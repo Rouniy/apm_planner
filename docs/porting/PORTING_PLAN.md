@@ -17,28 +17,34 @@ criteria as the Mission Planner 10 reference.
 3. Map rendering and tile persistence are separate concerns. Every map backend
    uses the same canonical tile store and provider identities; a backend must not
    create or purge a private cache.
-4. Hermes OPMap is the initial production map backend. The current QGroundControl
-   FlightMap is a possible Qt 6-only adapter, not a core dependency: it is tightly
-   coupled to QGC and Qt Location private APIs. QGC GeoMap is still experimental.
-   MapLibre Qt is the preferred additional production candidate to evaluate.
+4. Qt 5 is the product baseline. Hermes OPMap is the initial production map
+   backend. The current QGroundControl FlightMap requires Qt 6 and private Qt
+   Location APIs, so it cannot be a core or release dependency. QGC GeoMap is also
+   still experimental. A second production backend must retain Qt 5 support;
+   MapLibre Qt is a candidate to evaluate against that requirement.
 5. Platform APIs are replaced by Qt facilities wherever Qt covers the required
    behavior. Small platform branches are permitted only behind a tested service.
 6. Files are deleted only after their replacement passes its parity gate. An
    unbuilt or apparently obsolete module is not evidence that its user-visible
    function may be dropped.
+7. Public Qt class names and stable `objectName` values follow the corresponding
+   Mission Planner 10 views wherever the concepts match. The shell therefore uses
+   `MainWindowHeader`, `FlightDataView`, `FlightPlannerView`, `BackstageView`,
+   `SetupView` and `ConfigView`; implementation-specific suffixes are reserved for
+   adapters such as map backends and platform services.
 
 ## Target architecture
 
 ```text
-MissionPlannerMainWindow
-├── MpHeaderWidget (DATA/PLAN/SETUP/CONFIG/SIMULATION/HELP, TOOLS, connection)
+MainWindow
+├── MainWindowHeader (DATA/PLAN/SETUP/CONFIG/SIMULATION/HELP, TOOLS, connection)
 └── QStackedWidget
-    ├── DataPage
-    ├── PlanPage
-    ├── SetupBackstage
-    ├── ConfigBackstage
-    ├── SimulationPage
-    └── HelpPage
+    ├── FlightDataView
+    ├── FlightPlannerView
+    ├── SetupView -> BackstageView
+    ├── ConfigView -> BackstageView
+    ├── SimulationView
+    └── HelpView
 
 VehicleSession(link, system, component, revision)
 ├── ParameterStore + metadata + load/transaction controllers
@@ -73,7 +79,8 @@ IMapView
 
 1. **Baseline and inventory**
    - Freeze the 126-row parity manifest and reference commit.
-   - Keep Qt 5 build/tests green while introducing a controlled Qt 5/Qt 6 bridge.
+   - Keep the Qt 5 build/tests green. An optional Qt 6 configure path is only a
+     forward-compatibility diagnostic and is not a product-completeness gate.
    - Gate: manifest has an owner/status/evidence rule for every row.
 2. **Core safety**
    - Add `VehicleTarget`, typed `ParameterStore`, latest-wins loading,
@@ -100,9 +107,10 @@ IMapView
    - Rebuild deterministic DATA and PLAN pages, then simulation, help and the full
      tools menu. Add map backend selection without changing the cache.
    - Gate: offline, connected and multi-vehicle fixtures match the reference.
-7. **Qt 6 and packaging**
-   - Replace old QuaZip/QCustomPlot and removed Qt APIs; build Linux, Windows and
-     macOS through CMake presets and native deployment helpers.
+7. **Qt 5 packaging**
+   - Build the Qt 5 product on Linux, Windows and macOS through CMake presets and
+     native deployment helpers. Removed/deprecated APIs may still be modernized,
+     but the release baseline remains Qt 5.
    - Gate: CI build, package install, launch, QML/plugins/audio/SQL smoke and clean
      uninstall on all three platforms.
 8. **Cleanup and final parity**
