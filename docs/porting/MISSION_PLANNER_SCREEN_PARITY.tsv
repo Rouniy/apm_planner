@@ -1,0 +1,127 @@
+area	reference_surface	qt_surface	status	acceptance_evidence
+SHELL	Views/MainWindow.axaml	src/ui/MainWindow.*;qml/ApmToolBar.qml	partial	Match reference navigation, tools, connection strip, minimum geometry and theme; visual snapshots required
+SHELL	Views/BackstageView.axaml	src/ui/configuration/ApmHardwareConfig.*;src/ui/configuration/ApmSoftwareConfig.*	partial	One Qt backstage navigation model with the same groups, ordering, visibility rules and active states
+SHELL	Views/ConnectDialog.cs	src/ui/CommConfigurationWindow.*;src/ui/SerialConfigurationWindow.*	partial	Serial, TCP, UDP, UDP client, discovery and target selection behave like the reference
+SHELL	Views/ConnectionOptionsWindow.axaml		not-started	All reference options, validation, persistence and reset behavior are available
+DATA	GCSViews/FlightDataView.axaml	src/ui/submainwindow.*;src/ui/HUD.*;src/ui/uas/UASQuickView.*	partial	Reference layout, HUD/map split, quick values, messages, actions and detachable panels match
+DATA	Views/ActionPageView.axaml	src/ui/uas/UASActionsWidget.*	partial	Every supported mode/action has the same preconditions, confirmations, ACK handling and timeout behavior
+DATA	Views/InfoPageView.axaml	src/ui/QGCTabbedInfoView.*;src/ui/uas/UASInfoWidget.*	partial	Reference telemetry groups and configurable fields match
+DATA	Views/ProximityWindow.cs		not-started	Live proximity radar and orientation match
+DATA	Views/ElevationGraphWindow.cs	src/ui/MissionElevationDisplay.*	partial	Live/mission elevation graph scales, units and interaction match
+PLAN	GCSViews/FlightPlannerView.axaml	src/ui/map/QGCMapWidget.*;src/ui/QGCWaypointListMulti.*	partial	Mission, fence and rally editing plus table, map overlays and docking match
+PLAN	Views/GridUIView.axaml		not-started	Survey/grid generation, preview, camera settings and mission insertion match
+PLAN	Views/FaceMapView.axaml		not-started	Face-map planning and profile generation match
+PLAN	Controls/FlightPlannerMap.cs	src/ui/map/QGCMapWidget.*	partial	All waypoint/fence/rally/home/POI overlays and editing gestures match
+PLAN	Controls/ImportedMapOverlayRenderer.cs		not-started	KML/KMZ/SHP/GeoJSON/raster overlay rendering and opacity match
+PLAN	Controls/OverlapCoverageBuilder.cs		not-started	Camera coverage and overlap visualization match
+PLAN	Services/OgcMapProvider.cs		not-started	WMS and WMTS configuration, capabilities and cache identity match
+PLAN	Services/NativeGdalMapService.cs		not-started	Offline GDAL raster source, reprojection and cache behavior match
+PLAN	Services/MapCacheManager.cs	libs/opmapcontrol/src/core/pureimagecache.*	in-progress	Shared Mission Planner cache layout, prefetch, cache-only mode, cleanup and statistics are tested
+PLAN	Views/MapCacheView.axaml		not-started	Area/path prefetch, provider selection, cancellation, progress, size and cleanup match
+SETUP	GCSViews/SetupView.axaml	src/ui/configuration/ApmHardwareConfig.*	partial	Navigation groups, connected/disconnected visibility and screen ordering match
+SETUP	GCSViews/Setup/InstallFirmwareView.axaml	src/ui/configuration/ApmCustomFirmwareConfig.*;src/ui/PX4FirmwareUpgrader.*	partial	Board detection, channels, download, verification, upload, progress and recovery match
+SETUP	GCSViews/ConfigurationView/ConfigFirmwareLegacyView.axaml	src/ui/configuration/ApmCustomFirmwareConfig.*	partial	Legacy/custom firmware selection and upload match
+SETUP	GCSViews/ConfigurationView/ConfigFrameClassTypeView.axaml	src/ui/configuration/FrameTypeConfig.*	partial	Frame class/type images, parameter writes and reboot guidance match
+SETUP	GCSViews/ConfigurationView/ConfigFrameTypeView.axaml	src/ui/configuration/FrameTypeConfig.*	partial	Legacy frame selection behavior matches
+SETUP	GCSViews/ConfigurationView/ConfigAccelCalibrationView.axaml	src/ui/configuration/AccelCalibrationConfig.*	partial	All positions, progress, cancellation, level and temperature paths match
+SETUP	GCSViews/ConfigurationView/ConfigCompassView.axaml	src/ui/configuration/CompassConfig.*	partial	Compass discovery, priority, orientation, external flags and calibration match
+SETUP	GCSViews/ConfigurationView/ConfigCompassLegacyView.axaml	src/ui/configuration/CompassConfig.*	partial	Legacy compass setup remains behaviorally equivalent
+SETUP	GCSViews/ConfigurationView/ConfigCompassMotView.axaml	src/ui/configuration/CompassMotorCalibrationDialog.*	partial	CompassMot safety flow, live current/throttle and results match
+SETUP	GCSViews/ConfigurationView/ConfigRadioInputView.axaml	src/ui/configuration/RadioCalibrationConfig.*	partial	Channel bars, reversal, mode channel, calibration and validation match
+SETUP	GCSViews/ConfigurationView/ConfigRadioOutputView.axaml		not-started	Servo output assignment, min/trim/max/reverse and live testing match
+SETUP	GCSViews/ConfigurationView/ConfigESCCalibrationView.axaml		not-started	ESC calibration instructions, safety confirmation and parameter changes match
+SETUP	GCSViews/ConfigurationView/ConfigFlightModesView.axaml	src/ui/configuration/FlightModeConfig.*	partial	Vehicle-specific mode slots, Simple/Super Simple and live PWM match
+SETUP	GCSViews/ConfigurationView/ConfigFailSafeView.axaml	src/ui/configuration/FailSafeConfig.*	partial	All vehicle-specific failsafes, validation and help match
+SETUP	GCSViews/ConfigurationView/ConfigBatteryMonitoringView.axaml	src/ui/configuration/BatteryMonitorConfig.*	partial	Monitor type, sensor presets, calibration and live values match
+SETUP	GCSViews/ConfigurationView/ConfigBatteryMonitoring2View.axaml		not-started	Multi-battery instances and per-instance calibration match
+SETUP	GCSViews/ConfigurationView/ConfigAirspeedView.axaml	src/ui/configuration/AirspeedConfig.*	partial	Sensor type, bus/pin, calibration, use and primary selection match
+SETUP	GCSViews/ConfigurationView/ConfigRangeFinderView.axaml	src/ui/configuration/RangeFinderConfig.*	partial	All instances, sensor-specific fields and live distance match
+SETUP	GCSViews/ConfigurationView/ConfigOptFlowView.axaml	src/ui/configuration/OpticalFlowConfig.*	partial	Sensor selection, orientation, calibration and quality display match
+SETUP	GCSViews/ConfigurationView/ConfigPX4FlowView.axaml		not-started	PX4Flow configuration and firmware workflow match
+SETUP	GCSViews/ConfigurationView/ConfigMotorTestView.axaml		not-started	Motor ordering, throttle/duration, safety interlocks and all-motor tests match
+SETUP	GCSViews/ConfigurationView/ConfigMountView.axaml	src/ui/configuration/CameraGimbalConfig.*	partial	Mount/gimbal types, servo ranges, inputs, stabilization and test controls match
+SETUP	GCSViews/ConfigurationView/ConfigParachuteView.axaml		not-started	Enable/type/servo settings and guarded release test match
+SETUP	GCSViews/ConfigurationView/ConfigGPSOrderView.axaml		not-started	GPS discovery, order, primary selection and reboot behavior match
+SETUP	GCSViews/ConfigurationView/ConfigGpsInjectView.axaml		not-started	Correction source, RTCM injection and connection status match
+SETUP	GCSViews/ConfigurationView/ConfigHWCANView.axaml		not-started	CAN ports, drivers, protocol, bitrate and reboot requirements match
+SETUP	GCSViews/ConfigurationView/ConfigDroneCanView.axaml		not-started	Node discovery, parameters, firmware update, allocation and restart match
+SETUP	Views/DroneCANInspectorView.axaml		not-started	Message tree, subscribers, field graphs and safe handler lifetime match
+SETUP	GCSViews/ConfigurationView/ConfigSerialView.axaml		not-started	All autopilot SERIALn protocol/baud/options dependencies and conflict warnings match; local-link SerialSettingsDialog is not an equivalent
+SETUP	GCSViews/ConfigurationView/ConfigHWBTView.axaml		not-started	Bluetooth module discovery and configuration match
+SETUP	GCSViews/ConfigurationView/ConfigHWESP8266View.axaml		not-started	ESP8266 network setup, status, reset and firmware operations match
+SETUP	GCSViews/ConfigurationView/ConfigHWIDView.axaml		not-started	Hardware IDs, board identity, sensors and copy/export match
+SETUP	GCSViews/ConfigurationView/ConfigCubeIDView.axaml		not-started	Cube-family board/sensor identity presentation matches
+SETUP	GCSViews/ConfigurationView/ConfigHWOSDView.axaml		not-started	Hardware OSD setup, firmware and serial configuration match; legacy stream-rate OsdConfig is not an equivalent
+CONFIG	GCSViews/ConfigurationView/ConfigOSDView.axaml		not-started	Onboard OSD canvas, elements, screens, fonts and parameter writes match; legacy stream-rate OsdConfig is not an equivalent
+SETUP	GCSViews/ConfigurationView/ConfigADSBView.axaml		not-started	ADSB receiver/type/ICAO/squawk and live status match
+SETUP	GCSViews/ConfigurationView/ConfigSecureView.axaml		not-started	MAVLink signing key creation, provisioning, status and removal match
+SETUP	GCSViews/ConfigurationView/ConfigSecureApView.axaml		not-started	Secure-command key lifecycle and hardware provisioning match
+SETUP	GCSViews/ConfigurationView/ConfigTerminalView.axaml	src/ui/configuration/TerminalConsole.*	partial	Safe serial terminal, command history and disconnect lifecycle match
+SETUP	GCSViews/ConfigurationView/MavFTPUIView.axaml		not-started	MAVFTP browse, transfer, delete/create and cancellation match
+SETUP	GCSViews/ConfigurationView/ConfigOnboardReplView.axaml		not-started	Onboard REPL transport, history, upload and cancellation match
+SETUP	GCSViews/ConfigurationView/ConfigScriptReplView.axaml		not-started	Script REPL/editor workflow matches
+SETUP	GCSViews/ConfigurationView/ConfigAdvancedView.axaml		not-started	Advanced tools page, guarded commands and status feedback match
+SETUP	GCSViews/ConfigurationView/ConfigDeveloperToolsView.axaml		not-started	Developer tools page, visibility gating and guarded operations match
+SETUP	GCSViews/Setup/SikRadioView.axaml	src/ui/configuration/Radio3DRConfig.*;src/ui/configuration/RadioFlashWizard.*	partial	Local/remote radio parameters, copy, upload, reset and firmware match
+SETUP	GCSViews/Setup/NvModemView.axaml		not-started	NV4/NV5 discovery, route isolation, presets, keys, compare/save/reboot and diagnostics match
+SETUP	Views/OpenDroneIdView.axaml		not-started	Open Drone ID transport, identity/location/operator fields, validation and lifecycle match
+SETUP	GCSViews/ConfigurationView/ConfigJoystickView.axaml	src/ui/JoystickWidget.*	partial	Device/axis/button mapping, calibration, enable and vehicle output match
+SETUP	GCSViews/ConfigurationView/ConfigAntennaTrackerView.axaml		not-started	Tracker connection, calibration, servo ranges, testing and home match; existing AntennaTrackerConfig is a UI-only stub
+SETUP	GCSViews/ConfigurationView/ConfigAntennaTrackerParamView.axaml		not-started	Tracker-specific parameter page matches; existing AntennaTrackerConfig is a UI-only stub
+SETUP	Views/AntennaTrackerUIView.axaml		not-started	Live target tracking and all output protocols match
+SETUP	GCSViews/ConfigurationView/ConfigTradHeliView.axaml		not-started	Legacy traditional-heli setup matches
+SETUP	GCSViews/ConfigurationView/ConfigTradHeli4View.axaml		not-started	Current traditional-heli swash/servo/motor setup matches
+CONFIG	Views/ConfigView.axaml	src/ui/configuration/ApmSoftwareConfig.*	partial	Reference sidebar groups, search, visibility and active page layout match
+CONFIG	GCSViews/ConfigurationView/ConfigFlightModesView.axaml	src/ui/configuration/FlightModeConfig.*	partial	Vehicle-specific mode slots, Simple/Super Simple and live PWM match from the CONFIG navigation surface
+CONFIG	Views/RawParamsView.axaml	src/ui/configuration/AdvParameterList.*;src/ui/configuration/ParamWidget.*	partial	Complete typed parameter list, search, sort, staged edits, write/reset/load/save and metadata match
+CONFIG	Views/ParamCompareWindow.cs	src/ui/configuration/ParamCompareDialog.*	partial	Typed comparison, missing parameters, selective apply, defaults/file/vehicle sources and warnings match
+CONFIG	GCSViews/ConfigurationView/ConfigFriendlyParamsView.axaml	src/ui/configuration/StandardParamConfig.*	partial	Curated parameter groups, descriptions, ranges, units and refresh/write match
+CONFIG	GCSViews/ConfigurationView/ConfigFriendlyParamsView.axaml (advanced)	src/ui/configuration/AdvancedParamConfig.*	partial	Advanced curated parameter groups, metadata, favourites, typed editors and staged writes match
+CONFIG	GCSViews/ConfigurationView/ConfigBasicTuningView.axaml	src/ui/configuration/BasicPidConfig.*	partial	Vehicle-aware basic tuning controls, linked values and ranges match
+CONFIG	GCSViews/ConfigurationView/ConfigTradHeliView.axaml		not-started	Traditional-heli tuning page, gating and parameter mappings match
+CONFIG	GCSViews/ConfigurationView/ConfigExtendedTuningView.axaml	src/ui/configuration/CopterPidConfig.*;src/ui/configuration/ArduCopterPidConfig.*	partial	Extended/QP tuning controls and vehicle-specific visibility match
+CONFIG	GCSViews/ConfigurationView/ConfigArduplaneView.axaml	src/ui/configuration/ArduPlanePidConfig.*	partial	Plane tuning and parameter mappings match
+CONFIG	GCSViews/ConfigurationView/ConfigArduroverView.axaml	src/ui/configuration/ArduRoverPidConfig.*	partial	Rover tuning and parameter mappings match
+CONFIG	GCSViews/ConfigurationView/ConfigAC_FenceView.axaml	src/ui/configuration/GeoFenceConfig.*	partial	Fence enables, types, limits, actions and live status match
+SETUP	GCSViews/ConfigurationView/ConfigFFTView.axaml		not-started	FFT setup, live/offline analysis and filter suggestion match
+CONFIG	Views/ConfigFFTWindow.cs		not-started	FFT analysis window interaction and export match
+SETUP	GCSViews/ConfigurationView/ConfigDefaultSettingsView.axaml		not-started	Vehicle defaults, selection, diff preview and guarded apply match
+SETUP	GCSViews/ConfigurationView/ConfigInitialParamsView.axaml		not-started	Initial tuning calculator, validation and staged writes match
+CONFIG	GCSViews/ConfigurationView/ConfigPlannerView.axaml	src/ui/QGCSettingsWidget.*	partial	Planner units, speech, map, logs, telemetry rates and UI preferences match
+CONFIG	GCSViews/ConfigurationView/ConfigPlannerAdvView.axaml		not-started	Advanced planner/network/protocol/update settings match; disconnected MAVLinkSettingsWidget is not an equivalent
+SETUP	GCSViews/ConfigurationView/ConfigElevationSourcesView.axaml		not-started	Terrain/elevation source ordering, credentials and cache settings match
+SETUP	GCSViews/ConfigurationView/ConfigMavCommandView.axaml		not-started	Typed COMMAND_LONG/INT composition, validation, ACK and history match
+CONFIG	GCSViews/ConfigurationView/MavFTPUIView.axaml		not-started	MAVFTP navigation entry and complete browse/transfer workflow match from CONFIG
+CONFIG	GCSViews/ConfigurationView/ConfigUserDefinedView.axaml		not-started	User-defined parameter panels, persistence and editor match; QGCToolWidget is not wired as this CONFIG page
+CONFIG	GCSViews/ConfigurationView/WarningManagerView.axaml		not-started	Rule list, editor, severity, speech/notification and persistence match
+CONFIG	GCSViews/ConfigurationView/ConfigParamLoadingView.axaml		not-started	Partial load progress, cancel/skip/retry and feature gating match
+TOOLS	Views/MAVLinkInspectorView.axaml	src/ui/QGCMAVLinkInspector.*	partial	Multi-link/target message tree, rates, field values, filtering and graphs match
+TOOLS	Views/MavlinkLogWindow.axaml	src/ui/QGCMAVLinkLogPlayer.*	partial	Tlog load, playback, speed, seek, pause and state isolation match
+TOOLS	Views/LogDownloadWindow.axaml	src/uas/LogDownloadDialog.*	partial	DataFlash list, selected/all download, erase, cancellation and export match
+TOOLS	Views/SftpLogDownloadWindow.axaml		not-started	SFTP discovery, listing, download, cancellation and cleanup match
+TOOLS	Views/LogBrowseView.axaml	src/ui/Loghandling/LogAnalysis.*	partial	BIN/log browse, graphs, maps, messages, parameters and export match
+TOOLS	Views/LogIndexWindow.axaml		not-started	Directory index, metadata, map preview, search and cancellation match
+TOOLS	Views/OfflineMagFitWindow.axaml		not-started	Offline compass fitting, quality/results and parameter export match
+TOOLS	Views/GeoRefView.axaml		not-started	Photo/video georeference inputs, offsets, interpolation, output and cancellation match
+TOOLS	Views/Terrain3DView.axaml	src/ui/map3D/Pixhawk3DWidget.*	partial	Cross-platform terrain, vehicle/camera path, map texture and controls match
+TOOLS	Views/TerrainMakerWindow.axaml		not-started	Terrain tile generation, estimates, bounds, progress and validation match
+TOOLS	Views/FollowMeView.axaml		not-started	NMEA source, target filtering, guided updates, status and safe stop match
+TOOLS	Views/ExternalGuidedView.axaml		not-started	File-driven guided input, parsing, target and safe stop match
+TOOLS	Views/MovingBaseView.axaml		not-started	NMEA moving-base input, offsets, target and live state match
+TOOLS	Views/FormationControlWindow.axaml		not-started	Formation layout, target assignment, commands and safety match
+TOOLS	Views/SwarmFollowPathWindow.axaml		not-started	Follow-path swarm workflow and safety match
+TOOLS	Views/SwarmFollowLeaderWindow.axaml		not-started	Follow-leader offsets, target locking and safety match
+TOOLS	Views/SwarmWaypointLeaderWindow.axaml		not-started	Waypoint-leader distribution and safety match
+TOOLS	Views/SwarmSequenceWindow.axaml		not-started	Sequence layout editor, preview and persistence match
+TOOLS	Views/SerialOutputNMEAView.axaml		not-started	NMEA output transport, sentence/rate selection and lifecycle match
+TOOLS	Views/SerialOutputCotView.axaml		not-started	CoT/TAK UDP/TCP client/server output, identities and lifecycle match
+TOOLS	Views/MavlinkSerialTcpBridgeView.axaml		not-started	Serial/TCP bridge configuration, status, accounting and stop behavior match
+TOOLS	Views/SerialPassThroughView.axaml		not-started	Autopilot serial pass-through selection, baud and guarded lifecycle match
+TOOLS	Views/OsdVideoOverlayWindow.axaml		not-started	Video source, telemetry overlay, recording and resource lifecycle match
+TOOLS	Views/MicrodroneDownlinkView.axaml		not-started	Microdrone downlink transport, decode and diagnostics match
+TOOLS	Views/DeviceOperationsView.axaml		not-started	Device operations, target selection, progress, validation and ACK match
+TOOLS	Views/PluginManagerWindow.axaml	src/ui/QGCPluginHost.*	partial	Discovery, ABI/API, enable/disable, failures, logs and platform paths match
+TOOLS	Views/TranslationEditorWindow.axaml		not-started	RESX catalogue, culture load/edit/import/export and validation match
+TOOLS	Views/TrackerHomeModuleWindow.axaml		not-started	Tracker home-module input/output and status match
+SIMULATION	Views/SimulationView.axaml	src/ui/QGCHilConfiguration.*;src/comm/QGCJSBSimLink.*;src/comm/QGCFlightGearLink.*	partial	SITL vehicle/frame/version/location launch, console, process ownership and stop match
+HELP	Views/HelpView.axaml	src/ui/AboutDialog.*;src/ui/QGCWelcomeWidget.*	partial	Version, support, links, update state, credits and licenses match
