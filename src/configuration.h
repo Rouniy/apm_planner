@@ -14,8 +14,13 @@
 #define MAVLINK_HEARTBEAT_DEFAULT_RATE 1
 #define WITH_TEXT_TO_SPEECH 1
 
-#define QGC_APPLICATION_NAME "APM Planner"
-#define QGC_APPLICATION_VERSION "v2.0.30"
+// Product identity and the namespace used by default-constructed QSettings.
+#define QGC_APPLICATION_NAME "APM Planner 3.0"
+#define QGC_APPLICATION_VERSION "3.0.0"
+#define QGC_LEGACY_APPLICATION_NAME "APM Planner"
+#define QGC_ORGANIZATION_NAME "ardupilot"
+// Keep the established on-disk data root so an upgrade never strands logs,
+// missions or parameter files when the visible product identity changes.
 #define APP_DATA_DIRECTORY "/apmplanner2"
 #define LOG_DIRECTORY "/dataflashLogs"
 #define PARAMETER_DIRECTORY "/parameters"
@@ -58,9 +63,11 @@
 namespace QGC
 
 {
-const static QString APPNAME = "APMPLANNER2";
+const static QString APPNAME = "APMPLANNER3";
 const static QString COMPANYNAME = "ARDUPILOT";
-const static int APPLICATIONVERSION = 2030; // 2.0.30 [TODO] we should deprecate this version definition
+// Persistent QMainWindow state schema, not the product version. Keep it stable
+// so migrated dock/window layouts remain restorable across the 3.0 upgrade.
+const static int APPLICATIONVERSION = 2030;
 const static quint8 defaultMavlinkSystemId = 252; // Using 252 to 'crudely' identify a log created by APM Planner 2
 
     inline void close(){

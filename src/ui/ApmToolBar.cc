@@ -52,7 +52,6 @@ APMToolBar::APMToolBar(QWindow *parent): QQuickView(parent)
         QMessageBox::information(nullptr, "Error", QGC::shareDirectory() + "/qml/ApmToolBar.qml not found. Please reinstall the application and try again");
         exit(-1);
     }
-    engine()->addImportPath("qml/"); //For local or win32 builds
     engine()->addImportPath(QGC::shareDirectory() + "/qml"); //For installed linux builds
     // access to ini file from QML
     rootContext()->setContextProperty("Settings", &m_settings);

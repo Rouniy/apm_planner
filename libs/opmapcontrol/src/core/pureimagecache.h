@@ -43,11 +43,18 @@
 #include <QMutex>
 #include <QReadWriteLock>
 namespace core {
+    enum class TileCachePlatform
+    {
+        Windows,
+        MacOS,
+        Linux
+    };
+
     class PureImageCache
     {
 
     public:
-        PureImageCache();
+        explicit PureImageCache(const QString &sharedCacheRoot = QString());
         static bool CreateEmptyDB(const QString &file);
         bool PutImageToCache(const QByteArray &tile,const MapType::Types &type,const core::Point &pos, const int &zoom);
         QByteArray GetImageFromCache(MapType::Types type, core::Point pos, int zoom);
@@ -55,8 +62,34 @@ namespace core {
         void setGtileCache(const QString &value);
         static bool ExportMapDataToDB(QString sourceFile, QString destFile);
         void deleteOlderTiles(int const& days);
+
+        // This filesystem layout is shared with Mission Planner 10 and Hermes/GTU.
+        static QString sharedCacheRoot();
+        static QString sharedCacheRootForPlatform(TileCachePlatform platform,
+                                                  const QString &homePath,
+                                                  const QString &localApplicationData,
+                                                  const QString &xdgCacheHome);
+        static QString sharedTilePath(const QString &root,
+                                      MapType::Types type,
+                                      const core::Point &pos,
+                                      int zoom);
+        static QString providerCacheDirectory(MapType::Types type);
+        qint64 sharedCacheSizeBytes() const;
+        int pruneSharedCache(qint64 maximumBytes);
+        int deleteSharedTilesOlderThan(int days);
+
     private:
+        bool writeSharedTile(const QByteArray &tile,
+                             MapType::Types type,
+                             const core::Point &pos,
+                             int zoom) const;
+        QByteArray readSharedTile(MapType::Types type,
+                                  const core::Point &pos,
+                                  int zoom) const;
+
         QString gtilecache;
+        QString m_sharedCacheRoot;
+        mutable QReadWriteLock m_sharedCacheLock;
         QMutex Mcounter;
         QReadWriteLock lock;
         static qlonglong ConnCounter;

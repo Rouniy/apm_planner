@@ -30,6 +30,7 @@ This file is part of the QGROUNDCONTROL project
  */
 
 #include "QGCCore.h"
+#include "AppSettingsMigration.h"
 #include "logging.h"
 #include "configuration.h"
 #include "QGC.h"
@@ -68,11 +69,21 @@ QGCCore::QGCCore(int &argc, char* argv[]) : QApplication(argc, argv)
     // Set settings format
     QSettings::setDefaultFormat(QSettings::IniFormat);
 
-    // Set application name
-    this->setApplicationName(QGC_APPLICATION_NAME);
-    this->setApplicationVersion(QGC_APPLICATION_VERSION);
-    this->setOrganizationName(QLatin1String("ardupilot"));
+    // Establish the 3.0 identity before any component creates a default QSettings.
+    this->setOrganizationName(QLatin1String(QGC_ORGANIZATION_NAME));
     this->setOrganizationDomain("org.ardupilot");
+    this->setApplicationName(QGC_APPLICATION_NAME);
+    this->setApplicationDisplayName(QGC_APPLICATION_NAME);
+    this->setApplicationVersion(QGC_APPLICATION_VERSION);
+
+    // The application name is part of the QSettings namespace. Copy the complete
+    // legacy profile once, without replacing values already written by 3.0. This
+    // preserves custom data, log, mission and parameter paths as well as all other
+    // preferences before the first settings read.
+    AppSettingsMigration::migrateLegacyUserSettings(
+                QLatin1String(QGC_ORGANIZATION_NAME),
+                QLatin1String(QGC_LEGACY_APPLICATION_NAME),
+                QLatin1String(QGC_APPLICATION_NAME));
 
     m_mouseWheelFilter = new QGCMouseWheelEventFilter(this);
 
@@ -96,9 +107,8 @@ void QGCCore::initialize()
     QLOG_INFO() << "APP_TYPE:" << define2string(APP_TYPE);
 
 
-    // Check application settings
-    // clear them if they mismatch
-    // QGC then falls back to default
+    // Record the running version without discarding user preferences. Version
+    // changes are normal upgrades and must never clear the settings store.
     QSettings settings;
 
     // Show user an upgrade message if QGC got upgraded (see code below, after splash screen)
@@ -106,38 +116,25 @@ void QGCCore::initialize()
     QString lastApplicationVersion;
     if (settings.contains("QGC_APPLICATION_VERSION"))
     {
-        QString qgcVersion = settings.value("QGC_APPLICATION_VERSION").toString();
+        const QString qgcVersion = settings.value("QGC_APPLICATION_VERSION").toString();
         if (qgcVersion != QGC_APPLICATION_VERSION)
         {
-            settings.beginGroup("AUTO_UPDATE");
-            bool autoUpdateEnabled = settings.value("ENABLED", true).toBool();
-            QString releaseType = settings.value("RELEASE_TYPE", define2string(APP_TYPE)).toString();
-            settings.endGroup();
-
             lastApplicationVersion = qgcVersion;
-            settings.clear();
-            // Write current application version & update settings.
             settings.setValue("QGC_APPLICATION_VERSION", QGC_APPLICATION_VERSION);
-            settings.beginGroup("AUTO_UPDATE");
-            settings.setValue("ENABLED",autoUpdateEnabled);
-            settings.setValue("RELEASE_TYPE", releaseType);
-            settings.endGroup();
             upgraded = true;
         }
     }
     else
     {
-        // If application version is not set, clear settings anyway
-        settings.clear();
-        // Write current application version
         settings.setValue("QGC_APPLICATION_VERSION", QGC_APPLICATION_VERSION);
     }
-    //settings.clear();
     settings.sync();
 
 
     // Show splash screen
-    QPixmap splashImage(":/files/images/apm_planner_2_0-07.png");
+    // Use the version-neutral logo; the previous splash visibly branded the
+    // application as 2.0 even after the executable identity had changed.
+    QPixmap splashImage(":/files/images/apm_planner_logo_splash.png");
     QSplashScreen* splashScreen = new QSplashScreen(splashImage);
     // Delete splash screen after mainWindow was displayed
     splashScreen->setAttribute(Qt::WA_DeleteOnClose);
@@ -194,8 +191,10 @@ void QGCCore::initialize()
     // Remove splash screen
     splashScreen->finish(mainWindow);
 
-    if (upgraded) mainWindow->showInfoMessage(tr("Default Settings Loaded"),
-                                              tr("APM Planner has been upgraded from version %1 to version %2. Some of your user preferences have been reset to defaults for safety reasons. Please adjust them where needed.").arg(lastApplicationVersion).arg(QGC_APPLICATION_VERSION));
+    if (upgraded) mainWindow->showInfoMessage(
+                tr("Upgrade Complete"),
+                tr("APM Planner 3.0 has been upgraded from version %1 to version %2. Your user preferences have been retained.")
+                .arg(lastApplicationVersion).arg(QGC_APPLICATION_VERSION));
 
 }
 
@@ -270,5 +269,3 @@ void QGCCore::startUASManager()
         }
     }
 }
-
-

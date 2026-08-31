@@ -8,11 +8,75 @@
 #include <QtWidgets/QWidget>
 #include <QtWidgets/QHBoxLayout>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPaintEvent>
 
 #include "CompassOnboardCalibrationDialog.h"
 #include "ui_CompassOnboardCalibrationDialog.h"
 
+#ifdef APM_HAS_QT_DATA_VISUALIZATION
 using namespace QtDataVisualization;
+#else
+class CompassCalibrationPlot : public QWidget
+{
+public:
+    explicit CompassCalibrationPlot(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumSize(320, 260);
+    }
+
+    void addPoint(const QVector3D &point)
+    {
+        m_points.append(point);
+        update();
+    }
+
+    void clearPoints()
+    {
+        m_points.clear();
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event)
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.fillRect(rect(), QColor(18, 18, 20));
+
+        const QRectF plot = rect().adjusted(28, 24, -28, -34);
+        const QPointF center = plot.center();
+        const qreal radius = qMax<qreal>(10.0, qMin(plot.width(), plot.height()) / 2.0);
+        painter.setPen(QPen(QColor(95, 95, 100), 1));
+        painter.drawEllipse(center, radius, radius);
+        painter.drawLine(QPointF(center.x() - radius, center.y()),
+                         QPointF(center.x() + radius, center.y()));
+        painter.drawLine(QPointF(center.x(), center.y() - radius),
+                         QPointF(center.x(), center.y() + radius));
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(242, 194, 0, 190));
+        for (const QVector3D &point : m_points) {
+            // The fallback shows the X/Y projection and encodes Z as point size/opacity. It keeps
+            // the calibration coverage visible without making Qt Data Visualization mandatory.
+            const qreal x = center.x() + qBound(-1.0f, point.x(), 1.0f) * radius;
+            const qreal y = center.y() - qBound(-1.0f, point.y(), 1.0f) * radius;
+            const qreal size = 2.5 + qAbs(qBound(-1.0f, point.z(), 1.0f)) * 3.0;
+            painter.drawEllipse(QPointF(x, y), size, size);
+        }
+
+        painter.setPen(QColor(210, 210, 210));
+        painter.drawText(QRectF(8, height() - 28, width() - 16, 20),
+                         Qt::AlignCenter,
+                         tr("Compass sample coverage (X/Y, size = |Z|)"));
+    }
+
+private:
+    QVector<QVector3D> m_points;
+};
+#endif
 
 QString magCalStatusToString(uint8_t status);
 
@@ -112,9 +176,17 @@ void CompassOnboardCalibrationDialog::compassCalibrationProgress(
                 << " direction_y: " << mag_cal_progress.direction_y
                 << " direction_z: " << mag_cal_progress.direction_z;
 
+    const QVector3D sample(mag_cal_progress.direction_x,
+                           mag_cal_progress.direction_y,
+                           mag_cal_progress.direction_z);
+#ifdef APM_HAS_QT_DATA_VISUALIZATION
     if (m_pointDataArray) {
-        m_pointDataArray->append(QVector3D(mag_cal_progress.direction_x, mag_cal_progress.direction_y, mag_cal_progress.direction_z) );
+        m_pointDataArray->append(sample);
     }
+#else
+    if (m_plot)
+        m_plot->addPoint(sample);
+#endif
 
 }
 
@@ -189,8 +261,13 @@ void CompassOnboardCalibrationDialog::startCalibration()
         QTimer::singleShot(100, this, SLOT(cancelCalibration()));
     } else {
         m_uasInterface->startOnboardCompassCalibration();
-        delete m_pointDataArray;
+#ifdef APM_HAS_QT_DATA_VISUALIZATION
         m_pointDataArray = new QScatterDataArray;
+        m_proxy->resetArray(m_pointDataArray);
+#else
+        if (m_plot)
+            m_plot->clearPoints();
+#endif
     }
 }
 
@@ -236,6 +313,7 @@ void CompassOnboardCalibrationDialog::closeEvent(QCloseEvent *)
 
 void CompassOnboardCalibrationDialog::addDataVisualization()
 {
+#ifdef APM_HAS_QT_DATA_VISUALIZATION
     Q3DScatter* graph = new Q3DScatter();
     QWidget* container = QWidget::createWindowContainer(graph);
     ui->graphHorizontalLayout->addWidget(container);
@@ -243,10 +321,14 @@ void CompassOnboardCalibrationDialog::addDataVisualization()
     m_proxy = new QScatterDataProxy();
     m_series = new QScatter3DSeries(m_proxy);
 
-    QScatterDataArray *m_pointDataArray = new QScatterDataArray;
+    m_pointDataArray = new QScatterDataArray;
 
     m_proxy->resetArray(m_pointDataArray);
     graph->addSeries(m_series);
+#else
+    m_plot = new CompassCalibrationPlot(this);
+    ui->graphHorizontalLayout->addWidget(m_plot);
+#endif
 }
 
 QString magCalStatusToString(uint8_t status)
@@ -273,4 +355,3 @@ QString magCalStatusToString(uint8_t status)
         return "unknown";
     }
 }
-

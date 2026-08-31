@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=APM Planner 3.0
+GenericName=Ground Control Station
+Exec=apmplanner3
+TryExec=apmplanner3
+Terminal=false
+Categories=Education;Robotics;
+Comment=Open-source ground control station for MAVLink-based autopilots
+Icon=apmplanner3

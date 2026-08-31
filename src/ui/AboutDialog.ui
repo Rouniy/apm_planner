@@ -40,7 +40,7 @@
          </font>
         </property>
         <property name="text">
-         <string>APM Planner 2.0.0</string>
+         <string>APM Planner 3.0</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignCenter</set>

@@ -1,22 +1,101 @@
-cmake_minimum_required(VERSION 3.14)
-project(apmplanner2 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.21)
+project(APMPlanner3 VERSION 3.0.0 LANGUAGES CXX)
+
+include(CTest)
+include(GNUInstallDirs)
+
+set(APM_PLANNER_TARGET apmplanner3)
+set(APM_INSTALL_RESOURCE_SUBDIR "${CMAKE_INSTALL_DATADIR}/APMPlanner3")
+set(APM_INSTALL_RESOURCE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/APMPlanner3")
+set(APM_LEGACY_INSTALL_RESOURCE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/APMPlanner2")
+option(APM_ENABLE_SOURCE_DATA_FALLBACK
+    "Allow an uninstalled developer build to load resources from the source tree" ON)
 
 # C++ Standard & Qt features
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Qt5 components
-find_package(Qt5 REQUIRED COMPONENTS
-    Widgets Network OpenGL Svg Xml Sql SerialPort Quick PrintSupport Qml QuickWidgets Test DataVisualization
+# Keep Qt 5 as the reproducible baseline while the remaining legacy APIs are
+# removed. CI and developers can select Qt 6 explicitly with APM_QT_MAJOR=6.
+set(APM_QT_MAJOR "5" CACHE STRING "Qt major version to use: AUTO, 5, or 6")
+set_property(CACHE APM_QT_MAJOR PROPERTY STRINGS AUTO 5 6)
+if(APM_QT_MAJOR STREQUAL "5")
+    set(_apm_qt_names Qt5)
+elseif(APM_QT_MAJOR STREQUAL "6")
+    set(_apm_qt_names Qt6)
+elseif(APM_QT_MAJOR STREQUAL "AUTO")
+    # Prefer the known-green baseline until the explicit Qt 6 build is green.
+    set(_apm_qt_names Qt5 Qt6)
+else()
+    message(FATAL_ERROR "APM_QT_MAJOR must be AUTO, 5, or 6")
+endif()
+
+find_package(QT NAMES ${_apm_qt_names} REQUIRED COMPONENTS Core)
+set(APM_QT_PACKAGE Qt${QT_VERSION_MAJOR})
+set(_apm_qt_required_components
+    Core Gui Widgets Network Svg Xml Sql SerialPort Quick PrintSupport Qml QuickWidgets
 )
+if(BUILD_TESTING)
+    list(APPEND _apm_qt_required_components Test)
+endif()
+if(QT_VERSION_MAJOR EQUAL 6)
+    list(APPEND _apm_qt_required_components OpenGL OpenGLWidgets SvgWidgets)
+endif()
+find_package(${APM_QT_PACKAGE} REQUIRED COMPONENTS ${_apm_qt_required_components})
+message(STATUS "APM Planner Qt major: ${QT_VERSION_MAJOR}")
 
-# SDL2 (handled per platform below)
-if(UNIX) # Install for Apple and Linux
-    find_package(SDL2 REQUIRED)
-    include_directories(${SDL2_INCLUDE_DIRS})
+# Cross-platform audio is implemented only through Qt. These modules are optional for
+# developer builds, while release presets can make them mandatory.
+option(APM_REQUIRE_QT_AUDIO "Fail configure when Qt Multimedia or TextToSpeech is unavailable" OFF)
+find_package(${APM_QT_PACKAGE} QUIET COMPONENTS Multimedia)
+find_package(${APM_QT_PACKAGE} QUIET COMPONENTS TextToSpeech)
+set(APM_QT_AUDIO_LIBRARIES "")
+if(TARGET Qt::Multimedia)
+    list(APPEND APM_QT_AUDIO_LIBRARIES Qt::Multimedia)
+    add_compile_definitions(APM_HAS_QT_MULTIMEDIA)
+    message(STATUS "Audio playback: Qt Multimedia enabled")
+else()
+    message(STATUS "Audio playback: Qt Multimedia not found; silent fallback enabled")
+endif()
+if(TARGET Qt::TextToSpeech)
+    list(APPEND APM_QT_AUDIO_LIBRARIES Qt::TextToSpeech)
+    add_compile_definitions(APM_HAS_QT_TEXT_TO_SPEECH)
+    message(STATUS "Speech synthesis: Qt TextToSpeech enabled")
+else()
+    message(STATUS "Speech synthesis: Qt TextToSpeech not found; silent fallback enabled")
+endif()
+if(APM_REQUIRE_QT_AUDIO AND (NOT TARGET Qt::Multimedia OR NOT TARGET Qt::TextToSpeech))
+    message(FATAL_ERROR
+        "APM_REQUIRE_QT_AUDIO=ON requires both Qt Multimedia and Qt TextToSpeech")
+endif()
+
+# The 3D compass plot is optional at configure time. A QWidget fallback keeps the complete
+# calibration workflow available on minimal Linux installations and in packaging jobs.
+find_package(${APM_QT_PACKAGE} QUIET COMPONENTS DataVisualization)
+if(TARGET Qt::DataVisualization)
+    set(APM_DATA_VISUALIZATION_LIBRARY Qt::DataVisualization)
+    set(APM_HAS_DATA_VISUALIZATION TRUE)
+    message(STATUS "Compass calibration: Qt Data Visualization 3D plot enabled")
+else()
+    set(APM_DATA_VISUALIZATION_LIBRARY "")
+    set(APM_HAS_DATA_VISUALIZATION FALSE)
+    message(STATUS "Compass calibration: using built-in 2D plot fallback")
+endif()
+
+# Qt does not expose arbitrary flight-stick axes, so SDL is the isolated input
+# backend on every supported desktop platform.
+find_package(SDL2 REQUIRED)
+if(TARGET SDL2::SDL2)
+    set(APM_SDL2_TARGET SDL2::SDL2)
+else()
+    add_library(apm_sdl2 INTERFACE)
+    target_include_directories(apm_sdl2 INTERFACE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(apm_sdl2 INTERFACE ${SDL2_LIBRARIES})
+    set(APM_SDL2_TARGET apm_sdl2)
 endif()
 
 # MAVLink include
@@ -35,10 +114,24 @@ add_subdirectory(libs/opmapcontrol EXCLUDE_FROM_ALL)
 # External: quazip (can be via add_subdirectory or find_package if installed)
 add_subdirectory(libs/thirdParty/quazip EXCLUDE_FROM_ALL)
 
+add_library(apm_parameter_core STATIC
+    src/core/VehicleTarget.h
+    src/core/parameters/ParameterCodec.cpp
+    src/core/parameters/ParameterCodec.h
+    src/core/parameters/ParameterStore.cpp
+    src/core/parameters/ParameterStore.h
+)
+target_include_directories(apm_parameter_core PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+target_link_libraries(apm_parameter_core PUBLIC Qt::Core)
+
 
 # Gather sources/headers/forms/resources
 set(SOURCES
     qgroundcontrol.qrc
+    src/AppPaths.cpp
+    src/AppPaths.h
     src/GAudioOutput.cc
     src/GAudioOutput.h
     src/LogCompressor.cc
@@ -54,8 +147,8 @@ set(SOURCES
     src/Settings.h
     src/Waypoint.cc
     src/Waypoint.h
-    src/audio/AlsaAudio.cc
-    src/audio/AlsaAudio.h
+    src/audio/QtAudioOutput.cpp
+    src/audio/QtAudioOutput.h
     src/comm/AbsPositionOverview.cc
     src/comm/AbsPositionOverview.h
     src/comm/LinkInterface.cpp
@@ -156,8 +249,8 @@ set(SOURCES
     src/ui/AboutDialog.cc
     src/ui/AboutDialog.h
     src/ui/AboutDialog.ui
-    src/ui/ApmToolBar.cc
-    src/ui/ApmToolBar.h
+    src/ui/MainWindowHeader.cpp
+    src/ui/MainWindowHeader.h
     src/ui/AudioOutputWidget.cc
     src/ui/AudioOutputWidget.h
     src/ui/AudioOutputWidget.ui
@@ -640,19 +733,16 @@ if(WIN32)
     )
     add_definitions(-D__STDC_LIMIT_MACROS)
     include_directories(libs/lib/msinttypes)
-    set(ADDITIONAL_LIBS setupapi)
+    set(ADDITIONAL_LIBS "")
 elseif(APPLE)
     list(APPEND SOURCES
         # Add Mac-specific sources here
     )
     add_definitions(-D__STDC_LIMIT_MACROS)
-    set(ADDITIONAL_LIBS z)
-    find_library(APPSERVICES ApplicationServices)
-    find_package(Qt5Multimedia REQUIRED)
-    list(APPEND ADDITIONAL_LIBS ${APPSERVICES} Qt5::Multimedia)
+    set(ADDITIONAL_LIBS "")
 elseif(UNIX)
     add_definitions(-D__STDC_LIMIT_MACROS)
-    set(ADDITIONAL_LIBS sndfile asound z ${ADDITIONAL_LIBS})
+    set(ADDITIONAL_LIBS "")
 endif()
 
 # Optional: Google Earth (add logic to enable/disable as needed)
@@ -663,16 +753,6 @@ if(ENABLE_GOOGLE_EARTH)
     if(WIN32)
         add_definitions(-DGOOGLEEARTH)
     endif()
-endif()
-
-# Optional: Flite (Festival Lite) voice synthesis
-find_path(FLITE_INCLUDE_DIR flite/flite.h)
-if(FLITE_INCLUDE_DIR)
-    add_definitions(-DFLITE_AUDIO_ENABLED)
-    set(FLITE_LIBS flite_cmu_us_kal flite_usenglish flite_cmulex flite)
-    include_directories(${FLITE_INCLUDE_DIR})
-else()
-    message(STATUS "Flite not found, voice synthesis disabled")
 endif()
 
 # Optional: Magellan 3DxWare support (Linux/Mac/Windows)
@@ -714,7 +794,7 @@ else()
 endif()
 
 # Main target
-add_executable(apmplanner2
+add_executable(${APM_PLANNER_TARGET}
     ${SOURCES}
     ${HEADERS}
     ${FORMS}
@@ -723,7 +803,7 @@ add_executable(apmplanner2
 )
 
 # Includes
-target_include_directories(apmplanner2 PRIVATE
+target_include_directories(${APM_PLANNER_TARGET} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/include/ui
     ${MAVLINKPATH}
@@ -731,7 +811,7 @@ target_include_directories(apmplanner2 PRIVATE
     libs/utils libs libs/opmapcontrol
     ${SDL2_INCLUDE_DIR}
 )
-target_include_directories(apmplanner2 PRIVATE
+target_include_directories(${APM_PLANNER_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Loghandling
@@ -754,112 +834,187 @@ target_include_directories(apmplanner2 PRIVATE
 )
 
 # Link Qt and additional libs
-target_link_libraries(apmplanner2
-    Qt5::Widgets
-    Qt5::Network
-    Qt5::OpenGL
-    Qt5::Svg
-    Qt5::Xml
-    Qt5::Sql
-    Qt5::SerialPort
-    Qt5::Quick
-    Qt5::PrintSupport
-    Qt5::Qml
-    Qt5::QuickWidgets
-    Qt5::Test
-    Qt5::DataVisualization
+target_link_libraries(${APM_PLANNER_TARGET}
+    Qt::Widgets
+    Qt::Network
+    Qt::Svg
+    Qt::Xml
+    Qt::Sql
+    Qt::SerialPort
+    Qt::Quick
+    Qt::PrintSupport
+    Qt::Qml
+    Qt::QuickWidgets
+    ${APM_DATA_VISUALIZATION_LIBRARY}
     quazip
     alglib
     opmapcontrol
+    apm_parameter_core
     ${ADDITIONAL_LIBS}
-    ${FLITE_LIBS}
-    ${SDL2_LIBRARIES}
+    ${APM_QT_AUDIO_LIBRARIES}
+    ${APM_SDL2_TARGET}
 )
 
 # Definitions
-target_compile_definitions(apmplanner2 PRIVATE
+target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
     DISABLE_3DMOUSE
     _TTY_NOWARN_
     $<$<CONFIG:Release>:QT_NO_DEBUG>
     QGC_USE_${MAVLINK_CONF}_MESSAGES
     NOMINMAX
+    APM_INSTALL_DATA_DIR="${APM_INSTALL_RESOURCE_DIR}"
+    APM_LEGACY_INSTALL_DATA_DIR="${APM_LEGACY_INSTALL_RESOURCE_DIR}"
 )
+
+if(APM_ENABLE_SOURCE_DATA_FALLBACK)
+    target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
+        APM_DEVELOPMENT_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+endif()
+
+if(APM_HAS_DATA_VISUALIZATION)
+    target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE APM_HAS_QT_DATA_VISUALIZATION)
+endif()
 
 # Platform-specific properties and post-build
 if(APPLE)
-    set(MACOSX_BUNDLE_ICON_FILE "icons.icns")
+    set(MACOSX_BUNDLE_ICON_FILE "icon.icns")
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum OS X deployment version")
 
     set_source_files_properties(
-        "${CMAKE_SOURCE_DIR}/files/APMIcons/icons.icns"
+        "${CMAKE_SOURCE_DIR}/files/APMIcons/icon.icns"
         PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources"
     )
 
-    set_target_properties(apmplanner2 PROPERTIES
+    set_target_properties(${APM_PLANNER_TARGET} PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_ICON_FILE ${MACOSX_BUNDLE_ICON_FILE}
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/files/macOS/Info.plist"
     )
 
-    add_custom_command(TARGET apmplanner2 POST_BUILD
+    add_custom_command(TARGET ${APM_PLANNER_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/qml"
-            "$<TARGET_FILE_DIR:apmplanner2>/qml"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/qml"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/sik_uploader"
-            "$<TARGET_FILE_DIR:apmplanner2>/sik_uploader"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/sik_uploader"
     )
 
     # Ensure .icns is included in the app bundle for debug builds
-    add_custom_command(TARGET apmplanner2 POST_BUILD
+    add_custom_command(TARGET ${APM_PLANNER_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/files/APMIcons/icon.icns"
-            "$<TARGET_FILE_DIR:apmplanner2>/../Resources/icon.icns"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/../Resources/icon.icns"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/files/macOS/Info.plist"
-            "$<TARGET_FILE_DIR:apmplanner2>/../Info.plist"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/../Info.plist"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_SOURCE_DIR}/files/macOS/PkgInfo.in"
-            "$<TARGET_FILE_DIR:apmplanner2>/../PkgInfo"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/../PkgInfo"
 
     )
 
     install(FILES "${CMAKE_SOURCE_DIR}/files/APMIcons/icon.icns"
-            DESTINATION "${CMAKE_INSTALL_PREFIX}/apmplanner2.app/Contents/Resources")
+            DESTINATION "APM Planner 3.0.app/Contents/Resources")
 
     configure_file("${CMAKE_SOURCE_DIR}/files/macOS/PkgInfo.in" ${CMAKE_BINARY_DIR}/PkgInfo @ONLY)
     install(FILES ${CMAKE_BINARY_DIR}/PkgInfo
-        DESTINATION "${CMAKE_INSTALL_PREFIX}/apmplanner2.app/Contents")
+        DESTINATION "APM Planner 3.0.app/Contents")
 
 
 elseif(WIN32)
-    add_custom_command(TARGET apmplanner2 POST_BUILD
+    add_custom_command(TARGET ${APM_PLANNER_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/qml"
-            "$<TARGET_FILE_DIR:apmplanner2>/qml"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/qml"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/sik_uploader"
-            "$<TARGET_FILE_DIR:apmplanner2>/sik_uploader"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/sik_uploader"
         # Add DLLs if needed, e.g. SDL2.dll, libxbee.dll, etc.
     )
 else() # Linux
-    add_custom_command(TARGET apmplanner2 POST_BUILD
+    add_custom_command(TARGET ${APM_PLANNER_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/qml"
-            "$<TARGET_FILE_DIR:apmplanner2>/qml"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/qml"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/sik_uploader"
-            "$<TARGET_FILE_DIR:apmplanner2>/sik_uploader"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/sik_uploader"
     )
 endif()
 
 # Install rules for Linux packaging
 if(UNIX AND NOT APPLE)
-    install(TARGETS apmplanner2 DESTINATION bin)
-    install(FILES ${CMAKE_SOURCE_DIR}/sik_uploader/sik_uploader.py DESTINATION bin)
-    install(DIRECTORY ${CMAKE_SOURCE_DIR}/files DESTINATION share/APMPlanner2)
-    install(DIRECTORY ${CMAKE_SOURCE_DIR}/data DESTINATION share/APMPlanner2)
-    install(DIRECTORY ${CMAKE_SOURCE_DIR}/qml DESTINATION share/APMPlanner2)
-    install(FILES ${CMAKE_SOURCE_DIR}/common/apmplanner2.desktop DESTINATION share/applications)
+    install(TARGETS ${APM_PLANNER_TARGET} DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(FILES ${CMAKE_SOURCE_DIR}/sik_uploader/sik_uploader.py
+        DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/files
+        DESTINATION "${APM_INSTALL_RESOURCE_SUBDIR}")
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/data
+        DESTINATION "${APM_INSTALL_RESOURCE_SUBDIR}")
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/qml
+        DESTINATION "${APM_INSTALL_RESOURCE_SUBDIR}")
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/sik_uploader
+        DESTINATION "${APM_INSTALL_RESOURCE_SUBDIR}")
+    install(FILES ${CMAKE_SOURCE_DIR}/common/apmplanner3.desktop
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES ${CMAKE_SOURCE_DIR}/files/APMIcons/ap_rc.png
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps"
+        RENAME apmplanner3.png)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(tilecache_tests
+        tests/test_tilecache.cpp
+    )
+    target_link_libraries(tilecache_tests PRIVATE
+        opmapcontrol
+        Qt::Core
+        Qt::Network
+        Qt::Test
+    )
+    add_test(NAME tilecache_tests COMMAND tilecache_tests)
+    set_tests_properties(tilecache_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(appsettings_migration_tests
+        tests/test_appsettingsmigration.cpp
+    )
+    target_include_directories(appsettings_migration_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(appsettings_migration_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME appsettings_migration_tests COMMAND appsettings_migration_tests)
+
+    add_executable(parameter_core_tests
+        tests/test_parametercore.cpp
+    )
+    target_link_libraries(parameter_core_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME parameter_core_tests COMMAND parameter_core_tests)
+
+    add_executable(qgcparamid_tests
+        tests/test_qgcparamid.cpp
+        src/comm/QGCParamID.cc
+        src/comm/QGCParamID.h
+    )
+    target_include_directories(qgcparamid_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(qgcparamid_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME qgcparamid_tests COMMAND qgcparamid_tests)
 endif()

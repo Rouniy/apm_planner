@@ -194,23 +194,22 @@ namespace core {
         {
         case MapType::GoogleMap:
             {
-                QString sec1; // after &x=...
-                QString sec2; // after &zoom=...
-                GetSecGoogleWords(pos,  sec1,  sec2);
-                TryCorrectGoogleVersions();
-
-                Stream << "https://mt" << GetServerNum(pos, 4) << ".google.com/vt/lyrs=" << VersionGoogleMap << "&hl=" << language << "&x=" << pos.X() << sec1 << "&y=" << pos.Y() << "&z=" << zoom << "&s=" << sec2;
+                Stream << "https://mt1.google.com/vt/lyrs=m&x=" << pos.X()
+                       << "&y=" << pos.Y() << "&z=" << zoom;
                 return outPut;
             }
             break;
         case MapType::GoogleSatellite:
             {
-                QString sec1; // after &x=...
-                QString sec2; // after &zoom=...
-                GetSecGoogleWords(pos,  sec1,  sec2);
-                TryCorrectGoogleVersions();
-
-                Stream << "https://khm" << GetServerNum(pos, 4) << ".google.com/kh/v=" << VersionGoogleSatellite << "&hl=" << language << "&x=" << pos.X() << sec1 << "&y=" << pos.Y() << "&z=" << zoom << "&s=" << sec2;
+                Stream << "https://mt1.google.com/vt/lyrs=s&x=" << pos.X()
+                       << "&y=" << pos.Y() << "&z=" << zoom;
+                return outPut;
+            }
+            break;
+        case MapType::GoogleHybrid:
+            {
+                Stream << "https://mt1.google.com/vt/lyrs=y&x=" << pos.X()
+                       << "&y=" << pos.Y() << "&z=" << zoom;
                 return outPut;
             }
             break;
@@ -340,8 +339,8 @@ namespace core {
             break;
         case MapType::OpenStreetMap:
             {
-                char letter= "abc"[GetServerNum(pos, 3)];
-                Stream << "https://" << letter << ".tile.openstreetmap.org/" << zoom << "/" << pos.X() << "/" << pos.Y() << ".png";
+                Stream << "https://tile.openstreetmap.org/" << zoom << "/"
+                       << pos.X() << "/" << pos.Y() << ".png";
                 return outPut;
             }
             break;
@@ -378,9 +377,8 @@ namespace core {
         case MapType::BingSatellite:
             {
                 QString key = TileXYToQuadKey(pos.X(), pos.Y(), zoom);
-                QString token = !BingMapsClientToken.isEmpty() ? "&token=" + BingMapsClientToken : QString("");
-
-                Stream << "https://ecn.t" << GetServerNum(pos, 4) << ".tiles.virtualearth.net/tiles/a" << key << ".jpeg?g=" << VersionBingMaps << "&mkt=" << language << token;
+                Stream << "https://ecn.t0.tiles.virtualearth.net/tiles/a" << key
+                       << ".jpeg?g=1&n=z";
                 return outPut;
             }
             break;
@@ -402,9 +400,11 @@ namespace core {
             break;
         case MapType::ArcGIS_Satellite:
             {
-                // https://server.arcgisonline.com/ArcGIS/rest/services/ESRI_Imagery_World_2D/MapServer/tile/1/0/1.jpg
-
-                return QString("https://server.arcgisonline.com/ArcGIS/rest/services/ESRI_Imagery_World_2D/MapServer/tile/%1/%2/%3").arg(zoom, pos.Y(), pos.X());
+                return QStringLiteral("https://services.arcgisonline.com/ArcGIS/rest/services/"
+                                      "World_Imagery/MapServer/tile/%1/%2/%3")
+                    .arg(zoom)
+                    .arg(pos.Y())
+                    .arg(pos.X());
             }
             break;
         case MapType::ArcGIS_ShadedRelief:

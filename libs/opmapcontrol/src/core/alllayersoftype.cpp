@@ -38,11 +38,9 @@ namespace core {
             switch(type)
             {
             case MapType::GoogleHybrid:
-                {
-
-                    types.append(MapType::GoogleSatellite);
-                    types.append(MapType::GoogleLabels);
-                }
+                // Mission Planner and Hermes use Google's native combined hybrid tile (lyrs=y).
+                // A single layer is required for byte-compatible shared cache entries.
+                types.append(MapType::GoogleHybrid);
                 break;
 
             case MapType::GoogleHybridChina:

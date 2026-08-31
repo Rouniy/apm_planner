@@ -28,7 +28,7 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent, Qt::WindowFlags flags) :
         }
     }*/
 
-    this->window()->setWindowTitle(tr("APM Planner 2 Settings"));
+    this->window()->setWindowTitle(tr("APM Planner 3.0 Settings"));
 
 
 }

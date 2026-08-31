@@ -87,15 +87,15 @@ void SerialConnection::portError(QSerialPort::SerialPortError serialPortError)
                 break;
             }
         }
-    [[clang::fallthrough]];
+    [[fallthrough]];
     case QSerialPort::ResourceError:
         {
             QLOG_ERROR() << "serial connection: error " << serialPortError;
 
             // In case of error disconnect from error signal to avoid endless looping
             // if another error is signalled while disconnecting
-            QObject::disconnect(m_port, SIGNAL(error(QSerialPort::SerialPortError)),
-                                this, SLOT(portError(QSerialPort::SerialPortError)));
+            QObject::disconnect(m_port, &QSerialPort::errorOccurred,
+                                this, &SerialConnection::portError);
             disconnect();
             break;
         }
@@ -290,16 +290,21 @@ bool SerialConnection::connect()
     m_port = new QSerialPort();
 
 
-#if defined(Q_OS_MACX) && ((QT_VERSION == 0x050402)||(QT_VERSION == 0x0500401))
-    // temp fix Qt5.4.1 issue on OSX
-    // http://code.qt.io/cgit/qt/qtserialport.git/commit/?id=687dfa9312c1ef4894c32a1966b8ac968110b71e
-    m_port->setPortName("/dev/cu." + m_portName);
-#else
     m_port->setPortName(m_portName);
-#endif
 
     if (!m_port->open(QIODevice::ReadWrite))
     {
+        if (m_port->error() == QSerialPort::PermissionError)
+        {
+            emit error(this, tr("Permission denied opening serial port %1: %2")
+                       .arg(m_portName, m_port->errorString()));
+            QLOG_ERROR() << "Permission denied opening serial port" << m_portName
+                         << m_port->errorString();
+            m_port->deleteLater();
+            m_port = nullptr;
+            m_retryCount = 0;
+            return false;
+        }
         if (m_retryCount++ > 1)
         {
             m_retryCount = 0;
@@ -362,8 +367,8 @@ bool SerialConnection::connect()
     // Connetc to signals and start receivieng
     QObject::connect(m_port,SIGNAL(readyRead()),this,SLOT(readyRead()));
     QObject::connect(m_port, SIGNAL(destroyed(QObject*)),this,SLOT(connectionDestroyed(QObject*)));
-    QObject::connect(m_port, SIGNAL(error(QSerialPort::SerialPortError)),
-                     this, SLOT(portError(QSerialPort::SerialPortError)), Qt::UniqueConnection);
+    QObject::connect(m_port, &QSerialPort::errorOccurred,
+                     this, &SerialConnection::portError, Qt::UniqueConnection);
 
 
     m_lastTimeoutMessage = QDateTime::currentMSecsSinceEpoch();

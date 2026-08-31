@@ -6,19 +6,19 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1080</width>
-    <height>600</height>
+    <width>1280</width>
+    <height>800</height>
    </rect>
   </property>
   <property name="minimumSize">
    <size>
-    <width>1020</width>
-    <height>576</height>
+    <width>1120</width>
+    <height>720</height>
    </size>
   </property>
   <property name="baseSize">
    <size>
-    <width>1100</width>
+    <width>1280</width>
     <height>800</height>
    </size>
   </property>
@@ -50,7 +50,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1080</width>
+     <width>1280</width>
      <height>22</height>
     </rect>
    </property>
@@ -555,7 +555,7 @@
   </action>
   <action name="actionAbout_APM_Planner_2_0">
    <property name="text">
-    <string>About APM Planner 2.0</string>
+    <string>About APM Planner 3.0</string>
    </property>
   </action>
   <action name="actionCheck_For_Updates">

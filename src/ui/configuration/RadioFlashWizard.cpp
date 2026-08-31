@@ -26,14 +26,15 @@ This file is part of the APM_PLANNER project
 
 #include "logging.h"
 #include "QGC.h"
+#include "AppPaths.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QProcess>
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QMessageBox>
 
-static const QString FirmwareBaseURL = "./sik_uploader/firmware/";
 static const QString FirmwareVersionURL = "2.0";
 
 RadioFlashWizard::RadioFlashWizard(QWidget *parent) :
@@ -107,13 +108,23 @@ void RadioFlashWizard::flashRadio()
 {
     QLOG_DEBUG() << "Flash Radio:";
     ui->plainTextEdit->insertPlainText("\nFlashing with firmware\n");
-    ui->plainTextEdit->insertPlainText("./sik_uploader/firmware/2.0/radio~hm_trp.ihx\n");
+
+    int firmwareIndex = 0;
+    if (ui->rfd900aRadioButton->isChecked()) {
+        firmwareIndex = 1;
+    } else if (ui->rfd900uRadioButton->isChecked()) {
+        firmwareIndex = 2;
+    }
+    const QString firmwarePath = getFirmwareImageName(firmwareIndex);
+    const QString uploaderPath = AppPaths::resourcePath(
+                QStringLiteral("sik_uploader/sik_uploader.py"));
+    ui->plainTextEdit->insertPlainText(firmwarePath + QLatin1Char('\n'));
 
     QStringList argumentsList;
-    argumentsList << "./sik_uploader/sik_uploader.py";
+    argumentsList << uploaderPath;
     argumentsList << "--port" << ui->deviceComboBox->currentData().toString();
     argumentsList << "--baudrate" << ui->baudrateComboBox->currentText();
-    argumentsList << "./sik_uploader/firmware/2.0/radio~hm_trp.ihx";
+    argumentsList << firmwarePath;
 
     QLOG_DEBUG() << "commands: python " << argumentsList;
 
@@ -123,8 +134,7 @@ void RadioFlashWizard::flashRadio()
     connect(m_updateProcess, SIGNAL(finished(int,QProcess::ExitStatus)),
             SLOT(processFinished(int)));
 
-    QLOG_DEBUG() << "App dir:" << QCoreApplication::applicationDirPath();
-    m_updateProcess->setWorkingDirectory(QCoreApplication::applicationDirPath());
+    m_updateProcess->setWorkingDirectory(QFileInfo(uploaderPath).absolutePath());
 
     QLOG_DEBUG() << "Working dir:" << m_updateProcess->workingDirectory();
 
@@ -174,6 +184,9 @@ QString RadioFlashWizard::getFirmwareImageName(int index)
     imageList << "radio~hm_trp.ihx";
     imageList << "RFD_SiK_V2.0_rfd900a.ihx";
     imageList << "RFD_SiK_V2.0_rfd900u.ihx";
-    return FirmwareBaseURL + FirmwareVersionURL + "/" + imageList[index];
+    if (index < 0 || index >= imageList.size()) {
+        index = 0;
+    }
+    return AppPaths::resourcePath(QStringLiteral("sik_uploader/firmware/%1/%2")
+                                  .arg(FirmwareVersionURL, imageList.at(index)));
 }
-

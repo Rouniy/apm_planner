@@ -9,14 +9,20 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleGetInfoString</key>
-	<string>2.0.0</string>
+	<string>APM Planner 3.0, version 3.0.0</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleExecutable</key>
-	<string>apmplanner2</string>
+	<string>apmplanner3</string>
 	<key>CFBundleIdentifier</key>
-    <string>org.ardupilot.apmplanner2</string>
+	<string>org.ardupilot.apmplanner3</string>
 	<key>CFBundleName</key>
-	<string>APM Planner 2.0</string>
+	<string>APM Planner 3.0</string>
+	<key>CFBundleDisplayName</key>
+	<string>APM Planner 3.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>3.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>3.0.0</string>
 </dict>
 </plist>

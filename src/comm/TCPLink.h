@@ -113,6 +113,7 @@ private:
     int             _linkId;
     QTcpSocket*     _socket;
     QTcpServer      _server;
+    bool            _socketErrorReported = false;
 
     quint64 _bitsSentTotal;
     quint64 _bitsSentCurrent;

@@ -56,7 +56,7 @@ This file is part of the QGROUNDCONTROL project
 #include "ObjectDetectionView.h"
 #include "WatchdogControl.h"
 
-#include "ApmToolBar.h"
+#include "MainWindowHeader.h"
 #include "ApmHardwareConfig.h"
 #include "ApmSoftwareConfig.h"
 #include "TerminalConsole.h"
@@ -75,6 +75,7 @@ This file is part of the QGROUNDCONTROL project
 #include <QNetworkInterface>
 #include <QMessageBox>
 #include <QScreen>
+#include <QVBoxLayout>
 
 
 
@@ -213,31 +214,26 @@ MainWindow::MainWindow(QWidget *parent):
     // Setup UI state machines
     centerStackActionGroup->setExclusive(true);
 
-    centerStack = new QStackedWidget(this);
-    setCentralWidget(centerStack);
+    auto *applicationShell = new QWidget(this);
+    auto *applicationShellLayout = new QVBoxLayout(applicationShell);
+    applicationShellLayout->setContentsMargins(0, 0, 0, 0);
+    applicationShellLayout->setSpacing(0);
+    m_mainWindowHeader = new MainWindowHeader(applicationShell);
+    centerStack = new QStackedWidget(applicationShell);
+    applicationShellLayout->addWidget(m_mainWindowHeader);
+    applicationShellLayout->addWidget(centerStack, 1);
+    setCentralWidget(applicationShell);
 
-
-    // Load Toolbar
-#ifdef QGC_TOOLBAR_ENABLED
-    toolBar = new QGCToolBar(this);
-    this->addToolBar(toolBar);
-
-    // Add actions for average users (displayed next to each other)
-    QList<QAction*> actions;
-    actions << ui.actionFlightView;
-    actions << ui.actionMissionView;
-    //actions << ui.actionConfiguration_2;
-    actions << ui.actionHardwareConfig;
-    actions << ui.actionSoftwareConfig;
-    toolBar->setPerspectiveChangeActions(actions);
-
-    // Add actions for advanced users (displayed in dropdown under "advanced")
-    QList<QAction*> advancedActions;
-    advancedActions << ui.actionSimulation_View;
-    advancedActions << ui.actionEngineersView;
-
-    toolBar->setPerspectiveChangeAdvancedActions(advancedActions);
-#endif
+    m_mainWindowHeader->setNavigationActions(ui.actionFlightView,
+                                                  ui.actionMissionView,
+                                                  ui.actionHardwareConfig,
+                                                  ui.actionSoftwareConfig,
+                                                  ui.actionSimulation_View,
+                                                  ui.actionAbout_APM_Planner_2_0);
+    m_mainWindowHeader->setToolsMenu(ui.menuTools);
+    connect(m_mainWindowHeader, &MainWindowHeader::configureLinkRequested,
+            this, [this](int linkId) { configLink(linkId); });
+    ui.menuBar->hide();
 
     customStatusBar = new QGCStatusBar(this);
     setStatusBar(customStatusBar);
@@ -262,32 +258,6 @@ MainWindow::MainWindow(QWidget *parent):
     connect(LinkManager::instance(),SIGNAL(linkError(int,QString)),this,SLOT(linkError(int,QString)));
 
     connect(ui.actionTerminalConsole, SIGNAL(triggered()), this, SLOT(showTerminalConsole()));
-
-#ifndef QGC_TOOLBAR_ENABLED
-    // Add the APM 'toolbar'
-
-    m_apmToolBar = new APMToolBar();
-    m_apmToolBar->setFlightViewAction(ui.actionFlightView);
-    m_apmToolBar->setFlightPlanViewAction(ui.actionMissionView);
-    m_apmToolBar->setInitialSetupViewAction(ui.actionHardwareConfig);
-    m_apmToolBar->setConfigTuningViewAction(ui.actionSoftwareConfig);
-    m_apmToolBar->setPlotViewAction(ui.actionEngineersView);
-    m_apmToolBar->setSimulationViewAction(ui.actionSimulation_View);
-    m_apmToolBar->setDonateViewAction(ui.actionDonate);
-
-    connect(ui.actionAdvanced_Mode, SIGNAL(triggered(bool)), m_apmToolBar, SLOT(checkAdvancedMode(bool)));
-
-    QDockWidget *widget = new QDockWidget(tr("APM Tool Bar"),this);
-    QWidget *toolbarcontainer = QWidget::createWindowContainer(m_apmToolBar);
-    widget->setWidget(toolbarcontainer);
-    widget->setMinimumHeight(72);
-    widget->setMaximumHeight(72);
-    widget->setMinimumWidth(1024);
-    widget->setFeatures(QDockWidget::NoDockWidgetFeatures);
-    widget->setTitleBarWidget(new QWidget(this)); // Disables the title bar
-//    /*widget*/->setStyleSheet("QDockWidget { border: 0px solid #FFFFFF; border-radius: 0px; border-bottom: 0px;}");
-    this->addDockWidget(Qt::TopDockWidgetArea, widget);
-#endif
 
     // Connect user interface devices
     joystickWidget = 0;
@@ -327,8 +297,8 @@ MainWindow::MainWindow(QWidget *parent):
     {
         // Adjust the size
         QScreen *pScreen = QGuiApplication::primaryScreen();
-        QRect rect = pScreen->geometry();
-        resize(rect.width() * 0.6, rect.height() * 0.6);
+        const QRect rect = pScreen->availableGeometry();
+        resize(qMin(1280, rect.width()), qMin(800, rect.height()));
     }
     show();
 
@@ -344,31 +314,6 @@ MainWindow::MainWindow(QWidget *parent):
     //Disable firmware update and unconnected view buttons, as they aren't required for the moment.
     ui.actionFirmwareUpdateView->setVisible(false);
     ui.actionUnconnectedView->setVisible(false);
-
-    //in Linux, query if we have the correct permissions to
-    //access USB serial devices
-#ifdef Q_OS_LINUX
-    QFile permFile("/etc/group");
-    if(permFile.open(QIODevice::ReadOnly))
-    {
-        while(!permFile.atEnd())
-        {
-            QString line = permFile.readLine();
-            if(line.contains("dialout") && !line.contains(getenv("USER")))
-            {
-                QMessageBox msgBox;
-                msgBox.setIcon(QMessageBox::Information);
-                msgBox.setInformativeText(tr("The current user does not have the correct permissions to access serial devices. Use \"sudo usermod -a -G dialout $USER\" and then log out and in again"));
-                msgBox.setStandardButtons(QMessageBox::Ok);
-                msgBox.setDefaultButton(QMessageBox::Ok);
-                msgBox.exec();
-                QLOG_INFO() << "User does not have permissions to serial devices";
-                break;
-            }
-        }
-        permFile.close();
-    }
-#endif
 
     // Trigger Auto Update Check
     m_autoUpdateCheck.suppressNoUpdateSignal();
@@ -552,12 +497,10 @@ void MainWindow::buildCustomWidget()
     }
 }
 
-#ifndef QGC_TOOLBAR_ENABLED
-APMToolBar& MainWindow::toolBar()
+MainWindowHeader& MainWindow::toolBar()
 {
-    return *m_apmToolBar;
+    return *m_mainWindowHeader;
 }
-#endif
 
 void MainWindow::buildCommonWidgets()
 {

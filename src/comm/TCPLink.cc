@@ -30,7 +30,6 @@
 #include "LinkManager.h"
 #include "QGC.h"
 #include <QHostInfo>
-#include <QSignalSpy>
 
 /// @file
 ///     @brief TCP link type for SITL support
@@ -294,9 +293,8 @@ bool TCPLink::_hardwareConnect(void)
     }
     else
     {
-    	_socket = new QTcpSocket();
-
-        QSignalSpy errorSpy(_socket, SIGNAL(error(QAbstractSocket::SocketError)));
+	_socket = new QTcpSocket();
+        _socketErrorReported = false;
 
         _socket->connectToHost(_hostAddress, _port);
 
@@ -309,7 +307,7 @@ bool TCPLink::_hardwareConnect(void)
         {
             // Whether a failed connection emits an error signal or not is platform specific.
             // So in cases where it is not emitted, we emit one ourselves.
-            if (errorSpy.count() == 0) {
+            if (!_socketErrorReported) {
                 emit communicationError(getName(), "Connection Failed");
             }
             delete _socket;
@@ -327,6 +325,7 @@ bool TCPLink::_hardwareConnect(void)
 
 void TCPLink::_socketError(QAbstractSocket::SocketError socketError)
 {
+    _socketErrorReported = true;
     Q_UNUSED(socketError);
     emit communicationError(getName(), "Error on socket: " + _socket->errorString());
 }

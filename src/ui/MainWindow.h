@@ -53,7 +53,7 @@ This file is part of the QGROUNDCONTROL project
 #include "LogCompressor.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "MAVLinkDecoder.h"
-#include "ApmToolBar.h"
+#include "MainWindowHeader.h"
 #include "DebugOutput.h"
 #include "QGCFlightGearLink.h"
 
@@ -298,9 +298,7 @@ public slots:
     void configureWindowName();
 
     void commsWidgetDestroyed(QObject *obj);
-#ifndef QGC_TOOLBAR_ENABLED
-    APMToolBar &toolBar();
-#endif
+    MainWindowHeader &toolBar();
 signals:
 #ifdef MOUSE_ENABLED_LINUX
     /** @brief Forward X11Event to catch 3DMouse inputs */
@@ -452,11 +450,7 @@ protected:
     QPointer<QDockWidget> slugsHilSimWidget;
     QPointer<QDockWidget> slugsCamControlWidget;
 
-#ifdef QGC_TOOLBAR_ENABLED
-    QPointer<QGCToolBar> toolBar;
-#else
-    QPointer<APMToolBar> m_apmToolBar;
-#endif
+    QPointer<MainWindowHeader> m_mainWindowHeader;
 
     QPointer<QGCStatusBar> customStatusBar;
 

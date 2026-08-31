@@ -38,5 +38,5 @@ add_library(quazip STATIC ${SOURCES} ${HEADERS})
 
 target_include_directories(quazip PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 
-find_package(Qt5 REQUIRED COMPONENTS Core)
-target_link_libraries(quazip PUBLIC Qt5::Core)
+find_package(ZLIB REQUIRED)
+target_link_libraries(quazip PUBLIC Qt::Core ZLIB::ZLIB)

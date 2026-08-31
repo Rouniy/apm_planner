@@ -286,7 +286,7 @@
             </size>
            </property>
            <property name="text">
-            <string>APM Planner 2.0 Config</string>
+            <string>APM Planner 3.0 Config</string>
            </property>
            <property name="checkable">
             <bool>true</bool>

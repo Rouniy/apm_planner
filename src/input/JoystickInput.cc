@@ -16,11 +16,7 @@
 #include "QGC.h"
 
 #include <mavlink.h>
-#ifdef Q_OS_MAC
 #include <SDL_revision.h>
-#else
-#include <SDL2/SDL_revision.h>
-#endif
 #include <limits.h>
 #include <QMutexLocker>
 #include <QSettings>
@@ -62,10 +58,19 @@ JoystickInput::~JoystickInput()
 {
     storeSettings();
     storeAtomic(1);
+    wait();
+    if (joystick) {
+        SDL_JoystickClose(joystick);
+        joystick = nullptr;
+    }
+    SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
 }
 
 const QString JoystickInput::getActiveJoystickId()
 {
+    if (!joystick) {
+        return QStringLiteral("default");
+    }
     char joystickId[64];
 
     SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick), joystickId, sizeof(joystickId));
@@ -74,7 +79,7 @@ const QString JoystickInput::getActiveJoystickId()
 
 int JoystickInput::getNumberOfButtons() const
 {
-    return SDL_JoystickNumButtons(joystick);
+    return joystick ? SDL_JoystickNumButtons(joystick) : 0;
 }
 
 void JoystickInput::loadSettings()

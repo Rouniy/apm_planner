@@ -32,6 +32,9 @@ This file is part of the QGROUNDCONTROL project
 
 #include <QString>
 
+#include <array>
+#include <cstddef>
+
 #include "mavlink_types.h"
 
 //namespace OpalRT
@@ -52,10 +55,12 @@ class QGCParamID
 {
 //        friend QDataStream& operator<<(QDataStream& stream, const QGCParamID& paramid);
 public:
+    static constexpr std::size_t WireSize = 16;
+    using WireData = std::array<char, WireSize>;
 
     QGCParamID(const char[]);
-    QGCParamID(const QString);
-    QGCParamID() {}
+    QGCParamID(const QString& value);
+    QGCParamID();
     QGCParamID(const QGCParamID& other);
 
     bool operator<(const QGCParamID& other) const {
@@ -71,12 +76,13 @@ public:
     const QString getParamString() const {
         return static_cast<const QString>(data);
     }
-    int8_t* toInt8_t() const {
-        return (int8_t*)data.toLatin1().data();
+    const WireData& wireData() const noexcept {
+        return mavlinkData;
     }
 
 protected:
     QString data;
+    WireData mavlinkData;
 };
 }
 #endif // QGCPARAMID_H

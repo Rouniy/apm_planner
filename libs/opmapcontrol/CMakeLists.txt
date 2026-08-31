@@ -151,8 +151,8 @@ target_include_directories(opmapcontrol PUBLIC
 
 target_compile_definitions(opmapcontrol PUBLIC EXTERNAL_USE)
 
-find_package(Qt5 REQUIRED COMPONENTS Core Widgets)
-target_link_libraries(opmapcontrol PUBLIC Qt5::Core Qt5::Widgets)
-
-find_package(Qt5 REQUIRED COMPONENTS Sql OpenGL Svg)
-target_link_libraries(opmapcontrol PRIVATE Qt5::Sql Qt5::OpenGL Qt5::Svg)
+target_link_libraries(opmapcontrol PUBLIC Qt::Core Qt::Widgets)
+target_link_libraries(opmapcontrol PRIVATE Qt::Sql Qt::Svg)
+if(QT_VERSION_MAJOR EQUAL 6)
+    target_link_libraries(opmapcontrol PRIVATE Qt::OpenGL Qt::OpenGLWidgets Qt::SvgWidgets)
+endif()

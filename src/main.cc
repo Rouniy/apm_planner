@@ -34,11 +34,15 @@ This file is part of the QGROUNDCONTROL project
 #include "configuration.h"
 #include "logging.h"
 
-#include <fstream>
 #include <iostream>
 
 #include <QApplication>
+#include <QFile>
 #include <QMutexLocker>
+#include <QTextStream>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QStringConverter>
+#endif
 
 /* SDL does ugly things to main() */
 #ifdef main
@@ -64,6 +68,15 @@ void msgHandler( QtMsgType type, const char* msg )
 // Path for file logging
 static QString sLogPath;
 
+static void setUtf8Encoding(QTextStream &stream)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    stream.setEncoding(QStringConverter::Utf8);
+#else
+    stream.setCodec("UTF-8");
+#endif
+}
+
 // Message handler for logging provides console and file output
 // The handler itself has to be reentrant and threadsafe!
 void loggingMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &message)
@@ -72,12 +85,22 @@ void loggingMessageHandler(QtMsgType type, const QMessageLogContext &context, co
     static QMutex mutex;
     QMutexLocker localLoc(&mutex);
 
-    static std::ofstream logFile(sLogPath.toStdString().c_str(), std::ofstream::out | std::ofstream::app);
+    static QFile logFile;
+    static QTextStream logStream;
+
+    if (!logFile.isOpen() && !sLogPath.isEmpty()) {
+        logFile.setFileName(sLogPath);
+        if (logFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+            logStream.setDevice(&logFile);
+            setUtf8Encoding(logStream);
+        }
+    }
 
     QString outMessage(qFormatLogMessage(type, context, message));  // just format only once
-    if(logFile)
+    if (logFile.isOpen())
     {
-        logFile << qPrintable(outMessage) << std::endl; // log to file
+        logStream << outMessage << '\n';
+        logStream.flush();
     }
 
     LogWindowSingleton::instance().write(outMessage);   // log to debug window
@@ -136,11 +159,13 @@ int main(int argc, char *argv[])
     }
 
     // Add sperator for better orientation in Logfiles
-    std::ofstream logFile(sLogPath.toStdString().c_str(), std::ofstream::out | std::ofstream::app);
-    if (logFile)
+    QFile logFile(sLogPath);
+    if (logFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
     {
-        logFile << std::endl << std::endl << "**************************************************" << std::endl << std::endl;
-        logFile.close();
+        QTextStream logStream(&logFile);
+        setUtf8Encoding(logStream);
+        logStream << "\n\n**************************************************\n\n";
+        logStream.flush();
     }
 
     // set up logging pattern

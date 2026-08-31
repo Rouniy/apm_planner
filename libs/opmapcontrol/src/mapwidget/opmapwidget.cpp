@@ -28,6 +28,8 @@
 #include "opmapwidget.h"
 #include <QtGui>
 #include <QMetaObject>
+#include <QOpenGLWidget>
+#include <QSurfaceFormat>
 #include "waypointitem.h"
 
 namespace mapcontrol
@@ -273,10 +275,15 @@ namespace mapcontrol
     void OPMapWidget::SetUseOpenGL(const bool &value)
     {
         useOpenGL=value;
-        if (useOpenGL)
-            setViewport(new QGLWidget(QGLFormat(QGL::SampleBuffers)));
-        else
+        if (useOpenGL) {
+            QSurfaceFormat format;
+            format.setSamples(4);
+            auto *openGlViewport = new QOpenGLWidget;
+            openGlViewport->setFormat(format);
+            setViewport(openGlViewport);
+        } else {
             setupViewport(new QWidget());
+        }
         update();
     }
     internals::PointLatLng OPMapWidget::currentMousePosition()

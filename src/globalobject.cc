@@ -1,11 +1,11 @@
 #include "logging.h"
 #include "configuration.h"
 #include "globalobject.h"
+#include "AppPaths.h"
 #include "mavlink.h"
 #include <QSettings>
 #include <QDateTime>
 #include <QDir>
-#include <QDesktopServices>
 
 GlobalObject* GlobalObject::sharedInstance()
 {
@@ -67,11 +67,7 @@ QString GlobalObject::fileNameAsTime()
 
 bool GlobalObject::makeDirectory(const QString& dir)
 {
-    QDir newDir(dir);
-    if (!newDir.exists()){
-        return newDir.mkpath(dir);
-    }
-    return true;
+    return AppPaths::ensureDirectory(dir);
 }
 
 //
@@ -80,9 +76,7 @@ bool GlobalObject::makeDirectory(const QString& dir)
 
 QString GlobalObject::defaultAppDataDirectory()
 {
-    QString homeDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString appHomeDir = homeDir + APP_DATA_DIRECTORY;
-    return appHomeDir;
+    return AppPaths::writableDataDirectory();
 }
 
 QString GlobalObject::appDataDirectory()
@@ -103,9 +97,7 @@ void GlobalObject::setAppDataDirectory(const QString &dir)
 
 QString GlobalObject::defaultLogDirectory()
 {
-    QString homeDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString logHomeDir = homeDir + APP_DATA_DIRECTORY + LOG_DIRECTORY;
-    return logHomeDir;
+    return QDir(defaultAppDataDirectory()).filePath(QStringLiteral("dataflashLogs"));
 }
 
 QString GlobalObject::logDirectory()
@@ -126,9 +118,7 @@ void GlobalObject::setLogDirectory(const QString &dir)
 
 QString GlobalObject::defaultMAVLinkLogDirectory()
 {
-    QString homeDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString logHomeDir = homeDir + APP_DATA_DIRECTORY + MAVLINK_LOG_DIRECTORY;
-    return logHomeDir;
+    return QDir(defaultAppDataDirectory()).filePath(QStringLiteral("tlogs"));
 }
 
 QString GlobalObject::MAVLinkLogDirectory()
@@ -149,9 +139,7 @@ void GlobalObject::setMAVLinkLogDirectory(const QString &dir)
 
 QString GlobalObject::defaultParameterDirectory()
 {
-    QString homeDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString paramHomeDir = homeDir + APP_DATA_DIRECTORY + PARAMETER_DIRECTORY;
-    return paramHomeDir;
+    return QDir(defaultAppDataDirectory()).filePath(QStringLiteral("parameters"));
 }
 
 QString GlobalObject::parameterDirectory()
@@ -172,9 +160,7 @@ void GlobalObject::setParameterDirectory(const QString &dir)
 
 QString GlobalObject::defaultMissionDirectory()
 {
-    QString homeDir = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    QString missionDir = homeDir + APP_DATA_DIRECTORY + MISSION_DIRECTORY;
-    return missionDir;
+    return QDir(defaultAppDataDirectory()).filePath(QStringLiteral("missions"));
 }
 
 QString GlobalObject::missionDirectory()
@@ -234,42 +220,5 @@ void GlobalObject::setComponentID(const quint8 componentID)
 
 QString GlobalObject::shareDirectory()
 {
-#ifdef Q_OS_WIN
-    QDir settingsDir = QDir(QDir::currentPath());
-    return  settingsDir.absolutePath();
-#elif defined(Q_OS_MAC)
-    return QCoreApplication::applicationDirPath();
-#else
-    // I am no sure if really need this code to determine the application path.
-    // Will not remove it cause I do not want to create a regression.
-    // On Linux (Ubuntu 16.04) it just uses "return QCoreApplication::applicationDirPath();"
-    // like on Mac Os.
-    QDir settingsDir = QDir(QDir::currentPath());
-    if(settingsDir.exists("data") && settingsDir.exists("qml"))
-    {
-        return  settingsDir.absolutePath();
-    }
-
-    settingsDir.cdUp();
-    settingsDir.cd("./share/APMPlanner2");
-    if(settingsDir.exists("data") && settingsDir.exists("qml"))
-    {
-        return  settingsDir.absolutePath();
-    }
-
-    settingsDir = QDir("/usr/share/APMPlanner2");
-    if(settingsDir.exists("data") && settingsDir.exists("qml"))
-    {
-        return  settingsDir.absolutePath();
-    }
-
-    settingsDir = QDir("/usr/local/share/APMPlanner2");
-    if(settingsDir.exists("data") && settingsDir.exists("qml"))
-    {
-        return  settingsDir.absolutePath();
-    }
-    //else
-    return QCoreApplication::applicationDirPath();
-
-#endif
+    return AppPaths::resourceRoot();
 }

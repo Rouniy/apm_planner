@@ -92,7 +92,7 @@ void OpalLink::writeBytes(const char *bytes, qint64 length)
                 mavlink_msg_param_value_pack(systemID,
                                              (*paramIter).getComponentID(),
                                              &param,
-                                             (*paramIter).getParamID().toInt8_t(),
+                                             (*paramIter).getParamID().wireData().data(),
                                              (static_cast<OpalRT::Parameter>(*paramIter)).getValue(),
                                              params->count(),
                                              params->indexOf(*paramIter));
@@ -122,7 +122,7 @@ void OpalLink::writeBytes(const char *bytes, qint64 length)
                 mavlink_msg_param_value_pack(systemID,
                                              p.getComponentID(),
                                              &paramMsg,
-                                             p.getParamID().toInt8_t(),
+                                             p.getParamID().wireData().data(),
                                              p.getValue(),
                                              params->count(),
                                              params->indexOf(p));

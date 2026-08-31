@@ -29,6 +29,7 @@
 #include <QMutexLocker>
 
 #include <cmath>
+#include <cstring>
 #include <qmath.h>
 
 #ifdef QGC_PROTOBUF_ENABLED
@@ -2867,15 +2868,17 @@ void UAS::requestNextParamFromQueue()
     mavlink_message_t msg;
     mavlink_param_request_read_t read;
     read.param_index = -1;
+    std::memset(read.param_id, 0, sizeof(read.param_id));
+    const QByteArray parameterBytes = parameter.toLatin1();
     // Copy full param name or maximum max field size
-    if (parameter.length() > MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN)
+    if (parameterBytes.size() > MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN)
     {
-        emit textMessageReceived(uasId, 0, 255, QString("QGC WARNING: Parameter name %1 is more than %2 bytes long. This might lead to errors and mishaps!").arg(parameter).arg(MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN-1));
+        emit textMessageReceived(uasId, 0, 255, QString("QGC WARNING: Parameter name %1 is more than %2 bytes long. This might lead to errors and mishaps!").arg(parameter).arg(MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN));
         return;
     }
-    memcpy(read.param_id, parameter.toStdString().c_str(), qMax(parameter.length(), MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN));
-    if (parameter.length() < MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN){
-        read.param_id[parameter.length()] = '\0'; // Enforce null termination
+    const int bytesToCopy = qMin(parameterBytes.size(), static_cast<int>(sizeof(read.param_id)));
+    if (bytesToCopy > 0) {
+        std::memcpy(read.param_id, parameterBytes.constData(), static_cast<std::size_t>(bytesToCopy));
     }
     read.target_system = uasId;
     read.target_component = component;

@@ -43,7 +43,6 @@ PrimaryFlightDisplayQML::PrimaryFlightDisplayQML(QWidget *parent) : QWidget(pare
         exit(-1);
     }
     m_ptrDeclarativeView.reset(new QQuickView());
-    m_ptrDeclarativeView->engine()->addImportPath("qml/"); //For local or win32 builds
     m_ptrDeclarativeView->engine()->addImportPath(QGC::shareDirectory() +"/qml"); //For installed linux builds
     m_ptrDeclarativeView->setSource(url);
     QSurfaceFormat format = m_ptrDeclarativeView->format();
@@ -78,9 +77,14 @@ void PrimaryFlightDisplayQML::setActiveUAS(UASInterface *uas)
     if (mp_uasInterface != nullptr) {
         connect(uas,SIGNAL(textMessageReceived(int,int,int,QString)),
                 this,SLOT(uasTextMessage(int,int,int,QString)));
-        VehicleOverview* vehicleView = LinkManager::instance()->getUasObject(uas->getUASID())->getVehicleOverview();
-        RelPositionOverview* relView = LinkManager::instance()->getUasObject(uas->getUASID())->getRelPositionOverview();
-        AbsPositionOverview* absView = LinkManager::instance()->getUasObject(uas->getUASID())->getAbsPositionOverview();
+        UASObject *uasObject = LinkManager::instance()->getUasObject(uas->getUASID());
+        if (!uasObject) {
+            QLOG_ERROR() << "PrimaryFlightDisplayQML::setActiveUAS() Invalid UAS object";
+            return;
+        }
+        VehicleOverview* vehicleView = uasObject->getVehicleOverview();
+        RelPositionOverview* relView = uasObject->getRelPositionOverview();
+        AbsPositionOverview* absView = uasObject->getAbsPositionOverview();
         if (vehicleView != nullptr)
         {
             m_ptrDeclarativeView->rootContext()->setContextProperty("vehicleoverview", vehicleView);
@@ -106,7 +110,11 @@ void PrimaryFlightDisplayQML::setActiveUAS(UASInterface *uas)
             QLOG_ERROR() << "PrimaryFlightDisplayQML::setActiveUAS() Invalid abspositionoverview!";
         }
 
-        QMetaObject::invokeMethod(m_ptrDeclarativeView->rootObject(),"activeUasSet");
+        if (QObject *root = m_ptrDeclarativeView->rootObject()) {
+            QMetaObject::invokeMethod(root, "activeUasSet");
+        } else {
+            QLOG_ERROR() << "PrimaryFlightDisplayQML is unavailable because its QML failed to load";
+        }
     }
 }
 
@@ -114,14 +122,16 @@ void PrimaryFlightDisplayQML::uasTextMessage(int uasid, int componentid, int sev
 {
     Q_UNUSED(uasid);
     Q_UNUSED(componentid);
+    QObject *root = m_ptrDeclarativeView->rootObject();
+    if (!root) {
+        return;
+    }
     if (text.contains("PreArm") || severity <= MAV_SEVERITY_CRITICAL)
     {
-        QObject *root = m_ptrDeclarativeView->rootObject();
         root->setProperty("statusMessage", text);
         root->setProperty("showStatusMessage", true);
         root->setProperty("statusMessageColor", "red");
     } else if (severity <= MAV_SEVERITY_INFO ){
-        QObject *root = m_ptrDeclarativeView->rootObject();
         root->setProperty("statusMessage", text);
         root->setProperty("showStatusMessage", true);
         root->setProperty("statusMessageColor", "darkgreen");

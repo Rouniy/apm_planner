@@ -6,14 +6,18 @@ extern mavlink_status_t m_mavlink_status[MAVLINK_COMM_NUM_BUFFERS];  // defined 
 #include <mavlink.h>
 
 #include <QDialog>
+#include <QVector3D>
+#ifdef APM_HAS_QT_DATA_VISUALIZATION
 #include <QtDataVisualization/Q3DScatter>
 #include <QtDataVisualization/QScatter3DSeries>
 #include <QtDataVisualization/QScatterDataProxy>
 
 using namespace QtDataVisualization;
+#endif
 
 class QCustomPlot;
 class UASInterface;
+class CompassCalibrationPlot;
 
 namespace Ui {
 class CompassOnboardCalibrationDialog;
@@ -53,9 +57,13 @@ private:
 
     QMap<int, mavlink_mag_cal_progress_t> m_compassCalibrationProgress;
 
+#ifdef APM_HAS_QT_DATA_VISUALIZATION
     QScatterDataArray* m_pointDataArray = nullptr;
     QScatterDataProxy* m_proxy = nullptr;
     QScatter3DSeries* m_series = nullptr;
+#else
+    CompassCalibrationPlot* m_plot = nullptr;
+#endif
 };
 
 #endif // COMPASSONBOARDCALIBRATIONDIALOG_H

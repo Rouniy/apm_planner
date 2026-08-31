@@ -28,20 +28,38 @@ This file is part of the QGROUNDCONTROL project
  */
 
 #include "QGCParamID.h"
+
+#include <algorithm>
+#include <cstring>
+
 using namespace OpalRT;
 
-QGCParamID::QGCParamID(const char paramid[]):data(paramid)
+QGCParamID::QGCParamID(const char paramid[])
+    : QGCParamID(QString::fromLatin1(paramid))
 {
 }
 
-QGCParamID::QGCParamID(const QString s):data(s)
+QGCParamID::QGCParamID(const QString& value)
+    : data(value)
+    , mavlinkData{}
 {
-
+    const QByteArray latin1 = data.toLatin1();
+    const std::size_t bytesToCopy = std::min(
+        static_cast<std::size_t>(latin1.size()), mavlinkData.size());
+    if (bytesToCopy != 0) {
+        std::memcpy(mavlinkData.data(), latin1.constData(), bytesToCopy);
+    }
 }
 
-QGCParamID::QGCParamID(const QGCParamID &other):data(other.data)
+QGCParamID::QGCParamID()
+    : QGCParamID(QString())
 {
+}
 
+QGCParamID::QGCParamID(const QGCParamID &other)
+    : data(other.data)
+    , mavlinkData(other.mavlinkData)
+{
 }
 
 //

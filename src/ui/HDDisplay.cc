@@ -18,7 +18,6 @@
 #include "QGC.h"
 
 #include <QFile>
-#include <QGLWidget>
 #include <QStringList>
 #include <QGraphicsTextItem>
 #include <QDockWidget>

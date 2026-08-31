@@ -41,7 +41,6 @@ VibrationMonitor::VibrationMonitor(QWidget *parent) : QWidget(parent)
         exit(-1);
     }
     m_ptrDeclarativeView.reset(new QQuickView());
-    m_ptrDeclarativeView->engine()->addImportPath("qml/"); //For local or win32 builds
     m_ptrDeclarativeView->engine()->addImportPath(QGC::shareDirectory() +"/qml"); //For installed linux builds
     m_ptrDeclarativeView->setSource(url);
     QSurfaceFormat format = m_ptrDeclarativeView->format();
@@ -74,7 +73,12 @@ void VibrationMonitor::setActiveUAS(UASInterface *p_uas)
     {
         //connect(uas,SIGNAL(textMessageReceived(int,int,int,QString)), this, SLOT(uasTextMessage(int,int,int,QString)));
 
-        VehicleOverview *p_vehicleOverview = LinkManager::instance()->getUasObject(mp_uasInterface->getUASID())->getVehicleOverview();
+        UASObject *uasObject = LinkManager::instance()->getUasObject(mp_uasInterface->getUASID());
+        if (!uasObject) {
+            QLOG_ERROR() << "VibrationMonitor::setActiveUAS() Invalid UAS object";
+            return;
+        }
+        VehicleOverview *p_vehicleOverview = uasObject->getVehicleOverview();
         if (p_vehicleOverview)
         {
             m_ptrDeclarativeView->rootContext()->setContextProperty("vehicleOverview", p_vehicleOverview);
@@ -84,6 +88,10 @@ void VibrationMonitor::setActiveUAS(UASInterface *p_uas)
             QLOG_ERROR() << "VibrationMonitor::setActiveUAS() Invalid vehicleOverview!";
         }
 
-        QMetaObject::invokeMethod(m_ptrDeclarativeView->rootObject(),"activeUasSet");
+        if (QObject *root = m_ptrDeclarativeView->rootObject()) {
+            QMetaObject::invokeMethod(root, "activeUasSet");
+        } else {
+            QLOG_ERROR() << "VibrationMonitor is unavailable because its QML failed to load";
+        }
     }
 }
