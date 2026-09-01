@@ -10,12 +10,12 @@ class FlightDataView final : public DockableView
 public:
     explicit FlightDataView(QWidget *parent = nullptr);
 
+    bool setHudWidget(QWidget *hudHost);
     bool setMapWidget(QWidget *mapWidget);
-    bool setPrimaryFlightDisplay(QWidget *displayWidget);
     bool setInfoView(QWidget *infoWidget);
 
+    static QString hudPanelId();
     static QString mapPanelId();
-    static QString primaryFlightDisplayPanelId();
     static QString infoPanelId();
 };
 

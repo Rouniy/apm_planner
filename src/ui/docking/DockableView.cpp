@@ -12,6 +12,8 @@
 #endif
 
 #include <QAction>
+#include <QSizePolicy>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
@@ -72,6 +74,8 @@ DockableView::DockableView(const QString &viewId, QWidget *parent)
     d->host->setDockNestingEnabled(true);
     auto *placeholder = new QWidget(d->host);
     placeholder->setObjectName(QStringLiteral("%1FallbackDockCenter").arg(d->viewId));
+    placeholder->setMaximumSize(0, 0);
+    placeholder->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     d->host->setCentralWidget(placeholder);
 #endif
     layout->addWidget(d->host);
@@ -195,6 +199,49 @@ bool DockableView::setPanelVisible(const QString &panelId, bool visible)
         return false;
     }
     panel->setVisible(visible);
+    return true;
+#endif
+}
+
+bool DockableView::setPanelSizeWeights(const QStringList &panelIds,
+                                       const QList<int> &weights,
+                                       Qt::Orientation orientation)
+{
+    if (panelIds.isEmpty() || panelIds.size() != weights.size()) {
+        return false;
+    }
+#if defined(APM_HAS_KDDOCKWIDGETS)
+    Q_UNUSED(panelIds)
+    Q_UNUSED(weights)
+    Q_UNUSED(orientation)
+    // KDDockWidgets applies the InitialOption preferred sizes when the docks
+    // are inserted. The fallback QMainWindow needs an explicit resizeDocks()
+    // pass to produce the same initial ratios.
+    return true;
+#else
+    QList<QDockWidget *> panels;
+    panels.reserve(panelIds.size());
+    for (int index = 0; index < panelIds.size(); ++index) {
+        QDockWidget *panel = d->panels.value(panelIds.at(index), nullptr);
+        if (!panel || weights.at(index) <= 0) {
+            return false;
+        }
+        panels.append(panel);
+    }
+    const auto applyWeights = [host = d->host, panels, weights, orientation]() {
+        const int available = orientation == Qt::Horizontal
+            ? host->width() : host->height();
+        int totalWeight = 0;
+        for (int weight : weights) totalWeight += weight;
+        QList<int> sizes;
+        sizes.reserve(weights.size());
+        for (int weight : weights) {
+            sizes.append(qMax(1, available * weight / totalWeight));
+        }
+        host->resizeDocks(panels, sizes, orientation);
+    };
+    applyWeights();
+    QTimer::singleShot(0, d->host, applyWeights);
     return true;
 #endif
 }

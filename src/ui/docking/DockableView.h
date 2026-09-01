@@ -2,6 +2,7 @@
 #define DOCKABLEVIEW_H
 
 #include <QByteArray>
+#include <QList>
 #include <QSize>
 #include <QStringList>
 #include <QWidget>
@@ -40,6 +41,9 @@ public:
                   const QSize &preferredSize = QSize());
     QAction *panelToggleAction(const QString &panelId) const;
     bool setPanelVisible(const QString &panelId, bool visible);
+    bool setPanelSizeWeights(const QStringList &panelIds,
+                             const QList<int> &weights,
+                             Qt::Orientation orientation);
 
     QByteArray saveLayout() const;
     bool restoreLayout(const QByteArray &layout);

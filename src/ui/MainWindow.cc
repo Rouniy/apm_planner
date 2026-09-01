@@ -57,6 +57,8 @@ This file is part of the QGROUNDCONTROL project
 #include "WatchdogControl.h"
 
 #include "FlightDataView.h"
+#include "flightdata/FlightDataViewModel.h"
+#include "flightdata/HudControl.h"
 #include "FlightPlannerView.h"
 #include "HelpView.h"
 #include "docking/DockableView.h"
@@ -664,7 +666,6 @@ void MainWindow::buildCommonWidgets()
     if (!pilotView)
     {
         pilotView = new FlightDataView(this);
-        pilotView->setMapWidget(new QGCMapTool(this));
         addToCentralStackedWidget(pilotView, VIEW_FLIGHT, "Pilot");
     }
 
@@ -808,12 +809,6 @@ void MainWindow::buildCommonWidgets()
 #ifndef PFD_QML
     createDockWidget(simView,new PrimaryFlightDisplay(320,240,this),tr("Primary Flight Display"),
                      "PRIMARY_FLIGHT_DISPLAY_DOCKWIDGET",VIEW_SIMULATION,Qt::RightDockWidgetArea);
-    auto *pilotPrimaryFlightDisplay = new PrimaryFlightDisplay(320, 240, this);
-    if (pilotView->setPrimaryFlightDisplay(pilotPrimaryFlightDisplay)) {
-        registerDockablePanel(pilotView, VIEW_FLIGHT,
-                              FlightDataView::primaryFlightDisplayPanelId(),
-                              tr("Primary Flight Display"), pilotPrimaryFlightDisplay);
-    }
 
     { //This is required since we don't show the new PFD in full yet
         QAction* tempAction = ui.menuTools->addAction(tr("Primary Flight Display (2)"));
@@ -824,12 +819,6 @@ void MainWindow::buildCommonWidgets()
 #else
     createDockWidget(simView,new PrimaryFlightDisplayQML(this),tr("Primary Flight Display"),
                      "PRIMARY_FLIGHT_DISPLAY_QML_DOCKWIDGET",VIEW_SIMULATION,Qt::RightDockWidgetArea);
-    auto *pilotPrimaryFlightDisplay = new PrimaryFlightDisplayQML(this);
-    if (pilotView->setPrimaryFlightDisplay(pilotPrimaryFlightDisplay)) {
-        registerDockablePanel(pilotView, VIEW_FLIGHT,
-                              FlightDataView::primaryFlightDisplayPanelId(),
-                              tr("Primary Flight Display"), pilotPrimaryFlightDisplay);
-    }
 
     { //This is required since we don't show the old PFD in any view
         QAction* tempAction = ui.menuTools->addAction(tr("Primary Flight Display (old)"));
@@ -838,6 +827,32 @@ void MainWindow::buildCommonWidgets()
         menuToDockNameMap[tempAction] = "PRIMARY_FLIGHT_DISPLAY_DOCKWIDGET";
     }
 #endif
+
+    // Mission Planner 10 names and layout: HudHost/FdTabs form the 2* left
+    // column and FdMap forms the 3* right column. Adding them in this order
+    // keeps that layout identical in KDDockWidgets and the Qt fallback.
+    auto *pilotHudHost = new QWidget(this);
+    auto *pilotHudLayout = new QVBoxLayout(pilotHudHost);
+    pilotHudLayout->setObjectName(QStringLiteral("HudHostLayout"));
+    pilotHudLayout->setContentsMargins(0, 0, 0, 0);
+    pilotHudLayout->setSpacing(0);
+    auto *pilotHud = new HudControl(pilotHudHost);
+    pilotHud->setObjectName(QStringLiteral("Hud"));
+    pilotHudLayout->addWidget(pilotHud);
+    auto *flightDataViewModel = new FlightDataViewModel(pilotHud);
+    flightDataViewModel->setObjectName(QStringLiteral("FlightDataViewModel"));
+    flightDataViewModel->attachHud(pilotHud);
+    if (pilotView->setHudWidget(pilotHudHost)) {
+        registerDockablePanel(pilotView, VIEW_FLIGHT,
+                              FlightDataView::hudPanelId(),
+                              tr("HUD"), pilotHudHost);
+    }
+    auto *pilotMap = new QGCMapTool(this);
+    if (pilotView->setMapWidget(pilotMap)) {
+        registerDockablePanel(pilotView, VIEW_FLIGHT,
+                              FlightDataView::mapPanelId(),
+                              tr("Map"), pilotMap);
+    }
 
     { // Adds the Vibration Monitor Tool
         QAction* tempAction = ui.menuTools->addAction(tr("Vibration Monitor"));

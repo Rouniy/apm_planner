@@ -24,16 +24,16 @@ void FlightViewsTest::flightDataUsesStableMissionPlannerNames()
     FlightDataView view;
     QCOMPARE(view.objectName(), QStringLiteral("FlightDataView"));
 
+    QVERIFY(view.setHudWidget(new QLabel(QStringLiteral("hud"))));
     QVERIFY(view.setMapWidget(new QLabel(QStringLiteral("map"))));
-    QVERIFY(view.setPrimaryFlightDisplay(new QLabel(QStringLiteral("pfd"))));
     QVERIFY(view.setInfoView(new QLabel(QStringLiteral("info"))));
     auto *duplicate = new QLabel(QStringLiteral("duplicate"));
     QVERIFY(!view.setMapWidget(duplicate));
     delete duplicate;
 
     QCOMPARE(view.panelIds(),
-             QStringList({FlightDataView::mapPanelId(),
-                          FlightDataView::primaryFlightDisplayPanelId(),
+             QStringList({FlightDataView::hudPanelId(),
+                          FlightDataView::mapPanelId(),
                           FlightDataView::infoPanelId()}));
     QVERIFY(view.panelToggleAction(FlightDataView::infoPanelId()));
     const QByteArray layout = view.saveLayout();
@@ -65,17 +65,17 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
     FlightDataView dataView;
     dataView.resize(1280, 800);
     auto *dataMap = new QLabel(QStringLiteral("map"));
-    auto *primaryFlightDisplay = new QLabel(QStringLiteral("pfd"));
+    auto *hud = new QLabel(QStringLiteral("hud"));
     auto *info = new QLabel(QStringLiteral("info"));
+    QVERIFY(dataView.setHudWidget(hud));
     QVERIFY(dataView.setMapWidget(dataMap));
-    QVERIFY(dataView.setPrimaryFlightDisplay(primaryFlightDisplay));
     QVERIFY(dataView.setInfoView(info));
     dataView.show();
     QVERIFY(QTest::qWaitForWindowExposed(&dataView));
     QCoreApplication::processEvents();
 
     for (QWidget *panel : {static_cast<QWidget *>(dataMap),
-                           static_cast<QWidget *>(primaryFlightDisplay),
+                           static_cast<QWidget *>(hud),
                            static_cast<QWidget *>(info)}) {
         QVERIFY2(panel->isVisibleTo(&dataView), panel->objectName().toUtf8());
         QVERIFY2(panel->width() > 0 && panel->height() > 0,
@@ -87,6 +87,12 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
 #endif
     }
 
+    const QPoint hudCenter = hud->mapTo(&dataView, hud->rect().center());
+    const QPoint infoCenter = info->mapTo(&dataView, info->rect().center());
+    const QPoint mapCenter = dataMap->mapTo(&dataView, dataMap->rect().center());
+    QVERIFY(hudCenter.x() < mapCenter.x());
+    QVERIFY(infoCenter.x() < mapCenter.x());
+    QVERIFY(hudCenter.y() < infoCenter.y());
     FlightPlannerView plannerView;
     plannerView.resize(1280, 800);
     auto *plannerMap = new QLabel(QStringLiteral("map"));

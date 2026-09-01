@@ -6,35 +6,42 @@ FlightDataView::FlightDataView(QWidget *parent)
     setObjectName(QStringLiteral("FlightDataView"));
 }
 
-bool FlightDataView::setMapWidget(QWidget *mapWidget)
+bool FlightDataView::setHudWidget(QWidget *hudHost)
 {
-    return addPanel(mapPanelId(), tr("Map"), mapWidget,
-                    PanelLocation::Left, QString(), QSize(760, 640));
+    return addPanel(hudPanelId(), tr("HUD"), hudHost,
+                    PanelLocation::Left, QString(), QSize(440, 360));
 }
 
-bool FlightDataView::setPrimaryFlightDisplay(QWidget *displayWidget)
+bool FlightDataView::setMapWidget(QWidget *mapWidget)
 {
-    return addPanel(primaryFlightDisplayPanelId(), tr("Primary Flight Display"),
-                    displayWidget, PanelLocation::Left, mapPanelId(),
-                    QSize(440, 360));
+    if (!hasPanel(hudPanelId())) {
+        return false;
+    }
+    const bool added = addPanel(mapPanelId(), tr("Map"), mapWidget,
+                                PanelLocation::Right, hudPanelId(), QSize(660, 640));
+    if (added) {
+        setPanelSizeWeights(QStringList{hudPanelId(), mapPanelId()},
+                            QList<int>{2, 3}, Qt::Horizontal);
+    }
+    return added;
 }
 
 bool FlightDataView::setInfoView(QWidget *infoWidget)
 {
-    const QString relativePanel = hasPanel(primaryFlightDisplayPanelId())
-        ? primaryFlightDisplayPanelId() : mapPanelId();
+    const QString relativePanel = hasPanel(hudPanelId())
+        ? hudPanelId() : mapPanelId();
     return addPanel(infoPanelId(), tr("Info View"), infoWidget,
                     PanelLocation::Bottom, relativePanel, QSize(440, 280));
+}
+
+QString FlightDataView::hudPanelId()
+{
+    return QStringLiteral("HudHost");
 }
 
 QString FlightDataView::mapPanelId()
 {
     return QStringLiteral("FdMap");
-}
-
-QString FlightDataView::primaryFlightDisplayPanelId()
-{
-    return QStringLiteral("HudHost");
 }
 
 QString FlightDataView::infoPanelId()

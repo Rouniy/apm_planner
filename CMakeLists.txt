@@ -289,6 +289,10 @@ set(SOURCES
     src/ui/DebugOutput.ui
     src/ui/FlightDataView.cpp
     src/ui/FlightDataView.h
+    src/ui/flightdata/FlightDataViewModel.cpp
+    src/ui/flightdata/FlightDataViewModel.h
+    src/ui/flightdata/HudControl.cpp
+    src/ui/flightdata/HudControl.h
     src/ui/FlightPlannerView.cpp
     src/ui/FlightPlannerView.h
     src/ui/HelpView.cpp
@@ -1385,6 +1389,23 @@ if(BUILD_TESTING)
     )
     add_test(NAME dataselectionscreen_tests COMMAND dataselectionscreen_tests)
     set_tests_properties(dataselectionscreen_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(hudcontrol_tests
+        tests/test_hudcontrol.cpp
+        src/ui/flightdata/HudControl.cpp
+        src/ui/flightdata/HudControl.h
+    )
+    target_include_directories(hudcontrol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/flightdata
+    )
+    target_link_libraries(hudcontrol_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME hudcontrol_tests COMMAND hudcontrol_tests)
+    set_tests_properties(hudcontrol_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
