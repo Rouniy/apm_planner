@@ -227,14 +227,20 @@ void SerialConnection::loadSettings()
 {
     QSettings settings;
     settings.sync();
+    const int configuredDefaultBaud = settings.value(
+        QStringLiteral("baudrate"), 115200).toInt();
+    const int defaultBaud = configuredDefaultBaud > 0
+            && configuredDefaultBaud <= 12500000
+        ? configuredDefaultBaud
+        : 115200;
     if (settings.contains("SERIALLINK_COMM_PORT"))
     {
         m_portName = settings.value("SERIALLINK_COMM_PORT").toString();
-        m_baud = settings.value("SERIALLINK_COMM_BAUD",115200).toInt();
-        if (m_baud < 0 || m_baud > 12500000)
+        m_baud = settings.value("SERIALLINK_COMM_BAUD", defaultBaud).toInt();
+        if (m_baud <= 0 || m_baud > 12500000)
         {
             //Bad baud rate.
-            m_baud = 115200;
+            m_baud = defaultBaud;
         }
         //m_parity = settings.value("SERIALLINK_COMM_PARITY").toInt();
         //m_stopBits = settings.value("SERIALLINK_COMM_STOPBITS").toInt();
@@ -256,7 +262,7 @@ void SerialConnection::loadSettings()
     }
     else
     {
-        m_baud = 115200;
+        m_baud = defaultBaud;
     }
     emit linkChanged(this);
 }

@@ -346,6 +346,10 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
                 QAction *fullScreen = menu.addAction(tr("Full Screen"));
                 connect(fullScreen, &QAction::triggered,
                         this, &MainWindowHeader::fullScreenRequested);
+                if (m_connectionOptionsAction) {
+                    menu.addSeparator();
+                    menu.addAction(m_connectionOptionsAction);
+                }
                 menu.exec(mapToGlobal(position));
             });
 
@@ -502,6 +506,18 @@ void MainWindowHeader::setToolsMenu(QMenu *menu)
     m_toolsButton->setMenu(menu);
 }
 
+void MainWindowHeader::setConnectionOptionsAction(QAction *action)
+{
+    m_connectionOptionsAction = action;
+}
+
+void MainWindowHeader::setDefaultBaudRate(int baud)
+{
+    if (currentLinkId() < 0 && baud > 0) {
+        m_baudSpin->setValue(baud);
+    }
+}
+
 void MainWindowHeader::disableConnectWidget(bool disable)
 {
     if (!m_disableOverride) {
@@ -555,7 +571,11 @@ void MainWindowHeader::updateCurrentLink()
 {
     const int linkId = currentLinkId();
     if (linkId < 0) {
-        m_baudSpin->setValue(115200);
+        const int configuredBaud = QSettings().value(
+            QStringLiteral("baudrate"), 115200).toInt();
+        m_baudSpin->setValue(configuredBaud > 0
+            ? configuredBaud
+            : 115200);
         m_connectButton->setText(tr("CONNECT"));
         m_connectButton->setEnabled(false);
         m_connectionStatus->setText(tr("No connection configured"));

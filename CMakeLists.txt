@@ -267,6 +267,10 @@ set(SOURCES
     src/ui/AboutDialog.ui
     src/ui/BackstageView.cpp
     src/ui/BackstageView.h
+    src/ui/ConnectionOptionsViewModel.cpp
+    src/ui/ConnectionOptionsViewModel.h
+    src/ui/ConnectionOptionsWindow.cpp
+    src/ui/ConnectionOptionsWindow.h
     src/ui/MainWindowHeader.cpp
     src/ui/MainWindowHeader.h
     src/ui/AudioOutputWidget.cc
@@ -1129,6 +1133,26 @@ if(BUILD_TESTING)
     )
     add_test(NAME backstageview_tests COMMAND backstageview_tests)
     set_tests_properties(backstageview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(connectionoptions_tests
+        tests/test_connectionoptionswindow.cpp
+        src/ui/ConnectionOptionsViewModel.cpp
+        src/ui/ConnectionOptionsViewModel.h
+        src/ui/ConnectionOptionsWindow.cpp
+        src/ui/ConnectionOptionsWindow.h
+    )
+    target_include_directories(connectionoptions_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(connectionoptions_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME connectionoptions_tests COMMAND connectionoptions_tests)
+    set_tests_properties(connectionoptions_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

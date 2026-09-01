@@ -2,7 +2,7 @@ area	reference_surface	qt_surface	status	acceptance_evidence
 SHELL	Views/MainWindow.axaml	src/ui/MainWindow.*;qml/ApmToolBar.qml	partial	Match reference navigation, tools, connection strip, minimum geometry and theme; visual snapshots required
 SHELL	Views/BackstageView.axaml	src/ui/configuration/ApmHardwareConfig.*;src/ui/configuration/ApmSoftwareConfig.*	partial	One Qt backstage navigation model with the same groups, ordering, visibility rules and active states
 SHELL	Views/ConnectDialog.cs	src/ui/CommConfigurationWindow.*;src/ui/SerialConfigurationWindow.*	partial	Serial, TCP, UDP, UDP client, discovery and target selection behave like the reference
-SHELL	Views/ConnectionOptionsWindow.axaml		not-started	All reference options, validation, persistence and reset behavior are available
+SHELL	Views/ConnectionOptionsWindow.axaml		in-progress	Qt ConnectionOptionsWindow/ViewModel, canonical settings, legacy convergence and live runtime propagation implemented; visual screenshot evidence pending
 DATA	GCSViews/FlightDataView.axaml	src/ui/submainwindow.*;src/ui/HUD.*;src/ui/uas/UASQuickView.*	partial	Reference layout, HUD/map split, quick values, messages, actions and detachable panels match
 DATA	Views/ActionPageView.axaml	src/ui/uas/UASActionsWidget.*	partial	Every supported mode/action has the same preconditions, confirmations, ACK handling and timeout behavior
 DATA	Views/InfoPageView.axaml	src/ui/QGCTabbedInfoView.*;src/ui/uas/UASInfoWidget.*	partial	Reference telemetry groups and configurable fields match

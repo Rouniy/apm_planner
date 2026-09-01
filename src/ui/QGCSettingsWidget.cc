@@ -285,8 +285,7 @@ void QGCSettingsWidget::ratesChanged()
 
 void QGCSettingsWidget::mavIdChanged(int id)
 {
-    quint8 localID = static_cast<quint8>(id);
-    QGC::setMavlinkID(localID);
+    MainWindow::instance()->setGroundStationSystemId(id);
 }
 
 void QGCSettingsWidget::componentIdChanged(int id)

@@ -30,13 +30,28 @@ GlobalObject::~GlobalObject()
 void GlobalObject::loadSettings()
 {
     QSettings settings;
+    const bool hasCanonicalMavlinkId =
+        settings.contains(QStringLiteral("gcsid"))
+        || settings.contains(QStringLiteral("GCS_sysid"));
+    const uint canonicalMavlinkId =
+        settings.contains(QStringLiteral("gcsid"))
+        ? settings.value(QStringLiteral("gcsid")).toUInt()
+        : settings.value(QStringLiteral("GCS_sysid")).toUInt();
     settings.beginGroup("GLOBAL_SETTINGS");
     m_appDataDirectory = settings.value("APP_DATA_DIRECTORY", defaultAppDataDirectory()).toString();
     m_logDirectory = settings.value("LOG_DIRECTORY", defaultLogDirectory()).toString();
     m_MAVLinklogDirectory = settings.value("MAVLINK_LOG_DIRECTORY", defaultMAVLinkLogDirectory()).toString();
     m_parameterDirectory = settings.value("PARAMETER_DIRECTORY", defaultParameterDirectory()).toString();
     m_missionDirectory = settings.value("MISSION_DIRECTORY", defaultMissionDirectory()).toString();
-    m_mavlinkID = static_cast<quint8>(settings.value("MAVLINK_ID", defaultMavlinkID()).toUInt());
+    const uint legacyMavlinkId = settings.value(
+        "MAVLINK_ID", defaultMavlinkID()).toUInt();
+    const uint loadedMavlinkId = hasCanonicalMavlinkId
+        ? canonicalMavlinkId
+        : legacyMavlinkId;
+    m_mavlinkID = static_cast<quint8>(
+        loadedMavlinkId >= 1 && loadedMavlinkId <= 255
+            ? loadedMavlinkId
+            : defaultMavlinkID());
     m_componentID = static_cast<quint8>(settings.value("COMPONENT_ID", defaultComponentID()).toUInt());
 
     settings.endGroup();
@@ -45,6 +60,7 @@ void GlobalObject::loadSettings()
 void GlobalObject::saveSettings()
 {
     QSettings settings;
+    settings.setValue(QStringLiteral("gcsid"), m_mavlinkID);
     settings.beginGroup("GLOBAL_SETTINGS");
     settings.setValue("APP_DATA_DIRECTORY", m_appDataDirectory);
     settings.setValue("LOG_DIRECTORY", m_logDirectory);

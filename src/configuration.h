@@ -87,7 +87,8 @@ const static QString COMPANYNAME = "ARDUPILOT";
 // Persistent QMainWindow state schema, not the product version. Keep it stable
 // so migrated dock/window layouts remain restorable across the 3.0 upgrade.
 const static int APPLICATIONVERSION = 2030;
-const static quint8 defaultMavlinkSystemId = 252; // Using 252 to 'crudely' identify a log created by APM Planner 2
+// Mission Planner uses 255 for the ground station on a fresh profile.
+const static quint8 defaultMavlinkSystemId = 255;
 
     inline void close(){
         GlobalObject* global = GlobalObject::sharedInstance();

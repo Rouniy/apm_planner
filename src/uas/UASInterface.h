@@ -95,6 +95,7 @@ public:
     /* MANAGEMENT */
 
     virtual void setHeartbeatEnabled(bool enabled)=0;
+    virtual void setGroundStationSystemId(int systemId)=0;
 
     /** @brief The name of the robot **/
     virtual QString getUASName() const = 0;

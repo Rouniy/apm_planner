@@ -58,6 +58,8 @@ public:
     ~MAVLinkProtocol() override;
 
     void setConnectionManager(LinkManager *manager) { m_connectionManager = manager; }
+    void setSystemId(quint8 systemId) { m_systemID = systemId; }
+    quint8 systemId() const { return m_systemID; }
     void sendMessage(mavlink_message_t msg);
     void stopLogging();
     bool startLogging(const QString& filename);

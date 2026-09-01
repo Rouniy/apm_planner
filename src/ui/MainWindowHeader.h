@@ -38,6 +38,7 @@ public:
                               QAction *simulation,
                               QAction *help);
     void setToolsMenu(QMenu *menu);
+    void setConnectionOptionsAction(QAction *action);
 
     void disableConnectWidget(bool disable);
     void overrideDisableConnectWidget(bool disable);
@@ -47,6 +48,7 @@ public:
 public slots:
     void setAutoHideEnabled(bool enabled);
     void toggleConnection();
+    void setDefaultBaudRate(int baud);
 
 signals:
     void configureLinkRequested(int linkId);
@@ -86,6 +88,7 @@ private:
     QLabel *m_connectionStatus = nullptr;
     QProgressBar *m_connectionProgress = nullptr;
     QAction *m_autoHideAction = nullptr;
+    QAction *m_connectionOptionsAction = nullptr;
     bool m_disableOverride = false;
     bool m_autoHideEnabled = false;
     bool m_headerHovered = false;

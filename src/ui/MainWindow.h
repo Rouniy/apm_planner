@@ -184,6 +184,8 @@ public slots:
 
     /** @brief Show the application settings */
     void showSettings();
+    /** @brief Show Mission Planner-compatible connection defaults. */
+    void showConnectionOptions();
     /** @brief Show the application About box */
     void showAbout();
     /** @brief Add a communication link */
@@ -207,6 +209,9 @@ public slots:
     void stopVideoCapture();
     void saveScreen();
     void enableHeartbeat(bool enabled);
+    void setGroundStationSystemId(int systemId);
+    void applyConnectionOptions(int baud, bool sendHeartbeat,
+                                int gcsSystemId);
 
     /** @brief Sets advanced mode, allowing for editing of tool widget locations */
     void setAdvancedMode(bool mode);

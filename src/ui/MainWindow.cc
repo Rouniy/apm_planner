@@ -61,6 +61,7 @@ This file is part of the QGROUNDCONTROL project
 #include "HelpView.h"
 #include "docking/DockableView.h"
 #include "MainWindowHeader.h"
+#include "ConnectionOptionsWindow.h"
 #include "ConfigView.h"
 #include "SetupView.h"
 #include "TerminalConsole.h"
@@ -291,6 +292,17 @@ MainWindow::MainWindow(QWidget *parent):
                                                   ui.actionSimulation_View,
                                                   helpViewAction);
     m_mainWindowHeader->setToolsMenu(ui.menuTools);
+    auto *connectionOptionsAction = new QAction(
+        tr("Connection Options"), this);
+    connectionOptionsAction->setObjectName(
+        QStringLiteral("actionConnectionOptions"));
+    const QList<QAction *> toolActions = ui.menuTools->actions();
+    ui.menuTools->insertAction(
+        toolActions.isEmpty() ? nullptr : toolActions.first(),
+        connectionOptionsAction);
+    connect(connectionOptionsAction, &QAction::triggered,
+            this, &MainWindow::showConnectionOptions);
+    m_mainWindowHeader->setConnectionOptionsAction(connectionOptionsAction);
     connect(m_mainWindowHeader, &MainWindowHeader::fullScreenRequested,
             ui.actionFullscreen, &QAction::trigger);
     connect(m_mainWindowHeader, &MainWindowHeader::configureLinkRequested,
@@ -1430,6 +1442,12 @@ void MainWindow::loadCustomWidgetsFromDefaults(const QString& systemType, const 
 void MainWindow::loadSettings()
 {
     QSettings settings;
+    const bool heartbeat = settings.contains(
+        QStringLiteral("CHK_GCSheartbeat"))
+        ? settings.value(QStringLiteral("CHK_GCSheartbeat")).toBool()
+        : settings.value(
+              QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED"), true)
+              .toBool();
     settings.beginGroup("QGC_MAINWINDOW");
     autoReconnect = settings.value("AUTO_RECONNECT",false).toBool();
     currentStyle = (QGC_MAINWINDOW_STYLE)settings.value("CURRENT_STYLE", QGC_MAINWINDOW_STYLE_OUTDOOR).toInt();
@@ -1438,7 +1456,7 @@ void MainWindow::loadSettings()
     autoProxyMode = settings.value("AUTO_PROXY_MODE", false).toBool();
     dockWidgetTitleBarEnabled = settings.value("DOCK_WIDGET_TITLEBARS", true).toBool();
     isAdvancedMode = settings.value("ADVANCED_MODE", false).toBool();
-    enableHeartbeat(settings.value("HEARTBEATS_ENABLED",true).toBool());
+    enableHeartbeat(heartbeat);
     settings.endGroup();
 }
 
@@ -2696,6 +2714,12 @@ void MainWindow::showNoUpdateAvailDialog()
 }
 void MainWindow::enableHeartbeat(bool enabled)
 {
+    QSettings settings;
+    settings.setValue(QStringLiteral("CHK_GCSheartbeat"), enabled);
+    settings.setValue(
+        QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED"), enabled);
+    settings.sync();
+
     if (m_heartbeatEnabled != enabled)
     {
         m_heartbeatEnabled = enabled;
@@ -2705,6 +2729,41 @@ void MainWindow::enableHeartbeat(bool enabled)
         }
         storeSettings();
     }
+}
+
+void MainWindow::setGroundStationSystemId(int systemId)
+{
+    if (systemId < 1 || systemId > 255) {
+        systemId = 255;
+    }
+
+    QGC::setMavlinkID(static_cast<quint8>(systemId));
+    QSettings settings;
+    settings.setValue(QStringLiteral("gcsid"), systemId);
+    settings.setValue(QStringLiteral("GLOBAL_SETTINGS/MAVLINK_ID"), systemId);
+    settings.sync();
+
+    if (MAVLinkProtocol *protocol = LinkManager::instance()->getProtocol()) {
+        protocol->setSystemId(static_cast<quint8>(systemId));
+    }
+    const QList<UASInterface *> systems = UASManager::instance()->getUASList();
+    for (UASInterface *uas : systems) {
+        uas->setGroundStationSystemId(systemId);
+    }
+}
+
+void MainWindow::showConnectionOptions()
+{
+    ConnectionOptionsWindow::OpenWindow(this);
+}
+
+void MainWindow::applyConnectionOptions(int baud, bool sendHeartbeat,
+                                        int gcsSystemId)
+{
+    setGroundStationSystemId(gcsSystemId);
+    enableHeartbeat(sendHeartbeat);
+    m_mainWindowHeader->setDefaultBaudRate(baud);
+    showStatusMessage(tr("Connection options saved."));
 }
 
 void MainWindow::showTerminalConsole()

@@ -564,6 +564,10 @@ protected: //COMMENTS FOR TEST UNIT
 
 public:
     void setHeartbeatEnabled(bool enabled) { m_heartbeatsEnabled = enabled; }
+    void setGroundStationSystemId(int groundStationSystemId) override
+    {
+        systemId = groundStationSystemId;
+    }
     /** @brief Set the current battery type */
     void setBattery(BatteryType type, int cells);
     /** @brief Estimate how much flight time is remaining */
