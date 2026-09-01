@@ -871,6 +871,14 @@ target_link_libraries(${APM_PLANNER_TARGET}
     ${APM_SDL2_TARGET}
 )
 
+if(APM_ENABLE_KDDOCKWIDGETS)
+    target_sources(${APM_PLANNER_TARGET} PRIVATE
+        src/ui/docking/DockHost.cpp
+        src/ui/docking/DockHost.h
+    )
+    target_link_libraries(${APM_PLANNER_TARGET} KDAB::kddockwidgets)
+endif()
+
 # Definitions
 target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
     DISABLE_3DMOUSE
@@ -1061,6 +1069,23 @@ if(BUILD_TESTING)
         )
         add_test(NAME kddockwidgets_vendor_tests COMMAND kddockwidgets_vendor_tests)
         set_tests_properties(kddockwidgets_vendor_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        )
+
+        add_executable(dockhost_tests
+            tests/test_dockhost.cpp
+            src/ui/docking/DockHost.cpp
+            src/ui/docking/DockHost.h
+        )
+        target_include_directories(dockhost_tests PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+        )
+        target_link_libraries(dockhost_tests PRIVATE
+            KDAB::kddockwidgets
+            Qt::Test
+        )
+        add_test(NAME dockhost_tests COMMAND dockhost_tests)
+        set_tests_properties(dockhost_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
     endif()
