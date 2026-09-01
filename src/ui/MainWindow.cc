@@ -56,9 +56,11 @@ This file is part of the QGROUNDCONTROL project
 #include "ObjectDetectionView.h"
 #include "WatchdogControl.h"
 
+#include "FlightDataView.h"
+#include "FlightPlannerView.h"
 #include "MainWindowHeader.h"
-#include "ApmHardwareConfig.h"
-#include "ApmSoftwareConfig.h"
+#include "ConfigView.h"
+#include "SetupView.h"
 #include "TerminalConsole.h"
 #include "AP2DataPlot2D.h"
 #include "LinkManagerFactory.h"
@@ -220,6 +222,7 @@ MainWindow::MainWindow(QWidget *parent):
     applicationShellLayout->setSpacing(0);
     m_mainWindowHeader = new MainWindowHeader(applicationShell);
     centerStack = new QStackedWidget(applicationShell);
+    centerStack->setObjectName(QStringLiteral("mainScreenStack"));
     applicationShellLayout->addWidget(m_mainWindowHeader);
     applicationShellLayout->addWidget(centerStack, 1);
     setCentralWidget(applicationShell);
@@ -520,8 +523,7 @@ void MainWindow::buildCommonWidgets()
     // Center widgets
     if (!plannerView)
     {
-        plannerView = new SubMainWindow(this);
-        plannerView->setObjectName("VIEW_MISSION");
+        plannerView = new FlightPlannerView(this);
         plannerView->setCentralWidget(new QGCMapTool(this));
         addToCentralStackedWidget(plannerView, VIEW_MISSION, "Maps");
     }
@@ -529,8 +531,7 @@ void MainWindow::buildCommonWidgets()
     //pilotView (aka Flight or Mission View)
     if (!pilotView)
     {
-        pilotView = new SubMainWindow(this);
-        pilotView->setObjectName("VIEW_FLIGHT");
+        pilotView = new FlightDataView(this);
         pilotView->setCentralWidget(new QGCMapTool(this));
         addToCentralStackedWidget(pilotView, VIEW_FLIGHT, "Pilot");
     }
@@ -539,20 +540,20 @@ void MainWindow::buildCommonWidgets()
     {
         configView = new SubMainWindow(this);
         configView->setObjectName("VIEW_HARDWARE_CONFIG");
-        ApmHardwareConfig* aphw = new ApmHardwareConfig(this);
-        configView->setCentralWidget(aphw);
+        SetupView *setupView = new SetupView(this);
+        configView->setCentralWidget(setupView);
         addToCentralStackedWidget(configView,VIEW_HARDWARE_CONFIG, tr("Hardware"));
-        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)), aphw, SLOT(advModeChanged(bool)));
+        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)), setupView, SLOT(advModeChanged(bool)));
     }
 
     if (!softwareConfigView)
     {
         softwareConfigView = new SubMainWindow(this);
         softwareConfigView->setObjectName("VIEW_SOFTWARE_CONFIG");
-        ApmSoftwareConfig* apsw = new ApmSoftwareConfig(this);
-        softwareConfigView->setCentralWidget(apsw);
+        ConfigView *configPage = new ConfigView(this);
+        softwareConfigView->setCentralWidget(configPage);
         addToCentralStackedWidget(softwareConfigView, VIEW_SOFTWARE_CONFIG, tr("Software"));
-        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)), apsw, SLOT(advModeChanged(bool)));
+        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)), configPage, SLOT(advModeChanged(bool)));
     }
 
      AP2DataPlot2D *plot = NULL;

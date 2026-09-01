@@ -249,6 +249,8 @@ set(SOURCES
     src/ui/AboutDialog.cc
     src/ui/AboutDialog.h
     src/ui/AboutDialog.ui
+    src/ui/BackstageView.cpp
+    src/ui/BackstageView.h
     src/ui/MainWindowHeader.cpp
     src/ui/MainWindowHeader.h
     src/ui/AudioOutputWidget.cc
@@ -265,6 +267,10 @@ set(SOURCES
     src/ui/DebugOutput.cc
     src/ui/DebugOutput.h
     src/ui/DebugOutput.ui
+    src/ui/FlightDataView.cpp
+    src/ui/FlightDataView.h
+    src/ui/FlightPlannerView.cpp
+    src/ui/FlightPlannerView.h
     src/ui/EKFMonitor.cpp
     src/ui/EKFMonitor.h
     src/ui/GoogleElevationData.cpp
@@ -435,6 +441,8 @@ set(SOURCES
     src/ui/configuration/ApmHardwareConfig.cc
     src/ui/configuration/ApmHardwareConfig.h
     src/ui/configuration/ApmHardwareConfig.ui
+    src/ui/configuration/SetupView.cpp
+    src/ui/configuration/SetupView.h
     src/ui/configuration/ApmHighlighter.cc
     src/ui/configuration/ApmHighlighter.h
     src/ui/configuration/ApmPlaneLevel.cc
@@ -443,6 +451,8 @@ set(SOURCES
     src/ui/configuration/ApmSoftwareConfig.cc
     src/ui/configuration/ApmSoftwareConfig.h
     src/ui/configuration/ApmSoftwareConfig.ui
+    src/ui/configuration/ConfigView.cpp
+    src/ui/configuration/ConfigView.h
     src/ui/configuration/ArduCopterPidConfig.cc
     src/ui/configuration/ArduCopterPidConfig.h
     src/ui/configuration/ArduCopterPidConfig.ui
@@ -1017,4 +1027,21 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME qgcparamid_tests COMMAND qgcparamid_tests)
+
+    add_executable(backstageview_tests
+        tests/test_backstageview.cpp
+        src/ui/BackstageView.cpp
+        src/ui/BackstageView.h
+    )
+    target_include_directories(backstageview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(backstageview_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME backstageview_tests COMMAND backstageview_tests)
+    set_tests_properties(backstageview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 endif()

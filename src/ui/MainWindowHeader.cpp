@@ -1,6 +1,7 @@
 #include "MainWindowHeader.h"
 
 #include "LinkManager.h"
+#include "SerialLinkInterface.h"
 #include "UASInterface.h"
 #include "UASManager.h"
 
@@ -157,7 +158,9 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     root->addWidget(ardupilot);
 
     auto *connection = new QWidget(this);
+    m_connectionPanel = connection;
     connection->setObjectName(QStringLiteral("connectionPanel"));
+    connection->setFixedWidth(542);
     auto *connectionRows = new QVBoxLayout(connection);
     connectionRows->setContentsMargins(0, 3, 6, 3);
     connectionRows->setSpacing(2);
@@ -171,16 +174,19 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     top->addWidget(m_portCombo);
     m_baudSpin = new QSpinBox(connection);
     m_baudSpin->setObjectName(QStringLiteral("baudSpin"));
-    m_baudSpin->setRange(1200, 4000000);
+    m_baudSpin->setRange(1200, 12500000);
     m_baudSpin->setFixedWidth(140);
     top->addWidget(m_baudSpin);
     m_vehicleCombo = new QComboBox(connection);
     m_vehicleCombo->setObjectName(QStringLiteral("vehicleCombo"));
     m_vehicleCombo->setFixedWidth(170);
-    m_vehicleCombo->hide();
     top->addWidget(m_vehicleCombo);
+    m_vehicleCombo->hide();
+    m_vehicleCombo->setFixedWidth(0);
     auto *automatic = new QCheckBox(tr("Auto"), connection);
+    automatic->setObjectName(QStringLiteral("autoConnectCheckBox"));
     automatic->setChecked(true);
+    automatic->setFixedWidth(54);
     top->addWidget(automatic);
     auto *refresh = new QToolButton(connection);
     refresh->setObjectName(QStringLiteral("refreshLinksButton"));
@@ -189,6 +195,7 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     top->addWidget(refresh);
     m_connectButton = new QPushButton(tr("CONNECT"), connection);
     m_connectButton->setObjectName(QStringLiteral("connectButton"));
+    m_connectButton->setFixedWidth(110);
     top->addWidget(m_connectButton);
     connectionRows->addLayout(top);
 
@@ -199,6 +206,7 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     m_connectionStatus->setObjectName(QStringLiteral("connectionStatus"));
     bottom->addWidget(m_connectionStatus, 1);
     m_connectionProgress = new QProgressBar(connection);
+    m_connectionProgress->setObjectName(QStringLiteral("connectionProgress"));
     m_connectionProgress->setRange(0, 100);
     m_connectionProgress->setValue(0);
     m_connectionProgress->setTextVisible(false);
@@ -209,6 +217,8 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     connect(refresh, &QToolButton::clicked, this, &MainWindowHeader::refreshLinks);
     connect(m_portCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindowHeader::updateCurrentLink);
+    connect(m_baudSpin, &QSpinBox::editingFinished,
+            this, &MainWindowHeader::applyBaudRate);
     connect(m_connectButton, &QPushButton::clicked,
             this, &MainWindowHeader::toggleConnection);
     connect(LinkManager::instance(), SIGNAL(newLink(int)), this, SLOT(refreshLinks()));
@@ -362,6 +372,22 @@ void MainWindowHeader::updateCurrentLink()
         : tr("Disconnected · %1").arg(LinkManager::instance()->getLinkDetail(linkId)));
 }
 
+void MainWindowHeader::applyBaudRate()
+{
+    const int linkId = currentLinkId();
+    auto *serial = qobject_cast<SerialLinkInterface *>(
+        LinkManager::instance()->getLink(linkId));
+    if (!serial) {
+        return;
+    }
+    if (serial->isConnected()) {
+        m_baudSpin->setValue(serial->getBaudRate());
+        return;
+    }
+    serial->setBaudRate(m_baudSpin->value());
+    updateCurrentLink();
+}
+
 void MainWindowHeader::toggleConnection()
 {
     const int linkId = currentLinkId();
@@ -392,7 +418,10 @@ void MainWindowHeader::rebuildVehicleList()
     if (activeIndex >= 0) {
         m_vehicleCombo->setCurrentIndex(activeIndex);
     }
-    m_vehicleCombo->setVisible(vehicles.size() > 1);
+    const bool showVehicleSelector = vehicles.size() > 1;
+    m_vehicleCombo->setFixedWidth(showVehicleSelector ? 170 : 0);
+    m_vehicleCombo->setVisible(showVehicleSelector);
+    m_connectionPanel->setFixedWidth(showVehicleSelector ? 718 : 542);
     m_vehicleCombo->blockSignals(false);
 }
 

@@ -40,6 +40,7 @@ signals:
 private slots:
     void refreshLinks();
     void updateCurrentLink();
+    void applyBaudRate();
     void toggleConnection();
     void rebuildVehicleList();
     void activeVehicleChanged(UASInterface *uas);
@@ -51,6 +52,7 @@ private:
     int currentLinkId() const;
 
     QWidget *m_navigationHost = nullptr;
+    QWidget *m_connectionPanel = nullptr;
     QButtonGroup *m_navigationGroup = nullptr;
     QToolButton *m_toolsButton = nullptr;
     QComboBox *m_portCombo = nullptr;
