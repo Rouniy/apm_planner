@@ -3,11 +3,126 @@
 #include "core/parameters/ParameterCodec.h"
 #include "core/parameters/ParameterMetaData.h"
 #include "core/parameters/ParameterMetaDataRepository.h"
+#include "core/parameters/ParameterMetaDataUpdater.h"
 #include "core/parameters/ParameterStore.h"
+#include "uas/APMFirmwareVersion.h"
 
 #include <QBuffer>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QHostAddress>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTemporaryDir>
+
+namespace {
+QByteArray catalogXml(const QString &vehicleName, const QString &label)
+{
+    QByteArray xml = "<paramfile><vehicles><parameters name=\""
+        + vehicleName.toUtf8() + "\">";
+    for (int index = 0; index < 101; ++index) {
+        const QString name = index == 0
+            ? QStringLiteral("TEST_PARAM")
+            : QStringLiteral("TEST_%1").arg(index);
+        xml += QStringLiteral(
+            "<param name=\"%1:%2\" humanName=\"%3\" user=\"Standard\"/>")
+                   .arg(vehicleName, name, index == 0 ? label : name)
+                   .toUtf8();
+    }
+    xml += "</parameters></vehicles></paramfile>";
+    return xml;
+}
+
+bool writeBytes(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly)
+        && file.write(bytes) == bytes.size();
+}
+
+class MetadataHttpServer final : public QObject
+{
+public:
+    explicit MetadataHttpServer(const QByteArray &latestPayload)
+        : m_latestPayload(latestPayload)
+    {
+        connect(&m_server, &QTcpServer::newConnection, this, [this]() {
+            while (QTcpSocket *socket = m_server.nextPendingConnection()) {
+                connect(socket, &QTcpSocket::readyRead, socket,
+                        [this, socket]() {
+                    if (socket->property("handled").toBool()) {
+                        socket->readAll();
+                        return;
+                    }
+                    QByteArray request = socket->property(
+                        "requestBytes").toByteArray();
+                    request += socket->readAll();
+                    if (!request.contains("\r\n\r\n")) {
+                        socket->setProperty("requestBytes", request);
+                        return;
+                    }
+                    socket->setProperty("handled", true);
+                    const QByteArray firstLine = request.left(
+                        request.indexOf("\r\n"));
+                    const QList<QByteArray> words = firstLine.split(' ');
+                    const QString path = words.size() > 1
+                        ? QString::fromLatin1(words.at(1)) : QString();
+                    requests.append(path);
+                    if (holdVersionedRequests
+                        && path.contains(QStringLiteral("/versioned/"))) {
+                        return;
+                    }
+                    QByteArray response;
+                    if (redirectVersionedRequests
+                        && path.contains(QStringLiteral("/versioned/"))) {
+                        response = QByteArrayLiteral(
+                            "HTTP/1.1 302 Found\r\n"
+                            "Location: /Parameters/ArduCopter/apm.pdef.xml\r\n"
+                            "Content-Length: 0\r\nConnection: close\r\n\r\n");
+                    } else if (path.contains(QStringLiteral("/versioned/"))) {
+                        response = QByteArrayLiteral(
+                            "HTTP/1.1 404 Not Found\r\n"
+                            "Content-Length: 0\r\nConnection: close\r\n\r\n");
+                    } else {
+                        response = QByteArrayLiteral("HTTP/1.1 200 OK\r\n")
+                            + QByteArrayLiteral("Content-Type: application/xml\r\n")
+                            + QByteArrayLiteral("Content-Length: ")
+                            + QByteArray::number(m_latestPayload.size())
+                            + QByteArrayLiteral("\r\nConnection: close\r\n\r\n")
+                            + m_latestPayload;
+                    }
+                    socket->write(response);
+                    socket->disconnectFromHost();
+                });
+                connect(socket, &QTcpSocket::disconnected,
+                        socket, &QObject::deleteLater);
+            }
+        });
+    }
+
+    bool listen()
+    {
+        return m_server.listen(QHostAddress::LocalHost, 0);
+    }
+
+    QUrl baseUrl() const
+    {
+        return QUrl(QStringLiteral("http://127.0.0.1:%1")
+                        .arg(m_server.serverPort()));
+    }
+
+    QStringList requests;
+    bool holdVersionedRequests = false;
+    bool redirectVersionedRequests = false;
+
+private:
+    QTcpServer m_server;
+    QByteArray m_latestPayload;
+};
+}
 
 class ParameterCoreTest final : public QObject
 {
@@ -27,6 +142,11 @@ private slots:
     void packagedPdefsParse();
     void metadataRepositoryMapsPackagedFamilies();
     void metadataRepositoryUsesResourceFallback();
+    void metadataCachePrioritizesExactAndPreservesFallback();
+    void metadataFreshnessUsesValidatedProvenance();
+    void metadataUpdaterBuildsSafeCandidateUrls();
+    void metadataUpdaterFallsBackBacksOffAndCancels();
+    void firmwareVersionTracksReleaseType();
 };
 
 void ParameterCoreTest::duplicatePacketsDoNotFakeCompletion()
@@ -319,6 +439,274 @@ void ParameterCoreTest::metadataRepositoryUsesResourceFallback()
              QStringLiteral("Cruise Speed"));
 }
 
-QTEST_APPLESS_MAIN(ParameterCoreTest)
+void ParameterCoreTest::metadataCachePrioritizesExactAndPreservesFallback()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    const QString packagedDirectory = QDir(temporaryDirectory.path())
+        .filePath(QStringLiteral("packaged"));
+    const QString cacheDirectory = QDir(temporaryDirectory.path())
+        .filePath(QStringLiteral("cache"));
+    QVERIFY(QDir().mkpath(packagedDirectory));
+    QVERIFY(writeBytes(QDir(packagedDirectory).filePath(
+                           QStringLiteral("arducopter.pdef.xml")),
+                       catalogXml(QStringLiteral("ArduCopter"),
+                                  QStringLiteral("Packaged"))));
+
+    ParameterMetaDataRepository repository(packagedDirectory, cacheDirectory);
+    ParameterMetaDataCacheInfo latestInfo;
+    latestInfo.sourceUrl = QStringLiteral(
+        "https://autotest.ardupilot.org/Parameters/ArduCopter/apm.pdef.xml");
+    latestInfo.fetchedAtUtc = QDateTime::currentDateTimeUtc();
+    ParameterMetaDataCacheInfo exactInfo;
+    exactInfo.sourceUrl = QStringLiteral(
+        "https://autotest.ardupilot.org/Parameters/versioned/Copter/"
+        "stable-4.6.3/apm.pdef.xml");
+    exactInfo.fetchedAtUtc = latestInfo.fetchedAtUtc;
+    QString error;
+    QVERIFY2(repository.installCatalog(
+                 ParameterFirmwareFamily::ArduCopter, QString(),
+                 catalogXml(QStringLiteral("ArduCopter"),
+                            QStringLiteral("Latest")),
+                 latestInfo, &error),
+             qPrintable(error));
+    QVERIFY2(repository.installCatalog(
+                 ParameterFirmwareFamily::ArduCopter,
+                 QStringLiteral("4.6.3"),
+                 catalogXml(QStringLiteral("ArduCopter"),
+                            QStringLiteral("Exact")),
+                 exactInfo, &error),
+             qPrintable(error));
+
+    const ParameterMetaDataCatalog exact = repository.catalog(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"));
+    QCOMPARE(exact.value(QStringLiteral("TEST_PARAM")).title,
+             QStringLiteral("Exact"));
+    QVERIFY(repository.catalogMatchesFirmwareVersion(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3")));
+
+    const ParameterMetaDataCatalog latest = repository.catalog(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.4"));
+    QCOMPARE(latest.value(QStringLiteral("TEST_PARAM")).title,
+             QStringLiteral("Latest"));
+    QVERIFY(!repository.catalogMatchesFirmwareVersion(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.4")));
+
+    const QString exactPath = repository.cacheFilePath(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"));
+    QFile beforeFile(exactPath);
+    QVERIFY(beforeFile.open(QIODevice::ReadOnly));
+    const QByteArray before = beforeFile.readAll();
+    beforeFile.close();
+    QVERIFY(!repository.installCatalog(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"),
+        QByteArrayLiteral("<broken>"), exactInfo, &error));
+    QFile afterFile(exactPath);
+    QVERIFY(afterFile.open(QIODevice::ReadOnly));
+    QCOMPARE(afterFile.readAll(), before);
+
+    QVERIFY(writeBytes(exactPath + QStringLiteral(".json"),
+                       QByteArrayLiteral("not json")));
+    repository.clear(ParameterFirmwareFamily::ArduCopter);
+    const ParameterMetaDataCatalog advisorySidecar = repository.catalog(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"));
+    QCOMPARE(advisorySidecar.value(QStringLiteral("TEST_PARAM")).title,
+             QStringLiteral("Exact"));
+    QVERIFY(!repository.catalogMatchesFirmwareVersion(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3")));
+}
+
+void ParameterCoreTest::metadataFreshnessUsesValidatedProvenance()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    ParameterMetaDataRepository repository(
+        temporaryDirectory.path(),
+        QDir(temporaryDirectory.path()).filePath(QStringLiteral("cache")));
+    ParameterMetaDataCacheInfo cacheInfo;
+    cacheInfo.sourceUrl = QStringLiteral(
+        "https://autotest.ardupilot.org/Parameters/ArduCopter/apm.pdef.xml");
+    cacheInfo.fetchedAtUtc = QDateTime::currentDateTimeUtc().addDays(-8);
+    QString error;
+    QVERIFY2(repository.installCatalog(
+                 ParameterFirmwareFamily::ArduCopter, QString(),
+                 catalogXml(QStringLiteral("ArduCopter"),
+                            QStringLiteral("Latest")),
+                 cacheInfo, &error),
+             qPrintable(error));
+    QVERIFY(!repository.cachedCatalogIsFresh(
+        ParameterFirmwareFamily::ArduCopter, QString(), 7 * 24 * 60 * 60));
+
+    const QString path = repository.cacheFilePath(
+        ParameterFirmwareFamily::ArduCopter, QString());
+    QJsonObject forged;
+    forged.insert(QStringLiteral("format"), 1);
+    forged.insert(QStringLiteral("family"), QStringLiteral("ArduCopter"));
+    forged.insert(QStringLiteral("firmwareVersion"), QStringLiteral("latest"));
+    forged.insert(QStringLiteral("sha256"), QStringLiteral("wrong"));
+    forged.insert(QStringLiteral("fetchedAtUtc"),
+                  QDateTime::currentDateTimeUtc().addDays(30)
+                      .toString(Qt::ISODate));
+    QVERIFY(writeBytes(path + QStringLiteral(".json"),
+                       QJsonDocument(forged).toJson()));
+    QFile catalogFile(path);
+    QVERIFY(catalogFile.open(QIODevice::ReadOnly));
+    QVERIFY(catalogFile.setFileTime(
+        QDateTime::currentDateTimeUtc().addDays(-8),
+        QFileDevice::FileModificationTime));
+    catalogFile.close();
+    QVERIFY(!repository.cachedCatalogIsFresh(
+        ParameterFirmwareFamily::ArduCopter, QString(), 7 * 24 * 60 * 60));
+}
+
+void ParameterCoreTest::metadataUpdaterBuildsSafeCandidateUrls()
+{
+    QVERIFY(ParameterMetaDataRepository::normalizedVersion(
+        QString(300, QLatin1Char('9')) + QStringLiteral(".1.1")).isEmpty());
+
+    const QList<QUrl> stable = ParameterMetaDataUpdater::candidateUrls(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"), false);
+    QCOMPARE(stable.size(), 2);
+    QVERIFY(stable.first().path().contains(
+        QStringLiteral("/versioned/Copter/stable-4.6.3/")));
+    QCOMPARE(stable.last().toString(), QStringLiteral(
+        "https://autotest.ardupilot.org/Parameters/ArduCopter/apm.pdef.xml"));
+
+    const QList<QUrl> development = ParameterMetaDataUpdater::candidateUrls(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.8.0"), true);
+    QCOMPARE(development.size(), 1);
+    QVERIFY(!development.first().path().contains(QStringLiteral("versioned")));
+    QVERIFY(ParameterMetaDataUpdater::candidateUrls(
+        ParameterFirmwareFamily::ArduCopter,
+        QStringLiteral("4.8.0-dev"), false).isEmpty());
+}
+
+void ParameterCoreTest::metadataUpdaterFallsBackBacksOffAndCancels()
+{
+    QTemporaryDir temporaryDirectory;
+    QVERIFY(temporaryDirectory.isValid());
+    MetadataHttpServer server(catalogXml(
+        QStringLiteral("ArduCopter"), QStringLiteral("Downloaded")));
+    QVERIFY(server.listen());
+    ParameterMetaDataRepository repository(
+        temporaryDirectory.path(),
+        QDir(temporaryDirectory.path()).filePath(QStringLiteral("cache")));
+    ParameterMetaDataUpdater updater(&repository, server.baseUrl());
+    int updated = 0;
+    int failed = 0;
+    QString installedVersion;
+    connect(&updater, &ParameterMetaDataUpdater::catalogUpdated,
+            this, [&](ParameterFirmwareFamily, const QString &version) {
+        ++updated;
+        installedVersion = version;
+    });
+    connect(&updater, &ParameterMetaDataUpdater::updateFailed,
+            this, [&](ParameterFirmwareFamily, const QString &) {
+        ++failed;
+    });
+
+    updater.requestUpdate(ParameterFirmwareFamily::ArduCopter,
+                          QStringLiteral("9.9.9"), false);
+    QTRY_COMPARE_WITH_TIMEOUT(updated, 1, 3000);
+    QCOMPARE(failed, 0);
+    QVERIFY(installedVersion.isEmpty());
+    QCOMPARE(server.requests.size(), 2);
+    QVERIFY(server.requests.at(0).contains(QStringLiteral("/versioned/")));
+    QVERIFY(server.requests.at(1).endsWith(
+        QStringLiteral("/Parameters/ArduCopter/apm.pdef.xml")));
+    QVERIFY(repository.cachedCatalogIsFresh(
+        ParameterFirmwareFamily::ArduCopter, QString(), 60));
+
+    // The missing exact patch is backed off, while the freshly installed
+    // latest catalog prevents another network request.
+    updater.requestUpdate(ParameterFirmwareFamily::ArduCopter,
+                          QStringLiteral("9.9.9"), false);
+    QTest::qWait(100);
+    QCOMPARE(server.requests.size(), 2);
+
+    // A superseding/disconnect cancellation must not surface as a failure.
+    server.holdVersionedRequests = true;
+    updater.requestUpdate(ParameterFirmwareFamily::ArduCopter,
+                          QStringLiteral("9.9.8"), false);
+    QTRY_COMPARE_WITH_TIMEOUT(server.requests.size(), 3, 3000);
+    updater.cancel();
+    QTest::qWait(100);
+    QCOMPARE(updated, 1);
+    QCOMPARE(failed, 0);
+
+    // A redirect from an exact URL to latest must not acquire exact
+    // provenance. It is rejected and then fetched as an explicit fallback.
+    QTemporaryDir redirectDirectory;
+    QVERIFY(redirectDirectory.isValid());
+    MetadataHttpServer redirectServer(catalogXml(
+        QStringLiteral("ArduCopter"), QStringLiteral("Redirected")));
+    redirectServer.redirectVersionedRequests = true;
+    QVERIFY(redirectServer.listen());
+    ParameterMetaDataRepository redirectRepository(
+        redirectDirectory.path(),
+        QDir(redirectDirectory.path()).filePath(QStringLiteral("cache")));
+    ParameterMetaDataUpdater redirectUpdater(
+        &redirectRepository, redirectServer.baseUrl());
+    QString redirectInstalledVersion = QStringLiteral("not updated");
+    connect(&redirectUpdater, &ParameterMetaDataUpdater::catalogUpdated,
+            this, [&](ParameterFirmwareFamily, const QString &version) {
+        redirectInstalledVersion = version;
+    });
+    redirectUpdater.requestUpdate(ParameterFirmwareFamily::ArduCopter,
+                                  QStringLiteral("9.9.7"), false);
+    QTRY_COMPARE_WITH_TIMEOUT(redirectInstalledVersion, QString(), 3000);
+    QCOMPARE(redirectServer.requests.size(), 3);
+    QVERIFY(!redirectRepository.catalogMatchesFirmwareVersion(
+        ParameterFirmwareFamily::ArduCopter, QStringLiteral("9.9.7")));
+
+    // Destruction with a held reply must disconnect callbacks before QNAM
+    // destroys its children.
+    redirectServer.redirectVersionedRequests = false;
+    redirectServer.holdVersionedRequests = true;
+    auto *destructingUpdater = new ParameterMetaDataUpdater(
+        &redirectRepository, redirectServer.baseUrl());
+    destructingUpdater->requestUpdate(ParameterFirmwareFamily::ArduCopter,
+                                      QStringLiteral("9.9.6"), false);
+    QTRY_COMPARE_WITH_TIMEOUT(redirectServer.requests.size(), 4, 3000);
+    delete destructingUpdater;
+    QCoreApplication::processEvents();
+}
+
+void ParameterCoreTest::firmwareVersionTracksReleaseType()
+{
+    APMFirmwareVersion development(QStringLiteral("ArduCopter V4.8.0-dev"));
+    QVERIFY(development.isValid());
+    QVERIFY(development.isDev());
+    QVERIFY(!development.isOfficial());
+    APMFirmwareVersion textStable(QStringLiteral("ArduCopter V4.6.3"));
+    QVERIFY(textStable.isValid());
+    QVERIFY(!textStable.isOfficial());
+    APMFirmwareVersion overflow(
+        QStringLiteral("ArduCopter V999999999999999999.1.1"));
+    QVERIFY(!overflow.isValid());
+
+    APMFirmwareVersion firmware;
+    firmware.parseFlightSwVersion(
+        (quint32(4) << 24) | (quint32(6) << 16)
+        | (quint32(3) << 8) | quint32(255), QByteArray(),
+        QStringLiteral("ArduCopter"));
+    QCOMPARE(firmware.versionString(), QStringLiteral("4.6.3"));
+    QVERIFY(firmware.isOfficial());
+    QCOMPARE(firmware.releaseType(), 255);
+    QCOMPARE(firmware.vehicleType(), QStringLiteral("ArduCopter"));
+
+    firmware.parseVersion(QStringLiteral("ArduCopter V9.9.9-custom"));
+    QCOMPARE(firmware.versionString(), QStringLiteral("4.6.3"));
+    QCOMPARE(firmware.vehicleType(), QStringLiteral("ArduCopter"));
+    QVERIFY(firmware.isOfficial());
+
+    firmware.parseFlightSwVersion(
+        (quint32(4) << 24) | (quint32(7) << 16)
+        | (quint32(0) << 8) | quint32(192));
+    QVERIFY(firmware.isBeta());
+    QVERIFY(!firmware.isOfficial());
+}
+
+QTEST_GUILESS_MAIN(ParameterCoreTest)
 
 #include "test_parametercore.moc"

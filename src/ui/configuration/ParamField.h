@@ -48,6 +48,7 @@ struct ParamField
     double maximum = 0.0;
     double increment = 0.01;
     bool hasRange = false;
+    bool enforceRange = true;
     bool favorite = false;
     bool readOnly = false;
 };

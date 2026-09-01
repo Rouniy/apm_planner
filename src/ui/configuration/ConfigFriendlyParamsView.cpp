@@ -14,6 +14,7 @@
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QToolButton>
@@ -154,9 +155,11 @@ struct ConfigFriendlyParamsView::Row
 };
 
 ConfigFriendlyParamsView::ConfigFriendlyParamsView(
-    bool advanced, const ParameterMetaDataCatalog &catalog, QWidget *parent)
+    bool advanced, const ParameterMetaDataCatalog &catalog, QWidget *parent,
+    bool enforceMetadataRanges)
     : QWidget(parent),
-      m_viewModel(new ConfigFriendlyParamsViewModel(advanced, this)),
+      m_viewModel(new ConfigFriendlyParamsViewModel(
+          advanced, this, enforceMetadataRanges)),
       m_searchDebounce(new QTimer(this))
 {
     setObjectName(QStringLiteral("ConfigFriendlyParamsView"));
@@ -208,22 +211,23 @@ ConfigFriendlyParamsView::ConfigFriendlyParamsView(
     toolbar->addWidget(intro, 1);
     root->addLayout(toolbar);
 
-    auto *scroll = new QScrollArea(this);
-    scroll->setObjectName(QStringLiteral("fieldsScroll"));
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setWidgetResizable(true);
-    m_fieldsContent = new QWidget(scroll);
+    m_fieldsScroll = new QScrollArea(this);
+    m_fieldsScroll->setObjectName(QStringLiteral("fieldsScroll"));
+    m_fieldsScroll->setFrameShape(QFrame::NoFrame);
+    m_fieldsScroll->setWidgetResizable(true);
+    m_fieldsContent = new QWidget(m_fieldsScroll);
     m_fieldsContent->setObjectName(QStringLiteral("fieldsContent"));
     m_fieldsLayout = new QVBoxLayout(m_fieldsContent);
     m_fieldsLayout->setContentsMargins(0, 0, 0, 0);
     m_fieldsLayout->setSpacing(0);
     m_emptyLabel = new QLabel(tr("No described parameters are available."),
                               m_fieldsContent);
+    m_emptyLabel->setObjectName(QStringLiteral("emptyLabel"));
     m_emptyLabel->setAlignment(Qt::AlignCenter);
     m_fieldsLayout->addWidget(m_emptyLabel);
     m_fieldsLayout->addStretch(1);
-    scroll->setWidget(m_fieldsContent);
-    root->addWidget(scroll, 1);
+    m_fieldsScroll->setWidget(m_fieldsContent);
+    root->addWidget(m_fieldsScroll, 1);
 
     m_searchDebounce->setSingleShot(true);
     m_searchDebounce->setInterval(250);
@@ -260,12 +264,83 @@ ConfigFriendlyParamsView::ConfigFriendlyParamsView(
         }
     });
 
-    m_viewModel->setCatalog(catalog);
+    m_viewModel->setCatalog(catalog, enforceMetadataRanges);
 }
 
 ConfigFriendlyParamsView::~ConfigFriendlyParamsView()
 {
     clearRows();
+}
+
+void ConfigFriendlyParamsView::setCatalog(
+    const ParameterMetaDataCatalog &catalog, bool enforceMetadataRanges)
+{
+    struct TransientRowState
+    {
+        QVariant pendingValue;
+        QString editorText;
+        bool pending = false;
+        bool editorModified = false;
+        bool editorHadFocus = false;
+    };
+    QHash<QString, TransientRowState> transientRows;
+    for (const Row *row : m_rows) {
+        TransientRowState state;
+        state.pending = row->pending;
+        state.pendingValue = row->pendingValue;
+        if (row->numericEditor) {
+            if (auto *editor = row->numericEditor->findChild<QLineEdit *>()) {
+                state.editorModified = editor->isModified();
+                state.editorHadFocus = editor->hasFocus()
+                    || row->numericEditor->hasFocus();
+                if (state.editorModified || state.editorHadFocus) {
+                    state.editorText = editor->text();
+                }
+            }
+        }
+        if (state.pending || state.editorModified || state.editorHadFocus) {
+            transientRows.insert(
+                rowKey(row->field.componentId, row->field.name), state);
+        }
+    }
+    const int scrollPosition = m_fieldsScroll->verticalScrollBar()->value();
+
+    m_viewModel->setCatalog(catalog, enforceMetadataRanges);
+    setUnavailableMessage(QString());
+
+    for (auto iterator = transientRows.constBegin();
+         iterator != transientRows.constEnd(); ++iterator) {
+        Row *row = m_rowsByKey.value(iterator.key(), nullptr);
+        if (!row) {
+            continue;
+        }
+        const TransientRowState &state = iterator.value();
+        if (state.pending) {
+            row->pending = true;
+            row->pendingValue = state.pendingValue;
+            const quint64 generation = ++row->pendingGeneration;
+            row->statusLabel->setText(QStringLiteral("…"));
+            QTimer::singleShot(5000, row->widget, [row, generation]() {
+                if (row->pending && row->pendingGeneration == generation) {
+                    row->pending = false;
+                    row->statusLabel->setText(QObject::tr("write failed"));
+                }
+            });
+        }
+        if (row->numericEditor
+            && (state.editorModified || state.editorHadFocus)) {
+            if (auto *editor = row->numericEditor->findChild<QLineEdit *>()) {
+                editor->setText(state.editorText);
+                editor->setModified(state.editorModified);
+                if (state.editorHadFocus) {
+                    editor->setFocus();
+                }
+            }
+        }
+    }
+    QTimer::singleShot(0, this, [this, scrollPosition]() {
+        m_fieldsScroll->verticalScrollBar()->setValue(scrollPosition);
+    });
 }
 
 void ConfigFriendlyParamsView::setParameterSnapshot(
@@ -557,15 +632,17 @@ void ConfigFriendlyParamsView::submitValue(Row *row, const QVariant &value)
         return;
     }
     const QVariant typedValue = valueWithOriginalType(row->field.value, value);
-    if (row->field.editorKind == ParamField::EditorKind::Numeric
+    const bool outOfRange =
+        row->field.editorKind == ParamField::EditorKind::Numeric
         && row->field.hasRange
         && (typedValue.toDouble() < row->field.minimum
-            || typedValue.toDouble() > row->field.maximum)) {
+            || typedValue.toDouble() > row->field.maximum);
+    if (outOfRange && row->field.enforceRange) {
         setOutOfRange(row, true);
         row->statusLabel->setText(tr("out of range"));
         return;
     }
-    setOutOfRange(row, false);
+    setOutOfRange(row, outOfRange);
     if (variantsEqual(row->field.value, typedValue)) {
         row->statusLabel->setText(QStringLiteral("✓"));
         return;

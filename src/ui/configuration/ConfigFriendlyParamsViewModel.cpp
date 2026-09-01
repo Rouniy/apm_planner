@@ -12,11 +12,12 @@ bool nameLessThan(const QString &left, const QString &right)
 }
 
 ConfigFriendlyParamsViewModel::ConfigFriendlyParamsViewModel(
-    bool advanced, QObject *parent)
+    bool advanced, QObject *parent, bool enforceMetadataRanges)
     : QObject(parent),
       m_favoriteSettingsKey(advanced ? QStringLiteral("fav_params_adv")
                                      : QStringLiteral("fav_params_std")),
-      m_advanced(advanced)
+      m_advanced(advanced),
+      m_enforceMetadataRanges(enforceMetadataRanges)
 {
     loadFavorites();
 }
@@ -26,6 +27,13 @@ void ConfigFriendlyParamsViewModel::setCatalog(
 {
     m_catalog = catalog;
     rebuildFields();
+}
+
+void ConfigFriendlyParamsViewModel::setCatalog(
+    const ParameterMetaDataCatalog &catalog, bool enforceMetadataRanges)
+{
+    m_enforceMetadataRanges = enforceMetadataRanges;
+    setCatalog(catalog);
 }
 
 void ConfigFriendlyParamsViewModel::setParameterSnapshot(
@@ -174,6 +182,7 @@ void ConfigFriendlyParamsViewModel::rebuildFields()
         field.maximum = metadata.maximum;
         field.increment = metadata.increment;
         field.hasRange = metadata.hasRange;
+        field.enforceRange = m_enforceMetadataRanges;
         field.readOnly = metadata.readOnly;
         field.favorite = m_favorites.contains(
             favoriteKey(field.componentId, field.name));

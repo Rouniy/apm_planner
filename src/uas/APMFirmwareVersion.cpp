@@ -13,17 +13,22 @@
 /// @author Don Gagne <don@thegagnes.com>
 ///
 
-#include "logging.h"
-#include "ArduPilotMegaMAV.h"
 #include "APMFirmwareVersion.h"
-#include <QRegExp>
+#include <QRegularExpression>
 
-APMFirmwareVersion::APMFirmwareVersion(): _major(0),_minor(0),_patch(0)
+namespace {
+const QRegularExpression kVersionExpression(QStringLiteral(
+    "^(APM:Copter|APM:Plane|APM:Rover|APM:Sub|ArduCopter|ArduPlane|"
+    "ArduRover|ArduSub) +[vV](\\d+)\\.(\\d+)\\.(\\d+)"));
+}
+
+APMFirmwareVersion::APMFirmwareVersion()
+    : _major(0), _minor(0), _patch(0), _releaseType(-1)
 {
 }
 
 APMFirmwareVersion::APMFirmwareVersion(const QString &versionText):
-    _major(0),_minor(0),_patch(0)
+    _major(0), _minor(0), _patch(0), _releaseType(-1)
 {
     parseVersion(versionText);
 }
@@ -35,12 +40,28 @@ bool APMFirmwareVersion::isValid() const
 
 bool APMFirmwareVersion::isBeta() const
 {
-    return _versionString.contains(QStringLiteral(".rc"));
+    if (_releaseType >= 0) {
+        return _releaseType >= 64 && _releaseType < 255;
+    }
+    return _versionString.contains(QStringLiteral("rc"), Qt::CaseInsensitive)
+        || _versionString.contains(QStringLiteral("beta"), Qt::CaseInsensitive)
+        || _versionString.contains(QStringLiteral("alpha"), Qt::CaseInsensitive);
 }
 
 bool APMFirmwareVersion::isDev() const
 {
-    return _versionString.contains(QStringLiteral(".dev"));
+    if (_releaseType >= 0) {
+        return _releaseType < 64;
+    }
+    return _versionString.contains(QStringLiteral("dev"), Qt::CaseInsensitive);
+}
+
+bool APMFirmwareVersion::isOfficial() const
+{
+    // A STATUSTEXT suffix is not authoritative: custom builds may omit a
+    // pre-release marker. Only the packed MAVLink release type can prove that
+    // a version matches an official stable artifact.
+    return isValid() && _releaseType == 255;
 }
 
 bool APMFirmwareVersion::operator <(const APMFirmwareVersion& other) const
@@ -52,31 +73,49 @@ bool APMFirmwareVersion::operator <(const APMFirmwareVersion& other) const
 
 void APMFirmwareVersion::parseVersion(const QString &versionText)
 {
-    if (versionText.isEmpty()) {
+    const QRegularExpressionMatch match = kVersionExpression.match(
+        versionText.trimmed());
+    if (!match.hasMatch()) {
         return;
     }
 
-
-    if (VERSION_REXP.indexIn(versionText) == -1) {
-        QLOG_WARN() << "firmware version regex didn't match anything"
-                                        << "version text to be parsed" << versionText;
+    bool majorOk = false;
+    bool minorOk = false;
+    bool patchOk = false;
+    const uint major = match.captured(2).toUInt(&majorOk);
+    const uint minor = match.captured(3).toUInt(&minorOk);
+    const uint patch = match.captured(4).toUInt(&patchOk);
+    if (!majorOk || !minorOk || !patchOk
+        || major > 255 || minor > 255 || patch > 255) {
         return;
     }
-
-    QStringList capturedTexts = VERSION_REXP.capturedTexts();
-
-    if (capturedTexts.count() < 5) {
-        QLOG_WARN() << "something wrong with parsing the version text, not hitting anything"
-                                        << VERSION_REXP.captureCount() << VERSION_REXP.capturedTexts();
+    _vehicleType = match.captured(1);
+    if (_releaseType >= 0) {
         return;
     }
-
-    // successful extraction of version numbers
-    // even though we could have collected the version string atleast
-    // but if the parsing has faild, not much point
     _versionString = versionText;
-    _vehicleType   = capturedTexts[1];
-    _major         = capturedTexts[2].toInt();
-    _minor         = capturedTexts[3].toInt();
-    _patch         = capturedTexts[4].toInt();
+    _major = int(major);
+    _minor = int(minor);
+    _patch = int(patch);
+    _releaseType = -1;
+    _flightCustomVersion.clear();
+}
+
+void APMFirmwareVersion::parseFlightSwVersion(
+    quint32 flightSwVersion, const QByteArray &flightCustomVersion,
+    const QString &vehicleType)
+{
+    if (flightSwVersion == 0) {
+        return;
+    }
+    _major = int((flightSwVersion >> 24) & 0xff);
+    _minor = int((flightSwVersion >> 16) & 0xff);
+    _patch = int((flightSwVersion >> 8) & 0xff);
+    _releaseType = int(flightSwVersion & 0xff);
+    _flightCustomVersion = flightCustomVersion.left(8);
+    if (!vehicleType.trimmed().isEmpty()) {
+        _vehicleType = vehicleType.trimmed();
+    }
+    _versionString = QStringLiteral("%1.%2.%3")
+        .arg(_major).arg(_minor).arg(_patch);
 }

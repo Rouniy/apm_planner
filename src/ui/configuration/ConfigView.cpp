@@ -13,13 +13,17 @@
 #include "OsdConfig.h"
 #include "QGCSettingsWidget.h"
 #include "QGCUASParamManager.h"
+#include "ArduPilotMegaMAV.h"
 #include "UASInterface.h"
 #include "UASManager.h"
 #include "AppPaths.h"
 #include "core/parameters/ParameterMetaDataRepository.h"
+#include "core/parameters/ParameterMetaDataUpdater.h"
+#include "logging.h"
 #include "ui/BackstageView.h"
 
 #include <QFrame>
+#include <QDir>
 #include <QMessageBox>
 #include <QScrollArea>
 #include <QSettings>
@@ -88,7 +92,11 @@ ConfigView::ConfigView(QWidget *parent)
     : QWidget(parent),
       m_backstage(new BackstageView(this)),
       m_metadataRepository(new ParameterMetaDataRepository(
-          AppPaths::resourcePath(QStringLiteral("files/ardupilotmega"))))
+          AppPaths::resourcePath(QStringLiteral("files/ardupilotmega")),
+          QDir(AppPaths::writableDataDirectory()).filePath(
+              QStringLiteral("cache/parameter-metadata")))),
+      m_metadataUpdater(new ParameterMetaDataUpdater(
+          m_metadataRepository.get()))
 {
     setObjectName(QStringLiteral("ConfigView"));
     auto *layout = new QVBoxLayout(this);
@@ -109,6 +117,17 @@ ConfigView::ConfigView(QWidget *parent)
             this, &ConfigView::stopParameterLoading);
     connect(m_backstage, &BackstageView::retryLoadingRequested,
             this, &ConfigView::retryParameterLoading);
+    connect(m_metadataUpdater.get(),
+            &ParameterMetaDataUpdater::catalogUpdated,
+            this, &ConfigView::parameterMetadataUpdated);
+    connect(m_metadataUpdater.get(),
+            &ParameterMetaDataUpdater::updateFailed,
+            this, [this](ParameterFirmwareFamily family,
+                         const QString &reason) {
+        if (family == parameterFirmwareFamily()) {
+            QLOG_WARN() << "Parameter metadata update failed:" << reason;
+        }
+    });
     connect(UASManager::instance(),
             QOverload<UASInterface *>::of(&UASManager::activeUASSet),
             this, &ConfigView::activeUASSet);
@@ -216,10 +235,13 @@ void ConfigView::activeUASSet(UASInterface *uas)
     if (m_uas) {
         disconnect(m_uas, nullptr, this, nullptr);
     }
+    m_metadataUpdater->cancel();
     bindParameterManager(nullptr);
 
     m_uas = uas;
     m_parameterManager = nullptr;
+    m_firmwareVersion.clear();
+    m_officialFirmware = false;
     resetParameterProgress();
 
     if (m_uas) {
@@ -233,6 +255,10 @@ void ConfigView::activeUASSet(UASInterface *uas)
                 this, &ConfigView::parameterChanged);
         connect(m_uas, &UASInterface::parameterManagerChanged,
                 this, &ConfigView::parameterManagerChanged);
+        if (auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data())) {
+            connect(apm, &ArduPilotMegaMAV::versionDetected,
+                    this, &ConfigView::firmwareVersionDetected);
+        }
         bindParameterManager(m_uas->getParamManager());
         m_parametersReady = m_parameterManager
             && m_parameterManager->parameterListReady();
@@ -253,6 +279,12 @@ void ConfigView::activeUASSet(UASInterface *uas)
         resetVehiclePages(true);
     }
     restorePreferredPage();
+    if (auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data())) {
+        if (apm->getFirmwareVersion().isValid()) {
+            firmwareVersionDetected(
+                apm->getFirmwareVersion().versionString());
+        }
+    }
 }
 
 void ConfigView::vehicleConnected()
@@ -262,6 +294,9 @@ void ConfigView::vehicleConnected()
 
 void ConfigView::vehicleDisconnected()
 {
+    m_metadataUpdater->cancel();
+    m_firmwareVersion.clear();
+    m_officialFirmware = false;
     syncConnectionState();
 }
 
@@ -390,6 +425,46 @@ void ConfigView::currentPageChanged(const QString &pageId)
     refreshLoadingOverlay();
 }
 
+void ConfigView::firmwareVersionDetected(const QString &versionText)
+{
+    Q_UNUSED(versionText)
+    auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data());
+    if (!apm) {
+        return;
+    }
+    const APMFirmwareVersion firmware = apm->getFirmwareVersion();
+    if (!firmware.isValid()) {
+        return;
+    }
+    const QString normalized = QStringLiteral("%1.%2.%3")
+        .arg(firmware.majorNumber())
+        .arg(firmware.minorNumber())
+        .arg(firmware.patchNumber());
+    const bool official = firmware.isOfficial();
+    const bool identityChanged = normalized != m_firmwareVersion
+        || official != m_officialFirmware;
+    m_firmwareVersion = normalized;
+    m_officialFirmware = official;
+    if (identityChanged) {
+        refreshFriendlyParameterPages();
+        m_metadataUpdater->requestUpdate(
+            parameterFirmwareFamily(), normalized, !official);
+    }
+}
+
+void ConfigView::parameterMetadataUpdated(
+    ParameterFirmwareFamily family, const QString &firmwareVersion)
+{
+    if (family != parameterFirmwareFamily()) {
+        return;
+    }
+    if (!firmwareVersion.isEmpty()
+        && (!m_officialFirmware || firmwareVersion != m_firmwareVersion)) {
+        return;
+    }
+    refreshFriendlyParameterPages();
+}
+
 void ConfigView::refreshPageVisibility()
 {
     m_backstage->refreshVisibility();
@@ -480,6 +555,37 @@ void ConfigView::resetVehiclePages(bool targetChanged)
     m_adjustingSelection = false;
 }
 
+void ConfigView::refreshFriendlyParameterPages()
+{
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+    const QString unavailableMessage = catalog.isValid()
+        ? QString()
+        : tr("Parameter metadata is unavailable: %1")
+              .arg(m_metadataRepository->errorString(
+                  family, catalogVersion));
+
+    const QStringList friendlyPages = {
+        kStandardParams,
+        kAdvancedParams
+    };
+    for (const QString &pageId : friendlyPages) {
+        auto *page = qobject_cast<ConfigFriendlyParamsView *>(
+            m_backstage->page(pageId));
+        if (!page) {
+            continue;
+        }
+        page->setCatalog(catalog, enforceMetadataRanges);
+        page->setUnavailableMessage(unavailableMessage);
+    }
+}
+
 void ConfigView::resetParameterProgress()
 {
     m_parametersReady = false;
@@ -509,12 +615,20 @@ void ConfigView::restorePreferredPage()
 QWidget *ConfigView::createFriendlyParamsPage(bool advanced, QWidget *parent)
 {
     const ParameterFirmwareFamily family = parameterFirmwareFamily();
-    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(family);
-    auto *page = new ConfigFriendlyParamsView(advanced, catalog, parent);
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+    auto *page = new ConfigFriendlyParamsView(
+        advanced, catalog, parent, enforceMetadataRanges);
     if (!catalog.isValid()) {
         page->setUnavailableMessage(
             tr("Parameter metadata is unavailable: %1")
-                .arg(m_metadataRepository->errorString(family)));
+                .arg(m_metadataRepository->errorString(
+                    family, catalogVersion)));
     }
     page->setObjectName(advanced ? kAdvancedParams : kStandardParams);
     page->setParameterSnapshot(

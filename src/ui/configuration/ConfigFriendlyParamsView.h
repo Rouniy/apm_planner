@@ -9,6 +9,7 @@
 class QComboBox;
 class QLineEdit;
 class QLabel;
+class QScrollArea;
 class QTimer;
 class QVBoxLayout;
 
@@ -19,9 +20,12 @@ class ConfigFriendlyParamsView final : public QWidget
 public:
     explicit ConfigFriendlyParamsView(bool advanced,
                                       const ParameterMetaDataCatalog &catalog,
-                                      QWidget *parent = nullptr);
+                                      QWidget *parent = nullptr,
+                                      bool enforceMetadataRanges = true);
     ~ConfigFriendlyParamsView() override;
 
+    void setCatalog(const ParameterMetaDataCatalog &catalog,
+                    bool enforceMetadataRanges);
     void setParameterSnapshot(
         const QList<ConfigFriendlyParameterValue> &parameters,
         int preferredComponent = 1);
@@ -62,6 +66,7 @@ private:
     QWidget *m_fieldsContent = nullptr;
     QVBoxLayout *m_fieldsLayout = nullptr;
     QTimer *m_searchDebounce = nullptr;
+    QScrollArea *m_fieldsScroll = nullptr;
     QList<Row *> m_rows;
     QHash<QString, Row *> m_rowsByKey;
 };

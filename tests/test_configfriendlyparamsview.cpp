@@ -66,7 +66,9 @@ private slots:
     void modelUsesMissionPlannerFiltersAndComponents();
     void viewClassifiesEditorsAndPreservesOutOfRangeValue();
     void writesUseSelectedComponentAndTypedValues();
+    void nonExactMetadataWarnsButDoesNotBlockRange();
     void searchDebouncesAndRefreshIsForwarded();
+    void catalogRefreshPreservesViewState();
 };
 
 void ConfigFriendlyParamsViewTest::initTestCase()
@@ -242,6 +244,25 @@ void ConfigFriendlyParamsViewTest::writesUseSelectedComponentAndTypedValues()
     QCOMPARE(refresh.first().at(0).toInt(), 154);
 }
 
+void ConfigFriendlyParamsViewTest::nonExactMetadataWarnsButDoesNotBlockRange()
+{
+    ConfigFriendlyParamsView view(false, catalogFixture(), nullptr, false);
+    QSignalSpy writes(&view, &ConfigFriendlyParamsView::writeRequested);
+    view.setParameterSnapshot({
+        {1, QStringLiteral("GAIN"), 0.2}
+    });
+    QWidget *gain = parameterRow(view, QStringLiteral("GAIN"));
+    QVERIFY(gain);
+    auto *numeric = gain->findChild<QDoubleSpinBox *>(
+        QStringLiteral("numericEditor"));
+    QVERIFY(numeric);
+    numeric->setValue(2.0);
+    QVERIFY(QMetaObject::invokeMethod(numeric, "editingFinished"));
+    QCOMPARE(writes.count(), 1);
+    QCOMPARE(writes.first().at(2).toDouble(), 2.0);
+    QVERIFY(numeric->parentWidget()->property("outOfRange").toBool());
+}
+
 void ConfigFriendlyParamsViewTest::searchDebouncesAndRefreshIsForwarded()
 {
     ConfigFriendlyParamsView view(false, catalogFixture());
@@ -260,6 +281,55 @@ void ConfigFriendlyParamsViewTest::searchDebouncesAndRefreshIsForwarded()
     view.findChild<QPushButton *>(QStringLiteral("refreshButton"))->click();
     QCOMPARE(refresh.count(), 1);
     QCOMPARE(refresh.first().at(0).toInt(), 1);
+}
+
+void ConfigFriendlyParamsViewTest::catalogRefreshPreservesViewState()
+{
+    ConfigFriendlyParamsView view(false, catalogFixture());
+    view.setParameterSnapshot({
+        {1, QStringLiteral("GAIN"), 0.2},
+        {1, QStringLiteral("MASK"), 0},
+        {154, QStringLiteral("GAIN"), 0.8}
+    });
+    auto *search = view.findChild<QLineEdit *>(QStringLiteral("searchBox"));
+    auto *selector = view.findChild<QComboBox *>(
+        QStringLiteral("componentSelector"));
+    QVERIFY(search);
+    QVERIFY(selector);
+    search->setText(QStringLiteral("gain"));
+    QTRY_COMPARE_WITH_TIMEOUT(view.visibleParameterCount(), 1, 500);
+    selector->setCurrentIndex(selector->findData(154));
+    QCOMPARE(view.viewModel()->selectedComponent(), 154);
+    QWidget *oldGain = parameterRow(view, QStringLiteral("GAIN"));
+    QVERIFY(oldGain);
+    auto *oldEditor = oldGain->findChild<QDoubleSpinBox *>(
+        QStringLiteral("numericEditor"));
+    QVERIFY(oldEditor);
+    auto *oldLineEdit = oldEditor->findChild<QLineEdit *>();
+    QVERIFY(oldLineEdit);
+    oldLineEdit->setText(QStringLiteral("0.75"));
+    oldLineEdit->setModified(true);
+    view.setUnavailableMessage(QStringLiteral("stale error"));
+
+    view.setCatalog(catalogFixture(), false);
+
+    QCOMPARE(search->text(), QStringLiteral("gain"));
+    QCOMPARE(view.viewModel()->selectedComponent(), 154);
+    QCOMPARE(view.visibleParameterCount(), 1);
+    QCOMPARE(view.viewModel()->fields().size(), 1);
+    QVERIFY(!view.viewModel()->fields().first().enforceRange);
+    QWidget *newGain = parameterRow(view, QStringLiteral("GAIN"));
+    QVERIFY(newGain);
+    auto *newEditor = newGain->findChild<QDoubleSpinBox *>(
+        QStringLiteral("numericEditor"));
+    QVERIFY(newEditor);
+    QCOMPARE(newEditor->findChild<QLineEdit *>()->text(),
+             QStringLiteral("0.75"));
+
+    search->setText(QStringLiteral("missing"));
+    QTRY_COMPARE_WITH_TIMEOUT(view.visibleParameterCount(), 0, 500);
+    QCOMPARE(view.findChild<QLabel *>(QStringLiteral("emptyLabel"))->text(),
+             QStringLiteral("No described parameters are available."));
 }
 
 QTEST_MAIN(ConfigFriendlyParamsViewTest)

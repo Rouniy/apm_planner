@@ -3,6 +3,7 @@
 
 #include "core/parameters/ParameterMetaData.h"
 
+#include <QDateTime>
 #include <QMap>
 #include <QSet>
 #include <QString>
@@ -26,6 +27,8 @@ struct ParameterMetaDataSource
 {
     QString fileName;
     QString vehicleName;
+    QString latestVehicleName;
+    QString versionedVehicleName;
 
     bool isValid() const
     {
@@ -33,30 +36,74 @@ struct ParameterMetaDataSource
     }
 };
 
+struct ParameterMetaDataCacheInfo
+{
+    QString sourceUrl;
+    QString etag;
+    QString lastModified;
+    QDateTime fetchedAtUtc;
+};
+
 /**
  * Mission Planner-compatible metadata facade.
  *
- * The initial implementation deliberately guarantees a packaged, offline
- * catalog. A network/cache provider can later update the same per-family
- * snapshots without coupling configuration widgets to download state.
+ * Provides an always-available packaged catalog and validated per-family
+ * network caches. Cache XML remains usable when advisory provenance is lost;
+ * only a fresh, hash-matched versioned cache is considered exact enough for
+ * strict range enforcement.
  */
 class ParameterMetaDataRepository
 {
 public:
-    explicit ParameterMetaDataRepository(const QString &packagedDirectory);
+    explicit ParameterMetaDataRepository(
+        const QString &packagedDirectory,
+        const QString &cacheDirectory = QString());
 
     static ParameterMetaDataSource sourceForFamily(
         ParameterFirmwareFamily family);
 
-    ParameterMetaDataCatalog catalog(ParameterFirmwareFamily family);
-    QString errorString(ParameterFirmwareFamily family) const;
+    ParameterMetaDataCatalog catalog(
+        ParameterFirmwareFamily family,
+        const QString &firmwareVersion = QString());
+    QString errorString(
+        ParameterFirmwareFamily family,
+        const QString &firmwareVersion = QString()) const;
+    bool installCatalog(ParameterFirmwareFamily family,
+                        const QString &firmwareVersion,
+                        const QByteArray &xml,
+                        const ParameterMetaDataCacheInfo &cacheInfo,
+                        QString *error = nullptr);
+    bool cachedCatalogIsFresh(ParameterFirmwareFamily family,
+                              const QString &firmwareVersion,
+                              qint64 maximumAgeSeconds) const;
+    bool catalogMatchesFirmwareVersion(
+        ParameterFirmwareFamily family,
+        const QString &firmwareVersion) const;
+    QString cacheFilePath(ParameterFirmwareFamily family,
+                          const QString &firmwareVersion) const;
+    static QString normalizedVersion(const QString &firmwareVersion);
+    void clear(ParameterFirmwareFamily family);
     void clear();
 
 private:
+    ParameterMetaDataCatalog loadCatalogFile(
+        const QString &path, const ParameterMetaDataSource &source,
+        bool requireSubstantialCatalog, QString *error,
+        QByteArray *catalogBytes = nullptr) const;
+    QString catalogKey(ParameterFirmwareFamily family,
+                       const QString &firmwareVersion) const;
+    QString cacheInfoPath(const QString &catalogPath) const;
+    bool cacheProvenanceIsValid(ParameterFirmwareFamily family,
+                                const QString &firmwareVersion,
+                                QDateTime *fetchedAtUtc = nullptr,
+                                const QByteArray *catalogBytes = nullptr) const;
+
     QString m_packagedDirectory;
-    QMap<ParameterFirmwareFamily, ParameterMetaDataCatalog> m_catalogs;
-    QMap<ParameterFirmwareFamily, QString> m_errors;
-    QSet<ParameterFirmwareFamily> m_attempted;
+    QString m_cacheDirectory;
+    QMap<QString, ParameterMetaDataCatalog> m_catalogs;
+    QMap<QString, QString> m_errors;
+    QSet<QString> m_attempted;
+    QSet<QString> m_versionMatchedCatalogs;
 };
 
 #endif

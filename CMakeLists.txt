@@ -145,6 +145,8 @@ set(SOURCES
     qgroundcontrol.qrc
     src/AppPaths.cpp
     src/AppPaths.h
+    src/core/parameters/ParameterMetaDataUpdater.cpp
+    src/core/parameters/ParameterMetaDataUpdater.h
     src/GAudioOutput.cc
     src/GAudioOutput.h
     src/LogCompressor.cc
@@ -1045,10 +1047,15 @@ if(BUILD_TESTING)
     add_executable(parameter_core_tests
         tests/test_parametercore.cpp
         tests/parameter_metadata_test.qrc
+        src/core/parameters/ParameterMetaDataUpdater.cpp
+        src/core/parameters/ParameterMetaDataUpdater.h
+        src/uas/APMFirmwareVersion.cpp
+        src/uas/APMFirmwareVersion.h
     )
     target_link_libraries(parameter_core_tests PRIVATE
         apm_parameter_core
         Qt::Core
+        Qt::Network
         Qt::Test
     )
     target_compile_definitions(parameter_core_tests PRIVATE

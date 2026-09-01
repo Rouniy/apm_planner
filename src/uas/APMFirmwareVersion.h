@@ -15,7 +15,9 @@
 #ifndef APMFIRMWAREVERSION_H
 #define APMFIRMWAREVERSION_H
 
+#include <QByteArray>
 #include <QString>
+#include <QtGlobal>
 
 class APMFirmwareVersion
 {
@@ -23,10 +25,18 @@ public:
     APMFirmwareVersion();
     APMFirmwareVersion(const QString &versionText);
     void parseVersion(const QString &versionText);
+    void parseFlightSwVersion(
+        quint32 flightSwVersion,
+        const QByteArray &flightCustomVersion = QByteArray(),
+        const QString &vehicleType = QString());
 
     bool isValid() const;
     bool isBeta() const;
     bool isDev() const;
+    bool isOfficial() const;
+    bool hasReleaseType() const { return _releaseType >= 0; }
+    int releaseType() const { return _releaseType; }
+    QByteArray flightCustomVersion() const { return _flightCustomVersion; }
     bool operator<(const APMFirmwareVersion& other) const;
     QString versionString() const { return _versionString; }
     QString vehicleType() const { return _vehicleType; }
@@ -40,6 +50,8 @@ private:
     int     _major;
     int     _minor;
     int     _patch;
+    int     _releaseType;
+    QByteArray _flightCustomVersion;
 };
 
 #endif // APMFIRMWAREVERSION_H

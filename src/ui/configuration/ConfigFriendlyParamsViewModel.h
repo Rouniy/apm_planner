@@ -13,9 +13,12 @@ class ConfigFriendlyParamsViewModel final : public QObject
 
 public:
     explicit ConfigFriendlyParamsViewModel(bool advanced,
-                                           QObject *parent = nullptr);
+                                           QObject *parent = nullptr,
+                                           bool enforceMetadataRanges = true);
 
     void setCatalog(const ParameterMetaDataCatalog &catalog);
+    void setCatalog(const ParameterMetaDataCatalog &catalog,
+                    bool enforceMetadataRanges);
     void setParameterSnapshot(
         const QList<ConfigFriendlyParameterValue> &parameters,
         int preferredComponent = 1);
@@ -53,6 +56,7 @@ private:
     QString m_favoriteSettingsKey;
     int m_selectedComponent = 0;
     bool m_advanced = false;
+    bool m_enforceMetadataRanges = true;
 };
 
 #endif

@@ -40,6 +40,39 @@ This file is part of the QGROUNDCONTROL project
 #include <QSettings>
 #include <QSqlRecord>
 
+namespace {
+QString firmwareVehicleType(int mavType)
+{
+    switch (mavType) {
+    case MAV_TYPE_FIXED_WING:
+    case MAV_TYPE_VTOL_DUOROTOR:
+    case MAV_TYPE_VTOL_QUADROTOR:
+    case MAV_TYPE_VTOL_TILTROTOR:
+    case MAV_TYPE_VTOL_RESERVED2:
+    case MAV_TYPE_VTOL_RESERVED3:
+    case MAV_TYPE_VTOL_RESERVED4:
+    case MAV_TYPE_VTOL_RESERVED5:
+        return QStringLiteral("ArduPlane");
+    case MAV_TYPE_GROUND_ROVER:
+    case MAV_TYPE_SURFACE_BOAT:
+        return QStringLiteral("ArduRover");
+    case MAV_TYPE_SUBMARINE:
+        return QStringLiteral("ArduSub");
+    case MAV_TYPE_TRICOPTER:
+    case MAV_TYPE_QUADROTOR:
+    case MAV_TYPE_COAXIAL:
+    case MAV_TYPE_HELICOPTER:
+    case MAV_TYPE_HEXAROTOR:
+    case MAV_TYPE_OCTOROTOR:
+    case MAV_TYPE_DODECAROTOR:
+    case MAV_TYPE_DECAROTOR:
+        return QStringLiteral("ArduCopter");
+    default:
+        return {};
+    }
+}
+}
+
 
 ArduPilotMegaMAV::ArduPilotMegaMAV(MAVLinkProtocol* mavlink, int id) :
     UAS(mavlink, id),
@@ -110,6 +143,9 @@ void ArduPilotMegaMAV::uasConnected()
 {
     QLOG_INFO() << "ArduPilotMegaMAV APM Connected";
     QTimer::singleShot(500,this,SLOT(RequestAllDataStreams())); //Send an initial TX request in 0.5 seconds.
+    QTimer::singleShot(250, this, SLOT(RequestAutopilotVersion()));
+    QTimer::singleShot(1500, this, SLOT(RequestAutopilotVersion()));
+    QTimer::singleShot(4000, this, SLOT(RequestAutopilotVersion()));
     createNewMAVLinkLog(type);
     LinkManager::instance()->startLogging();
 }
@@ -117,6 +153,8 @@ void ArduPilotMegaMAV::uasConnected()
 void ArduPilotMegaMAV::uasDisconnected()
 {
     QLOG_INFO() << "ArduPilotMegaMAV APM disconnected";
+    m_firmwareVersion = APMFirmwareVersion();
+    m_severityCompatibilityMode = false;
     //if (mavlink)
    // {
    //     mavlink->stopLogging();
@@ -165,6 +203,21 @@ void ArduPilotMegaMAV::createNewMAVLinkLog(uint8_t type)
     LinkManager::instance()->setLogSubDirectory(subDir);
 }
 
+void ArduPilotMegaMAV::RequestAutopilotVersion()
+{
+    if (m_firmwareVersion.hasReleaseType()) {
+        return;
+    }
+    mavlink_message_t message;
+    mavlink_msg_command_long_pack(
+        getSystemId(), getComponentId(), &message,
+        getUASID(), MAV_COMP_ID_AUTOPILOT1,
+        MAV_CMD_REQUEST_MESSAGE, 0,
+        MAVLINK_MSG_ID_AUTOPILOT_VERSION,
+        0, 0, 0, 0, 0, 0);
+    sendMessage(message);
+}
+
 /**
  * This function is called by MAVLink once a complete, uncorrupted (CRC check valid)
  * mavlink packet is received.
@@ -186,6 +239,26 @@ void ArduPilotMegaMAV::receiveMessage(LinkInterface* link, mavlink_message_t mes
             //QLOG_DEBUG() << "ARDUPILOT RECEIVED HEARTBEAT";
             break;
         }
+        case MAVLINK_MSG_ID_AUTOPILOT_VERSION:
+        {
+            if (message.compid != MAV_COMP_ID_AUTOPILOT1) {
+                break;
+            }
+            mavlink_autopilot_version_t version;
+            mavlink_msg_autopilot_version_decode(&message, &version);
+            m_firmwareVersion.parseFlightSwVersion(
+                version.flight_sw_version,
+                QByteArray(reinterpret_cast<const char *>(
+                               version.flight_custom_version),
+                           int(sizeof(version.flight_custom_version))),
+                firmwareVehicleType(getSystemType()));
+            if (m_firmwareVersion.isValid()) {
+                m_severityCompatibilityMode =
+                    _isTextSeverityAdjustmentNeeded(m_firmwareVersion);
+                emit versionDetected(m_firmwareVersion.versionString());
+            }
+            break;
+        }
         case MAVLINK_MSG_ID_STATUSTEXT:
         {
             QByteArray b;
@@ -199,12 +272,15 @@ void ArduPilotMegaMAV::receiveMessage(LinkInterface* link, mavlink_message_t mes
 
             if (!messageText.contains(APM_SOLO_REXP)) {
                 if (messageText.contains(APM_COPTER_REXP) || messageText.contains(APM_PLANE_REXP)
-                        || messageText.contains(APM_ROVER_REXP)) {
+                        || messageText.contains(APM_ROVER_REXP)
+                        || messageText.contains(APM_SUB_REXP)) {
                     QLOG_DEBUG() << "APM Version String detected:" << messageText;
                     m_firmwareVersion.parseVersion(messageText);
-                    // Process Version and keep.
-                    m_severityCompatibilityMode = _isTextSeverityAdjustmentNeeded(m_firmwareVersion);
-
+                    // STATUSTEXT supplies the vehicle name needed by the
+                    // legacy severity compatibility check, but never
+                    // overrides a packed AUTOPILOT_VERSION identity.
+                    m_severityCompatibilityMode =
+                        _isTextSeverityAdjustmentNeeded(m_firmwareVersion);
                     emit versionDetected(messageText);
                 }
             }
