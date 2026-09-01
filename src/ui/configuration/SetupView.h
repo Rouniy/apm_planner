@@ -59,6 +59,7 @@ private:
     bool hasConnectedLink() const;
     bool currentPageRequiresParameters() const;
     QWidget *createSerialPage(QWidget *parent);
+    QWidget *createInitialParamsPage(QWidget *parent);
     QList<ConfigFriendlyParameterValue> parameterSnapshot(
         int componentId) const;
 

@@ -45,6 +45,21 @@ This file is part of the QGROUNDCONTROL project
 #include <QMessageBox>
 #include <QApplication>
 
+namespace {
+bool parameterValuesEqual(const QVariant &left, const QVariant &right)
+{
+    bool leftOk = false;
+    bool rightOk = false;
+    const double leftValue = left.toDouble(&leftOk);
+    const double rightValue = right.toDouble(&rightOk);
+    if (leftOk && rightOk) {
+        return leftValue == rightValue
+            || std::abs(leftValue - rightValue) <= 1.0e-6;
+    }
+    return left == right;
+}
+}
+
 /**
  * @param uas MAV to set the parameters on
  * @param parent Parent widget
@@ -612,7 +627,7 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
     {
         justWritten = true;
         expectedWriteValue = map->value(parameterName);
-        if (expectedWriteValue != value)
+        if (!parameterValuesEqual(expectedWriteValue, value))
         {
             writeMismatch = true;
         } else {
@@ -1195,8 +1210,9 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
         transmissionMissingWriteAckPackets.value(component, nullptr);
     const bool replacesPendingWrite = pendingWrites
         && pendingWrites->contains(parameterName)
-        && pendingWrites->value(parameterName) != value;
-    if (parameterList->value(parameterName) == value
+        && !parameterValuesEqual(
+            pendingWrites->value(parameterName), value);
+    if (parameterValuesEqual(parameterList->value(parameterName), value)
         && !replacesPendingWrite)
     {
         statusLabel->setText(tr("REJ. %1 > max").arg(value.toDouble()));
@@ -1205,11 +1221,13 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
         return;
     }
 
+    QVariant sentValue;
     switch (static_cast<QMetaType::Type>(parameterList->value(parameterName).type()))
     {
     case QMetaType::QChar:
     {
         QVariant fixedValue(QChar((unsigned char)value.toInt()));
+        sentValue = fixedValue;
         emit parameterChanged(component, parameterName, fixedValue);
         //QLOG_DEBUG() << "PARAM WIDGET SENT:" << fixedValue;
     }
@@ -1217,6 +1235,7 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
     case QMetaType::Int:
     {
         QVariant fixedValue(value.toInt());
+        sentValue = fixedValue;
         emit parameterChanged(component, parameterName, fixedValue);
         //QLOG_DEBUG() << "PARAM WIDGET SENT:" << fixedValue;
     }
@@ -1224,6 +1243,7 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
     case QMetaType::UInt:
     {
         QVariant fixedValue(value.toUInt());
+        sentValue = fixedValue;
         emit parameterChanged(component, parameterName, fixedValue);
         //QLOG_DEBUG() << "PARAM WIDGET SENT:" << fixedValue;
     }
@@ -1232,6 +1252,7 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
     case QMetaType::Float:
     {
         QVariant fixedValue(value.toFloat());
+        sentValue = fixedValue;
         emit parameterChanged(component, parameterName, fixedValue);
         //QLOG_DEBUG() << "PARAM WIDGET SENT:" << fixedValue;
     }
@@ -1253,7 +1274,8 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
     }
 
     // Insert it in missing write ACK list
-    transmissionMissingWriteAckPackets.value(component)->insert(parameterName, value);
+    transmissionMissingWriteAckPackets.value(component)->insert(
+        parameterName, sentValue);
 
     // Set timeouts
     if (transmissionActive)

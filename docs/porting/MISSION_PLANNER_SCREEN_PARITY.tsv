@@ -86,7 +86,7 @@ CONFIG	GCSViews/ConfigurationView/ConfigAC_FenceView.axaml	src/ui/configuration/
 SETUP	GCSViews/ConfigurationView/ConfigFFTView.axaml		not-started	FFT setup, live/offline analysis and filter suggestion match
 CONFIG	Views/ConfigFFTWindow.cs		not-started	FFT analysis window interaction and export match
 SETUP	GCSViews/ConfigurationView/ConfigDefaultSettingsView.axaml		not-started	Vehicle defaults, selection, diff preview and guarded apply match
-SETUP	GCSViews/ConfigurationView/ConfigInitialParamsView.axaml		not-started	Initial tuning calculator, validation and staged writes match
+SETUP	GCSViews/ConfigurationView/ConfigInitialParamsView.axaml	src/ui/configuration/ConfigInitialParamsView.{h,cpp}; src/ui/configuration/ConfigInitialParamsViewModel.{h,cpp}	in-progress	Qt calculator covers Copter/Plane namespaces, chemistry, T-Motor/Suggested candidates, safe validation and ACK-gated selected live writes; visual cross-platform and live-vehicle validation remain
 CONFIG	GCSViews/ConfigurationView/ConfigPlannerView.axaml	src/ui/QGCSettingsWidget.*	partial	Planner units, speech, map, logs, telemetry rates and UI preferences match
 CONFIG	GCSViews/ConfigurationView/ConfigPlannerAdvView.axaml		not-started	Advanced planner/network/protocol/update settings match; disconnected MAVLinkSettingsWidget is not an equivalent
 SETUP	GCSViews/ConfigurationView/ConfigElevationSourcesView.axaml		not-started	Terrain/elevation source ordering, credentials and cache settings match

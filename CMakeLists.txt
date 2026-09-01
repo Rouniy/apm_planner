@@ -486,6 +486,10 @@ set(SOURCES
     src/ui/configuration/ConfigSerialView.h
     src/ui/configuration/ConfigSerialViewModel.cpp
     src/ui/configuration/ConfigSerialViewModel.h
+    src/ui/configuration/ConfigInitialParamsView.cpp
+    src/ui/configuration/ConfigInitialParamsView.h
+    src/ui/configuration/ConfigInitialParamsViewModel.cpp
+    src/ui/configuration/ConfigInitialParamsViewModel.h
     src/ui/configuration/ConfigPlannerAdvView.cpp
     src/ui/configuration/ConfigPlannerAdvView.h
     src/ui/configuration/ArduCopterPidConfig.cc
@@ -1130,6 +1134,29 @@ if(BUILD_TESTING)
     )
     add_test(NAME configserialview_tests COMMAND configserialview_tests)
     set_tests_properties(configserialview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configinitialparamsview_tests
+        tests/test_configinitialparamsview.cpp
+        src/ui/configuration/ConfigInitialParamsView.cpp
+        src/ui/configuration/ConfigInitialParamsView.h
+        src/ui/configuration/ConfigInitialParamsViewModel.cpp
+        src/ui/configuration/ConfigInitialParamsViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configinitialparamsview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configinitialparamsview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configinitialparamsview_tests
+        COMMAND configinitialparamsview_tests)
+    set_tests_properties(configinitialparamsview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

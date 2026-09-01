@@ -7,6 +7,7 @@
 #include "BatteryMonitorConfig.h"
 #include "CameraGimbalConfig.h"
 #include "CompassConfig.h"
+#include "ConfigInitialParamsView.h"
 #include "ConfigSerialView.h"
 #include "FailSafeConfig.h"
 #include "FlightModeConfig.h"
@@ -41,6 +42,7 @@ const QString kRadioInput = QStringLiteral("ConfigRadioInputView");
 const QString kSerialPorts = QStringLiteral("ConfigSerialView");
 const QString kFlightModes = QStringLiteral("ConfigFlightModesView");
 const QString kFailSafe = QStringLiteral("ConfigFailSafeView");
+const QString kInitialParams = QStringLiteral("ConfigInitialParamsView");
 const QString kOptionalGroup = QStringLiteral("OptionalHardwareGroup");
 const QString kSikRadio = QStringLiteral("SikRadioView");
 const QString kBatteryMonitor = QStringLiteral("ConfigBatteryMonitoringView");
@@ -179,6 +181,15 @@ void SetupView::buildPages()
         kFlightModes, tr("Flight Modes"), true, true));
     m_backstage->addPage(makeBackstagePage<FailSafeConfig>(
         kFailSafe, tr("FailSafe"), true, true));
+    BackstagePage initialParams;
+    initialParams.id = kInitialParams;
+    initialParams.header = tr("Initial Parameters");
+    initialParams.isSub = true;
+    initialParams.requiresConnection = true;
+    initialParams.factory = [this](QWidget *parent) {
+        return createInitialParamsPage(parent);
+    };
+    m_backstage->addPage(initialParams);
 
     m_backstage->addGroup(tr(">> Optional Hardware"), kOptionalGroup);
     m_backstage->addPage(makeBackstagePage<Radio3DRConfig>(
@@ -417,11 +428,11 @@ void SetupView::firmwareVersionDetected(const QString &versionText)
     m_firmwareVersion = normalized;
     m_officialFirmware = official;
 
-    const bool selected = m_backstage->currentPageId() == kSerialPorts;
+    const QString selectedPage = m_backstage->currentPageId();
     m_backstage->resetPage(kSerialPorts);
-    if (selected && m_connected
-        && m_backstage->isPageVisible(kSerialPorts)) {
-        m_backstage->setCurrentPage(kSerialPorts);
+    m_backstage->resetPage(kInitialParams);
+    if (m_connected && m_backstage->isPageVisible(selectedPage)) {
+        m_backstage->setCurrentPage(selectedPage);
     }
 }
 
@@ -440,6 +451,12 @@ void SetupView::refreshPageVisibility()
             && firmwareFamily(m_uas) != ParameterFirmwareFamily::Unknown);
     m_backstage->setPageVisible(kFlightModes, m_connected);
     m_backstage->setPageVisible(kFailSafe, m_connected);
+    const ParameterFirmwareFamily family = firmwareFamily(m_uas);
+    m_backstage->setPageVisible(
+        kInitialParams,
+        m_connected
+            && (family == ParameterFirmwareFamily::ArduCopter
+                || family == ParameterFirmwareFamily::ArduPlane));
 
     m_backstage->setGroupVisible(kOptionalGroup, true);
     m_backstage->setPageVisible(kSikRadio, true);
@@ -596,6 +613,82 @@ QWidget *SetupView::createSerialPage(QWidget *parent)
 
     auto *scroll = new QScrollArea(parent);
     scroll->setObjectName(kSerialPorts);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setWidget(page);
+    return scroll;
+}
+
+QWidget *SetupView::createInitialParamsPage(QWidget *parent)
+{
+    const ParameterFirmwareFamily family = firmwareFamily(m_uas);
+    int firmwareMajor = 0;
+    if (auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data())) {
+        if (apm->getFirmwareVersion().isValid()) {
+            firmwareMajor = apm->getFirmwareVersion().majorNumber();
+        }
+    }
+
+    auto *page = new ConfigInitialParamsView;
+    page->setVehicleContext(
+        family == ParameterFirmwareFamily::ArduPlane, firmwareMajor);
+    page->setParameterSnapshot(
+        parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+        MAV_COMP_ID_AUTOPILOT1);
+    connect(page, &ConfigInitialParamsView::writeToFcRequested,
+            page, [this, page]() {
+        const QStringList available = m_parameterManager
+            ? m_parameterManager->getParameterNames(
+                  MAV_COMP_ID_AUTOPILOT1)
+            : QStringList();
+        page->WriteToFc(available,
+                        m_connected && m_parameterManager);
+    });
+    connect(page, &ConfigInitialParamsView::writeRequested,
+            page, [this, page](int componentId, const QString &name,
+                               const QVariant &value) {
+        if (!m_connected || !m_parameterManager) {
+            page->parameterWriteFailed(componentId, name,
+                                       tr("not connected"));
+            return;
+        }
+        if (!m_parameterManager->getParameterNames(componentId)
+                 .contains(name)) {
+            page->parameterWriteFailed(componentId, name,
+                                       tr("parameter unavailable"));
+            return;
+        }
+        m_parameterManager->setParameter(componentId, name, value);
+    });
+    if (m_uas) {
+        const int expectedUasId = m_uas->getUASID();
+        connect(m_uas,
+                QOverload<int, int, QString, QVariant>::of(
+                    &UASInterface::parameterChanged),
+                page, [page, expectedUasId](int uasId, int componentId,
+                                            const QString &name,
+                                            const QVariant &value) {
+            if (uasId == expectedUasId) {
+                page->parameterChanged(componentId, name, value);
+            }
+        });
+    }
+    if (m_parameterManager) {
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, [this, page](bool ready) {
+            if (ready && m_uas && m_parameterManager
+                && !page->viewModel()->Writing()) {
+                page->setParameterSnapshot(
+                    parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+                    MAV_COMP_ID_AUTOPILOT1);
+            }
+        });
+    }
+
+    auto *scroll = new QScrollArea(parent);
+    scroll->setObjectName(kInitialParams);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
