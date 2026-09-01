@@ -1,258 +1,436 @@
 /*===================================================================
 APM_PLANNER Open Source Ground Control Station
 
-(c) 2023 APM_PLANNER PROJECT <http://www.ardupilot.com>
-
-This file is part of the APM_PLANNER project
-
-    APM_PLANNER is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    APM_PLANNER is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with APM_PLANNER. If not, see <http://www.gnu.org/licenses/>.
-
+This file is part of the APM_PLANNER project and is distributed under
+the terms of the GNU General Public License version 3 or later.
 ======================================================================*/
-/**
- * @file
- *   @brief Droneshare API Query Object
- *
- *   @author Bill Bonney <billbonney@communistech.com>
- *	 @author Arne Wischamnn <wischmann-a@gmx.de>
- */
 
-#include "logging.h"
 #include "AutoUpdateCheck.h"
-#include <QJsonParseError>
-#include <QJsonObject>
-#include <QSettings>
-#include "QGC.h"
+
 #include "configuration.h"
+#include "logging.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QFileInfo>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QRegularExpression>
+#include <QSettings>
+#include <QTimer>
+#include <QVersionNumber>
 
-AutoUpdateCheck::AutoUpdateCheck(QObject *parent) :
-    QObject(parent)
+#define APM_STRINGIFY_DETAIL(value) #value
+#define APM_STRINGIFY(value) APM_STRINGIFY_DETAIL(value)
+
+namespace {
+struct ParsedVersion
 {
+    QVersionNumber number;
+    bool releaseCandidate = false;
+    int releaseCandidateNumber = 0;
+    bool valid = false;
+};
+
+ParsedVersion parseVersion(const QString &value)
+{
+    static const QRegularExpression expression(QStringLiteral(
+        "^\\s*(\\d+)\\.(\\d+)(?:\\.(\\d+))?(?:-?rc(\\d+))?\\s*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = expression.match(value);
+    if (!match.hasMatch()) {
+        return {};
+    }
+
+    ParsedVersion result;
+    result.number = QVersionNumber(match.captured(1).toInt(),
+                                    match.captured(2).toInt(),
+                                    match.captured(3).isEmpty()
+                                        ? 0 : match.captured(3).toInt());
+    result.releaseCandidate = !match.captured(4).isEmpty();
+    result.releaseCandidateNumber = match.captured(4).toInt();
+    result.valid = true;
+    return result;
+}
+
+bool isValidReleaseObject(const QJsonObject &release)
+{
+    const QString urlText = release.value(QStringLiteral("url")).toString().trimmed();
+    const QString name = release.value(QStringLiteral("name")).toString().trimmed();
+    const QUrl url(urlText);
+    return !release.value(QStringLiteral("platform")).toString().trimmed().isEmpty()
+        && !release.value(QStringLiteral("type")).toString().trimmed().isEmpty()
+        && !release.value(QStringLiteral("version")).toString().trimmed().isEmpty()
+        && url.isValid()
+        && url.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0
+        && !url.host().isEmpty()
+        && !name.isEmpty()
+        && name != QStringLiteral(".")
+        && name != QStringLiteral("..")
+        && !name.contains(QLatin1Char('/'))
+        && !name.contains(QLatin1Char('\\'))
+        && QFileInfo(name).fileName() == name;
+}
+}
+
+AutoUpdateCheck::AutoUpdateCheck(QObject *parent)
+    : QObject(parent),
+      m_networkAccessManager(new QNetworkAccessManager(this)),
+      m_timeoutTimer(new QTimer(this))
+{
+    qRegisterMetaType<AutoUpdateCheck::ReleaseChannel>();
+    qRegisterMetaType<AutoUpdateCheck::Presentation>();
+    m_timeoutTimer->setSingleShot(true);
+    m_timeoutTimer->setInterval(60000);
+    connect(m_timeoutTimer, &QTimer::timeout, this, [this]() {
+        if (!m_networkReplyPtr) {
+            return;
+        }
+        QNetworkReply *reply = m_networkReplyPtr.take();
+        disconnect(reply, nullptr, this, nullptr);
+        reply->abort();
+        reply->deleteLater();
+        finishFailure(tr("The update service timed out."));
+    });
     loadSettings();
+}
+
+AutoUpdateCheck::~AutoUpdateCheck() = default;
+
+bool AutoUpdateCheck::checkForUpdates(ReleaseChannel channel,
+                                      Presentation presentation,
+                                      const QUrl &manifestUrl)
+{
+    if (isChecking()) {
+        return false;
+    }
+
+    QUrl url = manifestUrl;
+    if (url.isEmpty()) {
+        url = QUrl(QStringLiteral(APM_UPDATE_MANIFEST_URL));
+    }
+    const bool supportedScheme = url.scheme().compare(
+        QStringLiteral("https"), Qt::CaseInsensitive) == 0
+        || url.isLocalFile();
+    if (!url.isValid() || !supportedScheme) {
+        return false;
+    }
+
+    m_activeChannel = channel;
+    m_activePresentation = presentation;
+    m_activeSuppressNoUpdateSignal = m_suppressNextNoUpdateSignal;
+    m_suppressNextNoUpdateSignal = false;
+    m_redirectCount = 0;
+    m_checking = true;
+
+    emit checkingChanged(true);
+    emit checkStarted(channel, presentation);
+    m_timeoutTimer->start();
+    startRequest(url);
+    return true;
+}
+
+bool AutoUpdateCheck::isChecking() const
+{
+    return m_checking;
+}
+
+AutoUpdateCheck::ReleaseChannel AutoUpdateCheck::configuredReleaseChannel() const
+{
+    return m_releaseChannel;
+}
+
+void AutoUpdateCheck::setConfiguredReleaseChannel(ReleaseChannel channel)
+{
+    if (m_releaseChannel == channel) {
+        return;
+    }
+    m_releaseChannel = channel;
+    writeSettings();
+}
+
+QString AutoUpdateCheck::skippedVersion(ReleaseChannel channel) const
+{
+    return channel == Beta ? m_betaSkipVersion : m_stableSkipVersion;
+}
+
+void AutoUpdateCheck::setSkippedVersion(ReleaseChannel channel,
+                                        const QString &version)
+{
+    if (channel == Beta) {
+        m_betaSkipVersion = version;
+    } else {
+        m_stableSkipVersion = version;
+    }
+    writeSettings();
+}
+
+QString AutoUpdateCheck::releaseChannelName(ReleaseChannel channel)
+{
+    return channel == Beta ? QStringLiteral("beta") : QStringLiteral("stable");
+}
+
+AutoUpdateCheck::ReleaseChannel AutoUpdateCheck::releaseChannelFromString(
+    const QString &value)
+{
+    return value.trimmed().compare(QStringLiteral("beta"), Qt::CaseInsensitive) == 0
+        ? Beta : Stable;
+}
+
+bool AutoUpdateCheck::isVersionNewer(const QString &candidate,
+                                     const QString &current)
+{
+    const ParsedVersion candidateVersion = parseVersion(candidate);
+    const ParsedVersion currentVersion = parseVersion(current);
+    if (!candidateVersion.valid || !currentVersion.valid) {
+        return false;
+    }
+
+    const int numericComparison = QVersionNumber::compare(
+        candidateVersion.number, currentVersion.number);
+    if (numericComparison != 0) {
+        return numericComparison > 0;
+    }
+
+    if (candidateVersion.releaseCandidate != currentVersion.releaseCandidate) {
+        // A final release is newer than an RC with the same numeric version.
+        return !candidateVersion.releaseCandidate;
+    }
+    return candidateVersion.releaseCandidate
+        && candidateVersion.releaseCandidateNumber
+               > currentVersion.releaseCandidateNumber;
+}
+
+AutoUpdateCheck::UpdateSelection AutoUpdateCheck::selectUpdate(
+    const QByteArray &manifest,
+    const QString &platform,
+    ReleaseChannel channel,
+    const QString &currentVersion,
+    const QString &skippedVersion)
+{
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(manifest, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        UpdateSelection invalid;
+        invalid.status = UpdateSelection::InvalidManifest;
+        invalid.error = parseError.error == QJsonParseError::NoError
+            ? tr("The update manifest root is not an object.")
+            : tr("Invalid update manifest: %1").arg(parseError.errorString());
+        return invalid;
+    }
+
+    const QJsonValue releasesValue = document.object().value(
+        QStringLiteral("releases"));
+    if (!releasesValue.isArray()) {
+        UpdateSelection invalid;
+        invalid.status = UpdateSelection::InvalidManifest;
+        invalid.error = tr("The update manifest has no releases array.");
+        return invalid;
+    }
+
+    UpdateSelection best;
+    const QString expectedType = releaseChannelName(channel);
+    for (const QJsonValue &value : releasesValue.toArray()) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject release = value.toObject();
+        if (!isValidReleaseObject(release)) {
+            continue;
+        }
+
+        const QString releasePlatform = release.value(
+            QStringLiteral("platform")).toString().trimmed();
+        const QString releaseType = release.value(
+            QStringLiteral("type")).toString().trimmed().toLower();
+        const QString version = release.value(
+            QStringLiteral("version")).toString().trimmed();
+        if (releasePlatform.compare(platform, Qt::CaseInsensitive) != 0
+            || releaseType != expectedType
+            || !isVersionNewer(version, currentVersion)) {
+            continue;
+        }
+        if (best.status == UpdateSelection::Available
+            && !isVersionNewer(version, best.version)) {
+            continue;
+        }
+
+        best.status = UpdateSelection::Available;
+        best.version = version;
+        best.releaseType = releaseType;
+        best.url = release.value(QStringLiteral("url")).toString().trimmed();
+        best.name = release.value(QStringLiteral("name")).toString().trimmed();
+    }
+
+    if (best.status == UpdateSelection::Available
+        && !skippedVersion.isEmpty()
+        && best.version.compare(skippedVersion, Qt::CaseInsensitive) == 0) {
+        return {};
+    }
+    return best;
 }
 
 void AutoUpdateCheck::forcedAutoUpdateCheck()
 {
     loadSettings();
-    setSkipVersion("0.0.0");
-    autoUpdateCheck();
+    checkForUpdates(m_releaseChannel, Modal);
 }
 
 void AutoUpdateCheck::autoUpdateCheck()
 {
-    QString url(c_AutoUpdateVersionObjectLocation);
-    url.append(c_AutoUpdateVersionObjectName);
-
-    autoUpdateCheck(url);
+    loadSettings();
+    checkForUpdates(m_releaseChannel, Background);
 }
 
 void AutoUpdateCheck::autoUpdateCheck(const QString &url)
 {
-    QLOG_DEBUG() << "Retrieve versionobject from server: " + url;
+    loadSettings();
+    checkForUpdates(m_releaseChannel, Background, QUrl(url));
+}
 
-    m_url = QUrl(url);
-    m_networkReplyPtr.reset(m_networkAccessManager.get(QNetworkRequest(m_url)));
-
-    connect(m_networkReplyPtr.data(), &QNetworkReply::finished, this, &AutoUpdateCheck::httpFinished);
-    //connect(m_networkReplyPtr.data(), QOverload<QNetworkReply::NetworkError>::of(&QNetworkReply::errorOccurred), this, QOverload<QNetworkReply::NetworkError>::of(&AutoUpdateCheck::networkError));
-    connect(m_networkReplyPtr.data(), QOverload<qint64,qint64>::of(&QNetworkReply::downloadProgress), this, QOverload<qint64,qint64>::of(&AutoUpdateCheck::updateDataReadProgress));
+void AutoUpdateCheck::startRequest(const QUrl &url)
+{
+    QLOG_DEBUG() << "Retrieve version object from server:" << url;
+    QNetworkRequest request(url);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 9, 0)
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::ManualRedirectPolicy);
+#endif
+    request.setHeader(
+        QNetworkRequest::UserAgentHeader,
+        QStringLiteral("%1/%2 (Qt updater)")
+            .arg(QStringLiteral(QGC_APPLICATION_NAME),
+                 QStringLiteral(QGC_APPLICATION_VERSION)));
+    m_networkReplyPtr.reset(m_networkAccessManager->get(request));
+    connect(m_networkReplyPtr.data(), &QNetworkReply::finished,
+            this, &AutoUpdateCheck::httpFinished);
+    connect(m_networkReplyPtr.data(), &QNetworkReply::downloadProgress,
+            this, &AutoUpdateCheck::updateDataReadProgress);
 }
 
 void AutoUpdateCheck::cancelDownload()
 {
-    QLOG_INFO() << "AutoUpdateCheck download canceled by user.";
-    m_httpRequestAborted = true;
-    m_networkReplyPtr->abort();
-    m_networkReplyPtr.reset();
+    if (!m_networkReplyPtr) {
+        return;
+    }
+    QNetworkReply *reply = m_networkReplyPtr.take();
+    disconnect(reply, nullptr, this, nullptr);
+    reply->abort();
+    reply->deleteLater();
+    finishFailure(tr("Update check canceled."));
 }
 
 void AutoUpdateCheck::httpFinished()
 {
-    QLOG_DEBUG() << "AutoUpdateCheck::httpFinished()";
-    if (m_httpRequestAborted)
-    {
-        QLOG_DEBUG() << "AutoUpdateCheck was aborted";
-        m_httpRequestAborted = false;
-        return;
-    }
-    if (!m_networkReplyPtr)
-    {
-        QLOG_DEBUG() << "m_networkReplyPtr is null!!";
+    auto *reply = qobject_cast<QNetworkReply *>(sender());
+    if (!reply || reply != m_networkReplyPtr.data()) {
         return;
     }
 
-    QVariant redirectionTarget = m_networkReplyPtr->attribute(QNetworkRequest::RedirectionTargetAttribute);
+    const QNetworkReply::NetworkError networkError = reply->error();
+    const QString networkErrorString = reply->errorString();
+    const QVariant redirect = reply->attribute(
+        QNetworkRequest::RedirectionTargetAttribute);
 
-    // Finished donwloading the version information
-    if (m_networkReplyPtr->error())
-    {
-        QLOG_WARN() << "AutoUpdateCheck::httpFinished() received an error: " << m_networkReplyPtr->errorString();
-    }
-    else if (!redirectionTarget.isNull())
-    {
-        // we have a redirection - disconnect the signals
-        disconnect(m_networkReplyPtr.data(), &QNetworkReply::finished, this, &AutoUpdateCheck::httpFinished);
-        disconnect(m_networkReplyPtr.data(), QOverload<qint64,qint64>::of(&QNetworkReply::downloadProgress), this, QOverload<qint64,qint64>::of(&AutoUpdateCheck::updateDataReadProgress));
-
-        // create new netowrk request
-        QUrl newUrl = m_networkReplyPtr->url().resolved(redirectionTarget.toUrl());
-        QLOG_DEBUG() << "Redirecting to " << newUrl;
-        m_networkReplyPtr.reset(m_networkAccessManager.get(QNetworkRequest(newUrl)));
-        m_httpRequestAborted = false;
-
-        // and connect to new request
-        connect(m_networkReplyPtr.data(), &QNetworkReply::finished, this, &AutoUpdateCheck::httpFinished);
-        connect(m_networkReplyPtr.data(), QOverload<qint64,qint64>::of(&QNetworkReply::downloadProgress), this, QOverload<qint64,qint64>::of(&AutoUpdateCheck::updateDataReadProgress));
+    if (networkError != QNetworkReply::NoError) {
+        m_networkReplyPtr.reset();
+        finishFailure(networkErrorString);
         return;
     }
-    else
-    {
-        // Process downloaded object
-        processDownloadedVersionObject(m_networkReplyPtr->readAll());
+
+    if (!redirect.isNull()) {
+        if (++m_redirectCount > 5) {
+            m_networkReplyPtr.reset();
+            finishFailure(tr("Update check failed: too many redirects."));
+            return;
+        }
+        const QUrl redirectUrl = reply->url().resolved(redirect.toUrl());
+        if (!redirectUrl.isValid()
+            || redirectUrl.scheme().compare(QStringLiteral("https"),
+                                            Qt::CaseInsensitive) != 0
+            || redirectUrl.host().isEmpty()) {
+            m_networkReplyPtr.reset();
+            finishFailure(tr("An update redirect attempted to leave HTTPS."));
+            return;
+        }
+        m_networkReplyPtr.reset();
+        startRequest(redirectUrl);
+        return;
     }
 
-    // the request is not needed anymore
+    const QByteArray manifest = reply->readAll();
     m_networkReplyPtr.reset();
+    const QString platform = QString::fromLatin1(APM_STRINGIFY(APP_PLATFORM));
+    const QString skipped = m_activePresentation == Background
+        ? skippedVersion(m_activeChannel) : QString();
+    const UpdateSelection selection = selectUpdate(
+        manifest, platform, m_activeChannel,
+        QStringLiteral(QGC_APPLICATION_VERSION), skipped);
+    if (selection.status == UpdateSelection::InvalidManifest) {
+        finishFailure(selection.error);
+    } else if (selection.status == UpdateSelection::Available) {
+        finishAvailable(selection);
+    } else {
+        finishNoUpdate();
+    }
 }
 
-void AutoUpdateCheck::processDownloadedVersionObject(const QByteArray& versionObject)
+void AutoUpdateCheck::finishAvailable(const UpdateSelection &selection)
 {
-    QJsonParseError jsonParseError;
-    QJsonDocument jdoc = QJsonDocument::fromJson(versionObject, &jsonParseError);
-    if (jsonParseError.error != QJsonParseError::NoError)
-    {
-        QLOG_ERROR() << "Unable to open json version object: " << jsonParseError.errorString();
-        QLOG_ERROR() << "Error evaluating version object";
-        return;
+    const ReleaseChannel channel = m_activeChannel;
+    const Presentation presentation = m_activePresentation;
+    finishChecking();
+    emit checkAvailable(channel, presentation, selection.version,
+                        selection.releaseType, selection.url, selection.name);
+    if (presentation != Inline) {
+        emit updateAvailable(selection.version, selection.releaseType,
+                             selection.url, selection.name);
     }
+}
 
-    QJsonObject json = jdoc.object();
-    QJsonArray releases = json["releases"].toArray();
-
-    bool foundUpdate = false;
-
-    for (const auto& release : qAsConst(releases))
-    {
-        const QJsonObject& releaseObject = release.toObject();
-        QString platform = releaseObject["platform"].toString();
-        QString type = releaseObject["type"].toString();
-        QString version = releaseObject["version"].toString();
-        QString name = releaseObject["name"].toString();
-        QString locationUrl = releaseObject["url"].toString();
-        QString platt = define2string(APP_PLATFORM);
-
-        if (platform == platt)
-        {
-            if (compareVersionStrings(version,QGC_APPLICATION_VERSION))
-            {
-                foundUpdate = true;
-                QLOG_DEBUG() << "Found New Version: " << platform << " " << type << " " << version << " " << locationUrl;
-                if(m_skipVersion != version)
-                {
-                    emit updateAvailable(version, type, locationUrl, name);
-                } else
-                {
-                    QLOG_INFO() << "Version Skipped at user request";
-                }
-                break;
-            }
-        }
+void AutoUpdateCheck::finishNoUpdate()
+{
+    const ReleaseChannel channel = m_activeChannel;
+    const Presentation presentation = m_activePresentation;
+    const bool suppressLegacy = m_activeSuppressNoUpdateSignal;
+    finishChecking();
+    emit checkNoUpdate(channel, presentation);
+    if (presentation == Modal && !suppressLegacy) {
+        emit noUpdateAvailable();
     }
+}
 
-    if (!foundUpdate)
-    {
-        QLOG_INFO() << "No new update available";
-        if (!m_suppressNoUpdateSignal)
-        {
-            emit noUpdateAvailable();
-        }
-    }
+void AutoUpdateCheck::finishFailure(const QString &reason)
+{
+    const ReleaseChannel channel = m_activeChannel;
+    const Presentation presentation = m_activePresentation;
+    finishChecking();
+    emit checkFailed(channel, presentation, reason);
+}
 
-    m_suppressNoUpdateSignal = false;
+void AutoUpdateCheck::finishChecking()
+{
+    m_timeoutTimer->stop();
+    m_checking = false;
+    m_activeSuppressNoUpdateSignal = false;
+    emit checkingChanged(false);
 }
 
 void AutoUpdateCheck::httpReadyRead()
 {
-
 }
 
 void AutoUpdateCheck::updateDataReadProgress(qint64 bytesRead, qint64 totalBytes)
 {
-    if (m_httpRequestAborted)
-        return;
-    QLOG_DEBUG() << "Downloading:" << bytesRead << "/" << totalBytes;
+    QLOG_DEBUG() << "Downloading update manifest:" << bytesRead << "/" << totalBytes;
 }
 
-bool AutoUpdateCheck::compareVersionStrings(const QString& newVersion, const QString& currentVersion)
+void AutoUpdateCheck::setSkipVersion(const QString &version)
 {
-    int newMajor = 0;
-    int newMinor = 0;
-    int newBuild = 0;
-    int newRc    = 0;
-
-    int currentMajor = 0;
-    int currentMinor = 0;
-    int currentBuild = 0;
-    int currentRc    = 0;
-
-    extractVersion(newVersion, newMajor, newMinor, newBuild, newRc);
-    extractVersion(currentVersion, currentMajor, currentMinor, currentBuild, currentRc);
-
-    QLOG_DEBUG() << "Comparing " <<QString().asprintf("new version %d.%d.%d-rc%d with current Version %d.%d.%d-rc%d",
-                                                             newMajor,newMinor,newBuild,newRc, currentMajor, currentMinor,currentBuild, currentRc);
-    if (newMajor > currentMajor)
-    {
-        // A Major release
-        return true;
-    } else if (newMajor == currentMajor)
-    {
-        if (newMinor > currentMinor)
-        {
-            // A minor release
-            return true;
-        } else if (newMinor ==  currentMinor)
-        {
-            if (newBuild > currentBuild)
-            {
-                // new build (or tiny release)
-                return true;
-            }
-            else if (newBuild == currentBuild)
-            {
-                // Check if RC is newer
-                // If the version isn't newer, it might be a new release candidate
-                if (newRc > currentRc)
-                {
-                    return true;
-                } else if (newRc == 0)
-                {
-                    // 2.0.20 is newer than 2.0.20-rc3
-                    QLOG_DEBUG() << "Stable build newer that last unstable release candidate ";
-                    return true;
-                }
-            }
-        }
-    }
-
-    QLOG_DEBUG() << "Current version is still newest one.";
-    return false;
-}
-
-void AutoUpdateCheck::setSkipVersion(const QString& version)
-{
-    m_skipVersion = version;
-    writeSettings();
+    setSkippedVersion(m_activeChannel, version);
 }
 
 void AutoUpdateCheck::setAutoUpdateEnabled(bool enabled)
@@ -268,62 +446,41 @@ bool AutoUpdateCheck::isUpdateEnabled()
 
 void AutoUpdateCheck::loadSettings()
 {
-    // Load defaults from settings
     QSettings settings;
-    settings.beginGroup("AUTO_UPDATE");
-    m_isAutoUpdateEnabled = settings.value("ENABLED", true).toBool();
-    m_skipVersion = settings.value("SKIP_VERSION", "0.0.0").toString();
-    m_releaseType = settings.value("RELEASE_TYPE", define2string(APP_TYPE)).toString();
+    settings.beginGroup(QStringLiteral("AUTO_UPDATE"));
+    m_isAutoUpdateEnabled = settings.value(
+        QStringLiteral("ENABLED"), true).toBool();
+    const QString legacySkip = settings.value(
+        QStringLiteral("SKIP_VERSION"), QStringLiteral("0.0.0")).toString();
+    m_stableSkipVersion = settings.value(
+        QStringLiteral("SKIP_VERSION_STABLE"), legacySkip).toString();
+    m_betaSkipVersion = settings.value(
+        QStringLiteral("SKIP_VERSION_BETA"), legacySkip).toString();
+    m_releaseChannel = releaseChannelFromString(settings.value(
+        QStringLiteral("RELEASE_TYPE"), QStringLiteral(APM_STRINGIFY(APP_TYPE)))
+                                                    .toString());
     settings.endGroup();
 }
 
 void AutoUpdateCheck::writeSettings()
 {
-    // Store settings
     QSettings settings;
-    settings.beginGroup("AUTO_UPDATE");
-    settings.setValue("ENABLED", m_isAutoUpdateEnabled);
-    settings.setValue("SKIP_VERSION", m_skipVersion);
-    settings.setValue("RELEASE_TYPE", m_releaseType);
+    settings.beginGroup(QStringLiteral("AUTO_UPDATE"));
+    settings.setValue(QStringLiteral("ENABLED"), m_isAutoUpdateEnabled);
+    // Keep the old key during the 3.0 migration while storing channel-specific
+    // choices for Mission Planner-compatible stable/beta behavior.
+    settings.setValue(QStringLiteral("SKIP_VERSION"), m_stableSkipVersion);
+    settings.setValue(QStringLiteral("SKIP_VERSION_STABLE"),
+                      m_stableSkipVersion);
+    settings.setValue(QStringLiteral("SKIP_VERSION_BETA"),
+                      m_betaSkipVersion);
+    settings.setValue(QStringLiteral("RELEASE_TYPE"),
+                      releaseChannelName(m_releaseChannel));
     settings.endGroup();
     settings.sync();
 }
 
 void AutoUpdateCheck::suppressNoUpdateSignal()
 {
-    m_suppressNoUpdateSignal = true;
-}
-
-void AutoUpdateCheck::extractVersion(const QString& versionString, int& major, int& minor, int& build, int& rc)
-{
-    QRegExp versionEx(c_VersionCompareRegEx);
-    int pos = versionEx.indexIn(versionString);
-    if (pos > -1)
-    {
-        // Split first sub-element to get numercal major.minor.build version
-        QLOG_DEBUG() << "parsing version:" << versionEx.capturedTexts();
-        QString version = versionEx.cap(1);
-        QStringList versionList = version.split(".");
-        major = versionList[0].toInt();
-        minor = versionList[1].toInt();
-        if (versionList.size() > 2)
-        {
-            build = versionList[2].toInt();
-        }
-        // second subelement is either rcX candidate or developement build
-        if (versionEx.captureCount() == 2)
-        {
-            QString newBuildSubMoniker = versionEx.cap(2);
-
-            if (newBuildSubMoniker.startsWith("RC", Qt::CaseInsensitive))
-            {
-                QRegExp releaseNumber("\\d+");
-                pos = releaseNumber.indexIn(newBuildSubMoniker);
-                if (pos > -1)
-                {
-                    rc = releaseNumber.cap(0).toInt();
-                }
-            }
-        }
-    }
+    m_suppressNextNoUpdateSignal = true;
 }

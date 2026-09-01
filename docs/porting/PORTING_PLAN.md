@@ -94,6 +94,17 @@ and not hovered. Navigation uses the matching Font Awesome Free glyphs; their
 attribution is kept beside the SVG resources. These are screenshot-test tokens,
 not approximate theme suggestions.
 
+`HelpView` is a real center-stack perspective, separate from the modal About
+dialog. Its stable and beta buttons share one guarded updater instance and must
+always end in available, no-update, or failure state. Release selection is exact
+by platform and channel and independent of manifest order. The legacy unsigned
+download prompt remains transitional: production-equivalent self-update still
+requires an APM Planner 3.0-owned HTTPS manifest, signing key, signed metadata,
+and package hash/size verification before an installer may be executed.
+The Help shortcut list intentionally exposes only commands that are currently
+wired globally; Developer Tools, NMEA Output, and DataFlash Spectrogram remain
+explicit parity work instead of advertising inert shortcuts.
+
 ## QGroundControl-derived communication safety
 
 QGroundControl is the architectural continuation of APM Planner and is the first

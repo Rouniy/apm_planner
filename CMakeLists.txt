@@ -281,6 +281,8 @@ set(SOURCES
     src/ui/FlightDataView.h
     src/ui/FlightPlannerView.cpp
     src/ui/FlightPlannerView.h
+    src/ui/HelpView.cpp
+    src/ui/HelpView.h
     src/ui/docking/DockableView.cpp
     src/ui/docking/DockableView.h
     src/ui/EKFMonitor.cpp
@@ -1084,6 +1086,38 @@ if(BUILD_TESTING)
     set_tests_properties(backstageview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_executable(helpview_tests
+        tests/test_helpview.cpp
+        src/ui/HelpView.cpp
+        src/ui/HelpView.h
+    )
+    target_include_directories(helpview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(helpview_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME helpview_tests COMMAND helpview_tests)
+    set_tests_properties(helpview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(autoupdatecheck_tests
+        tests/test_autoupdatecheck.cpp
+        src/ui/AutoUpdateCheck.cc
+        src/ui/AutoUpdateCheck.h
+    )
+    target_include_directories(autoupdatecheck_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(autoupdatecheck_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::Test
+    )
+    add_test(NAME autoupdatecheck_tests COMMAND autoupdatecheck_tests)
 
     add_executable(dataselectionscreen_tests
         tests/test_dataselectionscreen.cpp

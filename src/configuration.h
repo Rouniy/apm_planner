@@ -32,10 +32,29 @@
 #define APP_TYPE stable // or "daily" for master branch builds
 #endif
 
+// May be overridden by release packaging once the signed 3.0 manifest service
+// is deployed. The project-owned raw manifest keeps development checks from
+// depending on the retired firmware-server root URL.
+#ifndef APM_UPDATE_MANIFEST_URL
+#define APM_UPDATE_MANIFEST_URL \
+    "https://raw.githubusercontent.com/Rouniy/apm_planner/master/apm_planner_version.json"
+#endif
+
 #ifndef APP_PLATFORM
 
 #ifdef Q_OS_MACX
 #define APP_PLATFORM osx
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_64)
+// The published Linux desktop package and update manifest use the historical
+// ubuntu64 identifier. Qt's processor macro is set reliably by every CMake
+// build, unlike the old qmake-only Q_LINUX_64 define.
+#define APP_PLATFORM ubuntu64
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_X86_32)
+#define APP_PLATFORM ubuntu32
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_ARM_64)
+#define APP_PLATFORM linuxarm64
+#elif defined(Q_OS_LINUX) && defined(Q_PROCESSOR_ARM)
+#define APP_PLATFORM linuxarm32
 #elif defined(Q_LINUX_64) && defined(Q_UBUNTU)
 #define APP_PLATFORM ubuntu64
 #elif defined(Q_LINUX_64) && defined(Q_ARCHLINUX)

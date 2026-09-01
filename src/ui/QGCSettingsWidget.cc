@@ -120,7 +120,8 @@ void QGCSettingsWidget::showEvent(QShowEvent *evt)
 
         QSettings settings;
         settings.beginGroup("AUTO_UPDATE");
-        if(!settings.value("RELEASE_TYPE", "stable").toString().contains("stable")){
+        if (settings.value("RELEASE_TYPE", "stable").toString().trimmed()
+                .compare(QStringLiteral("beta"), Qt::CaseInsensitive) == 0) {
             ui->enableBetaReleaseCheckBox->setChecked(true);
         }
         settings.endGroup();

@@ -58,6 +58,7 @@ This file is part of the QGROUNDCONTROL project
 
 #include "FlightDataView.h"
 #include "FlightPlannerView.h"
+#include "HelpView.h"
 #include "docking/DockableView.h"
 #include "MainWindowHeader.h"
 #include "ConfigView.h"
@@ -75,6 +76,7 @@ This file is part of the QGROUNDCONTROL project
 
 #include <QSettings>
 #include <QDockWidget>
+#include <QKeySequence>
 #include <QNetworkInterface>
 #include <QMessageBox>
 #include <QScreen>
@@ -181,6 +183,7 @@ MainWindow::MainWindow(QWidget *parent):
     centerStackActionGroup(new QActionGroup(this)),
     styleFileName(QCoreApplication::applicationDirPath() + "/style-outdoor.css"),
     m_heartbeatEnabled(true),
+    m_dialog(nullptr),
     m_terminalDialog(NULL)
 {
     QLOG_DEBUG() << "Creating MainWindow";
@@ -225,12 +228,57 @@ MainWindow::MainWindow(QWidget *parent):
     applicationShellLayout->addWidget(centerStack, 1);
     setCentralWidget(applicationShell);
 
+    helpViewAction = new QAction(tr("Help"), this);
+    helpViewAction->setObjectName(QStringLiteral("actionHelpView"));
+    helpViewAction->setCheckable(true);
+    ui.menuPerspectives->addAction(helpViewAction);
+
+    // Match the primary Mission Planner 10 navigation shortcuts. More
+    // tool-specific shortcuts are enabled with the corresponding ported tools.
+    ui.actionFlightView->setShortcut(QKeySequence(Qt::Key_F2));
+    ui.actionMissionView->setShortcut(QKeySequence(Qt::Key_F3));
+    ui.actionSoftwareConfig->setShortcut(QKeySequence(Qt::Key_F4));
+    auto *connectionShortcut = new QAction(this);
+    connectionShortcut->setObjectName(QStringLiteral("actionToggleConnection"));
+    connectionShortcut->setShortcut(QKeySequence(Qt::Key_F12));
+    addAction(connectionShortcut);
+    connect(connectionShortcut, &QAction::triggered,
+            m_mainWindowHeader, &MainWindowHeader::toggleConnection);
+
+    auto *refreshParametersShortcut = new QAction(this);
+    refreshParametersShortcut->setObjectName(
+        QStringLiteral("actionRefreshFullParameterList"));
+    refreshParametersShortcut->setShortcut(QKeySequence(Qt::Key_F5));
+    addAction(refreshParametersShortcut);
+    connect(refreshParametersShortcut, &QAction::triggered, this, [this]() {
+        UASInterface *uas = UASManager::instance()->getActiveUAS();
+        if (uas) {
+            uas->requestParameters();
+        } else {
+            showStatusMessage(tr("Connect a vehicle before refreshing parameters."));
+        }
+    });
+
+    auto *saveParametersShortcut = new QAction(this);
+    saveParametersShortcut->setObjectName(
+        QStringLiteral("actionSaveParametersToEeprom"));
+    saveParametersShortcut->setShortcut(QKeySequence(QStringLiteral("Ctrl+Y")));
+    addAction(saveParametersShortcut);
+    connect(saveParametersShortcut, &QAction::triggered, this, [this]() {
+        UASInterface *uas = UASManager::instance()->getActiveUAS();
+        if (uas) {
+            uas->writeParametersToStorage();
+        } else {
+            showStatusMessage(tr("Connect a vehicle before saving parameters."));
+        }
+    });
+
     m_mainWindowHeader->setNavigationActions(ui.actionFlightView,
                                                   ui.actionMissionView,
                                                   ui.actionHardwareConfig,
                                                   ui.actionSoftwareConfig,
                                                   ui.actionSimulation_View,
-                                                  ui.actionAbout_APM_Planner_2_0);
+                                                  helpViewAction);
     m_mainWindowHeader->setToolsMenu(ui.menuTools);
     connect(m_mainWindowHeader, &MainWindowHeader::fullScreenRequested,
             ui.actionFullscreen, &QAction::trigger);
@@ -322,15 +370,70 @@ MainWindow::MainWindow(QWidget *parent):
     ui.actionFirmwareUpdateView->setVisible(false);
     ui.actionUnconnectedView->setVisible(false);
 
-    // Trigger Auto Update Check
-    m_autoUpdateCheck.suppressNoUpdateSignal();
-    if (m_autoUpdateCheck.isUpdateEnabled()) {
-        QTimer::singleShot(5000, &m_autoUpdateCheck, SLOT(autoUpdateCheck()));
-    }
+    // Keep the established modal flow for the menu action and background
+    // notifications, while the Mission Planner Help page receives scoped
+    // inline completion for its explicit stable/beta checks.
     connect(&m_autoUpdateCheck, SIGNAL(updateAvailable(QString,QString,QString,QString)),
             this, SLOT(showAutoUpdateDownloadDialog(QString,QString,QString,QString)));
     connect(&m_autoUpdateCheck, SIGNAL(noUpdateAvailable()),
             this, SLOT(showNoUpdateAvailDialog()));
+    connect(helpView, &HelpView::checkForUpdatesRequested, this, [this]() {
+        if (!m_autoUpdateCheck.checkForUpdates(AutoUpdateCheck::Stable,
+                                               AutoUpdateCheck::Inline)) {
+            helpView->setUpdateCheckInProgress(
+                false, tr("An update check is already in progress."));
+        }
+    });
+    connect(helpView, &HelpView::checkForBetaUpdatesRequested, this, [this]() {
+        if (!m_autoUpdateCheck.checkForUpdates(AutoUpdateCheck::Beta,
+                                               AutoUpdateCheck::Inline)) {
+            helpView->setUpdateCheckInProgress(
+                false, tr("An update check is already in progress."));
+        }
+    });
+    connect(&m_autoUpdateCheck, &AutoUpdateCheck::checkNoUpdate,
+            this, [this](AutoUpdateCheck::ReleaseChannel channel,
+                         AutoUpdateCheck::Presentation presentation) {
+                if (presentation != AutoUpdateCheck::Inline) {
+                    return;
+                }
+                helpView->setUpdateCheckInProgress(
+                    false, channel == AutoUpdateCheck::Beta
+                        ? tr("No new beta update available.")
+                        : tr("No new update available."));
+            });
+    connect(&m_autoUpdateCheck, &AutoUpdateCheck::checkFailed,
+            this, [this](AutoUpdateCheck::ReleaseChannel channel,
+                         AutoUpdateCheck::Presentation presentation,
+                         const QString &reason) {
+                if (presentation != AutoUpdateCheck::Inline) {
+                    if (presentation == AutoUpdateCheck::Modal) {
+                        QMessageBox::warning(
+                            this, tr("Update Check"),
+                            tr("Update check failed: %1").arg(reason));
+                    }
+                    return;
+                }
+                helpView->setUpdateCheckInProgress(
+                    false, channel == AutoUpdateCheck::Beta
+                        ? tr("Beta update check failed: %1").arg(reason)
+                        : tr("Update check failed: %1").arg(reason));
+            });
+    connect(&m_autoUpdateCheck, &AutoUpdateCheck::checkAvailable,
+            this, [this](AutoUpdateCheck::ReleaseChannel,
+                         AutoUpdateCheck::Presentation presentation,
+                         const QString &version, const QString &releaseType,
+                         const QString &url, const QString &name) {
+                if (presentation != AutoUpdateCheck::Inline) {
+                    return;
+                }
+                helpView->setUpdateCheckInProgress(
+                    false, tr("Version %1 is available.").arg(version));
+                showAutoUpdateDownloadDialog(version, releaseType, url, name);
+            });
+    if (m_autoUpdateCheck.isUpdateEnabled()) {
+        QTimer::singleShot(5000, &m_autoUpdateCheck, SLOT(autoUpdateCheck()));
+    }
 
 }
 
@@ -562,6 +665,12 @@ void MainWindow::buildCommonWidgets()
         connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)), configPage, SLOT(advModeChanged(bool)));
     }
 
+    if (!helpView)
+    {
+        helpView = new HelpView(this);
+        addToCentralStackedWidget(helpView, VIEW_HELP, tr("Help"));
+    }
+
      AP2DataPlot2D *plot = NULL;
     if (!engineeringView)
     {
@@ -648,6 +757,7 @@ void MainWindow::buildCommonWidgets()
 
     { //This is required since we disabled the only existing parent window for the MAVLink Inspector
         QAction* tempAction = ui.menuTools->addAction(tr("MAVLink Inspector"));
+        tempAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+I")));
         tempAction->setCheckable(true);
         connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
         menuToDockNameMap[tempAction] = "MAVLINK_INSPECTOR_DOCKWIDGET";
@@ -1656,6 +1766,7 @@ void MainWindow::connectCommonActions()
     //perspectives->addAction(ui.actionConfiguration_2);
     perspectives->addAction(ui.actionHardwareConfig);
     perspectives->addAction(ui.actionSoftwareConfig);
+    perspectives->addAction(helpViewAction);
     //perspectives->addAction(ui.actionFirmwareUpdateView);
     perspectives->addAction(ui.actionTerminalView);
     //perspectives->addAction(ui.actionUnconnectedView);
@@ -1696,6 +1807,11 @@ void MainWindow::connectCommonActions()
     {
         ui.actionSoftwareConfig->setChecked(true);
         ui.actionSoftwareConfig->activate(QAction::Trigger);
+    }
+    if (currentView == VIEW_HELP)
+    {
+        helpViewAction->setChecked(true);
+        helpViewAction->activate(QAction::Trigger);
     }
     if (currentView == VIEW_FIRMWAREUPDATE)
     {
@@ -1758,6 +1874,7 @@ void MainWindow::connectCommonActions()
     connect(ui.actionUnconnectedView, SIGNAL(triggered()), this, SLOT(loadUnconnectedView()));
     connect(ui.actionHardwareConfig,SIGNAL(triggered()),this,SLOT(loadHardwareConfigView()));
     connect(ui.actionSoftwareConfig,SIGNAL(triggered()),this,SLOT(loadSoftwareConfigView()));
+    connect(helpViewAction, &QAction::triggered, this, &MainWindow::loadHelpView);
     connect(ui.actionTerminalView,SIGNAL(triggered()),this,SLOT(loadTerminalView()));
 
     connect(ui.actionFirmwareUpdateView, SIGNAL(triggered()), this, SLOT(loadFirmwareUpdateView()));
@@ -2267,6 +2384,9 @@ void MainWindow::loadViewState()
         case VIEW_SOFTWARE_CONFIG:
             centerStack->setCurrentWidget(softwareConfigView);
             break;
+        case VIEW_HELP:
+            centerStack->setCurrentWidget(helpView);
+            break;
         case VIEW_ENGINEER:
             centerStack->setCurrentWidget(engineeringView);
             break;
@@ -2390,6 +2510,17 @@ void MainWindow::loadSoftwareConfigView()
     }
 }
 
+void MainWindow::loadHelpView()
+{
+    if (currentView != VIEW_HELP)
+    {
+        storeViewState();
+        currentView = VIEW_HELP;
+        helpViewAction->setChecked(true);
+        loadViewState();
+    }
+}
+
 void MainWindow::loadTerminalView()
 {
     if (currentView != VIEW_TERMINAL)
@@ -2506,18 +2637,34 @@ void MainWindow::showAutoUpdateDownloadDialog(QString version, QString releaseTy
     QLOG_DEBUG() << "Update Available! Show Update Dialog";
     QLOG_DEBUG() << "Ver:" << version << "type:" << releaseType;
 
-    m_dialog = new AutoUpdateDialog(version, name, url, this);
-    connect(m_dialog, SIGNAL(autoUpdateCancelled(QString)), this, SLOT(autoUpdateCancelled(QString)));
-    m_dialog->show();
-}
-
-void MainWindow::autoUpdateCancelled(QString version)
-{
-    QLOG_DEBUG() << "autoUpdateCancelled";
-    m_autoUpdateCheck.setSkipVersion(version);
-
-    delete m_dialog;
-    m_dialog = NULL;
+    if (m_dialog) {
+        m_dialog->raise();
+        m_dialog->activateWindow();
+        return;
+    }
+    auto *dialog = new AutoUpdateDialog(version, name, url, this);
+    m_dialog = dialog;
+    const AutoUpdateCheck::ReleaseChannel channel =
+        AutoUpdateCheck::releaseChannelFromString(releaseType);
+    connect(dialog, &AutoUpdateDialog::autoUpdateCancelled,
+            this, [this, dialog, channel](const QString &skippedVersion) {
+                m_autoUpdateCheck.setSkippedVersion(channel, skippedVersion);
+                dialog->deleteLater();
+                if (m_dialog == dialog) {
+                    m_dialog = nullptr;
+                }
+            });
+    connect(dialog, &QDialog::finished, this, [this, dialog]() {
+        if (m_dialog == dialog) {
+            m_dialog = nullptr;
+        }
+    });
+    connect(dialog, &QObject::destroyed, this, [this, dialog]() {
+        if (m_dialog == dialog) {
+            m_dialog = nullptr;
+        }
+    });
+    dialog->show();
 }
 
 void MainWindow::showNoUpdateAvailDialog()

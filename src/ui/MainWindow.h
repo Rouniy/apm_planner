@@ -72,6 +72,7 @@ class QGCStatusBar;
 class DockableView;
 class FlightDataView;
 class FlightPlannerView;
+class HelpView;
 
 /**
  * @brief The LogWindowSingleton class is a helper class providing
@@ -211,6 +212,8 @@ public slots:
     /** @brief Load configuration views */
     void loadHardwareConfigView();
     void loadSoftwareConfigView();
+    /** @brief Load the Mission Planner-style application help surface */
+    void loadHelpView();
     /** @brief Load default view when no MAV is connected */
     void loadUnconnectedView();
     /** @brief Load view for pilot */
@@ -340,7 +343,8 @@ protected:
         VIEW_3DWIDGET,
         VIEW_GOOGLEEARTH,
         VIEW_UNCONNECTED,    ///< View in unconnected mode, when no UAS is available
-        VIEW_FULL            ///< All widgets shown at once
+        VIEW_FULL,           ///< All widgets shown at once
+        VIEW_HELP
     } VIEW_SECTIONS;
 
     /**
@@ -407,6 +411,8 @@ protected:
     // Center widgets
     QPointer<FlightPlannerView> plannerView;
     QPointer<FlightDataView> pilotView;
+    QPointer<HelpView> helpView;
+    QPointer<QAction> helpViewAction;
     QPointer<SubMainWindow> configView;
     QPointer<SubMainWindow> softwareConfigView;
     QPointer<SubMainWindow> mavlinkView;
@@ -507,7 +513,6 @@ protected:
 
 private slots:
     void showAutoUpdateDownloadDialog(QString version, QString releaseType, QString url, QString name);
-    void autoUpdateCancelled(QString version);
     void showNoUpdateAvailDialog();
 
     void showTerminalConsole();

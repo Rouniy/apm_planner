@@ -8,6 +8,9 @@ class QAction;
 class QButtonGroup;
 class QCheckBox;
 class QComboBox;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+class QEnterEvent;
+#endif
 class QLabel;
 class QMenu;
 class QProgressBar;
@@ -43,6 +46,7 @@ public:
 
 public slots:
     void setAutoHideEnabled(bool enabled);
+    void toggleConnection();
 
 signals:
     void configureLinkRequested(int linkId);
@@ -50,14 +54,17 @@ signals:
     void fullScreenRequested();
 
 protected:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    void enterEvent(QEnterEvent *event) override;
+#else
     void enterEvent(QEvent *event) override;
+#endif
     void leaveEvent(QEvent *event) override;
 
 private slots:
     void refreshLinks();
     void updateCurrentLink();
     void applyBaudRate();
-    void toggleConnection();
     void rebuildVehicleList();
     void activeVehicleChanged(UASInterface *uas);
 

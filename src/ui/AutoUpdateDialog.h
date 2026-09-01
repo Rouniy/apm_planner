@@ -68,6 +68,9 @@ private:
     QNetworkReply* m_networkReply;
     QFile* m_targetFile;
     bool m_httpRequestAborted;
+    bool m_writeFailed;
+    QString m_writeError;
+    int m_redirectCount;
     bool m_skipVersion;
     QString m_skipVersionString;
 };
