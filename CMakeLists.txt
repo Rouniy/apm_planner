@@ -328,6 +328,12 @@ set(SOURCES
     src/ui/flightdata/HudControl.h
     src/ui/flightplanner/FlightPlannerMissionModel.cpp
     src/ui/flightplanner/FlightPlannerMissionModel.h
+    src/ui/flightplanner/FlightPlannerActionPanel.cpp
+    src/ui/flightplanner/FlightPlannerActionPanel.h
+    src/ui/flightplanner/FlightPlannerViewModel.cpp
+    src/ui/flightplanner/FlightPlannerViewModel.h
+    src/ui/flightplanner/FlightPlannerWaypointPanel.cpp
+    src/ui/flightplanner/FlightPlannerWaypointPanel.h
     src/ui/flightplanner/WpRow.cpp
     src/ui/flightplanner/WpRow.h
     src/ui/FlightPlannerView.cpp
@@ -1467,6 +1473,58 @@ if(BUILD_TESTING)
     )
     add_test(NAME flightplannermissionmodel_tests
              COMMAND flightplannermissionmodel_tests)
+
+    add_executable(flightplannerviewmodel_tests
+        tests/test_flightplannerviewmodel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.h
+        src/ui/flightplanner/FlightPlannerViewModel.cpp
+        src/ui/flightplanner/FlightPlannerViewModel.h
+        src/ui/flightplanner/WpRow.cpp
+        src/ui/flightplanner/WpRow.h
+    )
+    target_include_directories(flightplannerviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(flightplannerviewmodel_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightplannerviewmodel_tests
+             COMMAND flightplannerviewmodel_tests)
+
+    add_executable(flightplannerwaypointpanel_tests
+        tests/test_flightplannerwaypointpanel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.h
+        src/ui/flightplanner/FlightPlannerViewModel.cpp
+        src/ui/flightplanner/FlightPlannerViewModel.h
+        src/ui/flightplanner/FlightPlannerWaypointPanel.cpp
+        src/ui/flightplanner/FlightPlannerWaypointPanel.h
+        src/ui/flightplanner/WpRow.cpp
+        src/ui/flightplanner/WpRow.h
+    )
+    target_include_directories(flightplannerwaypointpanel_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(flightplannerwaypointpanel_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME flightplannerwaypointpanel_tests
+             COMMAND flightplannerwaypointpanel_tests)
+    set_tests_properties(flightplannerwaypointpanel_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     if(APM_ENABLE_KDDOCKWIDGETS)
         add_executable(kddockwidgets_vendor_tests

@@ -3,7 +3,10 @@
 
 #include <QMap>
 #include <QTimer>
+#include <QVector>
 #include "../../../libs/opmapcontrol/opmapcontrol.h"
+#include "../flightplanner/FlightPlannerMissionModel.h"
+#include "../flightplanner/WpRow.h"
 
 class UASInterface;
 class UASWaypointManager;
@@ -32,14 +35,23 @@ public:
     int getTrailType() { return static_cast<int>(trailType); }
     /** @brief Get the trail interval */
     float getTrailInterval() { return trailInterval; }
+    bool missionPlanningEnabled() const { return m_missionPlanningEnabled; }
 
 signals:
     void homePositionChanged(double latitude, double longitude, double altitude);
     /** @brief Signal for newly created map waypoints */
     void waypointCreated(Waypoint* wp);
     void waypointChanged(Waypoint* wp);
+    void plannerCoordinateRequested(double latitude, double longitude);
+    void plannerWaypointMoved(int seq, double latitude, double longitude);
 
 public slots:
+    void setMissionPlanningEnabled(bool enabled);
+    void setPlannerRows(const QVector<WpRowData> &rows,
+                        FlightPlannerMissionModel::MissionStore store);
+    void setPlannerHome(double latitude, double longitude, double altitude);
+    void clearPlannerHome();
+    void setPlannerSelection(int seq);
     /** @brief Action triggered with point-camera action is selected from the context menu */
     void cameraActionTriggered();
     /** @brief Action triggered when guided action is selected from the context menu */
@@ -136,6 +148,12 @@ protected slots:
 private:
     void sendGuidedAction(Waypoint *wp, double alt);
     bool isValidGpsLocation(UASInterface* system) const;
+    void rebuildPlannerGraphics();
+    void clearPlannerGraphics();
+    void clearPlannerLines();
+    void redrawPlannerLines();
+    void updateLegacyWaypointVisibility();
+    QColor plannerColor() const;
 
     void shiftOtherSelectedWaypoints(mapcontrol::WayPointItem* selectedWaypoint,
                                      double shiftLong, double shiftLat);
@@ -182,6 +200,21 @@ protected:
     double m_lastZoom;
     double m_lastLat;
     double m_lastLon;
+
+    bool m_missionPlanningEnabled = false;
+    bool m_plannerGraphicsUpdate = false;
+    bool m_plannerHomeValid = false;
+    double m_plannerHomeLatitude = 0.0;
+    double m_plannerHomeLongitude = 0.0;
+    double m_plannerHomeAltitude = 0.0;
+    int m_plannerSelection = -1;
+    QVector<WpRowData> m_plannerRows;
+    FlightPlannerMissionModel::MissionStore m_plannerStore =
+            FlightPlannerMissionModel::MissionStore::Mission;
+    QMap<int, mapcontrol::WayPointItem*> m_plannerIcons;
+    QMap<mapcontrol::WayPointItem*, int> m_plannerIconSequences;
+    mapcontrol::WayPointItem *m_plannerHomeIcon = nullptr;
+    QGraphicsItemGroup *m_plannerLineGroup = nullptr;
 
 };
 

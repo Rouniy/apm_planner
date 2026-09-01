@@ -73,6 +73,8 @@ class QGCStatusBar;
 class DockableView;
 class FlightDataView;
 class FlightPlannerView;
+class FlightPlannerViewModel;
+class QGCMapTool;
 class HelpView;
 
 /**
@@ -417,6 +419,8 @@ protected:
 
     // Center widgets
     QPointer<FlightPlannerView> plannerView;
+    QPointer<FlightPlannerViewModel> plannerViewModel;
+    QPointer<QGCMapTool> plannerMapTool;
     QPointer<FlightDataView> pilotView;
     QPointer<HelpView> helpView;
     QPointer<QAction> helpViewAction;

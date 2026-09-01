@@ -418,6 +418,42 @@ bool WpRow::commandForName(const QString &name, quint16 *command)
     return true;
 }
 
+bool WpRow::CommandHasLocation(quint16 command)
+{
+    // MAVLink's generated C enum does not retain the hasLocation metadata.
+    // Keep the map-facing subset explicit and covered by tests. The values
+    // follow the common/ArduPilot MAVLink dialect used to build this binary.
+    static constexpr std::array<quint16, 43> commands{{
+        16, 17, 18, 19, 21, 22, 23, 24, 25, 31,
+        80, 81, 82, 84, 85, 94, 179, 188, 189, 192,
+        195, 201, 4001, 4501, 5000, 5001, 5002, 5003, 5004, 5100,
+        30001, 31000, 31001, 31002, 31003, 31004, 31005, 31006,
+        31007, 31008, 31009, 42006, 43003,
+    }};
+    return std::find(commands.cbegin(), commands.cend(), command)
+        != commands.cend();
+}
+
+bool WpRow::CommandIsFlightPath(quint16 command)
+{
+    static constexpr std::array<quint16, 21> commands{{
+        16, 17, 18, 19, 21, 22, 23, 24, 31, 81, 82,
+        84, 85, 94, 192, 30001, 31000, 31001, 31002, 31003, 31004,
+    }};
+    return std::find(commands.cbegin(), commands.cend(), command)
+        != commands.cend();
+}
+
+bool WpRow::FrameHasGlobalLocation(quint8 frame)
+{
+    return frame == MAV_FRAME_GLOBAL
+        || frame == MAV_FRAME_GLOBAL_RELATIVE_ALT
+        || frame == MAV_FRAME_GLOBAL_INT
+        || frame == MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
+        || frame == MAV_FRAME_GLOBAL_TERRAIN_ALT
+        || frame == MAV_FRAME_GLOBAL_TERRAIN_ALT_INT;
+}
+
 QStringList WpRow::FrameList()
 {
     return {QStringLiteral("Relative"), QStringLiteral("Absolute"),
@@ -468,7 +504,8 @@ WPROW_DOUBLE_SETTER(P4, P4, p4Changed)
 
 void WpRow::setLat(double value)
 {
-    if (m_data.Lat == value || !std::isfinite(value)) return;
+    if (m_data.Lat == value || !std::isfinite(value)
+        || value < -90.0 || value > 90.0) return;
     m_data.Lat = value;
     emit latChanged(value);
     recomputeCoordinates();
@@ -477,7 +514,8 @@ void WpRow::setLat(double value)
 
 void WpRow::setLng(double value)
 {
-    if (m_data.Lng == value || !std::isfinite(value)) return;
+    if (m_data.Lng == value || !std::isfinite(value)
+        || value < -180.0 || value > 180.0) return;
     m_data.Lng = value;
     emit lngChanged(value);
     recomputeCoordinates();

@@ -63,6 +63,11 @@ QGCMapTool::~QGCMapTool()
     delete ui;
 }
 
+QGCMapWidget *QGCMapTool::mapWidget() const
+{
+    return ui->map;
+}
+
 void QGCMapTool::activeUASSet(UASInterface *uasInterface)
 {
     QLOG_INFO() << "QGCMapTool::activeUASSet";

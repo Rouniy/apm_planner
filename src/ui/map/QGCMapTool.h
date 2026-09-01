@@ -2,6 +2,7 @@
 #define QGCMAPTOOL_H
 
 class UASInterface;
+class QGCMapWidget;
 #include <QWidget>
 #include <QMenu>
 #include <QTimer>
@@ -17,6 +18,7 @@ class QGCMapTool : public QWidget
 public:
     explicit QGCMapTool(QWidget *parent = 0);
     ~QGCMapTool();
+    QGCMapWidget *mapWidget() const;
 
 public slots:
     void setMapZoom(int zoom);

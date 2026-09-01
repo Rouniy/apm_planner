@@ -90,6 +90,9 @@ public:
     static QStringList CommandList();
     static QString CommandNameFor(quint16 command);
     static bool commandForName(const QString &name, quint16 *command);
+    static bool CommandHasLocation(quint16 command);
+    static bool CommandIsFlightPath(quint16 command);
+    static bool FrameHasGlobalLocation(quint8 frame);
     static QStringList FrameList();
 
 public slots:

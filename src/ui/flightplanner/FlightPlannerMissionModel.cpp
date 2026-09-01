@@ -87,8 +87,26 @@ bool FlightPlannerMissionModel::setData(const QModelIndex &index,
     case P2Column: return setDouble(&WpRow::setP2);
     case P3Column: return setDouble(&WpRow::setP3);
     case P4Column: return setDouble(&WpRow::setP4);
-    case LatColumn: return setDouble(&WpRow::setLat);
-    case LngColumn: return setDouble(&WpRow::setLng);
+    case LatColumn: {
+        bool ok = false;
+        const double latitude = value.toDouble(&ok);
+        if (!ok || !std::isfinite(latitude)
+            || latitude < -90.0 || latitude > 90.0) {
+            return false;
+        }
+        row->setLat(latitude);
+        return true;
+    }
+    case LngColumn: {
+        bool ok = false;
+        const double longitude = value.toDouble(&ok);
+        if (!ok || !std::isfinite(longitude)
+            || longitude < -180.0 || longitude > 180.0) {
+            return false;
+        }
+        row->setLng(longitude);
+        return true;
+    }
     case AltColumn: return setDouble(&WpRow::setAltDisplay);
     case FrameColumn:
         if (value.userType() == QMetaType::QString) {

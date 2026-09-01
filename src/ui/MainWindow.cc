@@ -39,6 +39,7 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCTabbedInfoView.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCMapTool.h"
+#include "QGCMapWidget.h"
 #include "QGCStatusBar.h"
 #include "QGCWaypointListMulti.h"
 #include "ParameterInterface.h"
@@ -60,6 +61,9 @@ This file is part of the QGROUNDCONTROL project
 #include "flightdata/FlightDataViewModel.h"
 #include "flightdata/HudControl.h"
 #include "FlightPlannerView.h"
+#include "flightplanner/FlightPlannerActionPanel.h"
+#include "flightplanner/FlightPlannerViewModel.h"
+#include "flightplanner/FlightPlannerWaypointPanel.h"
 #include "HelpView.h"
 #include "docking/DockableView.h"
 #include "MainWindowHeader.h"
@@ -663,7 +667,11 @@ void MainWindow::buildCommonWidgets()
                     QLOG_WARN() << "FlightPlannerView layout reset:" << reason;
                     showStatusMessage(tr("PLAN layout was reset: %1").arg(reason));
                 });
-        plannerView->setMapWidget(new QGCMapTool(this));
+        plannerViewModel = new FlightPlannerViewModel(plannerView);
+        plannerMapTool = new QGCMapTool(plannerView);
+        plannerMapTool->setObjectName(QStringLiteral("PlannerMap"));
+        plannerMapTool->mapWidget()->setMissionPlanningEnabled(true);
+        plannerView->setMapWidget(plannerMapTool);
         addToCentralStackedWidget(plannerView, VIEW_MISSION, "Maps");
     }
 
@@ -746,21 +754,72 @@ void MainWindow::buildCommonWidgets()
     connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
 
     createDockWidget(simView,new UASControlWidget(this),tr("Control"),"UNMANNED_SYSTEM_CONTROL_DOCKWIDGET",VIEW_SIMULATION,Qt::LeftDockWidgetArea);
-    auto *plannerWaypointPanel = new QGCWaypointListMulti(this);
-    if (plannerView->setWaypointPanel(plannerWaypointPanel)) {
-        registerDockablePanel(plannerView, VIEW_MISSION,
-                              FlightPlannerView::waypointPanelId(),
-                              tr("Waypoints"), plannerWaypointPanel);
-    }
-    // Transitional content: the dedicated Mission Planner 10 planning actions
-    // are ported into this stable ActionPanel surface route by route.
-    auto *plannerActionPanel = new UASListWidget(this);
+    auto *plannerActionPanel = new FlightPlannerActionPanel(
+        plannerViewModel, plannerView);
     if (plannerView->setActionPanel(plannerActionPanel)) {
         plannerActionPanel->show();
         registerDockablePanel(plannerView, VIEW_MISSION,
                               FlightPlannerView::actionPanelId(),
                               tr("Actions"), plannerActionPanel);
     }
+    auto *plannerWaypointPanel = new FlightPlannerWaypointPanel(
+        plannerViewModel, plannerView);
+    if (plannerView->setWaypointPanel(plannerWaypointPanel)) {
+        registerDockablePanel(plannerView, VIEW_MISSION,
+                              FlightPlannerView::waypointPanelId(),
+                              tr("Waypoints"), plannerWaypointPanel);
+    }
+
+    QGCMapWidget *plannerMap = plannerMapTool->mapWidget();
+    const auto refreshPlannerMap = [this, plannerMap]() {
+        if (!plannerViewModel || !plannerMap) return;
+        FlightPlannerMissionModel *model = plannerViewModel->Waypoints();
+        const auto store = model->missionStore();
+        plannerMap->setPlannerRows(model->rows(store), store);
+    };
+    const auto refreshPlannerHome = [this, plannerMap]() {
+        if (!plannerViewModel || !plannerMap) return;
+        if (plannerViewModel->HomeValid()) {
+            plannerMap->setPlannerHome(plannerViewModel->HomeLat(),
+                                       plannerViewModel->HomeLng(),
+                                       plannerViewModel->HomeAlt());
+        } else {
+            plannerMap->clearPlannerHome();
+        }
+    };
+    connect(plannerViewModel->Waypoints(),
+            &FlightPlannerMissionModel::rowsChanged, plannerView,
+            [refreshPlannerMap](FlightPlannerMissionModel::MissionStore) {
+                refreshPlannerMap();
+            });
+    connect(plannerViewModel,
+            &FlightPlannerViewModel::missionTypeChanged, plannerView,
+            [refreshPlannerMap](const QString &) { refreshPlannerMap(); });
+    connect(plannerViewModel, &FlightPlannerViewModel::homeLatChanged,
+            plannerView, [refreshPlannerHome](double) { refreshPlannerHome(); });
+    connect(plannerViewModel, &FlightPlannerViewModel::homeLngChanged,
+            plannerView, [refreshPlannerHome](double) { refreshPlannerHome(); });
+    connect(plannerViewModel, &FlightPlannerViewModel::homeAltChanged,
+            plannerView, [refreshPlannerHome](double) { refreshPlannerHome(); });
+    connect(plannerViewModel, &FlightPlannerViewModel::homeValidChanged,
+            plannerView, [refreshPlannerHome](bool) { refreshPlannerHome(); });
+    connect(plannerMap, &QGCMapWidget::plannerCoordinateRequested,
+            plannerViewModel,
+            qOverload<double, double>(&FlightPlannerViewModel::AddWaypointAt));
+    connect(plannerMap, &QGCMapWidget::plannerWaypointMoved,
+            plannerViewModel,
+            [this](int sequence, double latitude, double longitude) {
+                if (!plannerViewModel) return;
+                WpRow *row = plannerViewModel->Waypoints()->rowAt(sequence);
+                if (!row) return;
+                row->setLat(latitude);
+                row->setLng(longitude);
+            }, Qt::QueuedConnection);
+    connect(plannerWaypointPanel,
+            &FlightPlannerWaypointPanel::selectedWaypointChanged,
+            plannerMap, &QGCMapWidget::setPlannerSelection);
+    refreshPlannerHome();
+    refreshPlannerMap();
 
     {   // Widget that shows the elevation changes over a mission.
         QAction* tempAction = ui.menuTools->addAction(tr("Mission Elevation"));

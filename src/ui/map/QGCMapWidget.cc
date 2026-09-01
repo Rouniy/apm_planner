@@ -9,7 +9,19 @@
 #include "UASWaypointManager.h"
 #include "ArduPilotMegaMAV.h"
 #include "WaypointNavigation.h"
+#include <QGraphicsPathItem>
 #include <QInputDialog>
+#include <QtMath>
+
+namespace
+{
+bool isPlannerCoordinateValid(double latitude, double longitude)
+{
+    return qIsFinite(latitude) && qIsFinite(longitude)
+            && latitude >= -90.0 && latitude <= 90.0
+            && longitude >= -180.0 && longitude <= 180.0;
+}
+}
 
 QGCMapWidget::QGCMapWidget(QWidget *parent) :
     mapcontrol::OPMapWidget(parent),
@@ -25,11 +37,16 @@ QGCMapWidget::QGCMapWidget(QWidget *parent) :
 {
     currWPManager = UASManager::instance()->getActiveUASWaypointManager();
     waypointLines.insert(0, new QGraphicsItemGroup(map));
+    m_plannerLineGroup = new QGraphicsItemGroup(map);
+    m_plannerLineGroup->setZValue(2.0);
+    m_plannerLineGroup->setVisible(false);
     connect(currWPManager, SIGNAL(waypointEditableListChanged(int)), this, SLOT(updateWaypointList(int)));
     connect(currWPManager, SIGNAL(waypointEditableChanged(int, Waypoint*)), this, SLOT(updateWaypoint(int,Waypoint*)));
     connect(this, SIGNAL(waypointCreated(Waypoint*)), currWPManager, SLOT(addWaypointEditable(Waypoint*)));
     connect(this, SIGNAL(waypointChanged(Waypoint*)), currWPManager, SLOT(notifyOfChangeEditable(Waypoint*)));
     connect(map, SIGNAL(mapChanged()), this, SLOT(redrawWaypointLines()));
+    connect(map, &mapcontrol::MapGraphicItem::mapChanged,
+            this, &QGCMapWidget::redrawPlannerLines);
     offlineMode = true;
     // Widget is inactive until shown
     defaultGuidedRelativeAlt = 100.0; // Default set to 100m
@@ -204,6 +221,9 @@ void QGCMapWidget::mouseReleaseEvent(QMouseEvent *event)
 
 QGCMapWidget::~QGCMapWidget()
 {
+    clearPlannerGraphics();
+    delete m_plannerLineGroup;
+    m_plannerLineGroup = nullptr;
     SetShowHome(false);	// doing this appears to stop the map lib crashing on exit
     SetShowUAV(false);	//   "          "
     storeSettings();
@@ -218,9 +238,9 @@ void QGCMapWidget::showEvent(QShowEvent* event)
     // Pass on to parent widget
     OPMapWidget::showEvent(event);
 
-
-
-    internals::PointLatLng pos_lat_lon = internals::PointLatLng(m_lastLat, m_lastLon);
+    const internals::PointLatLng pos_lat_lon(m_lastLat, m_lastLon);
+    if (m_missionPlanningEnabled)
+        SetShowHome(false);
 
     if (!mapInitialized)
     {
@@ -237,16 +257,20 @@ void QGCMapWidget::showEvent(QShowEvent* event)
         SetMouseWheelZoomType(internals::MouseWheelZoomType::MousePositionWithoutCenter);	    // set how the mouse wheel zoom functions
         SetFollowMouse(true);				    // we want a contiuous mouse position reading
 
-        SetShowHome(true);					    // display the HOME position on the map
-        Home->SetSafeArea(0);                         // set radius (meters)
-        Home->SetShowSafeArea(false);                                         // show the safe area
-        Home->SetCoord(pos_lat_lon);             // set the HOME position
-
         setFrameStyle(QFrame::NoFrame);      // no border frame
         setBackgroundBrush(QBrush(Qt::black)); // tile background
 
-        // Set current home position
-        updateHomePosition(UASManager::instance()->getHomeLatitude(), UASManager::instance()->getHomeLongitude(), UASManager::instance()->getHomeAltitude());
+        if (m_missionPlanningEnabled)
+        {
+            SetShowHome(false);
+        }
+        else
+        {
+            // Set current home position
+            updateHomePosition(UASManager::instance()->getHomeLatitude(),
+                               UASManager::instance()->getHomeLongitude(),
+                               UASManager::instance()->getHomeAltitude());
+        }
 
         // Set currently selected system
         activeUASSet(UASManager::instance()->getActiveUAS());
@@ -362,8 +386,298 @@ void QGCMapWidget::refreshGlobalMapType()
     }
 }
 
+void QGCMapWidget::setMissionPlanningEnabled(bool enabled)
+{
+    if (m_missionPlanningEnabled == enabled)
+    {
+        updateLegacyWaypointVisibility();
+        if (enabled)
+            redrawPlannerLines();
+        return;
+    }
+
+    m_missionPlanningEnabled = enabled;
+    updateLegacyWaypointVisibility();
+
+    for (mapcontrol::WayPointItem *icon : m_plannerIcons)
+        icon->setVisible(enabled);
+    if (m_plannerHomeIcon)
+        m_plannerHomeIcon->setVisible(enabled);
+    if (m_plannerLineGroup)
+        m_plannerLineGroup->setVisible(enabled);
+
+    if (enabled)
+        redrawPlannerLines();
+}
+
+void QGCMapWidget::setPlannerRows(
+        const QVector<WpRowData> &rows,
+        FlightPlannerMissionModel::MissionStore store)
+{
+    m_plannerRows = rows;
+    m_plannerStore = store;
+    rebuildPlannerGraphics();
+}
+
+void QGCMapWidget::setPlannerHome(double latitude, double longitude,
+                                  double altitude)
+{
+    m_plannerHomeValid = isPlannerCoordinateValid(latitude, longitude)
+            && qIsFinite(altitude);
+    m_plannerHomeLatitude = latitude;
+    m_plannerHomeLongitude = longitude;
+    m_plannerHomeAltitude = altitude;
+    rebuildPlannerGraphics();
+}
+
+void QGCMapWidget::clearPlannerHome()
+{
+    if (!m_plannerHomeValid && !m_plannerHomeIcon)
+        return;
+    m_plannerHomeValid = false;
+    rebuildPlannerGraphics();
+}
+
+void QGCMapWidget::setPlannerSelection(int seq)
+{
+    m_plannerSelection = seq;
+    for (auto it = m_plannerIcons.constBegin();
+         it != m_plannerIcons.constEnd(); ++it)
+    {
+        it.value()->setSelected(it.key() == seq);
+    }
+}
+
+QColor QGCMapWidget::plannerColor() const
+{
+    switch (m_plannerStore)
+    {
+    case FlightPlannerMissionModel::MissionStore::Fence:
+        return QColor(255, 152, 0);
+    case FlightPlannerMissionModel::MissionStore::Rally:
+        return QColor(186, 104, 200);
+    case FlightPlannerMissionModel::MissionStore::Mission:
+    default:
+        return QColor(0, 174, 239);
+    }
+}
+
+void QGCMapWidget::clearPlannerLines()
+{
+    if (!m_plannerLineGroup)
+        return;
+
+    const QList<QGraphicsItem*> lines = m_plannerLineGroup->childItems();
+    for (QGraphicsItem *line : lines)
+        delete line;
+}
+
+void QGCMapWidget::clearPlannerGraphics()
+{
+    m_plannerGraphicsUpdate = true;
+    clearPlannerLines();
+
+    const QList<mapcontrol::WayPointItem*> icons = m_plannerIcons.values();
+    m_plannerIcons.clear();
+    m_plannerIconSequences.clear();
+    for (mapcontrol::WayPointItem *icon : icons)
+        delete icon;
+
+    delete m_plannerHomeIcon;
+    m_plannerHomeIcon = nullptr;
+    m_plannerGraphicsUpdate = false;
+}
+
+void QGCMapWidget::rebuildPlannerGraphics()
+{
+    m_plannerGraphicsUpdate = true;
+    clearPlannerLines();
+
+    if (m_plannerHomeValid)
+    {
+        if (!m_plannerHomeIcon)
+        {
+            m_plannerHomeIcon = new mapcontrol::WayPointItem(
+                        internals::PointLatLng(m_plannerHomeLatitude,
+                                               m_plannerHomeLongitude),
+                        m_plannerHomeAltitude, map, this, tr("Home"));
+            m_plannerHomeIcon->SetNumber(0);
+            m_plannerHomeIcon->setFlag(QGraphicsItem::ItemIsMovable, false);
+            m_plannerHomeIcon->setFlag(QGraphicsItem::ItemIsSelectable, false);
+            m_plannerHomeIcon->setZValue(3.0);
+            m_plannerHomeIcon->setParentItem(map);
+        }
+        else
+        {
+            m_plannerHomeIcon->SetCoord(internals::PointLatLng(
+                                            m_plannerHomeLatitude,
+                                            m_plannerHomeLongitude));
+            m_plannerHomeIcon->SetAltitude(m_plannerHomeAltitude);
+        }
+        m_plannerHomeIcon->setVisible(m_missionPlanningEnabled);
+    }
+    else
+    {
+        delete m_plannerHomeIcon;
+        m_plannerHomeIcon = nullptr;
+    }
+
+    QMap<int, mapcontrol::WayPointItem*> remainingIcons = m_plannerIcons;
+    QMap<int, mapcontrol::WayPointItem*> updatedIcons;
+    QMap<mapcontrol::WayPointItem*, int> updatedSequences;
+
+    for (const WpRowData &row : m_plannerRows)
+    {
+        if (!isPlannerCoordinateValid(row.Lat, row.Lng)
+                || !WpRow::CommandHasLocation(row.Command)
+                || !WpRow::FrameHasGlobalLocation(row.Frame)
+                || updatedIcons.contains(row.Seq))
+            continue;
+
+        const QString description = QStringLiteral("%1: %2")
+                .arg(row.Seq + 1)
+                .arg(WpRow::CommandNameFor(row.Command));
+        mapcontrol::WayPointItem *icon = remainingIcons.take(row.Seq);
+        if (!icon)
+        {
+            icon = new mapcontrol::WayPointItem(
+                        internals::PointLatLng(row.Lat, row.Lng), row.Alt,
+                        map, this, description);
+            icon->SetNumber(row.Seq + 1);
+            icon->setZValue(4.0);
+            icon->setParentItem(map);
+            connect(icon, &mapcontrol::WayPointItem::WPValuesChanged,
+                    this, &QGCMapWidget::handleMapWaypointEdit);
+        }
+        else
+        {
+            icon->SetCoord(internals::PointLatLng(row.Lat, row.Lng));
+            icon->SetAltitude(row.Alt);
+            icon->SetDescription(description);
+            icon->SetNumber(row.Seq + 1);
+        }
+        icon->setVisible(m_missionPlanningEnabled);
+        icon->setSelected(row.Seq == m_plannerSelection);
+        updatedIcons.insert(row.Seq, icon);
+        updatedSequences.insert(icon, row.Seq);
+    }
+
+    m_plannerIcons = updatedIcons;
+    m_plannerIconSequences = updatedSequences;
+    for (mapcontrol::WayPointItem *icon : remainingIcons)
+        delete icon;
+
+    m_plannerGraphicsUpdate = false;
+    if (m_plannerLineGroup)
+        m_plannerLineGroup->setVisible(m_missionPlanningEnabled);
+    redrawPlannerLines();
+}
+
+void QGCMapWidget::redrawPlannerLines()
+{
+    clearPlannerLines();
+    if (!m_missionPlanningEnabled || !m_plannerLineGroup)
+        return;
+    if (m_plannerStore == FlightPlannerMissionModel::MissionStore::Rally)
+        return;
+
+    QPainterPath path;
+    bool pathStarted = false;
+    internals::PointLatLng firstCoordinate;
+
+    if (m_plannerStore == FlightPlannerMissionModel::MissionStore::Mission
+            && m_plannerHomeValid)
+    {
+        const internals::PointLatLng home(m_plannerHomeLatitude,
+                                          m_plannerHomeLongitude);
+        const core::Point localHome = map->FromLatLngToLocal(home);
+        path.moveTo(localHome.X(), localHome.Y());
+        firstCoordinate = home;
+        pathStarted = true;
+    }
+
+    int pathPointCount = 0;
+    for (const WpRowData &row : m_plannerRows)
+    {
+        const mapcontrol::WayPointItem *icon = m_plannerIcons.value(row.Seq, nullptr);
+        if (!icon)
+            continue;
+        if (m_plannerStore == FlightPlannerMissionModel::MissionStore::Mission
+                && !WpRow::CommandIsFlightPath(row.Command))
+            continue;
+        if (m_plannerStore == FlightPlannerMissionModel::MissionStore::Fence
+                && row.Command != MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION
+                && row.Command != MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION)
+            continue;
+
+        const internals::PointLatLng coordinate = icon->Coord();
+        const core::Point local = map->FromLatLngToLocal(coordinate);
+        if (!pathStarted)
+        {
+            path.moveTo(local.X(), local.Y());
+            firstCoordinate = coordinate;
+            pathStarted = true;
+        }
+        else
+        {
+            path.lineTo(local.X(), local.Y());
+        }
+        ++pathPointCount;
+    }
+
+    if (m_plannerStore == FlightPlannerMissionModel::MissionStore::Fence
+            && pathPointCount > 2 && pathStarted)
+    {
+        const core::Point localFirst = map->FromLatLngToLocal(firstCoordinate);
+        path.lineTo(localFirst.X(), localFirst.Y());
+    }
+
+    if (path.elementCount() < 2)
+        return;
+
+    QGraphicsPathItem *line = new QGraphicsPathItem(path, m_plannerLineGroup);
+    QPen pen(plannerColor());
+    pen.setWidth(3);
+    pen.setCosmetic(true);
+    line->setPen(pen);
+    line->setZValue(2.0);
+}
+
+void QGCMapWidget::updateLegacyWaypointVisibility()
+{
+    const bool visible = !m_missionPlanningEnabled;
+    for (mapcontrol::WayPointItem *icon : waypointsToIcons)
+        icon->setVisible(visible);
+    for (QGraphicsItemGroup *group : waypointLines)
+    {
+        if (group)
+            group->setVisible(visible);
+    }
+
+    if (m_missionPlanningEnabled)
+    {
+        SetShowHome(false);
+    }
+    else
+    {
+        updateHomePosition(UASManager::instance()->getHomeLatitude(),
+                           UASManager::instance()->getHomeLongitude(),
+                           UASManager::instance()->getHomeAltitude());
+    }
+}
+
 void QGCMapWidget::mouseDoubleClickEvent(QMouseEvent* event)
 {
+    if (m_missionPlanningEnabled)
+    {
+        const QPointF localPosition = map->mapFromScene(mapToScene(event->pos()));
+        const internals::PointLatLng pos =
+                map->FromLocalToLatLng(localPosition.x(), localPosition.y());
+        emit plannerCoordinateRequested(pos.Lat(), pos.Lng());
+        OPMapWidget::mouseDoubleClickEvent(event);
+        return;
+    }
+
     // If a waypoint manager is available
     if (currWPManager)
     {
@@ -639,16 +953,36 @@ void QGCMapWidget::showGoToDialog()
 
 void QGCMapWidget::updateHomePosition(double latitude, double longitude, double altitude)
 {
+    homeAltitude = altitude;
+    if (m_missionPlanningEnabled)
+    {
+        SetShowHome(false);
+        return;
+    }
+
+    SetShowHome(true);                      // display the HOME position on the map
+    Home->SetSafeArea(0);
+    Home->SetShowSafeArea(false);
     Home->SetCoord(internals::PointLatLng(latitude, longitude));
     Home->SetAltitude(altitude);
-    homeAltitude = altitude;
-    SetShowHome(true);                      // display the HOME position on the map
 
     Home->RefreshPos();     // Force repainting
 }
 
 void QGCMapWidget::goHome()
 {
+    if (m_missionPlanningEnabled)
+    {
+        if (!m_plannerHomeValid)
+            return;
+        SetCurrentPosition(internals::PointLatLng(m_plannerHomeLatitude,
+                                                   m_plannerHomeLongitude));
+        SetZoom(18);
+        return;
+    }
+    if (!Home)
+        return;
+
     SetCurrentPosition(Home->Coord());
     SetZoom(18); //zoom to "large RC park" size
 }
@@ -727,12 +1061,41 @@ void QGCMapWidget::shiftOtherSelectedWaypoints(mapcontrol::WayPointItem* selecte
 
 void QGCMapWidget::handleMapWaypointEdit(mapcontrol::WayPointItem* waypoint)
 {
+    const auto plannerIt = m_plannerIconSequences.constFind(waypoint);
+    if (plannerIt != m_plannerIconSequences.constEnd())
+    {
+        if (m_plannerGraphicsUpdate || !m_missionPlanningEnabled)
+            return;
+
+        const int seq = plannerIt.value();
+        const internals::PointLatLng pos = map->FromLocalToLatLng(
+                    waypoint->pos().x(), waypoint->pos().y());
+        m_plannerGraphicsUpdate = true;
+        waypoint->SetCoord(pos);
+        m_plannerGraphicsUpdate = false;
+        for (WpRowData &row : m_plannerRows)
+        {
+            if (row.Seq == seq)
+            {
+                row.Lat = pos.Lat();
+                row.Lng = pos.Lng();
+                break;
+            }
+        }
+        redrawPlannerLines();
+        emit plannerWaypointMoved(seq, pos.Lat(), pos.Lng());
+        return;
+    }
+
     // Block circle updates
     Waypoint* wp = iconsToWaypoints.value(waypoint, NULL);
 
     // Delete UI element if wp doesn't exist
     if (!wp)
+    {
         WPDelete(waypoint);
+        return;
+    }
 
     // Protect from vicious double update cycle
     if (firingWaypointChange == wp) return;
@@ -806,6 +1169,7 @@ void QGCMapWidget::updateWaypoint(int uas, Waypoint* wp)
                 // Update maps to allow inverse data association
                 waypointsToIcons.insert(wp, icon);
                 iconsToWaypoints.insert(icon, wp);
+                icon->setVisible(!m_missionPlanningEnabled);
             }
             else
             {
@@ -872,6 +1236,7 @@ void QGCMapWidget::redrawWaypointLines(int uas)
     if (!group)
         return;
     Q_ASSERT(group->parentItem() == map);
+    group->setVisible(!m_missionPlanningEnabled);
 
     // Delete existing waypoint lines
     foreach (QGraphicsItem* item, group->childItems())
@@ -947,6 +1312,8 @@ void QGCMapWidget::updateWaypointList(int uas)
                 updateWaypoint(uas, wp);
             }
         }
+
+        updateLegacyWaypointVisibility();
 
 //        redrawWaypointLines(uas);
     }

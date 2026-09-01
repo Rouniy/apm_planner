@@ -17,6 +17,7 @@ private slots:
     void storesRemainIndependentAndPreserveIdentity();
     void structuralEditsRenumberRows();
     void tableContractMatchesWaypointGrid();
+    void mapCommandMetadataMatchesMissionSemantics();
 };
 
 void FlightPlannerMissionModelTest::wpRowMatchesMissionPlannerContract()
@@ -239,8 +240,38 @@ void FlightPlannerMissionModelTest::tableContractMatchesWaypointGrid()
         QStringLiteral("NOT_A_MAV_COMMAND")));
     QVERIFY(!model.setData(model.index(0,
         FlightPlannerMissionModel::P1Column), QStringLiteral("invalid")));
+    QVERIFY(model.setData(model.index(0,
+        FlightPlannerMissionModel::LatColumn), 40.0));
+    QVERIFY(model.setData(model.index(0,
+        FlightPlannerMissionModel::LngColumn), 28.0));
+    QVERIFY(!model.setData(model.index(0,
+        FlightPlannerMissionModel::LatColumn), 90.1));
+    QVERIFY(!model.setData(model.index(0,
+        FlightPlannerMissionModel::LngColumn), -180.1));
+    QCOMPARE(model.rowAt(0)->Lat(), 40.0);
+    QCOMPARE(model.rowAt(0)->Lng(), 28.0);
+
+    model.rowAt(0)->setLat(-91.0);
+    model.rowAt(0)->setLng(181.0);
+    QCOMPARE(model.rowAt(0)->Lat(), 40.0);
+    QCOMPARE(model.rowAt(0)->Lng(), 28.0);
     QVERIFY(!model.setData(model.index(0,
         FlightPlannerMissionModel::FrameColumn), QStringLiteral("Moon")));
+}
+
+void FlightPlannerMissionModelTest::mapCommandMetadataMatchesMissionSemantics()
+{
+    QVERIFY(WpRow::CommandHasLocation(MAV_CMD_NAV_WAYPOINT));
+    QVERIFY(WpRow::CommandIsFlightPath(MAV_CMD_NAV_WAYPOINT));
+    QVERIFY(!WpRow::CommandHasLocation(MAV_CMD_NAV_RETURN_TO_LAUNCH));
+    QVERIFY(!WpRow::CommandIsFlightPath(MAV_CMD_NAV_RETURN_TO_LAUNCH));
+    QVERIFY(!WpRow::CommandHasLocation(MAV_CMD_DO_CHANGE_SPEED));
+    QVERIFY(WpRow::CommandHasLocation(
+        MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION));
+    QVERIFY(WpRow::CommandHasLocation(MAV_CMD_NAV_RALLY_POINT));
+    QVERIFY(WpRow::FrameHasGlobalLocation(MAV_FRAME_GLOBAL));
+    QVERIFY(WpRow::FrameHasGlobalLocation(MAV_FRAME_GLOBAL_RELATIVE_ALT));
+    QVERIFY(!WpRow::FrameHasGlobalLocation(MAV_FRAME_LOCAL_NED));
 }
 
 QTEST_MAIN(FlightPlannerMissionModelTest)
