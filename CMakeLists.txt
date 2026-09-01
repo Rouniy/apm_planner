@@ -496,6 +496,8 @@ set(SOURCES
     src/ui/configuration/ConfigInitialParamsViewModel.h
     src/ui/configuration/ConfigPlannerAdvView.cpp
     src/ui/configuration/ConfigPlannerAdvView.h
+    src/ui/configuration/ConfigPlannerAdvViewModel.cpp
+    src/ui/configuration/ConfigPlannerAdvViewModel.h
     src/ui/configuration/ArduCopterPidConfig.cc
     src/ui/configuration/ArduCopterPidConfig.h
     src/ui/configuration/ArduCopterPidConfig.ui
@@ -1143,6 +1145,28 @@ if(BUILD_TESTING)
     add_test(NAME configuserdefinedview_tests
         COMMAND configuserdefinedview_tests)
     set_tests_properties(configuserdefinedview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configplanneradvview_tests
+        tests/test_configplanneradvview.cpp
+        src/ui/configuration/ConfigPlannerAdvView.cpp
+        src/ui/configuration/ConfigPlannerAdvView.h
+        src/ui/configuration/ConfigPlannerAdvViewModel.cpp
+        src/ui/configuration/ConfigPlannerAdvViewModel.h
+    )
+    target_include_directories(configplanneradvview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configplanneradvview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configplanneradvview_tests
+        COMMAND configplanneradvview_tests)
+    set_tests_properties(configplanneradvview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
