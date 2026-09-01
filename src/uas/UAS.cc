@@ -163,12 +163,6 @@ UAS::UAS(MAVLinkProtocol* protocol, int id) : UASInterface(),
     lastSendTimeGPS(0),
     lastSendTimeSensors(0)
 {
-    for (unsigned int i = 0; i<255;++i)
-    {
-        componentID[i] = -1;
-        componentMulti[i] = false;
-    }
-    
     color = UASInterface::getNextColor();
     setBatterySpecs(QString("9V,9.5V,12.6V"));
     connect(statusTimeout, SIGNAL(timeout()), this, SLOT(updateState()));
@@ -397,37 +391,12 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
         QString uasState;
         QString stateDescription;
 
-        bool multiComponentSourceDetected = false;
-        bool wrongComponent = false;
-
-        switch (message.compid)
-        {
-        case MAV_COMP_ID_IMU_2:
-            // Prefer IMU 2 over IMU 1 (FIXME)
-            componentID[message.msgid] = MAV_COMP_ID_IMU_2;
-            break;
-        default:
-            // Do nothing
-            break;
-        }
-
-        // Store component ID
-        if (componentID[message.msgid] == -1)
-        {
-            // Prefer the first component
-            componentID[message.msgid] = message.compid;
-        }
-        else
-        {
-            // Got this message already
-            if (componentID[message.msgid] != message.compid)
-            {
-                componentMulti[message.msgid] = true;
-                wrongComponent = true;
-            }
-        }
-
-        if (componentMulti[message.msgid] == true) multiComponentSourceDetected = true;
+        const MAVLinkComponentTracker::Result source = m_componentTracker.observe(
+            message.msgid,
+            message.compid,
+            message.compid == MAV_COMP_ID_IMU_2);
+        const bool multiComponentSourceDetected = source.multiComponentSourceDetected;
+        const bool wrongComponent = source.wrongComponent;
 
 
         switch (message.msgid)

@@ -4,6 +4,8 @@
 #include <QWidget>
 #include "ui_dataselectionscreen.h"
 
+class QTreeWidgetItem;
+
 class DataSelectionScreen : public QWidget
 {
 	Q_OBJECT
@@ -29,10 +31,12 @@ private slots:
 
 private:
     QMap<QString,QString> m_nameToSysId;
+    QMap<QString, QTreeWidgetItem *> m_groupItems;
     QList<QWidget*> m_itemList;
 	Ui::DataSelectionScreen ui;
     QList<QString> m_enabledList;
 
+    QTreeWidgetItem *findOrCreateGroup(const QString &groupName);
     void handleItem(const QString &name, Qt::CheckState checkState);
 };
 

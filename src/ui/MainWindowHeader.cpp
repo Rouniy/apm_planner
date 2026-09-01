@@ -258,12 +258,12 @@ void MainWindowHeader::setNavigationActions(QAction *data,
         }
         delete item;
     }
-    addNavigationButton(tr("DATA"), QStringLiteral("navData"), data)->setChecked(true);
-    addNavigationButton(tr("PLAN"), QStringLiteral("navPlan"), plan);
-    addNavigationButton(tr("SETUP"), QStringLiteral("navSetup"), setup);
-    addNavigationButton(tr("CONFIG"), QStringLiteral("navConfig"), config);
-    addNavigationButton(tr("SIMULATION"), QStringLiteral("navSimulation"), simulation);
-    addNavigationButton(tr("HELP"), QStringLiteral("navHelp"), help);
+    addNavigationButton(tr("DATA"), QStringLiteral("MenuFlightData"), data)->setChecked(true);
+    addNavigationButton(tr("PLAN"), QStringLiteral("MenuFlightPlanner"), plan);
+    addNavigationButton(tr("SETUP"), QStringLiteral("MenuInitConfig"), setup);
+    addNavigationButton(tr("CONFIG"), QStringLiteral("MenuConfigTune"), config);
+    addNavigationButton(tr("SIMULATION"), QStringLiteral("MenuSimulation"), simulation);
+    addNavigationButton(tr("HELP"), QStringLiteral("MenuHelp"), help);
     layout->addStretch();
 }
 

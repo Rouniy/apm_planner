@@ -15,6 +15,7 @@
 //
 
 import QtQuick 2.9
+import QtQml 2.2
 import "./components"
 
 Rectangle {
@@ -118,4 +119,3 @@ Rectangle {
     }
 
 }
-

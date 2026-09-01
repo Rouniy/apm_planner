@@ -31,7 +31,6 @@ This file is part of the APM_PLANNER project
 #include "AutoUpdateCheck.h"
 #include <QJsonParseError>
 #include <QJsonObject>
-#include <QMessageBox>
 #include <QSettings>
 #include "QGC.h"
 #include "configuration.h"
@@ -98,11 +97,7 @@ void AutoUpdateCheck::httpFinished()
     // Finished donwloading the version information
     if (m_networkReplyPtr->error())
     {
-        // [TODO] cleanup download failed
         QLOG_WARN() << "AutoUpdateCheck::httpFinished() received an error: " << m_networkReplyPtr->errorString();
-#ifdef QT_DEBUG
-        QMessageBox::information(NULL, tr("HTTP"), tr("Download failed: %1.").arg(m_networkReplyPtr->errorString()));
-#endif
     }
     else if (!redirectionTarget.isNull())
     {

@@ -3,6 +3,27 @@
 #include <QVBoxLayout>
 #include <logging.h>
 #include <GraphTreeWidgetItem.h>
+
+QTreeWidgetItem *DataSelectionScreen::findOrCreateGroup(const QString &groupName)
+{
+    const auto existing = m_groupItems.constFind(groupName);
+    if (existing != m_groupItems.constEnd()) {
+        return existing.value();
+    }
+
+    auto *group = new GraphTreeWidgetItem(QStringList() << groupName);
+    int insertionIndex = 0;
+    while (insertionIndex < ui.treeWidget->topLevelItemCount()
+           && QString::localeAwareCompare(
+                  ui.treeWidget->topLevelItem(insertionIndex)->text(0),
+                  groupName) < 0) {
+        ++insertionIndex;
+    }
+    ui.treeWidget->insertTopLevelItem(insertionIndex, group);
+    m_groupItems.insert(groupName, group);
+    return group;
+}
+
 DataSelectionScreen::DataSelectionScreen(QWidget *parent) : QWidget(parent)
 {
 	ui.setupUi(this);
@@ -89,26 +110,12 @@ void DataSelectionScreen::addItem(QString name)
             return;
         }
 
-        QList<QTreeWidgetItem*> findlist = ui.treeWidget->findItems(groupname, Qt::MatchContains);
-        if (findlist.size() > 0)
-        {
-            GraphTreeWidgetItem *child = new GraphTreeWidgetItem(QStringList() << shortname);
-            child->setFlags(child->flags() | Qt::ItemIsUserCheckable);
-            child->setCheckState(0,Qt::Unchecked);
-            findlist[0]->addChild(child);
-        }
-        else
-        {
-            GraphTreeWidgetItem *item = new GraphTreeWidgetItem(QStringList() << groupname);
-            ui.treeWidget->addTopLevelItem(item);
-            GraphTreeWidgetItem *child = new GraphTreeWidgetItem(QStringList() << shortname);
-
-            child->setFlags(child->flags() | Qt::ItemIsUserCheckable);
-            child->setCheckState(0,Qt::Unchecked);
-            item->addChild(child);
-        }
+        QTreeWidgetItem *group = findOrCreateGroup(groupname);
+        auto *child = new GraphTreeWidgetItem(QStringList() << shortname);
+        child->setFlags(child->flags() | Qt::ItemIsUserCheckable);
+        child->setCheckState(0,Qt::Unchecked);
+        group->addChild(child);
     }
-    ui.treeWidget->sortByColumn(0,Qt::AscendingOrder);
 }
 
 void DataSelectionScreen::addItems(const QMap<QString, QStringList> &fmtMap)
@@ -125,16 +132,7 @@ void DataSelectionScreen::addItems(const QMap<QString, QStringList> &fmtMap)
             return;
         }
 
-        QList<QTreeWidgetItem*> findlist = ui.treeWidget->findItems(parts[0], Qt::MatchContains);   // is this group already in tree?
-        if (findlist.size() > 0)
-        {
-            pParentItem = findlist[0];   // is already there
-        }
-        else
-        {
-            pParentItem = new GraphTreeWidgetItem(QStringList() << parts[0]); // Not there so add it. parts[0] is the groupname
-            ui.treeWidget->addTopLevelItem(pParentItem);
-        }
+        pParentItem = findOrCreateGroup(parts[0]);
 
         if(parts.size() == 2)
         {
@@ -200,6 +198,8 @@ void DataSelectionScreen::onItemChanged(QTreeWidgetItem* item, int column)
 void DataSelectionScreen::clear()
 {
     ui.treeWidget->clear();
+    m_groupItems.clear();
+    m_nameToSysId.clear();
     m_enabledList.clear();
 }
 

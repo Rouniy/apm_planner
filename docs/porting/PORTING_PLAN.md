@@ -69,6 +69,41 @@ IMapView
     └── SharedTileStore (one root, provider IDs, quota and lifecycle)
 ```
 
+## Canonical Mission Planner 10 identities
+
+These names are layout keys and test contracts, not cosmetic labels:
+
+| Surface | Stable Qt identities |
+|---|---|
+| Header | `MenuFlightData`, `MenuFlightPlanner`, `MenuInitConfig`, `MenuConfigTune`, `MenuSimulation`, `MenuHelp` |
+| DATA | `FlightDataView`, `FlightDataLayoutGrid`, `HudHost`, `Hud`, `FdTabs`, `QuickHost`, `QuickGrid`, `MainFlightSplitter`, `MapVideoLayout`, `FdMap` |
+| PLAN | `FlightPlannerView`, `PlannerLayoutGrid`, `Map`, `HorizontalDockSplitter`, `WaypointPanel`, `VerticalDockSplitter`, `ActionPanel`, `ActionScroller`, `ActionItemsPanel` |
+| Backstage | `SetupView`, `ConfigView`, `BackstageView`, `BackstagePage` |
+| Remaining roots | `SimulationView`, `HelpView` |
+
+The reference navigation order is always DATA, PLAN, SETUP, CONFIG, SIMULATION,
+HELP, then TOOLS, ARDUPILOT and the connection controls. Renaming an existing Qt
+implementation is allowed because the legacy plugin API is not supported; new
+names must match the corresponding Mission Planner 10 concept.
+
+## QGroundControl-derived communication safety
+
+QGroundControl is the architectural continuation of APM Planner and is the first
+reference for modern MAVLink, vehicle, parameter and mission behavior. Its Qt 6
+UI dependencies are not copied into the Qt 5 baseline, but these transport rules
+are mandatory:
+
+- `MessageId` is `quint32` end to end; no array indexing or 8/16-bit narrowing.
+- Each link owns a distinct MAVLink channel. Bytes enter one protocol thread by
+  queued delivery before parsing and signal fan-out.
+- Processing pins the link lifetime; stale queued bytes from a removed link are
+  discarded.
+- Vehicle removal is two-phase and timer/request callbacks use guarded pointers.
+- Parameters are keyed by component and name. Mission transactions correlate
+  mission type, expected ACK and outstanding item indexes.
+- Reentrant command completion, vehicle deletion and multi-link parsing require
+  dedicated regression tests.
+
 ## Qt-first platform policy
 
 | Concern | Required implementation | Exception or gate |

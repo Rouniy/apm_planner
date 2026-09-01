@@ -44,15 +44,30 @@ with the selected clean upstream shows that the behavior is still required.
 - Build a standalone CMake target and expose it through an internal `DockHost`
   adapter. Application widgets must not include KDDockWidgets private headers.
 - Use stable Mission Planner-oriented dock IDs.
-- Set affinity `flight-data` or `flight-planner` on every dock and on every layout
-  saver. A layout from one screen must never affect the other.
-- Store JSON below `Docking/v1/<view>` and validate schema/version before restore.
+- Set one affinity per view (`apmplanner-<view-id>`) on every dock and on every
+  layout saver. A layout from one screen must never affect the other.
+- Store the validated JSON envelope in the view-specific QSettings key ending in
+  `_DOCK_LAYOUT_V1`; the envelope also records schema, view ID, affinity and the
+  KDDockWidgets payload version.
 - Missing, corrupt, incompatible, added or removed docks must fall back to the
   complete default layout, never a partially restored layout.
 - Floating panels are controlled by an explicit user setting. The first-run
   presentation is always the deterministic Mission Planner layout.
 - KDDockWidgets state contains geometry only. Map tiles continue to use the one
   canonical shared tile store.
+
+## Bootstrap status
+
+`FlightDataView` and `FlightPlannerView` are now direct `DockableView` subclasses;
+they no longer inherit `SubMainWindow`. Their first deterministic layouts use the
+Mission Planner object names `FdMap`, `HudHost`, `FdTabs`, `Map`,
+`WaypointPanel` and `ActionPanel`. Existing Qt map, PFD, telemetry and waypoint
+widgets are hosted
+as transitional functional content while those screens are ported route by route.
+
+The classic QtWidgets primary flight display is the Qt 5 default. The legacy QML
+display is available only with `APM_USE_QML_PFD=ON`, because it additionally
+requires the QtQuick runtime modules to be present in every target package.
 
 ## Acceptance gate
 

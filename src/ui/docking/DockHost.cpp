@@ -6,6 +6,7 @@
 
 #include <QAction>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QVariant>
@@ -14,6 +15,7 @@
 namespace {
 constexpr int kLayoutSchemaVersion = 1;
 const char kLayoutSchema[] = "apmplanner-dock-layout";
+const char kKddockwidgetsVersion[] = "1.4.0";
 
 KDDockWidgets::Location toKddockLocation(DockHost::Location location)
 {
@@ -165,7 +167,13 @@ QByteArray DockHost::saveLayout() const
     root.insert(QStringLiteral("version"), kLayoutSchemaVersion);
     root.insert(QStringLiteral("viewId"), d->viewId);
     root.insert(QStringLiteral("affinity"), d->affinity);
-    root.insert(QStringLiteral("kddockwidgets"), QStringLiteral("1.4.0"));
+    root.insert(QStringLiteral("kddockwidgets"),
+                QString::fromLatin1(kKddockwidgetsVersion));
+    QJsonArray dockIds;
+    for (const QString &dockId : d->dockOrder) {
+        dockIds.append(dockId);
+    }
+    root.insert(QStringLiteral("docks"), dockIds);
     root.insert(QStringLiteral("payload"), QString::fromLatin1(payload.toBase64()));
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
@@ -189,6 +197,25 @@ bool DockHost::restoreLayout(const QByteArray &envelope)
     if (root.value(QStringLiteral("viewId")).toString() != d->viewId
         || root.value(QStringLiteral("affinity")).toString() != d->affinity) {
         emit layoutRestoreRejected(tr("Dock layout belongs to another view"));
+        return false;
+    }
+    if (root.value(QStringLiteral("kddockwidgets")).toString()
+        != QString::fromLatin1(kKddockwidgetsVersion)) {
+        emit layoutRestoreRejected(tr("Dock layout library version is not supported"));
+        return false;
+    }
+
+    QStringList savedDockIds;
+    const QJsonArray dockIds = root.value(QStringLiteral("docks")).toArray();
+    for (const QJsonValue &dockId : dockIds) {
+        if (!dockId.isString()) {
+            emit layoutRestoreRejected(tr("Dock layout panel list is invalid"));
+            return false;
+        }
+        savedDockIds.append(dockId.toString());
+    }
+    if (savedDockIds != d->dockOrder) {
+        emit layoutRestoreRejected(tr("Dock layout panel set does not match this view"));
         return false;
     }
 

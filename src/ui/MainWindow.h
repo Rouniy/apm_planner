@@ -69,6 +69,9 @@ class QGCMapTool;
 class QGCFirmwareUpdate;
 class QSplashScreen;
 class QGCStatusBar;
+class DockableView;
+class FlightDataView;
+class FlightPlannerView;
 
 /**
  * @brief The LogWindowSingleton class is a helper class providing
@@ -352,6 +355,9 @@ protected:
      * @param location  The default location for the QDockedWidget in case there is no previous key in the settings
      */
     void addTool(SubMainWindow *parent,VIEW_SECTIONS view,QDockWidget* widget, const QString& title, Qt::DockWidgetArea area);
+    void registerDockablePanel(DockableView *parent, VIEW_SECTIONS view,
+                               const QString &panelId, const QString &title,
+                               QWidget *content);
     void loadDockWidget(QString name);
     QDockWidget* createDockWidget(QWidget *parent,QWidget *child,QString title,QString objectname,VIEW_SECTIONS view,Qt::DockWidgetArea area,int minwidth=0,int minheight=0);
     /**
@@ -399,8 +405,8 @@ protected:
     QPointer<QActionGroup> centerStackActionGroup;
 
     // Center widgets
-    QPointer<SubMainWindow> plannerView;
-    QPointer<SubMainWindow> pilotView;
+    QPointer<FlightPlannerView> plannerView;
+    QPointer<FlightDataView> pilotView;
     QPointer<SubMainWindow> configView;
     QPointer<SubMainWindow> softwareConfigView;
     QPointer<SubMainWindow> mavlinkView;
@@ -512,6 +518,7 @@ private:
     QList<QObject*> commsWidgetList;
     QMap<QString,QString> customWidgetNameToFilenameMap;
     QMap<QAction*,QString > menuToDockNameMap;
+    QMap<VIEW_SECTIONS, QMap<QAction *, QString>> menuToDockNameMapByView;
     QMap<QDockWidget*,QWidget*> dockToTitleBarMap;
     QMap<VIEW_SECTIONS,QMap<QString,QWidget*> > centralWidgetToDockWidgetsMap;
     bool isAdvancedMode;

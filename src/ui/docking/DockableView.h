@@ -1,0 +1,55 @@
+#ifndef DOCKABLEVIEW_H
+#define DOCKABLEVIEW_H
+
+#include <QByteArray>
+#include <QSize>
+#include <QStringList>
+#include <QWidget>
+
+#include <memory>
+
+class QAction;
+
+class DockableView : public QWidget
+{
+    Q_OBJECT
+
+public:
+    enum class PanelLocation
+    {
+        Left,
+        Right,
+        Top,
+        Bottom,
+        Tabbed
+    };
+    Q_ENUM(PanelLocation)
+
+    explicit DockableView(const QString &viewId, QWidget *parent = nullptr);
+    ~DockableView() override;
+
+    QString viewId() const;
+    QStringList panelIds() const;
+    bool hasPanel(const QString &panelId) const;
+
+    bool addPanel(const QString &panelId,
+                  const QString &title,
+                  QWidget *content,
+                  PanelLocation location,
+                  const QString &relativeToPanelId = QString(),
+                  const QSize &preferredSize = QSize());
+    QAction *panelToggleAction(const QString &panelId) const;
+    bool setPanelVisible(const QString &panelId, bool visible);
+
+    QByteArray saveLayout() const;
+    bool restoreLayout(const QByteArray &layout);
+
+signals:
+    void layoutRestoreRejected(const QString &reason);
+
+private:
+    class Private;
+    std::unique_ptr<Private> d;
+};
+
+#endif

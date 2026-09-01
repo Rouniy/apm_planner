@@ -1,6 +1,7 @@
 #include "ui/docking/DockHost.h"
 
 #include <QAction>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
@@ -47,6 +48,9 @@ void DockHostTest::createsStableMissionPlannerDocks()
     const QJsonObject envelope = QJsonDocument::fromJson(saved).object();
     QCOMPARE(envelope.value(QStringLiteral("version")).toInt(), DockHost::layoutSchemaVersion());
     QCOMPARE(envelope.value(QStringLiteral("viewId")).toString(), QStringLiteral("flight-data"));
+    QCOMPARE(envelope.value(QStringLiteral("kddockwidgets")).toString(),
+             QStringLiteral("1.4.0"));
+    QCOMPARE(envelope.value(QStringLiteral("docks")).toArray().size(), 3);
     QVERIFY(host.restoreLayout(saved));
 }
 
@@ -67,6 +71,13 @@ void DockHostTest::rejectsForeignAndCorruptLayouts()
     foreign.insert(QStringLiteral("payload"), QStringLiteral("e30="));
     QVERIFY(!host.restoreLayout(QJsonDocument(foreign).toJson(QJsonDocument::Compact)));
     QCOMPARE(rejected.count(), 2);
+
+    const QByteArray beforeNewPanel = host.saveLayout();
+    QVERIFY(host.addDock(QStringLiteral("WaypointPanel"), QStringLiteral("Mission"),
+                         new QLabel, DockHost::Location::Bottom,
+                         QStringLiteral("Map")));
+    QVERIFY(!host.restoreLayout(beforeNewPanel));
+    QCOMPARE(rejected.count(), 3);
 }
 
 QTEST_MAIN(DockHostTest)

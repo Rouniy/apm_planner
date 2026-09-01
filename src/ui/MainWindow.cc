@@ -58,6 +58,7 @@ This file is part of the QGROUNDCONTROL project
 
 #include "FlightDataView.h"
 #include "FlightPlannerView.h"
+#include "docking/DockableView.h"
 #include "MainWindowHeader.h"
 #include "ConfigView.h"
 #include "SetupView.h"
@@ -87,9 +88,6 @@ This file is part of the QGROUNDCONTROL project
 #include <QGCHilLink.h>
 #include <QGCHilConfiguration.h>
 #include <QGCHilFlightGearConfiguration.h>
-
-#define PFD_QML
-
 
 LogWindowSingleton &LogWindowSingleton::instance()
 {
@@ -320,13 +318,13 @@ MainWindow::MainWindow(QWidget *parent):
 
     // Trigger Auto Update Check
     m_autoUpdateCheck.suppressNoUpdateSignal();
-    QTimer::singleShot(5000, &m_autoUpdateCheck, SLOT(autoUpdateCheck()));
+    if (m_autoUpdateCheck.isUpdateEnabled()) {
+        QTimer::singleShot(5000, &m_autoUpdateCheck, SLOT(autoUpdateCheck()));
+    }
     connect(&m_autoUpdateCheck, SIGNAL(updateAvailable(QString,QString,QString,QString)),
             this, SLOT(showAutoUpdateDownloadDialog(QString,QString,QString,QString)));
     connect(&m_autoUpdateCheck, SIGNAL(noUpdateAvailable()),
             this, SLOT(showNoUpdateAvailDialog()));
-
-    settings.endGroup();
 
 }
 
@@ -493,7 +491,9 @@ void MainWindow::buildCustomWidget()
             }
 
             // XXX temporary "fix"
-            dock->hide();
+            if (dock) {
+                dock->hide();
+            }
 
             //createDockWidget(0,tool,tool->getTitle(),tool->objectName(),view,location);
         }
@@ -524,7 +524,7 @@ void MainWindow::buildCommonWidgets()
     if (!plannerView)
     {
         plannerView = new FlightPlannerView(this);
-        plannerView->setCentralWidget(new QGCMapTool(this));
+        plannerView->setMapWidget(new QGCMapTool(this));
         addToCentralStackedWidget(plannerView, VIEW_MISSION, "Maps");
     }
 
@@ -532,7 +532,7 @@ void MainWindow::buildCommonWidgets()
     if (!pilotView)
     {
         pilotView = new FlightDataView(this);
-        pilotView->setCentralWidget(new QGCMapTool(this));
+        pilotView->setMapWidget(new QGCMapTool(this));
         addToCentralStackedWidget(pilotView, VIEW_FLIGHT, "Pilot");
     }
 
@@ -597,8 +597,21 @@ void MainWindow::buildCommonWidgets()
     connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
 
     createDockWidget(simView,new UASControlWidget(this),tr("Control"),"UNMANNED_SYSTEM_CONTROL_DOCKWIDGET",VIEW_SIMULATION,Qt::LeftDockWidgetArea);
-    createDockWidget(plannerView,new UASListWidget(this),tr("Unmanned Systems"),"UNMANNED_SYSTEM_LIST_DOCKWIDGET",VIEW_MISSION,Qt::LeftDockWidgetArea);
-    createDockWidget(plannerView,new QGCWaypointListMulti(this),tr("Mission Plan"),"WAYPOINT_LIST_DOCKWIDGET",VIEW_MISSION,Qt::BottomDockWidgetArea);
+    auto *plannerWaypointPanel = new QGCWaypointListMulti(this);
+    if (plannerView->setWaypointPanel(plannerWaypointPanel)) {
+        registerDockablePanel(plannerView, VIEW_MISSION,
+                              FlightPlannerView::waypointPanelId(),
+                              tr("Waypoints"), plannerWaypointPanel);
+    }
+    // Transitional content: the dedicated Mission Planner 10 planning actions
+    // are ported into this stable ActionPanel surface route by route.
+    auto *plannerActionPanel = new UASListWidget(this);
+    if (plannerView->setActionPanel(plannerActionPanel)) {
+        plannerActionPanel->show();
+        registerDockablePanel(plannerView, VIEW_MISSION,
+                              FlightPlannerView::actionPanelId(),
+                              tr("Actions"), plannerActionPanel);
+    }
 
     {   // Widget that shows the elevation changes over a mission.
         QAction* tempAction = ui.menuTools->addAction(tr("Mission Elevation"));
@@ -656,8 +669,12 @@ void MainWindow::buildCommonWidgets()
 #ifndef PFD_QML
     createDockWidget(simView,new PrimaryFlightDisplay(320,240,this),tr("Primary Flight Display"),
                      "PRIMARY_FLIGHT_DISPLAY_DOCKWIDGET",VIEW_SIMULATION,Qt::RightDockWidgetArea);
-    createDockWidget(pilotView,new PrimaryFlightDisplay(320,240,this),tr("Primary Flight Display"),
-                     "PRIMARY_FLIGHT_DISPLAY_DOCKWIDGET",VIEW_FLIGHT,Qt::LeftDockWidgetArea);
+    auto *pilotPrimaryFlightDisplay = new PrimaryFlightDisplay(320, 240, this);
+    if (pilotView->setPrimaryFlightDisplay(pilotPrimaryFlightDisplay)) {
+        registerDockablePanel(pilotView, VIEW_FLIGHT,
+                              FlightDataView::primaryFlightDisplayPanelId(),
+                              tr("Primary Flight Display"), pilotPrimaryFlightDisplay);
+    }
 
     { //This is required since we don't show the new PFD in full yet
         QAction* tempAction = ui.menuTools->addAction(tr("Primary Flight Display (2)"));
@@ -668,8 +685,12 @@ void MainWindow::buildCommonWidgets()
 #else
     createDockWidget(simView,new PrimaryFlightDisplayQML(this),tr("Primary Flight Display"),
                      "PRIMARY_FLIGHT_DISPLAY_QML_DOCKWIDGET",VIEW_SIMULATION,Qt::RightDockWidgetArea);
-    createDockWidget(pilotView,new PrimaryFlightDisplayQML(this),tr("Primary Flight Display"),
-                     "PRIMARY_FLIGHT_DISPLAY_QML_DOCKWIDGET",VIEW_FLIGHT,Qt::LeftDockWidgetArea);
+    auto *pilotPrimaryFlightDisplay = new PrimaryFlightDisplayQML(this);
+    if (pilotView->setPrimaryFlightDisplay(pilotPrimaryFlightDisplay)) {
+        registerDockablePanel(pilotView, VIEW_FLIGHT,
+                              FlightDataView::primaryFlightDisplayPanelId(),
+                              tr("Primary Flight Display"), pilotPrimaryFlightDisplay);
+    }
 
     { //This is required since we don't show the old PFD in any view
         QAction* tempAction = ui.menuTools->addAction(tr("Primary Flight Display (old)"));
@@ -695,7 +716,11 @@ void MainWindow::buildCommonWidgets()
 
     QGCTabbedInfoView *infoview = new QGCTabbedInfoView(this);
     infoview->addSource(mavlinkDecoder);
-    createDockWidget(pilotView,infoview,tr("Info View"),"UAS_INFO_INFOVIEW_DOCKWIDGET",VIEW_FLIGHT,Qt::LeftDockWidgetArea);
+    if (pilotView->setInfoView(infoview)) {
+        registerDockablePanel(pilotView, VIEW_FLIGHT,
+                              FlightDataView::infoPanelId(),
+                              tr("Info View"), infoview);
+    }
 
     //connect(ui.actionLoad_tlog,SIGNAL(triggered()),this,SLOT(loadTlogMenuClicked()));
 
@@ -749,6 +774,7 @@ void MainWindow::addTool(SubMainWindow *parent,VIEW_SECTIONS view,QDockWidget* w
         connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
         connect(widget, SIGNAL(visibilityChanged(bool)), tempAction, SLOT(setChecked(bool)));
         tempAction->setChecked(widget->isVisible());
+        menuToDockNameMapByView[view][tempAction] = widget->objectName();
     }
     else
     {
@@ -763,8 +789,44 @@ void MainWindow::addTool(SubMainWindow *parent,VIEW_SECTIONS view,QDockWidget* w
         }
         centralWidgetToDockWidgetsMap[view][widget->objectName()]= widget;
         connect(widget, SIGNAL(visibilityChanged(bool)), targetAction, SLOT(setChecked(bool)));
+        menuToDockNameMapByView[view][targetAction] = widget->objectName();
     }
     parent->addDockWidget(area,widget);
+}
+
+void MainWindow::registerDockablePanel(DockableView *parent,
+                                       VIEW_SECTIONS view,
+                                       const QString &panelId,
+                                       const QString &title,
+                                       QWidget *content)
+{
+    if (!parent || panelId.isEmpty() || !content) {
+        return;
+    }
+
+    QAction *menuAction = nullptr;
+    const QList<QAction *> actions = ui.menuTools->actions();
+    for (QAction *action : actions) {
+        if (action->text() == title) {
+            menuAction = action;
+            break;
+        }
+    }
+    if (!menuAction) {
+        menuAction = ui.menuTools->addAction(title);
+        menuAction->setCheckable(true);
+        connect(menuAction, SIGNAL(triggered(bool)), this, SLOT(showTool(bool)));
+    }
+
+    menuToDockNameMap[menuAction] = panelId;
+    menuToDockNameMapByView[view][menuAction] = panelId;
+    centralWidgetToDockWidgetsMap[view][panelId] = content;
+
+    if (QAction *toggleAction = parent->panelToggleAction(panelId)) {
+        menuAction->setChecked(toggleAction->isChecked());
+        connect(toggleAction, &QAction::toggled,
+                menuAction, &QAction::setChecked, Qt::UniqueConnection);
+    }
 }
 
 QDockWidget* MainWindow::createDockWidget(QWidget *parent,QWidget *child,QString title,QString objectname,VIEW_SECTIONS view,Qt::DockWidgetArea area,int minwidth,int minheight)
@@ -773,6 +835,37 @@ QDockWidget* MainWindow::createDockWidget(QWidget *parent,QWidget *child,QString
     //{
     child->setObjectName(objectname);
     //}
+
+    if (auto *dockableView = qobject_cast<DockableView *>(parent)) {
+        DockableView::PanelLocation location = DockableView::PanelLocation::Left;
+        switch (area) {
+        case Qt::RightDockWidgetArea:
+            location = DockableView::PanelLocation::Right;
+            break;
+        case Qt::TopDockWidgetArea:
+            location = DockableView::PanelLocation::Top;
+            break;
+        case Qt::BottomDockWidgetArea:
+            location = DockableView::PanelLocation::Bottom;
+            break;
+        case Qt::LeftDockWidgetArea:
+        default:
+            location = DockableView::PanelLocation::Left;
+            break;
+        }
+        const QSize preferredSize = (minwidth > 0 || minheight > 0)
+            ? QSize(minwidth, minheight) : QSize();
+        if (!dockableView->addPanel(objectname, title, child, location,
+                                    QString(), preferredSize)) {
+            QLOG_WARN() << "Could not add panel" << objectname
+                        << "to" << dockableView->viewId();
+            child->deleteLater();
+            return nullptr;
+        }
+        registerDockablePanel(dockableView, view, objectname, title, child);
+        return nullptr;
+    }
+
     QDockWidget *widget = new QDockWidget(title,this);
     if (!isAdvancedMode)
     {
@@ -920,13 +1013,23 @@ void MainWindow::showTool(bool show)
     //Called when a menu item is clicked on, regardless of view.
 
     QAction* act = qobject_cast<QAction *>(sender());
-    if (menuToDockNameMap.contains(act))
+    QString name;
+    if (menuToDockNameMapByView.value(currentView).contains(act)) {
+        name = menuToDockNameMapByView.value(currentView).value(act);
+    } else if (menuToDockNameMap.contains(act)) {
+        name = menuToDockNameMap.value(act);
+    }
+    if (!name.isEmpty())
     {
-        QString name = menuToDockNameMap[act];
         if (centralWidgetToDockWidgetsMap.contains(currentView))
         {
             if (centralWidgetToDockWidgetsMap[currentView].contains(name))
             {
+                if (auto *dockableView = qobject_cast<DockableView *>(
+                        centerStack->currentWidget())) {
+                    dockableView->setPanelVisible(name, show);
+                    return;
+                }
                 if (show)
                 {
                     centralWidgetToDockWidgetsMap[currentView][name]->show();
@@ -1880,9 +1983,18 @@ void MainWindow::setActiveUAS(UASInterface* uas)
     //    if (!ui.menuUnmanned_System->isEnabled()) ui.menuUnmanned_System->setEnabled(true);
     if (settings.contains(getWindowStateKey()))
     {
-        SubMainWindow *win = qobject_cast<SubMainWindow*>(centerStack->currentWidget());
-        //settings.setValue(getWindowStateKey(), win->saveState(QGC::applicationVersion()))
-        win->restoreState(settings.value(getWindowStateKey()).toByteArray(), QGC::applicationVersion());
+        if (SubMainWindow *win = qobject_cast<SubMainWindow *>(
+                centerStack->currentWidget())) {
+            win->restoreState(settings.value(getWindowStateKey()).toByteArray(),
+                              QGC::applicationVersion());
+        }
+    }
+    if (auto *dockableView = qobject_cast<DockableView *>(
+            centerStack->currentWidget())) {
+        const QString layoutKey = getWindowStateKey() + QStringLiteral("_DOCK_LAYOUT_V1");
+        if (settings.contains(layoutKey)) {
+            dockableView->restoreLayout(settings.value(layoutKey).toByteArray());
+        }
     }
 
 }
@@ -2091,18 +2203,25 @@ void MainWindow::storeViewState()
 {
     if (!aboutToCloseFlag)
     {
-        // Save current state
-        SubMainWindow *win = qobject_cast<SubMainWindow*>(centerStack->currentWidget());
-        QList<QDockWidget*> widgets = win->findChildren<QDockWidget*>();
-        QString widgetnames = "";
-        for (int i=0;i<widgets.size();i++)
-        {
-            widgetnames += widgets[i]->objectName() + ",";
+        QWidget *currentWidget = centerStack->currentWidget();
+        if (auto *dockableView = qobject_cast<DockableView *>(currentWidget)) {
+            const QByteArray layout = dockableView->saveLayout();
+            if (!layout.isEmpty()) {
+                settings.setValue(getWindowStateKey()
+                                      + QStringLiteral("_DOCK_LAYOUT_V1"),
+                                  layout);
+            }
+        } else if (SubMainWindow *win = qobject_cast<SubMainWindow *>(currentWidget)) {
+            const QList<QDockWidget *> widgets = win->findChildren<QDockWidget *>();
+            QStringList widgetNames;
+            for (QDockWidget *widget : widgets) {
+                widgetNames.append(widget->objectName());
+            }
+            settings.setValue(getWindowStateKey() + QStringLiteral("WIDGETS"),
+                              widgetNames.join(QLatin1Char(',')));
+            settings.setValue(getWindowStateKey(),
+                              win->saveState(QGC::applicationVersion()));
         }
-        widgetnames = widgetnames.mid(0,widgetnames.length()-1);
-
-        settings.setValue(getWindowStateKey() + "WIDGETS",widgetnames);
-        settings.setValue(getWindowStateKey(), win->saveState(QGC::applicationVersion()));
         settings.setValue(getWindowStateKey()+"CENTER_WIDGET", centerStack->currentIndex());
         // Although we want save the state of the window, we do not want to change the top-leve state (minimized, maximized, etc)
         // therefore this state is stored here and restored after applying the rest of the settings in the new
@@ -2179,25 +2298,30 @@ void MainWindow::loadViewState()
         }
     }
 
-    // Restore the widget positions and size
-    if (settings.contains(getWindowStateKey() + "WIDGETS"))
-    {
-        QString widgetstr = settings.value(getWindowStateKey() + "WIDGETS").toString();
-        QStringList split = widgetstr.split(",");
-        foreach (QString widgetname,split)
-        {
-            if (widgetname != "")
-            {
-                QLOG_DEBUG() << "Loading widget:" << widgetname;
-                loadDockWidget(widgetname);
+    QWidget *currentWidget = centerStack->currentWidget();
+    if (auto *dockableView = qobject_cast<DockableView *>(currentWidget)) {
+        const QString layoutKey = getWindowStateKey()
+            + QStringLiteral("_DOCK_LAYOUT_V1");
+        if (settings.contains(layoutKey)) {
+            dockableView->restoreLayout(settings.value(layoutKey).toByteArray());
+        }
+    } else if (SubMainWindow *win = qobject_cast<SubMainWindow *>(currentWidget)) {
+        // Legacy Qt docking remains isolated to views that have not been ported yet.
+        if (settings.contains(getWindowStateKey() + QStringLiteral("WIDGETS"))) {
+            const QStringList widgetNames = settings.value(
+                getWindowStateKey() + QStringLiteral("WIDGETS"))
+                                                .toString()
+                                                .split(QLatin1Char(','),
+                                                       Qt::SkipEmptyParts);
+            for (const QString &widgetName : widgetNames) {
+                QLOG_DEBUG() << "Loading widget:" << widgetName;
+                loadDockWidget(widgetName);
             }
         }
-    }
-    if (settings.contains(getWindowStateKey()))
-    {
-        SubMainWindow *win = qobject_cast<SubMainWindow*>(centerStack->currentWidget());
-        //settings.setValue(getWindowStateKey(), win->saveState(QGC::applicationVersion()))
-        win->restoreState(settings.value(getWindowStateKey()).toByteArray(), QGC::applicationVersion());
+        if (settings.contains(getWindowStateKey())) {
+            win->restoreState(settings.value(getWindowStateKey()).toByteArray(),
+                              QGC::applicationVersion());
+        }
     }
 }
 void MainWindow::setAdvancedMode(bool mode)

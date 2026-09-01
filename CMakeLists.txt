@@ -120,6 +120,9 @@ if(APM_ENABLE_KDDOCKWIDGETS)
     add_subdirectory(libs/kddockwidgets)
 endif()
 
+option(APM_USE_QML_PFD
+    "Use the legacy Qt Quick primary flight display instead of the QtWidgets display" OFF)
+
 add_library(apm_parameter_core STATIC
     src/core/VehicleTarget.h
     src/core/parameters/ParameterCodec.cpp
@@ -222,6 +225,7 @@ set(SOURCES
     src/uas/ApmUiHelpers.h
     src/uas/ArduPilotMegaMAV.cc
     src/uas/ArduPilotMegaMAV.h
+    src/uas/MAVLinkComponentTracker.h
     src/uas/LogDownloadDialog.cc
     src/uas/LogDownloadDialog.h
     src/uas/LogDownloadDialog.ui
@@ -277,6 +281,8 @@ set(SOURCES
     src/ui/FlightDataView.h
     src/ui/FlightPlannerView.cpp
     src/ui/FlightPlannerView.h
+    src/ui/docking/DockableView.cpp
+    src/ui/docking/DockableView.h
     src/ui/EKFMonitor.cpp
     src/ui/EKFMonitor.h
     src/ui/GoogleElevationData.cpp
@@ -877,6 +883,9 @@ if(APM_ENABLE_KDDOCKWIDGETS)
         src/ui/docking/DockHost.h
     )
     target_link_libraries(${APM_PLANNER_TARGET} KDAB::kddockwidgets)
+    target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
+        APM_HAS_KDDOCKWIDGETS=1
+    )
 endif()
 
 # Definitions
@@ -894,6 +903,10 @@ if(APM_ENABLE_SOURCE_DATA_FALLBACK)
     target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
         APM_DEVELOPMENT_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     )
+endif()
+
+if(APM_USE_QML_PFD)
+    target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE PFD_QML=1)
 endif()
 
 if(APM_HAS_DATA_VISUALIZATION)
@@ -1042,6 +1055,19 @@ if(BUILD_TESTING)
     )
     add_test(NAME qgcparamid_tests COMMAND qgcparamid_tests)
 
+    add_executable(mavlink_component_tracker_tests
+        tests/test_mavlinkcomponenttracker.cpp
+        src/uas/MAVLinkComponentTracker.h
+    )
+    target_include_directories(mavlink_component_tracker_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(mavlink_component_tracker_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME mavlink_component_tracker_tests COMMAND mavlink_component_tracker_tests)
+
     add_executable(backstageview_tests
         tests/test_backstageview.cpp
         src/ui/BackstageView.cpp
@@ -1056,6 +1082,27 @@ if(BUILD_TESTING)
     )
     add_test(NAME backstageview_tests COMMAND backstageview_tests)
     set_tests_properties(backstageview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(dataselectionscreen_tests
+        tests/test_dataselectionscreen.cpp
+        src/ui/dataselectionscreen.cpp
+        src/ui/dataselectionscreen.h
+        src/ui/dataselectionscreen.ui
+        src/ui/GraphTreeWidgetItem.cc
+        src/ui/GraphTreeWidgetItem.h
+    )
+    target_include_directories(dataselectionscreen_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    )
+    target_link_libraries(dataselectionscreen_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME dataselectionscreen_tests COMMAND dataselectionscreen_tests)
+    set_tests_properties(dataselectionscreen_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
@@ -1088,5 +1135,39 @@ if(BUILD_TESTING)
         set_tests_properties(dockhost_tests PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
         )
+
     endif()
+
+    add_executable(flightviews_tests
+        tests/test_flightviews.cpp
+        src/ui/FlightDataView.cpp
+        src/ui/FlightDataView.h
+        src/ui/FlightPlannerView.cpp
+        src/ui/FlightPlannerView.h
+        src/ui/docking/DockableView.cpp
+        src/ui/docking/DockableView.h
+    )
+    target_include_directories(flightviews_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    if(APM_ENABLE_KDDOCKWIDGETS)
+        target_sources(flightviews_tests PRIVATE
+            src/ui/docking/DockHost.cpp
+            src/ui/docking/DockHost.h
+        )
+        target_compile_definitions(flightviews_tests PRIVATE
+            APM_HAS_KDDOCKWIDGETS=1
+        )
+        target_link_libraries(flightviews_tests PRIVATE
+            KDAB::kddockwidgets
+        )
+    endif()
+    target_link_libraries(flightviews_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME flightviews_tests COMMAND flightviews_tests)
+    set_tests_properties(flightviews_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 endif()
