@@ -32,6 +32,11 @@
 #include <QSurfaceFormat>
 #include "waypointitem.h"
 
+static void initializeMapResources()
+{
+    Q_INIT_RESOURCE(mapresources);
+}
+
 namespace mapcontrol
 {
 
@@ -50,6 +55,7 @@ namespace mapcontrol
         showDiag(false),
         diagGraphItem(0)
     {
+        initializeMapResources();
         setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
         core=new internals::Core;
         map=new MapGraphicItem(core,config);

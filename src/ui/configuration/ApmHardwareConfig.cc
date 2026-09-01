@@ -153,9 +153,9 @@ ApmHardwareConfig::ApmHardwareConfig(QWidget *parent) : QWidget(parent)
 
     ui.mandatoryHardware->setChecked(true);
 
-    // Set start up WarningMessageView view
-    ui.stackedWidget->setCurrentWidget(m_buttonToConfigWidgetMap[ui.hiddenPushButton]);
-    ui.hiddenPushButton->setChecked(true);
+    // The disconnected Mission Planner setup route starts on firmware install.
+    ui.stackedWidget->setCurrentWidget(m_apmCustomFWConfig);
+    ui.firmwareButton->setChecked(true);
 }
 
 void ApmHardwareConfig::advModeChanged(bool state)
@@ -252,8 +252,8 @@ void ApmHardwareConfig::uasDisconnected()
     ui.radio3DRLargeButton->setVisible(true); // [SHOW 3DR RADIO]
     ui.antennaTrackerLargeButton->setVisible(false); // [HIDE Antenna Tracking]
 
-    ui.stackedWidget->setCurrentWidget(m_buttonToConfigWidgetMap[ui.hiddenPushButton]);
-    ui.hiddenPushButton->setChecked(true);
+    ui.stackedWidget->setCurrentWidget(m_apmCustomFWConfig);
+    ui.firmwareButton->setChecked(true);
 }
 
 void ApmHardwareConfig::firmwareWhileConnected()
