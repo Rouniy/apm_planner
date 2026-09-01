@@ -36,6 +36,7 @@ This file is part of the QGROUNDCONTROL project
 #include "QGC.h"
 #include "MainWindow.h"
 #include "GAudioOutput.h"
+#include "ui/configuration/ElevationSourceService.h"
 
 #ifdef OPAL_RT
 #include "OpalLink.h"
@@ -92,6 +93,7 @@ QGCCore::QGCCore(int &argc, char* argv[]) : QApplication(argc, argv)
 
 void QGCCore::aboutToQuit()
 {
+    ElevationSourceService::instance()->shutdown();
     LinkManager::instance()->shutdown();
 }
 
@@ -129,6 +131,10 @@ void QGCCore::initialize()
         settings.setValue("QGC_APPLICATION_VERSION", QGC_APPLICATION_VERSION);
     }
     settings.sync();
+
+    // Restore local GeoTIFF/DTED and optional native GDAL indexes without
+    // blocking the splash screen or the main UI construction.
+    ElevationSourceService::instance()->initializeFromSettings();
 
 
     // Show splash screen

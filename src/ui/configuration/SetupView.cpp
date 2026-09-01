@@ -7,6 +7,7 @@
 #include "BatteryMonitorConfig.h"
 #include "CameraGimbalConfig.h"
 #include "CompassConfig.h"
+#include "ConfigElevationSourcesView.h"
 #include "ConfigInitialParamsView.h"
 #include "ConfigSerialView.h"
 #include "FailSafeConfig.h"
@@ -29,6 +30,7 @@
 #include <QDir>
 #include <QFrame>
 #include <QScrollArea>
+#include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -51,6 +53,8 @@ const QString kAirspeed = QStringLiteral("ConfigAirspeedView");
 const QString kOpticalFlow = QStringLiteral("ConfigOptFlowView");
 const QString kOsd = QStringLiteral("ConfigHWOSDView");
 const QString kCameraGimbal = QStringLiteral("ConfigMountView");
+const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
+const QString kElevationSources = QStringLiteral("ConfigElevationSourcesView");
 
 QWidget *scrollablePage(QWidget *content, const QString &objectName,
                         QWidget *parent)
@@ -139,6 +143,11 @@ SetupView::SetupView(QWidget *parent)
     layout->setSpacing(0);
     layout->addWidget(m_backstage);
 
+    QSettings settings;
+    settings.setFallbacksEnabled(false);
+    m_advanced = settings.value(
+        QStringLiteral("QGC_MAINWINDOW/ADVANCED_MODE"), false).toBool();
+
     buildPages();
     connect(m_backstage, &BackstageView::currentPageChanged,
             this, [this]() { refreshLoadingOverlay(); });
@@ -206,6 +215,9 @@ void SetupView::buildPages()
         kOsd, tr("OSD"), true, true));
     m_backstage->addPage(makeBackstagePage<CameraGimbalConfig>(
         kCameraGimbal, tr("Camera Gimbal"), true, true));
+
+    m_backstage->addGroup(tr(">> Advanced"), kAdvancedGroup);
+    m_backstage->addPage(configElevationSourcesBackstagePage());
 }
 
 void SetupView::advModeChanged(bool advanced)
@@ -487,6 +499,9 @@ void SetupView::refreshPageVisibility()
     m_backstage->setPageVisible(kOpticalFlow, m_connected);
     m_backstage->setPageVisible(kOsd, m_connected);
     m_backstage->setPageVisible(kCameraGimbal, m_connected);
+
+    m_backstage->setGroupVisible(kAdvancedGroup, m_advanced);
+    m_backstage->setPageVisible(kElevationSources, m_advanced);
     refreshLoadingOverlay();
 }
 

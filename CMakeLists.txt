@@ -498,6 +498,12 @@ set(SOURCES
     src/ui/configuration/ConfigPlannerAdvView.h
     src/ui/configuration/ConfigPlannerAdvViewModel.cpp
     src/ui/configuration/ConfigPlannerAdvViewModel.h
+    src/ui/configuration/ConfigElevationSourcesView.cpp
+    src/ui/configuration/ConfigElevationSourcesView.h
+    src/ui/configuration/ConfigElevationSourcesViewModel.cpp
+    src/ui/configuration/ConfigElevationSourcesViewModel.h
+    src/ui/configuration/ElevationSourceService.cpp
+    src/ui/configuration/ElevationSourceService.h
     src/ui/configuration/ConfigParamLoadingView.cpp
     src/ui/configuration/ConfigParamLoadingView.h
     src/ui/configuration/ConfigParamLoadingViewModel.cpp
@@ -1171,6 +1177,30 @@ if(BUILD_TESTING)
     add_test(NAME configplanneradvview_tests
         COMMAND configplanneradvview_tests)
     set_tests_properties(configplanneradvview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configelevationsourcesview_tests
+        tests/test_configelevationsourcesview.cpp
+        src/ui/configuration/ConfigElevationSourcesView.cpp
+        src/ui/configuration/ConfigElevationSourcesView.h
+        src/ui/configuration/ConfigElevationSourcesViewModel.cpp
+        src/ui/configuration/ConfigElevationSourcesViewModel.h
+        src/ui/configuration/ElevationSourceService.cpp
+        src/ui/configuration/ElevationSourceService.h
+    )
+    target_include_directories(configelevationsourcesview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configelevationsourcesview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configelevationsourcesview_tests
+        COMMAND configelevationsourcesview_tests)
+    set_tests_properties(configelevationsourcesview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
