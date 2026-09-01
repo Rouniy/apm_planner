@@ -43,6 +43,14 @@ namespace core {
                 types.append(MapType::GoogleHybrid);
                 break;
 
+            case MapType::GDALCustom:
+                // Match Mission Planner: keep Google's normal satellite
+                // provider/cache as the base and draw the local raster as a
+                // transparent, memory-only overlay.
+                types.append(MapType::GoogleSatellite);
+                types.append(MapType::GDALCustom);
+                break;
+
             case MapType::GoogleHybridChina:
                 {
                     types.append(MapType::GoogleSatelliteChina);

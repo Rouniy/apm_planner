@@ -29,6 +29,7 @@ This file is part of the APM_PLANNER project
 #include "LogAnalysisMap.h"
 #include "logging.h"
 #include "pointlatlng.h"
+#include "ui/map/MapTileSourceFactory.h"
 
 #include "ui_LogAnalysisMap.h"
 
@@ -42,6 +43,22 @@ LogAnalysisMap::LogAnalysisMap(QWidget *parent) :
  {
     QLOG_DEBUG() << "LogAnalysisMap::LogAnalysisMap - CTOR";
     mp_Ui->setupUi(this);
+
+    MapTileSourceFactory *mapFactory = MapTileSourceFactory::instance();
+    mp_Ui->map->SetMapType(mapFactory->CurrentMapType());
+    connect(mapFactory, &MapTileSourceFactory::MapTypeChanged, this,
+            [this](core::MapType::Types type) {
+                if (mp_Ui->map->GetMapType() != type) {
+                    mp_Ui->map->SetMapType(type);
+                }
+            });
+    connect(mapFactory, &MapTileSourceFactory::MapRefreshRequested, this,
+            [this]() {
+                if (mp_Ui->map->GetMapType()
+                    == core::MapType::GDALCustom) {
+                    mp_Ui->map->ReloadMap();
+                }
+            });
 
     // setup zoom slider
     mp_Ui->zoomSlider->setMinimum(mp_Ui->map->MinZoom() * s_MapScaling);
@@ -320,5 +337,4 @@ void LogAnalysisMap::setZoom(int value)
 {
     mp_Ui->zoomSlider->setValue(value * s_MapScaling);
 }
-
 

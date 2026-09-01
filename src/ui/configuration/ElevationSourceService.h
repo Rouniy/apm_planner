@@ -2,6 +2,7 @@
 #define ELEVATIONSOURCESERVICE_H
 
 #include <QList>
+#include <QByteArray>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -106,8 +107,11 @@ public:
     virtual QString startupError() const;
     virtual bool requiresRestartToSwitch(const QString &directory) const;
     virtual QString backendStatus() const;
+    virtual bool isNativeGdalAvailable() const;
     virtual bool sampleAltitude(double latitude, double longitude,
                                 double *altitude) const;
+    virtual QByteArray renderRasterTile(int tileX, int tileY, int zoom,
+                                        int tileSize = 256) const;
 
     virtual bool startScan(const QString &directory, bool startup = false);
     virtual void cancelScan();
@@ -124,6 +128,7 @@ signals:
     void scanFailed(const QString &error, bool startup);
     void scanCancelled(bool startup);
     void busyChanged(bool busy);
+    void nativeRastersChanged();
 
 private:
     class Private;

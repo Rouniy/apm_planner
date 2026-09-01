@@ -35,6 +35,8 @@ This file is part of the PIXHAWK project
 
 #include <QApplication>
 
+#include <memory>
+
 #include "MainWindow.h"
 #include "UASManager.h"
 #include "LinkManager.h"
@@ -45,6 +47,7 @@ This file is part of the PIXHAWK project
 #include "OpalLink.h"
 
 #endif
+class NativeGdalMapService;
 /**
  * @brief The main application and management class.
  *
@@ -79,6 +82,7 @@ protected:
 private:
     MainWindow* mainWindow;
     QGCMouseWheelEventFilter *m_mouseWheelFilter;
+    std::unique_ptr<NativeGdalMapService> m_nativeGdalMapService;
 };
 
 #endif /* _CORE_H_ */

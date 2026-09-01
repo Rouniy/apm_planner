@@ -507,6 +507,9 @@ namespace internals {
     {
         if(started)
         {
+            // Matrix must not be cleared while an old tile loader can still
+            // publish into it. This also makes provider refreshes deterministic.
+            CancelAsyncTasks();
 #ifdef DEBUG_CORE
             qDebug()<<"------------------";
 #endif //DEBUG_CORE

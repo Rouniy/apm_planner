@@ -26,6 +26,9 @@
 */
 #include "opmaps.h"
 
+#include <QReadLocker>
+#include <QWriteLocker>
+
 
 namespace core {
     OPMaps* OPMaps::m_pInstance=0;
@@ -49,6 +52,21 @@ namespace core {
     OPMaps::~OPMaps()
     {
         TileDBcacheQueue.wait();
+    }
+
+    void OPMaps::setLocalTileProvider(LocalTileProvider *provider)
+    {
+        QWriteLocker locker(&localTileProviderLock);
+        localTileProvider = provider;
+    }
+
+    void OPMaps::invalidateLocalTiles(MapType::Types type)
+    {
+        // Wait for every in-flight provider read/render to finish before
+        // removing the corresponding memory entries. Otherwise an old render
+        // could repopulate the cache immediately after invalidation.
+        QWriteLocker providerLocker(&localTileProviderLock);
+        RemoveTilesOfTypeFromMemoryCache(type);
     }
 
 
@@ -83,6 +101,19 @@ namespace core {
 #ifdef DEBUG_GMAPS
             qDebug()<<"Tile not in memory";
 #endif //DEBUG_GMAPS
+            if (type == MapType::GDALCustom) {
+                // Local rasters never enter the shared disk cache. Keeping
+                // the provider read lock during the call makes unregistering
+                // safe while loader threads are still rendering.
+                QReadLocker locker(&localTileProviderLock);
+                if (localTileProvider)
+                    ret = localTileProvider->tileImage(type, pos, zoom);
+
+                if (!ret.isEmpty() && useMemoryCache)
+                    AddTileToMemoryCache(RawTile(type, pos, zoom), ret);
+                return ret;
+            }
+
             if(accessmode != (AccessMode::ServerOnly))
             {
 #ifdef DEBUG_GMAPS
@@ -305,4 +336,3 @@ namespace core {
         return i;
     }
 }
-

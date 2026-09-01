@@ -40,10 +40,10 @@ namespace core {
 
     public:
         RawTile(const MapType::Types &Type,const core::Point &Pos,const int &Zoom);
-        QString ToString(void);
-        MapType::Types Type();
-        core::Point Pos();
-        int Zoom();
+        QString ToString(void) const;
+        MapType::Types Type() const;
+        core::Point Pos() const;
+        int Zoom() const;
         void setType(const MapType::Types &value);
         void setPos(const core::Point &value);
         void setZoom(const int &value);

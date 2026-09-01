@@ -41,10 +41,21 @@
 #include "urlfactory.h"
 #include "diagnostics.h"
 
+#include <QReadWriteLock>
+
 //#include "point.h"
 
 
 namespace core {
+    class LocalTileProvider
+    {
+    public:
+        virtual ~LocalTileProvider() = default;
+        virtual QByteArray tileImage(MapType::Types type,
+                                     const Point &position,
+                                     int zoom) = 0;
+    };
+
     class OPMaps: public MemoryCache,public AllLayersOfType,public UrlFactory
     {
 
@@ -62,6 +73,8 @@ namespace core {
 
 
         QByteArray GetImageFrom(const MapType::Types &type,const core::Point &pos,const int &zoom);
+        void setLocalTileProvider(LocalTileProvider *provider);
+        void invalidateLocalTiles(MapType::Types type);
         bool UseMemoryCache(){return useMemoryCache;}//TODO
         void setUseMemoryCache(const bool& value){useMemoryCache=value;}
         void setLanguage(const LanguageType::Types& language){Language=language;}//TODO
@@ -83,6 +96,8 @@ namespace core {
         static OPMaps* m_pInstance;
         diagnostics diag;
         QMutex errorvars;
+        QReadWriteLock localTileProviderLock;
+        LocalTileProvider *localTileProvider = nullptr;
     protected:
         // MemoryCache TilesInMemory;
 

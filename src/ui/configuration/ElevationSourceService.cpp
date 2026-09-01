@@ -1,12 +1,14 @@
 #include "ElevationSourceService.h"
 
 #include <QCoreApplication>
+#include <QBuffer>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QLibrary>
 #include <QLocale>
+#include <QImage>
 #include <QMetaObject>
 #include <QMutex>
 #include <QMutexLocker>
@@ -23,11 +25,21 @@
 namespace {
 constexpr unsigned int kGdalOpenReadOnlyRaster = 0x00u | 0x02u | 0x40u;
 constexpr int kGdalRead = 0;
+constexpr int kGdalByte = 1;
 constexpr int kGdalFloat64 = 7;
 constexpr int kGdalBilinear = 1;
 constexpr int kTraditionalGisOrder = 0;
 constexpr double kEarthRadius = 6378137.0;
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kWebMercatorHalfWorld = kPi * kEarthRadius;
+constexpr int kGrayColorInterpretation = 1;
+constexpr int kPaletteColorInterpretation = 2;
+constexpr int kRedColorInterpretation = 3;
+constexpr int kGreenColorInterpretation = 4;
+constexpr int kBlueColorInterpretation = 5;
+constexpr int kAlphaColorInterpretation = 6;
+constexpr int kAllValidMask = 0x01;
+constexpr int kAlphaMask = 0x04;
 
 #if defined(_MSC_VER) && !defined(CPL_DISABLE_STDCALL)
 #define APM_GDAL_STDCALL __stdcall
@@ -136,6 +148,74 @@ double mercatorLatitude(double y)
         * 180.0 / kPi;
 }
 
+struct GdalColorEntry
+{
+    short red = 0;
+    short green = 0;
+    short blue = 0;
+    short alpha = 0;
+};
+
+static_assert(sizeof(GdalColorEntry) == 4 * sizeof(short),
+              "GDALColorEntry ABI must contain four short values");
+
+struct MercatorExtent
+{
+    double minX = 0.0;
+    double minY = 0.0;
+    double maxX = 0.0;
+    double maxY = 0.0;
+
+    double width() const { return maxX - minX; }
+    double height() const { return maxY - minY; }
+};
+
+bool intersectExtents(const MercatorExtent &left,
+                      const MercatorExtent &right,
+                      MercatorExtent *intersection)
+{
+    if (!intersection) {
+        return false;
+    }
+    const MercatorExtent result{
+        std::max(left.minX, right.minX),
+        std::max(left.minY, right.minY),
+        std::min(left.maxX, right.maxX),
+        std::min(left.maxY, right.maxY)};
+    if (result.minX >= result.maxX || result.minY >= result.maxY) {
+        return false;
+    }
+    *intersection = result;
+    return true;
+}
+
+unsigned char clampColor(short value)
+{
+    return static_cast<unsigned char>(std::clamp<int>(value, 0, 255));
+}
+
+void blendPixel(unsigned char *destination, unsigned char red,
+                unsigned char green, unsigned char blue,
+                unsigned char alpha)
+{
+    const int destinationAlpha = destination[3];
+    const int outputAlpha = alpha
+        + destinationAlpha * (255 - alpha) / 255;
+    if (outputAlpha == 0) {
+        return;
+    }
+    destination[0] = static_cast<unsigned char>((red * alpha
+        + destination[0] * destinationAlpha * (255 - alpha) / 255)
+        / outputAlpha);
+    destination[1] = static_cast<unsigned char>((green * alpha
+        + destination[1] * destinationAlpha * (255 - alpha) / 255)
+        / outputAlpha);
+    destination[2] = static_cast<unsigned char>((blue * alpha
+        + destination[2] * destinationAlpha * (255 - alpha) / 255)
+        / outputAlpha);
+    destination[3] = static_cast<unsigned char>(outputAlpha);
+}
+
 class NativeGdalApi final
 {
 public:
@@ -152,6 +232,8 @@ public:
     using GdalGetString = const char *(APM_GDAL_STDCALL *)(void *);
     using GdalGetGeoTransform = int (APM_GDAL_STDCALL *)(void *, double *);
     using GdalGetRasterBand = void *(APM_GDAL_STDCALL *)(void *, int);
+    using GdalGetColorEntryAsRgb = int (APM_GDAL_STDCALL *)(
+        void *, int, GdalColorEntry *);
     using GdalRasterIo = int (APM_GDAL_STDCALL *)(
         void *, int, int, int, int, int, void *, int, int, int, int, int);
     using GdalGetRasterNoDataValue = double (APM_GDAL_STDCALL *)(
@@ -249,6 +331,52 @@ public:
         return m_getGeoTransform(dataset, transform);
     }
 
+    void *rasterBand(void *dataset, int band) const
+    {
+        return dataset && band > 0 ? m_getRasterBand(dataset, band) : nullptr;
+    }
+
+    int colorInterpretation(void *band) const
+    {
+        return band ? m_getRasterColorInterpretation(band) : 0;
+    }
+
+    void *colorTable(void *band) const
+    {
+        return band ? m_getRasterColorTable(band) : nullptr;
+    }
+
+    void *maskBand(void *band) const
+    {
+        return band ? m_getMaskBand(band) : nullptr;
+    }
+
+    int maskFlags(void *band) const
+    {
+        return band ? m_getMaskFlags(band) : kAllValidMask;
+    }
+
+    bool color(void *table, int index, GdalColorEntry *entry) const
+    {
+        return table && entry
+            && m_getColorEntryAsRgb(table, index, entry) != 0;
+    }
+
+    bool readByteBand(void *band, int xOffset, int yOffset,
+                      int xSize, int ySize, unsigned char *destination,
+                      int destinationWidth, int destinationHeight) const
+    {
+        if (!band || !destination || xSize <= 0 || ySize <= 0
+            || destinationWidth <= 0 || destinationHeight <= 0) {
+            return false;
+        }
+        m_errorReset();
+        return m_rasterIo(band, kGdalRead, xOffset, yOffset,
+                          xSize, ySize, destination,
+                          destinationWidth, destinationHeight,
+                          kGdalByte, 0, 0) == 0;
+    }
+
     QString driver(void *dataset) const
     {
         void *driverHandle = m_getDatasetDriver(dataset);
@@ -333,6 +461,14 @@ private:
             && resolve(&m_getDatasetDriver, "GDALGetDatasetDriver", error)
             && resolve(&m_getDriverShortName, "GDALGetDriverShortName", error)
             && resolve(&m_getRasterBand, "GDALGetRasterBand", error)
+            && resolve(&m_getRasterColorInterpretation,
+                       "GDALGetRasterColorInterpretation", error)
+            && resolve(&m_getRasterColorTable,
+                       "GDALGetRasterColorTable", error)
+            && resolve(&m_getColorEntryAsRgb,
+                       "GDALGetColorEntryAsRGB", error)
+            && resolve(&m_getMaskBand, "GDALGetMaskBand", error)
+            && resolve(&m_getMaskFlags, "GDALGetMaskFlags", error)
             && resolve(&m_rasterIo, "GDALRasterIO", error)
             && resolve(&m_getRasterNoDataValue,
                        "GDALGetRasterNoDataValue", error)
@@ -399,6 +535,11 @@ private:
     GdalGetHandle m_getDatasetDriver = nullptr;
     GdalGetString m_getDriverShortName = nullptr;
     GdalGetRasterBand m_getRasterBand = nullptr;
+    GdalGetInteger m_getRasterColorInterpretation = nullptr;
+    GdalGetHandle m_getRasterColorTable = nullptr;
+    GdalGetColorEntryAsRgb m_getColorEntryAsRgb = nullptr;
+    GdalGetHandle m_getMaskBand = nullptr;
+    GdalGetInteger m_getMaskFlags = nullptr;
     GdalRasterIo m_rasterIo = nullptr;
     GdalGetRasterNoDataValue m_getRasterNoDataValue = nullptr;
     OsrNewSpatialReference m_newSpatialReference = nullptr;
@@ -438,6 +579,19 @@ public:
           m_width(width), m_height(height), m_bands(bands)
     {
         std::copy(transform, transform + 6, m_transform);
+        const double x2 = m_transform[0] + m_width * m_transform[1];
+        const double y2 = m_transform[3] + m_height * m_transform[5];
+        m_extent = {std::min(m_transform[0], x2),
+                    std::min(m_transform[3], y2),
+                    std::max(m_transform[0], x2),
+                    std::max(m_transform[3], y2)};
+        m_resolution = std::max(std::abs(m_transform[1]),
+                                std::abs(m_transform[5]));
+        m_interpretations.reserve(m_bands);
+        for (int index = 1; index <= m_bands; ++index) {
+            m_interpretations.push_back(m_api->colorInterpretation(
+                m_api->rasterBand(m_warped, index)));
+        }
     }
 
     ~GdalDataset()
@@ -455,6 +609,7 @@ public:
     int height() const { return m_height; }
     int bands() const { return m_bands; }
     const double *transform() const { return m_transform; }
+    double resolution() const { return m_resolution; }
 
     bool sampleLonLat(double latitude, double longitude,
                       double *altitude) const
@@ -472,7 +627,184 @@ public:
         return m_api->sample(m_warped, x, y, altitude);
     }
 
+    bool render(const MercatorExtent &request, int tileSize,
+                unsigned char *destination) const
+    {
+        QMutexLocker locker(&m_gate);
+        MercatorExtent intersection;
+        if (!destination || tileSize <= 0
+            || !intersectExtents(request, m_extent, &intersection)) {
+            return false;
+        }
+
+        const int destinationLeft = std::clamp(
+            static_cast<int>(std::floor(
+                (intersection.minX - request.minX)
+                / request.width() * tileSize)),
+            0, tileSize - 1);
+        const int destinationRight = std::clamp(
+            static_cast<int>(std::ceil(
+                (intersection.maxX - request.minX)
+                / request.width() * tileSize)),
+            1, tileSize);
+        const int destinationTop = std::clamp(
+            static_cast<int>(std::floor(
+                (request.maxY - intersection.maxY)
+                / request.height() * tileSize)),
+            0, tileSize - 1);
+        const int destinationBottom = std::clamp(
+            static_cast<int>(std::ceil(
+                (request.maxY - intersection.minY)
+                / request.height() * tileSize)),
+            1, tileSize);
+        const int outputWidth = destinationRight - destinationLeft;
+        const int outputHeight = destinationBottom - destinationTop;
+        if (outputWidth <= 0 || outputHeight <= 0) {
+            return false;
+        }
+
+        const int xOffset = std::clamp(
+            static_cast<int>(std::floor(
+                (intersection.minX - m_transform[0]) / m_transform[1])),
+            0, m_width - 1);
+        const int xEnd = std::clamp(
+            static_cast<int>(std::ceil(
+                (intersection.maxX - m_transform[0]) / m_transform[1])),
+            xOffset + 1, m_width);
+        const int yOffset = std::clamp(
+            static_cast<int>(std::floor(
+                (m_transform[3] - intersection.maxY) / -m_transform[5])),
+            0, m_height - 1);
+        const int yEnd = std::clamp(
+            static_cast<int>(std::ceil(
+                (m_transform[3] - intersection.minY) / -m_transform[5])),
+            yOffset + 1, m_height);
+        const int count = outputWidth * outputHeight;
+
+        const int redBand = findBand(kRedColorInterpretation);
+        const int greenBand = findBand(kGreenColorInterpretation);
+        const int blueBand = findBand(kBlueColorInterpretation);
+        const int grayBand = findBand(kGrayColorInterpretation);
+        const int paletteBand = findBand(kPaletteColorInterpretation);
+        const int alphaBand = findBand(kAlphaColorInterpretation);
+        const int fallbackBand = redBand > 0 ? redBand
+            : grayBand > 0 ? grayBand
+            : paletteBand > 0 ? paletteBand : 1;
+        const bool channelsUndefined = redBand == 0 && greenBand == 0
+            && blueBand == 0 && grayBand == 0 && paletteBand == 0;
+
+        const auto read = [this, xOffset, yOffset, xEnd, yEnd,
+                           outputWidth, outputHeight, count](int bandIndex,
+                                                            std::vector<unsigned char> *bytes) {
+            if (!bytes || bandIndex <= 0) {
+                return false;
+            }
+            void *band = m_api->rasterBand(m_warped, bandIndex);
+            if (!band) {
+                return false;
+            }
+            bytes->assign(static_cast<size_t>(count), 0);
+            return m_api->readByteBand(
+                band, xOffset, yOffset, xEnd - xOffset, yEnd - yOffset,
+                bytes->data(), outputWidth, outputHeight);
+        };
+        const auto readHandle = [this, xOffset, yOffset, xEnd, yEnd,
+                                 outputWidth, outputHeight, count](
+                                    void *band,
+                                    std::vector<unsigned char> *bytes) {
+            if (!band || !bytes) {
+                return false;
+            }
+            bytes->assign(static_cast<size_t>(count), 0);
+            return m_api->readByteBand(
+                band, xOffset, yOffset, xEnd - xOffset, yEnd - yOffset,
+                bytes->data(), outputWidth, outputHeight);
+        };
+
+        std::vector<unsigned char> red;
+        std::vector<unsigned char> green;
+        std::vector<unsigned char> blue;
+        std::vector<unsigned char> alpha;
+        if (!read(redBand > 0 ? redBand
+                             : grayBand > 0 ? grayBand : fallbackBand,
+                  &red)
+            || !read(greenBand > 0 ? greenBand
+                                   : channelsUndefined && m_bands >= 3 ? 2
+                                   : grayBand > 0 ? grayBand : fallbackBand,
+                     &green)
+            || !read(blueBand > 0 ? blueBand
+                                  : channelsUndefined && m_bands >= 3 ? 3
+                                  : grayBand > 0 ? grayBand : fallbackBand,
+                     &blue)
+            || (alphaBand > 0 && !read(alphaBand, &alpha))) {
+            return false;
+        }
+
+        void *firstBand = m_api->rasterBand(m_warped, fallbackBand);
+        std::vector<unsigned char> mask;
+        const int maskFlags = m_api->maskFlags(firstBand);
+        // RFC 15 exposes an explicit alpha band as the per-dataset mask of
+        // every color band. Applying both would square the opacity (for
+        // example, alpha 128 would incorrectly become 64).
+        const bool alphaAlreadyRead = alphaBand > 0
+            && (maskFlags & kAlphaMask) != 0;
+        if (firstBand && (maskFlags & kAllValidMask) == 0
+            && !alphaAlreadyRead) {
+            if (!readHandle(m_api->maskBand(firstBand), &mask)) {
+                mask.clear();
+            }
+        }
+        void *colorTable = paletteBand > 0
+            ? m_api->colorTable(m_api->rasterBand(m_warped, paletteBand))
+            : nullptr;
+
+        bool any = false;
+        for (int row = 0; row < outputHeight; ++row) {
+            for (int column = 0; column < outputWidth; ++column) {
+                const int input = row * outputWidth + column;
+                unsigned char sourceRed = red[static_cast<size_t>(input)];
+                unsigned char sourceGreen = green[static_cast<size_t>(input)];
+                unsigned char sourceBlue = blue[static_cast<size_t>(input)];
+                unsigned char sourceAlpha = alpha.empty()
+                    ? 255 : alpha[static_cast<size_t>(input)];
+                GdalColorEntry color;
+                if (paletteBand > 0 && m_api->color(
+                        colorTable, sourceRed, &color)) {
+                    sourceRed = clampColor(color.red);
+                    sourceGreen = clampColor(color.green);
+                    sourceBlue = clampColor(color.blue);
+                    sourceAlpha = static_cast<unsigned char>(
+                        sourceAlpha * clampColor(color.alpha) / 255);
+                }
+                if (!mask.empty()) {
+                    sourceAlpha = static_cast<unsigned char>(
+                        sourceAlpha * mask[static_cast<size_t>(input)] / 255);
+                }
+                if (sourceAlpha == 0) {
+                    continue;
+                }
+                const int output = ((destinationTop + row) * tileSize
+                    + destinationLeft + column) * 4;
+                blendPixel(destination + output, sourceRed, sourceGreen,
+                           sourceBlue, sourceAlpha);
+                any = true;
+            }
+        }
+        return any;
+    }
+
 private:
+    int findBand(int interpretation) const
+    {
+        const auto found = std::find(m_interpretations.cbegin(),
+                                     m_interpretations.cend(),
+                                     interpretation);
+        return found == m_interpretations.cend()
+            ? 0
+            : static_cast<int>(std::distance(m_interpretations.cbegin(),
+                                             found)) + 1;
+    }
+
     std::shared_ptr<NativeGdalApi> m_api;
     void *m_source = nullptr;
     void *m_warped = nullptr;
@@ -482,6 +814,9 @@ private:
     int m_width = 0;
     int m_height = 0;
     int m_bands = 0;
+    MercatorExtent m_extent;
+    double m_resolution = 0.0;
+    std::vector<int> m_interpretations;
     mutable QMutex m_gate;
 };
 
@@ -699,6 +1034,17 @@ ScanArtifacts scanDirectory(const QString &requestedDirectory,
            const NativeGdalRasterFile &right) {
             return lessPath(left.FullPath, right.FullPath,
                             rasterPathCaseSensitivity());
+        });
+    std::stable_sort(
+        artifacts.rasterDatasets.begin(),
+        artifacts.rasterDatasets.end(),
+        [](const std::shared_ptr<GdalDataset> &left,
+           const std::shared_ptr<GdalDataset> &right) {
+            // Coarse imagery is painted first so higher-resolution datasets
+            // replace it in overlap areas, matching Mission Planner.
+            return left && right
+                ? left->resolution() > right->resolution()
+                : bool(left);
         });
     return artifacts;
 }
@@ -1082,6 +1428,11 @@ QString ElevationSourceService::backendStatus() const
     return gdalBackend().status;
 }
 
+bool ElevationSourceService::isNativeGdalAvailable() const
+{
+    return bool(gdalBackend().api);
+}
+
 bool ElevationSourceService::sampleAltitude(double latitude,
                                             double longitude,
                                             double *altitude) const
@@ -1102,6 +1453,58 @@ bool ElevationSourceService::sampleAltitude(double latitude,
         }
     }
     return false;
+}
+
+QByteArray ElevationSourceService::renderRasterTile(
+    int tileX, int tileY, int zoom, int tileSize) const
+{
+    if (zoom < 0 || zoom > 30 || tileSize < 1 || tileSize > 2048) {
+        return {};
+    }
+    const qint64 tileCount = qint64(1) << zoom;
+    if (tileX < 0 || tileY < 0
+        || tileX >= tileCount || tileY >= tileCount) {
+        return {};
+    }
+
+    std::vector<std::shared_ptr<GdalDataset>> datasets;
+    {
+        QMutexLocker locker(&d->stateMutex);
+        datasets = d->rasterDatasets;
+    }
+    if (datasets.empty()) {
+        return {};
+    }
+
+    const double tileSpan = 2.0 * kWebMercatorHalfWorld
+        / static_cast<double>(tileCount);
+    const double minX = -kWebMercatorHalfWorld + tileX * tileSpan;
+    const double maxY = kWebMercatorHalfWorld - tileY * tileSpan;
+    const MercatorExtent request{
+        minX, maxY - tileSpan, minX + tileSpan, maxY};
+
+    QImage image(tileSize, tileSize, QImage::Format_RGBA8888);
+    if (image.isNull()) {
+        return {};
+    }
+    image.fill(Qt::transparent);
+    bool rendered = false;
+    for (const std::shared_ptr<GdalDataset> &dataset : datasets) {
+        if (dataset) {
+            rendered |= dataset->render(request, tileSize, image.bits());
+        }
+    }
+    if (!rendered) {
+        return {};
+    }
+
+    QByteArray png;
+    QBuffer buffer(&png);
+    if (!buffer.open(QIODevice::WriteOnly)
+        || !image.save(&buffer, "PNG")) {
+        return {};
+    }
+    return png;
 }
 
 bool ElevationSourceService::startScan(const QString &directory, bool startup)
@@ -1172,6 +1575,7 @@ bool ElevationSourceService::startScan(const QString &directory, bool startup)
                             published = self->d->lastResult;
                         }
                         emit self->scanFinished(published, startup);
+                        emit self->nativeRastersChanged();
                     }
                     emit self->busyChanged(false);
                 },
@@ -1194,13 +1598,16 @@ void ElevationSourceService::cancelScan()
 
 void ElevationSourceService::unloadNativeRasters()
 {
-    QMutexLocker locker(&d->stateMutex);
-    d->rasterDatasets.clear();
-    if (d->hasLastResult) {
-        d->lastResult.RasterFiles.clear();
-        d->lastResult.ExaminedRasterFiles = 0;
-        d->lastResult.UnrecognizedRasterFiles = 0;
+    {
+        QMutexLocker locker(&d->stateMutex);
+        d->rasterDatasets.clear();
+        if (d->hasLastResult) {
+            d->lastResult.RasterFiles.clear();
+            d->lastResult.ExaminedRasterFiles = 0;
+            d->lastResult.UnrecognizedRasterFiles = 0;
+        }
     }
+    emit nativeRastersChanged();
 }
 
 void ElevationSourceService::initializeFromSettings()

@@ -633,6 +633,10 @@ set(SOURCES
     src/ui/map/QGCMapToolBar.cc
     src/ui/map/QGCMapToolBar.h
     src/ui/map/QGCMapToolBar.ui
+    src/ui/map/MapTileSourceFactory.cpp
+    src/ui/map/MapTileSourceFactory.h
+    src/ui/map/NativeGdalMapService.cpp
+    src/ui/map/NativeGdalMapService.h
     src/ui/map/QGCMapWidget.cc
     src/ui/map/QGCMapWidget.h
     src/ui/map/Waypoint2DIcon.cc
@@ -1057,6 +1061,33 @@ if(BUILD_TESTING)
     )
     add_test(NAME tilecache_tests COMMAND tilecache_tests)
     set_tests_properties(tilecache_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(maptilesourcefactory_tests
+        tests/test_maptilesourcefactory.cpp
+        src/ui/configuration/ElevationSourceService.cpp
+        src/ui/configuration/ElevationSourceService.h
+        src/ui/map/MapTileSourceFactory.cpp
+        src/ui/map/MapTileSourceFactory.h
+        src/ui/map/NativeGdalMapService.cpp
+        src/ui/map/NativeGdalMapService.h
+    )
+    target_include_directories(maptilesourcefactory_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/map
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(maptilesourcefactory_tests PRIVATE
+        opmapcontrol
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::Test
+    )
+    add_test(NAME maptilesourcefactory_tests
+        COMMAND maptilesourcefactory_tests)
+    set_tests_properties(maptilesourcefactory_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

@@ -5,6 +5,8 @@
 #include <QMenu>
 #include <QActionGroup>
 
+#include "maptype.h"
+
 class QGCMapWidget;
 
 namespace Ui {
@@ -29,6 +31,8 @@ public slots:
     void setUAVTrailDistance();
     void setUpdateInterval();
     void setMapType();
+    void updateMapType(core::MapType::Types type);
+    void showMapStatus(const QString &status);
     void goHome();
 
 private:

@@ -34,19 +34,19 @@ RawTile::RawTile(const MapType::Types &Type, const Point &Pos, const int &Zoom)
     type=Type;
     pos=Pos;
 }
-QString RawTile::ToString()
+QString RawTile::ToString() const
 {
     return QString("%1 at zoom %2, pos:%3,%4").arg(type).arg(zoom).arg(pos.X()).arg(pos.Y());
 }
-Point RawTile::Pos()
+Point RawTile::Pos() const
 {
     return pos;
 }
-MapType::Types RawTile::Type()
+MapType::Types RawTile::Type() const
 {
     return type;
 }
-int RawTile::Zoom()
+int RawTile::Zoom() const
 {
     return zoom;
 }

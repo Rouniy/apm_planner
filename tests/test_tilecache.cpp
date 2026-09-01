@@ -1,11 +1,51 @@
 #include <QtTest>
 
 #include "alllayersoftype.h"
+#include "opmaps.h"
 #include "pureimagecache.h"
 #include "urlfactory.h"
 
 #include <QFile>
 #include <QTemporaryDir>
+
+namespace {
+class FakeLocalTileProvider final : public core::LocalTileProvider
+{
+public:
+    QByteArray tileImage(core::MapType::Types type,
+                         const core::Point &position,
+                         int zoom) override
+    {
+        lastType = type;
+        lastPosition = position;
+        lastZoom = zoom;
+        ++calls;
+        return bytes;
+    }
+
+    QByteArray bytes = QByteArrayLiteral("first-local-raster-tile");
+    int calls = 0;
+    core::MapType::Types lastType = static_cast<core::MapType::Types>(0);
+    core::Point lastPosition;
+    int lastZoom = -1;
+};
+
+class LocalTileProviderRegistration final
+{
+public:
+    explicit LocalTileProviderRegistration(core::LocalTileProvider *provider)
+    {
+        core::OPMaps::Instance()->invalidateLocalTiles(core::MapType::GDALCustom);
+        core::OPMaps::Instance()->setLocalTileProvider(provider);
+    }
+
+    ~LocalTileProviderRegistration()
+    {
+        core::OPMaps::Instance()->setLocalTileProvider(nullptr);
+        core::OPMaps::Instance()->invalidateLocalTiles(core::MapType::GDALCustom);
+    }
+};
+}
 
 class TileCacheTest final : public QObject
 {
@@ -19,6 +59,8 @@ private slots:
     void sharedAgeCleanupPreservesRecentTiles();
     void missionPlannerCompatibleUrls();
     void googleHybridUsesOneNativeLayer();
+    void gdalCustomUsesSatelliteAndLocalLayers();
+    void gdalCustomUsesOnlyMemoryCache();
 };
 
 void TileCacheTest::platformRoots()
@@ -175,6 +217,64 @@ void TileCacheTest::googleHybridUsesOneNativeLayer()
 
     QCOMPARE(hybrid.size(), 1);
     QCOMPARE(hybrid.constFirst(), core::MapType::GoogleHybrid);
+}
+
+void TileCacheTest::gdalCustomUsesSatelliteAndLocalLayers()
+{
+    QCOMPARE(core::MapType::StrByType(core::MapType::GDALCustom),
+             QStringLiteral("GDAL Custom"));
+    QCOMPARE(core::MapType::TypeByStr(QStringLiteral("GDAL Custom")),
+             core::MapType::GDALCustom);
+
+    core::AllLayersOfType layers;
+    const QVector<core::MapType::Types> custom =
+        layers.GetAllLayersOfType(core::MapType::GDALCustom);
+
+    QCOMPARE(custom,
+             QVector<core::MapType::Types>({core::MapType::GoogleSatellite,
+                                            core::MapType::GDALCustom}));
+}
+
+void TileCacheTest::gdalCustomUsesOnlyMemoryCache()
+{
+    FakeLocalTileProvider provider;
+    LocalTileProviderRegistration registration(&provider);
+    const core::RawTile satelliteTile(
+        core::MapType::GoogleSatellite, core::Point(72, 43), 9);
+    const QByteArray satelliteBytes =
+        QByteArrayLiteral("shared-satellite-memory-tile");
+    core::OPMaps::Instance()->AddTileToMemoryCache(
+        satelliteTile, satelliteBytes);
+    const core::Point position(71, 42);
+    const QString forbiddenDiskPath = core::PureImageCache::sharedTilePath(
+        core::PureImageCache::sharedCacheRoot(),
+        core::MapType::GDALCustom, position, 9);
+    QVERIFY2(!QFile::exists(forbiddenDiskPath),
+             qPrintable(forbiddenDiskPath));
+
+    QCOMPARE(core::OPMaps::Instance()->GetImageFrom(
+                 core::MapType::GDALCustom, position, 9),
+             provider.bytes);
+    QCOMPARE(provider.calls, 1);
+    QCOMPARE(provider.lastType, core::MapType::GDALCustom);
+    QCOMPARE(provider.lastPosition, position);
+    QCOMPARE(provider.lastZoom, 9);
+
+    provider.bytes = QByteArrayLiteral("second-local-raster-tile");
+    QCOMPARE(core::OPMaps::Instance()->GetImageFrom(
+                 core::MapType::GDALCustom, position, 9),
+             QByteArrayLiteral("first-local-raster-tile"));
+    QCOMPARE(provider.calls, 1);
+
+    core::OPMaps::Instance()->invalidateLocalTiles(core::MapType::GDALCustom);
+    QCOMPARE(core::OPMaps::Instance()->GetTileFromMemoryCache(satelliteTile),
+             satelliteBytes);
+    QCOMPARE(core::OPMaps::Instance()->GetImageFrom(
+                 core::MapType::GDALCustom, position, 9),
+             provider.bytes);
+    QCOMPARE(provider.calls, 2);
+    QVERIFY2(!QFile::exists(forbiddenDiskPath),
+             qPrintable(forbiddenDiskPath));
 }
 
 QTEST_APPLESS_MAIN(TileCacheTest)

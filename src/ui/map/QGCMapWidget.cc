@@ -1,6 +1,7 @@
 #include "QGCMapWidget.h"
 #include "logging.h"
 #include "QGCMapToolBar.h"
+#include "MapTileSourceFactory.h"
 #include "UASInterface.h"
 #include "UASManager.h"
 #include "MAV2DIcon.h"
@@ -22,9 +23,6 @@ QGCMapWidget::QGCMapWidget(QWidget *parent) :
     homeAltitude(0),
     uas(NULL)
 {
-    // Set the map cache directory
-    configuration->SetCacheLocation(QGC::appDataDirectory() + "/mapscache/");
-
     currWPManager = UASManager::instance()->getActiveUASWaypointManager();
     waypointLines.insert(0, new QGraphicsItemGroup(map));
     connect(currWPManager, SIGNAL(waypointEditableListChanged(int)), this, SLOT(updateWaypointList(int)));
@@ -36,6 +34,12 @@ QGCMapWidget::QGCMapWidget(QWidget *parent) :
     // Widget is inactive until shown
     defaultGuidedRelativeAlt = 100.0; // Default set to 100m
     defaultGuidedAltFirstTimeSet = false;
+    connect(MapTileSourceFactory::instance(),
+            &MapTileSourceFactory::MapTypeChanged,
+            this, &QGCMapWidget::setGlobalMapType);
+    connect(MapTileSourceFactory::instance(),
+            &MapTileSourceFactory::MapRefreshRequested,
+            this, &QGCMapWidget::refreshGlobalMapType);
     loadSettings();
 
     //handy for debugging:
@@ -281,7 +285,7 @@ void QGCMapWidget::loadSettings()
     m_lastLon = settings.value("LAST_LONGITUDE", 0.0f).toDouble();
     m_lastZoom = settings.value("LAST_ZOOM", 1.0f).toDouble();
 
-    SetMapType(static_cast<MapType::Types>(settings.value("MAP_TYPE", MapType::GoogleHybrid).toInt()));
+    SetMapType(MapTileSourceFactory::instance()->CurrentMapType());
 
     trailType = static_cast<mapcontrol::UAVTrailType::Types>(settings.value("TRAIL_TYPE", trailType).toInt());
     trailInterval = settings.value("TRAIL_INTERVAL", trailInterval).toFloat();
@@ -337,9 +341,25 @@ void QGCMapWidget::storeSettings()
     settings.setValue("LAST_ZOOM", ZoomReal());
     settings.setValue("TRAIL_TYPE", static_cast<int>(trailType));
     settings.setValue("TRAIL_INTERVAL", trailInterval);
-    settings.setValue("MAP_TYPE", static_cast<int>(GetMapType()));
+    settings.remove("MAP_TYPE");
     settings.endGroup();
     settings.sync();
+}
+
+void QGCMapWidget::setGlobalMapType(core::MapType::Types type)
+{
+    if (GetMapType() != type) {
+        SetMapType(type);
+    } else {
+        ReloadMap();
+    }
+}
+
+void QGCMapWidget::refreshGlobalMapType()
+{
+    if (GetMapType() == MapType::GDALCustom) {
+        ReloadMap();
+    }
 }
 
 void QGCMapWidget::mouseDoubleClickEvent(QMouseEvent* event)

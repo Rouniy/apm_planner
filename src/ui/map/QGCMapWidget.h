@@ -126,6 +126,8 @@ public slots:
     void loadSettings();
     /** @brief Store the settings for this widget to disk */
     void storeSettings();
+    void setGlobalMapType(core::MapType::Types type);
+    void refreshGlobalMapType();
 
 protected slots:
     /** @brief Convert a map edit into a QGC waypoint event */

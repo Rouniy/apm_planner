@@ -7,6 +7,7 @@
 
 #include <QAbstractItemView>
 #include <QBuffer>
+#include <QColor>
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
@@ -96,6 +97,89 @@ bool writeSyntheticGeoTiff(const QString &path)
     stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
     stream << float(100.0) << float(110.0)
            << float(120.0) << float(130.0);
+    buffer.close();
+    if (bytes.size() < 2048) {
+        bytes.append(QByteArray(2048 - bytes.size(), '\0'));
+    }
+
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly)
+        && file.write(bytes) == bytes.size();
+}
+
+bool writeSyntheticRgbaGeoTiff(const QString &path, int width, int height,
+                               const QColor &color)
+{
+    constexpr quint16 entryCount = 14;
+    constexpr quint32 bitsOffset = 8 + 2 + entryCount * 12 + 4;
+    constexpr quint32 scaleOffset = bitsOffset + 4 * sizeof(quint16);
+    constexpr quint32 tiePointOffset = scaleOffset + 3 * sizeof(double);
+    constexpr quint32 geoKeyOffset = tiePointOffset + 6 * sizeof(double);
+    constexpr quint32 pixelsOffset = geoKeyOffset + 16 * sizeof(quint16);
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    if (!buffer.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+    QDataStream stream(&buffer);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream.writeRawData("II", 2);
+    stream << quint16(42) << quint32(8);
+    stream << entryCount;
+    const auto shortEntry = [&stream](quint16 tag, quint16 value) {
+        stream << tag << quint16(3) << quint32(1) << value << quint16(0);
+    };
+    const auto longEntry = [&stream](quint16 tag, quint32 value) {
+        stream << tag << quint16(4) << quint32(1) << value;
+    };
+    const auto offsetEntry = [&stream](quint16 tag, quint16 type,
+                                       quint32 count, quint32 offset) {
+        stream << tag << type << count << offset;
+    };
+    longEntry(256, static_cast<quint32>(width));
+    longEntry(257, static_cast<quint32>(height));
+    offsetEntry(258, 3, 4, bitsOffset);    // BitsPerSample
+    shortEntry(259, 1);                   // Compression = none
+    shortEntry(262, 2);                   // RGB
+    longEntry(273, pixelsOffset);         // StripOffsets
+    shortEntry(277, 4);                   // SamplesPerPixel
+    longEntry(278, static_cast<quint32>(height));
+    longEntry(279, static_cast<quint32>(width * height * 4));
+    shortEntry(284, 1);                   // chunky RGBA
+    shortEntry(338, 2);                   // unassociated alpha
+    offsetEntry(33550, 12, 3, scaleOffset);
+    offsetEntry(33922, 12, 6, tiePointOffset);
+    offsetEntry(34735, 3, 16, geoKeyOffset);
+    stream << quint32(0);
+
+    stream << quint16(8) << quint16(8) << quint16(8) << quint16(8);
+    stream.setFloatingPointPrecision(QDataStream::DoublePrecision);
+    const double pixelScale = 0.02 / static_cast<double>(width);
+    stream << pixelScale << pixelScale << 0.0;
+    stream << 0.0 << 0.0 << 0.0
+           << 30.0 << 35.0 << 0.0;
+    const quint16 geoKeys[] = {
+        1, 1, 0, 3,
+        1024, 0, 1, 2,
+        1025, 0, 1, 1,
+        2048, 0, 1, 4326
+    };
+    for (quint16 value : geoKeys) {
+        stream << value;
+    }
+    QByteArray pixels;
+    pixels.reserve(width * height * 4);
+    for (int index = 0; index < width * height; ++index) {
+        pixels.append(static_cast<char>(color.red()));
+        pixels.append(static_cast<char>(color.green()));
+        pixels.append(static_cast<char>(color.blue()));
+        pixels.append(static_cast<char>(color.alpha()));
+    }
+    stream.writeRawData(pixels.constData(), pixels.size());
     buffer.close();
     if (bytes.size() < 2048) {
         bytes.append(QByteArray(2048 - bytes.size(), '\0'));
@@ -213,6 +297,9 @@ private slots:
     void initialStateUsesOnlyExactProfileAndHasNoSideEffects();
     void discoveryIsRecursiveDeterministicAndCacheNeutral();
     void runtimeBackendIsDynamicallyLoadedAndIsolatesCorruptFiles();
+    void nativeGdalRendererProducesTransparentOverlayTiles();
+    void nativeGdalRendererHonorsExplicitAlpha();
+    void nativeGdalRendererPrefersFineRasterOnOverlap();
     void startupRestorationIsBackgroundAndCancellable();
     void startupFailureIsRetainedForLazyViewModel();
     void validationPersistenceRestartAndCancelMatchReference();
@@ -376,6 +463,175 @@ void ConfigElevationSourcesViewTest::runtimeBackendIsDynamicallyLoadedAndIsolate
         QVERIFY(!service.sampleAltitude(34.995, 30.005, &altitude));
     }
     QCOMPARE(fileContents(corrupt), before);
+}
+
+void ConfigElevationSourcesViewTest::nativeGdalRendererProducesTransparentOverlayTiles()
+{
+    QTemporaryDir source;
+    QVERIFY(source.isValid());
+    QVERIFY(writeSyntheticGeoTiff(
+        source.filePath(QStringLiteral("local-raster.tif"))));
+
+    ElevationSourceService service;
+    QSignalSpy finished(&service, &ElevationSourceService::scanFinished);
+    QSignalSpy changed(&service,
+                       &ElevationSourceService::nativeRastersChanged);
+    QVERIFY(service.startScan(source.path()));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 15000);
+    const ElevationSourcesScanResult result =
+        qvariant_cast<ElevationSourcesScanResult>(finished.at(0).at(0));
+    if (!result.NativeGdalAvailable) {
+        QSKIP("Native GDAL runtime is not installed.");
+    }
+    QCOMPARE(result.RasterIndexedCount(), 1);
+    QCOMPARE(changed.count(), 1);
+
+    constexpr int zoom = 14;
+    constexpr double pi = 3.14159265358979323846;
+    constexpr double longitude = 30.005;
+    constexpr double latitude = 34.995;
+    const int tileCount = 1 << zoom;
+    const int tileX = static_cast<int>(std::floor(
+        (longitude + 180.0) / 360.0 * tileCount));
+    const double latitudeRadians = latitude * pi / 180.0;
+    const int tileY = static_cast<int>(std::floor(
+        (1.0 - std::asinh(std::tan(latitudeRadians)) / pi)
+        * 0.5 * tileCount));
+
+    const QByteArray overlay = service.renderRasterTile(
+        tileX, tileY, zoom);
+    QVERIFY(!overlay.isEmpty());
+    const QImage image = QImage::fromData(overlay, "PNG")
+        .convertToFormat(QImage::Format_RGBA8888);
+    QCOMPARE(image.size(), QSize(256, 256));
+    int opaquePixels = 0;
+    int transparentPixels = 0;
+    int minimumGray = 255;
+    int maximumGray = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        const uchar *line = image.constScanLine(y);
+        for (int x = 0; x < image.width(); ++x) {
+            const uchar *pixel = line + x * 4;
+            if (pixel[3] != 0) {
+                ++opaquePixels;
+                QCOMPARE(pixel[0], pixel[1]);
+                QCOMPARE(pixel[1], pixel[2]);
+                minimumGray = qMin(minimumGray, static_cast<int>(pixel[0]));
+                maximumGray = qMax(maximumGray, static_cast<int>(pixel[0]));
+            } else {
+                ++transparentPixels;
+            }
+        }
+    }
+    QVERIFY(opaquePixels > 0);
+    QVERIFY(transparentPixels > 0);
+    QVERIFY(minimumGray >= 80);
+    QVERIFY(maximumGray <= 150);
+    QVERIFY(maximumGray > minimumGray);
+    QVERIFY(service.renderRasterTile(0, 0, zoom).isEmpty());
+
+    service.unloadNativeRasters();
+    QCOMPARE(changed.count(), 2);
+    QVERIFY(service.renderRasterTile(tileX, tileY, zoom).isEmpty());
+}
+
+void ConfigElevationSourcesViewTest::nativeGdalRendererHonorsExplicitAlpha()
+{
+    QTemporaryDir source;
+    QVERIFY(source.isValid());
+    QVERIFY(writeSyntheticRgbaGeoTiff(
+        source.filePath(QStringLiteral("rgba.tif")), 4, 4,
+        QColor(200, 100, 50, 128)));
+
+    ElevationSourceService service;
+    QSignalSpy finished(&service, &ElevationSourceService::scanFinished);
+    QVERIFY(service.startScan(source.path()));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 15000);
+    const ElevationSourcesScanResult result =
+        qvariant_cast<ElevationSourcesScanResult>(finished.at(0).at(0));
+    if (!result.NativeGdalAvailable) {
+        QSKIP("Native GDAL runtime is not installed.");
+    }
+    QCOMPARE(result.RasterIndexedCount(), 1);
+
+    constexpr int zoom = 14;
+    constexpr double pi = 3.14159265358979323846;
+    const int tileCount = 1 << zoom;
+    const int tileX = static_cast<int>(std::floor(
+        (30.01 + 180.0) / 360.0 * tileCount));
+    const double latitudeRadians = 34.99 * pi / 180.0;
+    const int tileY = static_cast<int>(std::floor(
+        (1.0 - std::asinh(std::tan(latitudeRadians)) / pi)
+        * 0.5 * tileCount));
+    const QImage image = QImage::fromData(
+        service.renderRasterTile(tileX, tileY, zoom), "PNG")
+        .convertToFormat(QImage::Format_RGBA8888);
+    QVERIFY(!image.isNull());
+
+    int maximumAlpha = 0;
+    QColor strongest;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            if (pixel.alpha() > maximumAlpha) {
+                maximumAlpha = pixel.alpha();
+                strongest = pixel;
+            }
+        }
+    }
+    QVERIFY(maximumAlpha >= 120 && maximumAlpha <= 136);
+    QVERIFY(qAbs(strongest.red() - 200) <= 2);
+    QVERIFY(qAbs(strongest.green() - 100) <= 2);
+    QVERIFY(qAbs(strongest.blue() - 50) <= 2);
+}
+
+void ConfigElevationSourcesViewTest::nativeGdalRendererPrefersFineRasterOnOverlap()
+{
+    QTemporaryDir source;
+    QVERIFY(source.isValid());
+    QVERIFY(writeSyntheticRgbaGeoTiff(
+        source.filePath(QStringLiteral("coarse.tif")), 2, 2,
+        QColor(220, 30, 20, 255)));
+    QVERIFY(writeSyntheticRgbaGeoTiff(
+        source.filePath(QStringLiteral("fine.tif")), 8, 8,
+        QColor(20, 80, 220, 255)));
+
+    ElevationSourceService service;
+    QSignalSpy finished(&service, &ElevationSourceService::scanFinished);
+    QVERIFY(service.startScan(source.path()));
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 15000);
+    const ElevationSourcesScanResult result =
+        qvariant_cast<ElevationSourcesScanResult>(finished.at(0).at(0));
+    if (!result.NativeGdalAvailable) {
+        QSKIP("Native GDAL runtime is not installed.");
+    }
+    QCOMPARE(result.RasterIndexedCount(), 2);
+
+    constexpr int zoom = 14;
+    constexpr double pi = 3.14159265358979323846;
+    const int tileCount = 1 << zoom;
+    const int tileX = static_cast<int>(std::floor(
+        (30.01 + 180.0) / 360.0 * tileCount));
+    const double latitudeRadians = 34.99 * pi / 180.0;
+    const int tileY = static_cast<int>(std::floor(
+        (1.0 - std::asinh(std::tan(latitudeRadians)) / pi)
+        * 0.5 * tileCount));
+    const QImage image = QImage::fromData(
+        service.renderRasterTile(tileX, tileY, zoom), "PNG")
+        .convertToFormat(QImage::Format_RGBA8888);
+    QVERIFY(!image.isNull());
+
+    int finePixels = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            if (pixel.alpha() == 255 && pixel.blue() >= 210
+                && pixel.red() <= 30) {
+                ++finePixels;
+            }
+        }
+    }
+    QVERIFY(finePixels > 0);
 }
 
 void ConfigElevationSourcesViewTest::startupRestorationIsBackgroundAndCancellable()

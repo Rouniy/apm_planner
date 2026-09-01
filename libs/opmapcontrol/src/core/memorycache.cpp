@@ -47,6 +47,8 @@ namespace core {
     {
         kiberCacheLock.lockForWrite();
         // QPixmapCache::Key key=TilesInMemory.insert(pic);
+        TilesInMemory.memoryCacheSize -= TilesInMemory.cachequeue.value(tile).size();
+        TilesInMemory.list.removeAll(tile);
         TilesInMemory.memoryCacheSize +=pic.size();
 #ifdef DEBUG_MEMORY_CACHE
         qDebug()<<"Current memory="<<TilesInMemory.memoryCacheSize<<" in "<<TilesInMemory.cachequeue.count()<<" tiles";
@@ -55,6 +57,31 @@ namespace core {
         TilesInMemory.list.enqueue(tile);
 
         kiberCacheLock.unlock();
+    }
+
+    void MemoryCache::RemoveTilesOfTypeFromMemoryCache(MapType::Types type)
+    {
+        QWriteLocker locker(&kiberCacheLock);
+        for (auto it = TilesInMemory.cachequeue.begin();
+             it != TilesInMemory.cachequeue.end();) {
+            if (it.key().Type() != type) {
+                ++it;
+                continue;
+            }
+
+            TilesInMemory.memoryCacheSize -= it.value().size();
+            it = TilesInMemory.cachequeue.erase(it);
+        }
+
+        for (auto it = TilesInMemory.list.begin(); it != TilesInMemory.list.end();) {
+            if (it->Type() == type)
+                it = TilesInMemory.list.erase(it);
+            else
+                ++it;
+        }
+
+        if (TilesInMemory.memoryCacheSize < 0)
+            TilesInMemory.memoryCacheSize = 0;
     }
 
 }

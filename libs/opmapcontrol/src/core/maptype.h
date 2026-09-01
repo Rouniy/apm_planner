@@ -28,6 +28,7 @@
 #define MAPTYPE_H
 #include <QMetaObject>
 #include <QMetaEnum>
+#include <QMetaType>
 #include <QStringList>
 
 namespace core {
@@ -103,9 +104,17 @@ namespace core {
             Eniro_Topo = 5510,
 
             JapanMap = 6001,
+
+            // Mission Planner-compatible local GDAL raster overlay. The
+            // numeric value is persisted by older Qt builds, so keep it
+            // stable once released.
+            GDALCustom = 10000,
         };
         static QString StrByType(Types const& value)
         {
+            if (value == GDALCustom)
+                return QStringLiteral("GDAL Custom");
+
             QMetaObject metaObject = MapType().staticMetaObject;
             QMetaEnum metaEnum= metaObject.enumerator( metaObject.indexOfEnumerator("Types"));
             QString s=metaEnum.valueToKey(value);
@@ -113,6 +122,9 @@ namespace core {
         }
         static Types TypeByStr(QString const& value)
         {
+            if (value == QStringLiteral("GDAL Custom"))
+                return GDALCustom;
+
             QMetaObject metaObject = MapType().staticMetaObject;
             QMetaEnum metaEnum= metaObject.enumerator( metaObject.indexOfEnumerator("Types"));
             Types s=(Types)metaEnum.keyToValue(value.toLatin1());
@@ -125,11 +137,14 @@ namespace core {
             QMetaEnum metaEnum= metaObject.enumerator( metaObject.indexOfEnumerator("Types"));
             for(int x=0;x<metaEnum.keyCount();++x)
             {
-                ret.append(metaEnum.key(x));
+                const Types type = static_cast<Types>(metaEnum.value(x));
+                ret.append(StrByType(type));
             }
             return ret;
         }
     };
 
 }
+
+Q_DECLARE_METATYPE(core::MapType::Types)
 #endif // MAPTYPE_H

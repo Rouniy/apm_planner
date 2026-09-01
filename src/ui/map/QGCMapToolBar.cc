@@ -2,6 +2,7 @@
 #include "UASManager.h"
 #include "ArduPilotMegaMAV.h"
 #include "QGCMapWidget.h"
+#include "MapTileSourceFactory.h"
 #include "ui_QGCMapToolBar.h"
 
 QGCMapToolBar::QGCMapToolBar(QWidget *parent) :
@@ -32,12 +33,14 @@ static const struct {
     { "Google Terrain", MapType::GoogleTerrain },
     { "OpenStreetMap", MapType::OpenStreetMap },
     { "ArcGIS Map", MapType::ArcGIS_Map },
+    { "Esri World Imagery", MapType::ArcGIS_Satellite },
     { "ArcGIS Terrain", MapType::ArcGIS_Terrain },
     { "ArcGIS World Topo", MapType::ArcGIS_WorldTopo },
     { "Statkart Topo", MapType::Statkart_Topo },
     { "Statkart Basemap", MapType::Statkart_Basemap },
     { "Eniro N,S,F,D,P", MapType::Eniro_Topo },
     { "Japan Map", MapType::JapanMap },
+    { "GDAL Custom", MapType::GDALCustom },
 };
 
 static const size_t sNumMapTypes = sizeof(sMapTypes) / sizeof(sMapTypes[0]);
@@ -93,6 +96,14 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
             if (mapType == sMapTypes[i].type) action->setChecked(true);
         }
         optionsMenu.addMenu(&mapTypesMenu);
+        connect(MapTileSourceFactory::instance(),
+                &MapTileSourceFactory::MapTypeChanged,
+                this, &QGCMapToolBar::updateMapType,
+                Qt::UniqueConnection);
+        connect(MapTileSourceFactory::instance(),
+                &MapTileSourceFactory::StatusMessage,
+                this, &QGCMapToolBar::showMapStatus,
+                Qt::UniqueConnection);
 
         // FIXME MARK CURRENT VALUES IN MENU
         QAction *defaultTrailAction = trailPlotMenu.addAction(tr("No trail"), this, SLOT(setUAVTrailTime()));
@@ -228,10 +239,31 @@ void QGCMapToolBar::setMapType()
         int mapType = action->data().toInt(&ok);
         if (ok)
         {
-            map->SetMapType((MapType::Types)mapType);
-            ui->posLabel->setText(tr("Map type: %1").arg(mapType));
+            MapTileSourceFactory *factory =
+                MapTileSourceFactory::instance();
+            factory->SetMapType(
+                static_cast<MapType::Types>(mapType));
+            updateMapType(factory->CurrentMapType());
+            if (!factory->LastStatus().isEmpty()) {
+                showMapStatus(factory->LastStatus());
+            }
         }
     }
+}
+
+void QGCMapToolBar::updateMapType(core::MapType::Types type)
+{
+    for (QAction *action : mapTypesGroup->actions()) {
+        action->setChecked(
+            action->data().toInt() == static_cast<int>(type));
+    }
+    ui->posLabel->setText(tr("Map type: %1").arg(
+        MapType::StrByType(type)));
+}
+
+void QGCMapToolBar::showMapStatus(const QString &status)
+{
+    ui->posLabel->setText(status);
 }
 
 void QGCMapToolBar::tileLoadStart()

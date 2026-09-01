@@ -37,6 +37,7 @@ This file is part of the QGROUNDCONTROL project
 #include "MainWindow.h"
 #include "GAudioOutput.h"
 #include "ui/configuration/ElevationSourceService.h"
+#include "ui/map/NativeGdalMapService.h"
 
 #ifdef OPAL_RT
 #include "OpalLink.h"
@@ -93,6 +94,7 @@ QGCCore::QGCCore(int &argc, char* argv[]) : QApplication(argc, argv)
 
 void QGCCore::aboutToQuit()
 {
+    m_nativeGdalMapService.reset();
     ElevationSourceService::instance()->shutdown();
     LinkManager::instance()->shutdown();
 }
@@ -134,6 +136,8 @@ void QGCCore::initialize()
 
     // Restore local GeoTIFF/DTED and optional native GDAL indexes without
     // blocking the splash screen or the main UI construction.
+    m_nativeGdalMapService.reset(new NativeGdalMapService(
+        ElevationSourceService::instance()));
     ElevationSourceService::instance()->initializeFromSettings();
 
 

@@ -43,6 +43,7 @@ namespace core {
         KiberTileCache TilesInMemory;
         QByteArray GetTileFromMemoryCache(const RawTile &tile);
         void AddTileToMemoryCache(const RawTile &tile, const QByteArray &pic);
+        void RemoveTilesOfTypeFromMemoryCache(MapType::Types type);
         QReadWriteLock kiberCacheLock;
     };
 
