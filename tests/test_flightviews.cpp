@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QLabel>
+#include <QStackedWidget>
 #if !defined(APM_HAS_KDDOCKWIDGETS)
 #include <QDockWidget>
 #include <QMainWindow>
@@ -17,6 +18,7 @@ private slots:
     void flightDataUsesStableMissionPlannerNames();
     void flightPlannerUsesStableMissionPlannerNames();
     void flightViewsRenderEveryDefaultPanel();
+    void flightViewsRemainVisibleAfterStackSwitch();
 };
 
 void FlightViewsTest::flightDataUsesStableMissionPlannerNames()
@@ -128,6 +130,53 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
     QVERIFY(!dataHost->isWindow());
     QVERIFY(!plannerHost->isWindow());
 #endif
+}
+
+void FlightViewsTest::flightViewsRemainVisibleAfterStackSwitch()
+{
+    QStackedWidget stack;
+    stack.resize(1280, 800);
+
+    auto *dataView = new FlightDataView;
+    auto *hud = new QLabel(QStringLiteral("hud"));
+    auto *dataMap = new QLabel(QStringLiteral("map"));
+    auto *info = new QLabel(QStringLiteral("info"));
+    QVERIFY(dataView->setHudWidget(hud));
+    QVERIFY(dataView->setMapWidget(dataMap));
+    QVERIFY(dataView->setInfoView(info));
+    stack.addWidget(dataView);
+
+    auto *plannerView = new FlightPlannerView;
+    auto *plannerMap = new QLabel(QStringLiteral("map"));
+    auto *waypoints = new QLabel(QStringLiteral("waypoints"));
+    auto *actions = new QLabel(QStringLiteral("actions"));
+    QVERIFY(plannerView->setMapWidget(plannerMap));
+    QVERIFY(plannerView->setWaypointPanel(waypoints));
+    QVERIFY(plannerView->setActionPanel(actions));
+    stack.addWidget(plannerView);
+
+    stack.setCurrentWidget(dataView);
+    stack.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&stack));
+    QCoreApplication::processEvents();
+
+    const auto verifySurface = [&stack](QWidget *page,
+                                        const QList<QWidget *> &panels) {
+        QCOMPARE(stack.currentWidget(), page);
+        for (QWidget *panel : panels) {
+            QVERIFY2(panel->isVisibleTo(&stack), panel->objectName().toUtf8());
+            QVERIFY2(panel->width() > 0 && panel->height() > 0,
+                     panel->objectName().toUtf8());
+        }
+    };
+
+    verifySurface(dataView, {hud, dataMap, info});
+    stack.setCurrentWidget(plannerView);
+    QCoreApplication::processEvents();
+    verifySurface(plannerView, {plannerMap, waypoints, actions});
+    stack.setCurrentWidget(dataView);
+    QCoreApplication::processEvents();
+    verifySurface(dataView, {hud, dataMap, info});
 }
 
 QTEST_MAIN(FlightViewsTest)
