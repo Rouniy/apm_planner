@@ -127,6 +127,17 @@ void ConfigFriendlyParamsViewModel::setFavorite(
     emit layoutChanged();
 }
 
+void ConfigFriendlyParamsViewModel::setCustomParameterNames(
+    const QStringList &names)
+{
+    if (m_customMode && m_customParameterNames == names) {
+        return;
+    }
+    m_customMode = true;
+    m_customParameterNames = names;
+    rebuildFields();
+}
+
 QList<ParamField> ConfigFriendlyParamsViewModel::visibleFields() const
 {
     QList<ParamField> result;
@@ -136,6 +147,9 @@ QList<ParamField> ConfigFriendlyParamsViewModel::visibleFields() const
             || field.label.contains(m_search, Qt::CaseInsensitive)) {
             result.append(field);
         }
+    }
+    if (m_customMode) {
+        return result;
     }
     std::sort(result.begin(), result.end(), [](const ParamField &left,
                                                const ParamField &right) {
@@ -150,31 +164,50 @@ QList<ParamField> ConfigFriendlyParamsViewModel::visibleFields() const
 void ConfigFriendlyParamsViewModel::rebuildFields()
 {
     m_fields.clear();
-    if (!m_catalog.isValid() || m_selectedComponent <= 0) {
+    const bool customMode = m_customMode;
+    if (m_selectedComponent <= 0
+        || (!customMode && !m_catalog.isValid())) {
         emit structureChanged();
         return;
     }
 
-    for (const ConfigFriendlyParameterValue &parameter : m_parameters) {
-        if (parameter.componentId != m_selectedComponent
-            || !m_catalog.contains(parameter.name)) {
-            continue;
+    QList<ConfigFriendlyParameterValue> selectedParameters;
+    if (customMode) {
+        for (const QString &requestedName : m_customParameterNames) {
+            for (const ConfigFriendlyParameterValue &parameter : m_parameters) {
+                if (parameter.componentId == m_selectedComponent
+                    && parameter.name.compare(
+                           requestedName, Qt::CaseInsensitive) == 0) {
+                    selectedParameters.append(parameter);
+                    break;
+                }
+            }
         }
+    } else {
+        for (const ConfigFriendlyParameterValue &parameter : m_parameters) {
+            if (parameter.componentId == m_selectedComponent
+                && m_catalog.contains(parameter.name)) {
+                selectedParameters.append(parameter);
+            }
+        }
+    }
+
+    for (const ConfigFriendlyParameterValue &parameter : selectedParameters) {
         const ParameterMetaData metadata = m_catalog.value(parameter.name);
         // Mission Planner deliberately hides parameters without DisplayName.
-        if (metadata.title.isEmpty()) {
+        if (!customMode && metadata.title.isEmpty()) {
             continue;
         }
         const bool isAdvanced =
             metadata.userLevel == ParameterUserLevel::Advanced;
-        if (m_advanced != isAdvanced) {
+        if (!customMode && m_advanced != isAdvanced) {
             continue;
         }
 
         ParamField field;
         field.componentId = parameter.componentId;
-        field.name = metadata.name;
-        field.label = metadata.title;
+        field.name = parameter.name.trimmed().toUpper();
+        field.label = metadata.title.isEmpty() ? field.name : metadata.title;
         field.units = metadata.units;
         field.description = metadata.description;
         field.value = parameter.value;
@@ -184,17 +217,24 @@ void ConfigFriendlyParamsViewModel::rebuildFields()
         field.hasRange = metadata.hasRange;
         field.enforceRange = m_enforceMetadataRanges;
         field.readOnly = metadata.readOnly;
-        field.favorite = m_favorites.contains(
+        field.favorite = !customMode && m_favorites.contains(
             favoriteKey(field.componentId, field.name));
 
-        // This ordering matches Mission Planner 10: bitmask wins when a PDEF
-        // also happens to provide ordinary enum values.
-        if (metadata.isBitmask()) {
+        // ConfigUserDefinedView in Mission Planner constructs ParamField
+        // without an explicit kind: ordinary values make a combo, while a
+        // bitmask-only parameter remains numeric. The friendly pages use the
+        // richer shared renderer where bitmask deliberately wins.
+        if (customMode && metadata.isEnum()) {
+            field.editorKind = ParamField::EditorKind::Combo;
+            for (const ParameterMetaDataOption &entry : metadata.values) {
+                field.options.append({entry.value, entry.label});
+            }
+        } else if (!customMode && metadata.isBitmask()) {
             field.editorKind = ParamField::EditorKind::Bitmask;
             for (const auto &entry : metadata.bitmaskValues) {
                 field.bitOptions.append({entry.first, entry.second});
             }
-        } else if (metadata.isEnum()) {
+        } else if (!customMode && metadata.isEnum()) {
             field.editorKind = ParamField::EditorKind::Combo;
             for (const ParameterMetaDataOption &entry : metadata.values) {
                 field.options.append({entry.value, entry.label});
@@ -202,10 +242,12 @@ void ConfigFriendlyParamsViewModel::rebuildFields()
         }
         m_fields.append(field);
     }
-    std::sort(m_fields.begin(), m_fields.end(), [](const ParamField &left,
-                                                   const ParamField &right) {
-        return nameLessThan(left.name, right.name);
-    });
+    if (!customMode) {
+        std::sort(m_fields.begin(), m_fields.end(), [](const ParamField &left,
+                                                       const ParamField &right) {
+            return nameLessThan(left.name, right.name);
+        });
+    }
     emit structureChanged();
 }
 

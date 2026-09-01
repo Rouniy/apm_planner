@@ -14,6 +14,7 @@
 
 class BackstageView;
 class ConfigFriendlyParamsView;
+class ConfigUserDefinedView;
 class ParameterMetaDataRepository;
 class ParameterMetaDataUpdater;
 class QGCUASParamManager;
@@ -64,6 +65,7 @@ private:
     void resetParameterProgress();
     void restorePreferredPage();
     QWidget *createFriendlyParamsPage(bool advanced, QWidget *parent);
+    QWidget *createUserDefinedPage(QWidget *parent);
     QList<ConfigFriendlyParameterValue> parameterSnapshot(int componentId) const;
     ParameterFirmwareFamily parameterFirmwareFamily() const;
     bool friendlyParametersSupported() const;

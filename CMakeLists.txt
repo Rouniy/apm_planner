@@ -482,6 +482,10 @@ set(SOURCES
     src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
     src/ui/configuration/ConfigFriendlyParamsViewModel.h
     src/ui/configuration/ParamField.h
+    src/ui/configuration/ConfigUserDefinedView.cpp
+    src/ui/configuration/ConfigUserDefinedView.h
+    src/ui/configuration/ConfigUserDefinedViewModel.cpp
+    src/ui/configuration/ConfigUserDefinedViewModel.h
     src/ui/configuration/ConfigSerialView.cpp
     src/ui/configuration/ConfigSerialView.h
     src/ui/configuration/ConfigSerialViewModel.cpp
@@ -1111,6 +1115,34 @@ if(BUILD_TESTING)
     )
     add_test(NAME friendlyparams_tests COMMAND friendlyparams_tests)
     set_tests_properties(friendlyparams_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configuserdefinedview_tests
+        tests/test_configuserdefinedview.cpp
+        src/ui/configuration/ConfigUserDefinedView.cpp
+        src/ui/configuration/ConfigUserDefinedView.h
+        src/ui/configuration/ConfigUserDefinedViewModel.cpp
+        src/ui/configuration/ConfigUserDefinedViewModel.h
+        src/ui/configuration/ConfigFriendlyParamsView.cpp
+        src/ui/configuration/ConfigFriendlyParamsView.h
+        src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
+        src/ui/configuration/ConfigFriendlyParamsViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configuserdefinedview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configuserdefinedview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configuserdefinedview_tests
+        COMMAND configuserdefinedview_tests)
+    set_tests_properties(configuserdefinedview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

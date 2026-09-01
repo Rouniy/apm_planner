@@ -6,12 +6,15 @@
 #include <QHash>
 #include <QWidget>
 
+#include <functional>
+
 class QComboBox;
 class QLineEdit;
 class QLabel;
 class QScrollArea;
 class QTimer;
 class QVBoxLayout;
+class QPushButton;
 
 class ConfigFriendlyParamsView final : public QWidget
 {
@@ -30,13 +33,19 @@ public:
         const QList<ConfigFriendlyParameterValue> &parameters,
         int preferredComponent = 1);
     void setUnavailableMessage(const QString &message);
+    void setCustomParameterNames(const QStringList &names);
+    void setEmbeddedMode(bool embedded);
     int visibleParameterCount() const;
+    int selectedComponent() const;
     ConfigFriendlyParamsViewModel *viewModel() const { return m_viewModel; }
 
 public slots:
     void parameterChanged(int componentId, const QString &name,
                           const QVariant &value);
     void parameterWriteFailed(int componentId, const QString &name,
+                              const QString &reason);
+    void parameterWriteFailed(int componentId, const QString &name,
+                              const QVariant &attemptedValue,
                               const QString &reason);
 
 signals:
@@ -48,9 +57,11 @@ private:
     struct Row;
 
     void rebuildRows();
+    void mutatePreservingTransientRows(const std::function<void()> &mutation);
     void applyLayout();
     void updateComponentSelector();
     void hydrateRow(Row *row, const QVariant &value);
+    void queueWriteDispatch(Row *row, const QVariant &expectedValue);
     void submitValue(Row *row, const QVariant &value);
     void setOutOfRange(Row *row, bool outOfRange);
     void updateFavoriteButton(Row *row);
@@ -59,8 +70,12 @@ private:
     QString rowKey(int componentId, const QString &name) const;
 
     ConfigFriendlyParamsViewModel *m_viewModel = nullptr;
+    QVBoxLayout *m_rootLayout = nullptr;
+    QLabel *m_titleLabel = nullptr;
+    QPushButton *m_refreshButton = nullptr;
     QComboBox *m_componentSelector = nullptr;
     QLineEdit *m_searchBox = nullptr;
+    QLabel *m_introLabel = nullptr;
     QLabel *m_emptyLabel = nullptr;
     QObject *m_wheelFilter = nullptr;
     QWidget *m_fieldsContent = nullptr;
@@ -69,6 +84,7 @@ private:
     QScrollArea *m_fieldsScroll = nullptr;
     QList<Row *> m_rows;
     QHash<QString, Row *> m_rowsByKey;
+    bool m_embeddedMode = false;
 };
 
 #endif

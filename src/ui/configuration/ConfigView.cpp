@@ -7,6 +7,7 @@
 #include "CopterPidConfig.h"
 #include "ConfigPlannerAdvView.h"
 #include "ConfigFriendlyParamsView.h"
+#include "ConfigUserDefinedView.h"
 #include "FlightModeConfig.h"
 #include "GeoFenceConfig.h"
 #include "LinkInterface.h"
@@ -44,6 +45,7 @@ const QString kPlaneTuning = QStringLiteral("ConfigArduplaneView");
 const QString kRoverTuning = QStringLiteral("ConfigArduroverView");
 const QString kExtendedTuning = QStringLiteral("ConfigExtendedTuningView");
 const QString kOnboardOsd = QStringLiteral("ConfigOSDView");
+const QString kUserParams = QStringLiteral("ConfigUserDefinedView");
 const QString kFullParameterList = QStringLiteral("RawParamsView");
 const QString kPlanner = QStringLiteral("ConfigPlannerView");
 const QString kPlannerAdvanced = QStringLiteral("ConfigPlannerAdvView");
@@ -191,6 +193,16 @@ void ConfigView::buildPages()
         kExtendedTuning, tr("Extended Tuning"), copter));
     m_backstage->addPage(makeBackstagePage<OsdConfig>(
         kOnboardOsd, tr("Onboard OSD"), connected));
+
+    BackstagePage userParameters;
+    userParameters.id = kUserParams;
+    userParameters.header = tr("User Params");
+    userParameters.requiresConnection = true;
+    userParameters.visibleWhen = connected;
+    userParameters.factory = [this](QWidget *parent) {
+        return createUserDefinedPage(parent);
+    };
+    m_backstage->addPage(userParameters);
 
     m_backstage->addPage(makeBackstagePage<AdvParameterList>(
         kFullParameterList, tr("Full Parameter List"), always,
@@ -584,6 +596,10 @@ void ConfigView::refreshFriendlyParameterPages()
         page->setCatalog(catalog, enforceMetadataRanges);
         page->setUnavailableMessage(unavailableMessage);
     }
+    if (auto *page = qobject_cast<ConfigUserDefinedView *>(
+            m_backstage->page(kUserParams))) {
+        page->setCatalog(catalog, enforceMetadataRanges);
+    }
 }
 
 void ConfigView::resetParameterProgress()
@@ -670,6 +686,90 @@ QWidget *ConfigView::createFriendlyParamsPage(bool advanced, QWidget *parent)
         if (!m_parameterManager->getParameterNames(componentId)
                  .contains(name)) {
             page->parameterWriteFailed(componentId, name,
+                                       tr("parameter unavailable"));
+            return;
+        }
+        m_parameterManager->setParameter(componentId, name, value);
+    });
+    if (m_uas) {
+        const int expectedUasId = m_uas->getUASID();
+        connect(m_uas,
+                QOverload<int, int, QString, QVariant>::of(
+                    &UASInterface::parameterChanged),
+                page, [page, expectedUasId](int uasId, int componentId,
+                                            const QString &name,
+                                            const QVariant &value) {
+            if (uasId == expectedUasId) {
+                page->parameterChanged(componentId, name, value);
+            }
+        });
+    }
+    if (m_parameterManager) {
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, [this, page](bool ready) {
+            if (ready && m_uas && m_parameterManager) {
+                page->setParameterSnapshot(
+                    parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+                    MAV_COMP_ID_AUTOPILOT1);
+            }
+        });
+    }
+    return page;
+}
+
+QWidget *ConfigView::createUserDefinedPage(QWidget *parent)
+{
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+    auto *page = new ConfigUserDefinedView(
+        catalog, parent, enforceMetadataRanges);
+    page->setObjectName(kUserParams);
+    page->setParameterSnapshot(
+        parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+        MAV_COMP_ID_AUTOPILOT1);
+
+    connect(page, &ConfigUserDefinedView::refreshRequested,
+            page, [this](int componentId) {
+        if (!m_connected || !m_parameterManager) {
+            return;
+        }
+        if (m_uas && m_uas->isArmed()
+            && QMessageBox::question(
+                   this, tr("Refresh Params"),
+                   tr("The vehicle is armed. Refreshing the complete parameter "
+                      "list can consume telemetry bandwidth. Continue?"),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+        if (componentId != MAV_COMP_ID_AUTOPILOT1) {
+            const QList<QString> names =
+                m_parameterManager->getParameterNames(componentId);
+            for (const QString &name : names) {
+                m_parameterManager->requestParameterUpdate(componentId, name);
+            }
+            return;
+        }
+        retryParameterLoading();
+    });
+    connect(page, &ConfigUserDefinedView::writeRequested,
+            page, [this, page](int componentId, const QString &name,
+                              const QVariant &value) {
+        if (!m_connected || !m_parameterManager) {
+            page->parameterWriteFailed(componentId, name, value,
+                                       tr("not connected"));
+            return;
+        }
+        if (!m_parameterManager->getParameterNames(componentId)
+                 .contains(name)) {
+            page->parameterWriteFailed(componentId, name, value,
                                        tr("parameter unavailable"));
             return;
         }

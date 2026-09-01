@@ -92,7 +92,7 @@ CONFIG	GCSViews/ConfigurationView/ConfigPlannerAdvView.axaml		not-started	Advanc
 SETUP	GCSViews/ConfigurationView/ConfigElevationSourcesView.axaml		not-started	Terrain/elevation source ordering, credentials and cache settings match
 SETUP	GCSViews/ConfigurationView/ConfigMavCommandView.axaml		not-started	Typed COMMAND_LONG/INT composition, validation, ACK and history match
 CONFIG	GCSViews/ConfigurationView/MavFTPUIView.axaml		not-started	MAVFTP navigation entry and complete browse/transfer workflow match from CONFIG
-CONFIG	GCSViews/ConfigurationView/ConfigUserDefinedView.axaml		not-started	User-defined parameter panels, persistence and editor match; QGCToolWidget is not wired as this CONFIG page
+CONFIG	GCSViews/ConfigurationView/ConfigUserDefinedView.axaml	src/ui/configuration/ConfigUserDefinedView.{h,cpp}; src/ui/configuration/ConfigUserDefinedViewModel.{h,cpp}; tests/test_configuserdefinedview.cpp	in-progress	Qt CONFIG route, exact defaults/order/layout, durable custom-list persistence, metadata enum/numeric editors and target/value-correlated writes are covered; reference screenshots, cross-platform and live-vehicle validation remain
 CONFIG	GCSViews/ConfigurationView/WarningManagerView.axaml		not-started	Supporting warning manager (not a direct CONFIG route): rule list, editor, severity, speech/notification and persistence match
 CONFIG	GCSViews/ConfigurationView/ConfigParamLoadingView.axaml		not-started	Backstage loading overlay (not a navigation route): partial load progress, cancel/skip/retry and feature gating match
 TOOLS	Views/MAVLinkInspectorView.axaml	src/ui/QGCMAVLinkInspector.*	partial	Multi-link/target message tree, rates, field values, filtering and graphs match

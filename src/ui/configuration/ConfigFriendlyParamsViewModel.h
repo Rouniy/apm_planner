@@ -6,6 +6,7 @@
 #include <QList>
 #include <QObject>
 #include <QSet>
+#include <QStringList>
 
 class ConfigFriendlyParamsViewModel final : public QObject
 {
@@ -27,6 +28,7 @@ public:
     void setSelectedComponent(int componentId);
     void setSearch(const QString &search);
     void setFavorite(int componentId, const QString &name, bool favorite);
+    void setCustomParameterNames(const QStringList &names);
 
     bool advanced() const { return m_advanced; }
     int selectedComponent() const { return m_selectedComponent; }
@@ -53,10 +55,12 @@ private:
     QList<int> m_components;
     QSet<QString> m_favorites;
     QString m_search;
+    QStringList m_customParameterNames;
     QString m_favoriteSettingsKey;
     int m_selectedComponent = 0;
     bool m_advanced = false;
     bool m_enforceMetadataRanges = true;
+    bool m_customMode = false;
 };
 
 #endif

@@ -149,8 +149,12 @@ struct ConfigFriendlyParamsView::Row
     QLabel *unitsLabel = nullptr;
     QLabel *statusLabel = nullptr;
     QVariant pendingValue;
+    QVariant latestRequestedValue;
+    QList<QPair<quint64, QVariant>> supersededValues;
     quint64 pendingGeneration = 0;
+    quint64 supersededGeneration = 0;
     bool pending = false;
+    bool hasLatestRequestedValue = false;
     bool filteredVisible = true;
 };
 
@@ -174,20 +178,20 @@ ConfigFriendlyParamsView::ConfigFriendlyParamsView(
         " font-weight: bold; }"
         "QLabel#statusLabel { color: #34D399; }"));
 
-    auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(16, 16, 16, 16);
-    root->setSpacing(10);
+    m_rootLayout = new QVBoxLayout(this);
+    m_rootLayout->setContentsMargins(16, 16, 16, 16);
+    m_rootLayout->setSpacing(10);
 
-    auto *title = new QLabel(
+    m_titleLabel = new QLabel(
         advanced ? tr("Advanced Params") : tr("Standard Params"), this);
-    title->setObjectName(QStringLiteral("friendlyParamsTitle"));
-    root->addWidget(title);
+    m_titleLabel->setObjectName(QStringLiteral("friendlyParamsTitle"));
+    m_rootLayout->addWidget(m_titleLabel);
 
     auto *toolbar = new QHBoxLayout;
     toolbar->setSpacing(8);
-    auto *refreshButton = new QPushButton(tr("Refresh Params"), this);
-    refreshButton->setObjectName(QStringLiteral("refreshButton"));
-    toolbar->addWidget(refreshButton);
+    m_refreshButton = new QPushButton(tr("Refresh Params"), this);
+    m_refreshButton->setObjectName(QStringLiteral("refreshButton"));
+    toolbar->addWidget(m_refreshButton);
 
     m_componentSelector = new QComboBox(this);
     m_componentSelector->setObjectName(QStringLiteral("componentSelector"));
@@ -203,13 +207,13 @@ ConfigFriendlyParamsView::ConfigFriendlyParamsView(
     m_searchBox->setPlaceholderText(tr("Search by name or label…"));
     toolbar->addWidget(m_searchBox);
 
-    auto *intro = new QLabel(
+    m_introLabel = new QLabel(
         tr("Human-readable parameters with descriptions. Connect, then Refresh. "
            "Star a row to pin it to the top; type to filter."), this);
-    intro->setObjectName(QStringLiteral("friendlyParamsIntro"));
-    intro->setWordWrap(true);
-    toolbar->addWidget(intro, 1);
-    root->addLayout(toolbar);
+    m_introLabel->setObjectName(QStringLiteral("friendlyParamsIntro"));
+    m_introLabel->setWordWrap(true);
+    toolbar->addWidget(m_introLabel, 1);
+    m_rootLayout->addLayout(toolbar);
 
     m_fieldsScroll = new QScrollArea(this);
     m_fieldsScroll->setObjectName(QStringLiteral("fieldsScroll"));
@@ -227,12 +231,12 @@ ConfigFriendlyParamsView::ConfigFriendlyParamsView(
     m_fieldsLayout->addWidget(m_emptyLabel);
     m_fieldsLayout->addStretch(1);
     m_fieldsScroll->setWidget(m_fieldsContent);
-    root->addWidget(m_fieldsScroll, 1);
+    m_rootLayout->addWidget(m_fieldsScroll, 1);
 
     m_searchDebounce->setSingleShot(true);
     m_searchDebounce->setInterval(250);
 
-    connect(refreshButton, &QPushButton::clicked, this, [this]() {
+    connect(m_refreshButton, &QPushButton::clicked, this, [this]() {
         emit refreshRequested(m_viewModel->selectedComponent());
     });
     connect(m_searchBox, &QLineEdit::textChanged, this, [this]() {
@@ -272,14 +276,17 @@ ConfigFriendlyParamsView::~ConfigFriendlyParamsView()
     clearRows();
 }
 
-void ConfigFriendlyParamsView::setCatalog(
-    const ParameterMetaDataCatalog &catalog, bool enforceMetadataRanges)
+void ConfigFriendlyParamsView::mutatePreservingTransientRows(
+    const std::function<void()> &mutation)
 {
     struct TransientRowState
     {
         QVariant pendingValue;
+        QVariant latestRequestedValue;
+        QList<QVariant> supersededValues;
         QString editorText;
         bool pending = false;
+        bool hasLatestRequestedValue = false;
         bool editorModified = false;
         bool editorHadFocus = false;
     };
@@ -288,6 +295,11 @@ void ConfigFriendlyParamsView::setCatalog(
         TransientRowState state;
         state.pending = row->pending;
         state.pendingValue = row->pendingValue;
+        state.hasLatestRequestedValue = row->hasLatestRequestedValue;
+        state.latestRequestedValue = row->latestRequestedValue;
+        for (const auto &superseded : row->supersededValues) {
+            state.supersededValues.append(superseded.second);
+        }
         if (row->numericEditor) {
             if (auto *editor = row->numericEditor->findChild<QLineEdit *>()) {
                 state.editorModified = editor->isModified();
@@ -298,15 +310,15 @@ void ConfigFriendlyParamsView::setCatalog(
                 }
             }
         }
-        if (state.pending || state.editorModified || state.editorHadFocus) {
+        if (state.pending || !state.supersededValues.isEmpty()
+            || state.editorModified || state.editorHadFocus) {
             transientRows.insert(
                 rowKey(row->field.componentId, row->field.name), state);
         }
     }
     const int scrollPosition = m_fieldsScroll->verticalScrollBar()->value();
 
-    m_viewModel->setCatalog(catalog, enforceMetadataRanges);
-    setUnavailableMessage(QString());
+    mutation();
 
     for (auto iterator = transientRows.constBegin();
          iterator != transientRows.constEnd(); ++iterator) {
@@ -315,17 +327,57 @@ void ConfigFriendlyParamsView::setCatalog(
             continue;
         }
         const TransientRowState &state = iterator.value();
-        if (state.pending) {
+        row->hasLatestRequestedValue = state.hasLatestRequestedValue;
+        row->latestRequestedValue = state.latestRequestedValue;
+        const auto beginPending = [this, row](const QVariant &expectedValue,
+                                              bool dispatch) {
+            const QVariant authoritativeValue = row->field.value;
+            hydrateRow(row, expectedValue);
+            row->field.value = authoritativeValue;
             row->pending = true;
-            row->pendingValue = state.pendingValue;
+            row->pendingValue = expectedValue;
             const quint64 generation = ++row->pendingGeneration;
             row->statusLabel->setText(QStringLiteral("…"));
+            if (dispatch) {
+                queueWriteDispatch(row, expectedValue);
+            }
             QTimer::singleShot(5000, row->widget, [row, generation]() {
                 if (row->pending && row->pendingGeneration == generation) {
                     row->pending = false;
                     row->statusLabel->setText(QObject::tr("write failed"));
                 }
             });
+        };
+        if (state.pending) {
+            if (variantsEqual(row->field.value, state.pendingValue)) {
+                row->statusLabel->setText(QStringLiteral("✓"));
+            } else {
+                beginPending(state.pendingValue, false);
+            }
+        }
+        bool authoritativeValueIsSuperseded = false;
+        for (const QVariant &value : state.supersededValues) {
+            authoritativeValueIsSuperseded =
+                authoritativeValueIsSuperseded
+                || (variantsEqual(row->field.value, value)
+                    && (!state.hasLatestRequestedValue
+                        || !variantsEqual(
+                            state.latestRequestedValue, value)));
+            const quint64 generation = ++row->supersededGeneration;
+            row->supersededValues.append(qMakePair(generation, value));
+            QTimer::singleShot(5000, row->widget, [row, generation]() {
+                for (int index = 0; index < row->supersededValues.size();
+                     ++index) {
+                    if (row->supersededValues.at(index).first == generation) {
+                        row->supersededValues.removeAt(index);
+                        break;
+                    }
+                }
+            });
+        }
+        if (!state.pending && authoritativeValueIsSuperseded
+            && state.hasLatestRequestedValue) {
+            beginPending(state.latestRequestedValue, true);
         }
         if (row->numericEditor
             && (state.editorModified || state.editorHadFocus)) {
@@ -343,11 +395,22 @@ void ConfigFriendlyParamsView::setCatalog(
     });
 }
 
+void ConfigFriendlyParamsView::setCatalog(
+    const ParameterMetaDataCatalog &catalog, bool enforceMetadataRanges)
+{
+    mutatePreservingTransientRows([this, &catalog, enforceMetadataRanges]() {
+        m_viewModel->setCatalog(catalog, enforceMetadataRanges);
+    });
+    setUnavailableMessage(QString());
+}
+
 void ConfigFriendlyParamsView::setParameterSnapshot(
     const QList<ConfigFriendlyParameterValue> &parameters,
     int preferredComponent)
 {
-    m_viewModel->setParameterSnapshot(parameters, preferredComponent);
+    mutatePreservingTransientRows([this, &parameters, preferredComponent]() {
+        m_viewModel->setParameterSnapshot(parameters, preferredComponent);
+    });
 }
 
 void ConfigFriendlyParamsView::setUnavailableMessage(const QString &message)
@@ -355,6 +418,29 @@ void ConfigFriendlyParamsView::setUnavailableMessage(const QString &message)
     m_emptyLabel->setText(message.isEmpty()
                               ? tr("No described parameters are available.")
                               : message);
+}
+
+void ConfigFriendlyParamsView::setCustomParameterNames(
+    const QStringList &names)
+{
+    mutatePreservingTransientRows([this, &names]() {
+        m_viewModel->setCustomParameterNames(names);
+    });
+}
+
+void ConfigFriendlyParamsView::setEmbeddedMode(bool embedded)
+{
+    m_embeddedMode = embedded;
+    m_rootLayout->setContentsMargins(
+        embedded ? QMargins(0, 0, 0, 0) : QMargins(16, 16, 16, 16));
+    m_titleLabel->setVisible(!embedded);
+    m_refreshButton->setVisible(!embedded);
+    m_searchBox->setVisible(!embedded);
+    m_introLabel->setVisible(!embedded);
+    updateComponentSelector();
+    for (Row *row : m_rows) {
+        row->favoriteButton->setVisible(!embedded);
+    }
 }
 
 int ConfigFriendlyParamsView::visibleParameterCount() const
@@ -366,9 +452,44 @@ int ConfigFriendlyParamsView::visibleParameterCount() const
     return count;
 }
 
+int ConfigFriendlyParamsView::selectedComponent() const
+{
+    return m_viewModel->selectedComponent();
+}
+
 void ConfigFriendlyParamsView::parameterChanged(
     int componentId, const QString &name, const QVariant &value)
 {
+    if (Row *row = m_rowsByKey.value(rowKey(componentId, name), nullptr)) {
+        if (!(row->pending && variantsEqual(row->pendingValue, value))) {
+            for (const auto &superseded : row->supersededValues) {
+                if (variantsEqual(superseded.second, value)) {
+                    if (row->hasLatestRequestedValue
+                        && variantsEqual(
+                            row->latestRequestedValue, value)) {
+                        break;
+                    }
+                    if (!row->pending && row->hasLatestRequestedValue) {
+                        row->pending = true;
+                        const quint64 generation = ++row->pendingGeneration;
+                        row->pendingValue = row->latestRequestedValue;
+                        row->statusLabel->setText(QStringLiteral("…"));
+                        queueWriteDispatch(row, row->pendingValue);
+                        QTimer::singleShot(
+                            5000, row->widget, [row, generation]() {
+                            if (row->pending
+                                && row->pendingGeneration == generation) {
+                                row->pending = false;
+                                row->statusLabel->setText(
+                                    QObject::tr("write failed"));
+                            }
+                        });
+                    }
+                    return;
+                }
+            }
+        }
+    }
     m_viewModel->updateParameter(componentId, name, value);
 }
 
@@ -380,6 +501,39 @@ void ConfigFriendlyParamsView::parameterWriteFailed(
         row->statusLabel->setText(reason.isEmpty() ? tr("write failed")
                                                    : reason);
     }
+}
+
+void ConfigFriendlyParamsView::parameterWriteFailed(
+    int componentId, const QString &name, const QVariant &attemptedValue,
+    const QString &reason)
+{
+    if (Row *row = m_rowsByKey.value(rowKey(componentId, name), nullptr)) {
+        if (row->pending
+            && !variantsEqual(row->pendingValue, attemptedValue)) {
+            return;
+        }
+        row->pending = false;
+        row->statusLabel->setText(reason.isEmpty() ? tr("write failed")
+                                                   : reason);
+    }
+}
+
+void ConfigFriendlyParamsView::queueWriteDispatch(
+    Row *row, const QVariant &expectedValue)
+{
+    if (!row) {
+        return;
+    }
+    const QString key = rowKey(row->field.componentId, row->field.name);
+    QTimer::singleShot(0, this, [this, key, expectedValue]() {
+        Row *current = m_rowsByKey.value(key, nullptr);
+        if (!current || !current->pending
+            || !variantsEqual(current->pendingValue, expectedValue)) {
+            return;
+        }
+        emit writeRequested(current->field.componentId, current->field.name,
+                            expectedValue);
+    });
 }
 
 void ConfigFriendlyParamsView::rebuildRows()
@@ -405,6 +559,7 @@ void ConfigFriendlyParamsView::rebuildRows()
         row->favoriteButton->setCheckable(true);
         row->favoriteButton->setChecked(field.favorite);
         row->favoriteButton->setFixedWidth(32);
+        row->favoriteButton->setVisible(!m_embeddedMode);
         updateFavoriteButton(row);
         layout->addWidget(row->favoriteButton);
 
@@ -582,7 +737,8 @@ void ConfigFriendlyParamsView::updateComponentSelector()
     const int selected = m_componentSelector->findData(
         m_viewModel->selectedComponent());
     m_componentSelector->setCurrentIndex(selected);
-    m_componentSelector->setVisible(components.size() > 1);
+    m_componentSelector->setVisible(
+        !m_embeddedMode && components.size() > 1);
 }
 
 void ConfigFriendlyParamsView::hydrateRow(Row *row, const QVariant &value)
@@ -643,13 +799,39 @@ void ConfigFriendlyParamsView::submitValue(Row *row, const QVariant &value)
         return;
     }
     setOutOfRange(row, outOfRange);
-    if (variantsEqual(row->field.value, typedValue)) {
+    for (int index = row->supersededValues.size() - 1; index >= 0; --index) {
+        if (variantsEqual(row->supersededValues.at(index).second,
+                          typedValue)) {
+            row->supersededValues.removeAt(index);
+        }
+    }
+    if (row->pending && variantsEqual(row->pendingValue, typedValue)) {
+        return;
+    }
+    if (row->pending) {
+        const quint64 supersededGeneration = ++row->supersededGeneration;
+        row->supersededValues.append(
+            qMakePair(supersededGeneration, row->pendingValue));
+        QTimer::singleShot(5000, row->widget,
+                           [row, supersededGeneration]() {
+            for (int index = 0; index < row->supersededValues.size();
+                 ++index) {
+                if (row->supersededValues.at(index).first
+                    == supersededGeneration) {
+                    row->supersededValues.removeAt(index);
+                    break;
+                }
+            }
+        });
+    } else if (variantsEqual(row->field.value, typedValue)) {
         row->statusLabel->setText(QStringLiteral("✓"));
         return;
     }
     row->pending = true;
     const quint64 generation = ++row->pendingGeneration;
     row->pendingValue = typedValue;
+    row->latestRequestedValue = typedValue;
+    row->hasLatestRequestedValue = true;
     row->statusLabel->setText(QStringLiteral("…"));
     emit writeRequested(row->field.componentId, row->field.name, typedValue);
     QTimer::singleShot(5000, row->widget, [row, generation]() {
