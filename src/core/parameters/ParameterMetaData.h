@@ -1,0 +1,79 @@
+#ifndef PARAMETERMETADATA_H
+#define PARAMETERMETADATA_H
+
+#include <QList>
+#include <QMap>
+#include <QPair>
+#include <QString>
+#include <QVariant>
+
+class QIODevice;
+
+enum class ParameterUserLevel
+{
+    Unknown,
+    Standard,
+    Advanced
+};
+
+enum class ParameterMetaDataScope
+{
+    Vehicle,
+    Library
+};
+
+struct ParameterMetaDataOption
+{
+    QVariant value;
+    QString rawCode;
+    QString label;
+};
+
+struct ParameterMetaData
+{
+    QString name;
+    QString rawName;
+    QString group;
+    QString title;
+    QString description;
+    QString units;
+    QString rangeText;
+    double minimum = 0.0;
+    double maximum = 0.0;
+    double increment = 1.0;
+    QList<ParameterMetaDataOption> values;
+    QList<QPair<int, QString>> bitmaskValues;
+    QMap<QString, QString> fields;
+    ParameterUserLevel userLevel = ParameterUserLevel::Unknown;
+    ParameterMetaDataScope scope = ParameterMetaDataScope::Library;
+    bool hasRange = false;
+    bool hasIncrement = false;
+    bool readOnly = false;
+    bool rebootRequired = false;
+    bool volatileValue = false;
+    bool calibration = false;
+
+    bool isEnum() const { return !values.isEmpty(); }
+    bool isBitmask() const { return !bitmaskValues.isEmpty(); }
+};
+
+class ParameterMetaDataCatalog
+{
+public:
+    static ParameterMetaDataCatalog fromPdef(QIODevice *device,
+                                             const QString &vehicleName);
+
+    bool isValid() const;
+    QString errorString() const;
+    bool contains(const QString &name) const;
+    ParameterMetaData value(const QString &name) const;
+    QList<ParameterMetaData> entries() const;
+    QList<ParameterMetaData> entriesForLevel(ParameterUserLevel level) const;
+
+private:
+    QMap<QString, ParameterMetaData> m_entries;
+    QString m_error;
+    bool m_loaded = false;
+};
+
+#endif

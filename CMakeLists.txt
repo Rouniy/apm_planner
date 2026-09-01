@@ -127,6 +127,8 @@ add_library(apm_parameter_core STATIC
     src/core/VehicleTarget.h
     src/core/parameters/ParameterCodec.cpp
     src/core/parameters/ParameterCodec.h
+    src/core/parameters/ParameterMetaData.cpp
+    src/core/parameters/ParameterMetaData.h
     src/core/parameters/ParameterStore.cpp
     src/core/parameters/ParameterStore.h
 )
@@ -1040,6 +1042,9 @@ if(BUILD_TESTING)
         apm_parameter_core
         Qt::Core
         Qt::Test
+    )
+    target_compile_definitions(parameter_core_tests PRIVATE
+        APM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     )
     add_test(NAME parameter_core_tests COMMAND parameter_core_tests)
 
