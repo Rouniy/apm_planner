@@ -107,6 +107,39 @@ if(NOT EXISTS "${MAVLINKPATH}/${MAVLINK_CONF}")
     )
 endif()
 
+# MAV_CMD is a generated C enum without reflection support. Build the planner
+# catalog from the vendored dialect so the command editor always follows the
+# exact MAVLink revision compiled into the application.
+set(_apm_mav_command_header
+    "${MAVLINKPATH}/${MAVLINK_CONF}/${MAVLINK_CONF}.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${_apm_mav_command_header}")
+file(STRINGS "${_apm_mav_command_header}" _apm_mav_command_lines
+    REGEX "^[ \t]*MAV_CMD_[A-Z0-9_]+=[0-9]+,")
+set(_apm_mav_command_entries "")
+set(_apm_mav_command_count 0)
+foreach(_apm_mav_command_line IN LISTS _apm_mav_command_lines)
+    string(REGEX MATCH "MAV_CMD_([A-Z0-9_]+)=([0-9]+),"
+        _apm_mav_command_match "${_apm_mav_command_line}")
+    set(_apm_mav_command_symbol "${CMAKE_MATCH_1}")
+    if(_apm_mav_command_symbol STREQUAL "ENUM_END")
+        break()
+    endif()
+    string(REGEX REPLACE "^NAV_" "" _apm_mav_command_name
+        "${_apm_mav_command_symbol}")
+    string(APPEND _apm_mav_command_entries
+        "    {MAV_CMD_${_apm_mav_command_symbol}, \"${_apm_mav_command_name}\"},\n")
+    math(EXPR _apm_mav_command_count "${_apm_mav_command_count} + 1")
+endforeach()
+if(_apm_mav_command_count LESS 100)
+    message(FATAL_ERROR
+        "Only ${_apm_mav_command_count} MAV_CMD entries were read from ${_apm_mav_command_header}")
+endif()
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/MavCommandCatalog.inc"
+    "const std::array<CommandEntry, ${_apm_mav_command_count}> kCommands{{\n"
+    "${_apm_mav_command_entries}}};\n")
+
 # AGLLIB math library & OPMapControl
 add_subdirectory(libs/alglib EXCLUDE_FROM_ALL)
 add_subdirectory(libs/opmapcontrol EXCLUDE_FROM_ALL)
@@ -293,6 +326,10 @@ set(SOURCES
     src/ui/flightdata/FlightDataViewModel.h
     src/ui/flightdata/HudControl.cpp
     src/ui/flightdata/HudControl.h
+    src/ui/flightplanner/FlightPlannerMissionModel.cpp
+    src/ui/flightplanner/FlightPlannerMissionModel.h
+    src/ui/flightplanner/WpRow.cpp
+    src/ui/flightplanner/WpRow.h
     src/ui/FlightPlannerView.cpp
     src/ui/FlightPlannerView.h
     src/ui/HelpView.cpp
@@ -877,6 +914,7 @@ add_executable(${APM_PLANNER_TARGET}
 
 # Includes
 target_include_directories(${APM_PLANNER_TARGET} PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}/generated
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/include/ui
     ${MAVLINKPATH}
@@ -1408,6 +1446,27 @@ if(BUILD_TESTING)
     set_tests_properties(hudcontrol_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_executable(flightplannermissionmodel_tests
+        tests/test_flightplannermissionmodel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.h
+        src/ui/flightplanner/WpRow.cpp
+        src/ui/flightplanner/WpRow.h
+    )
+    target_include_directories(flightplannermissionmodel_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(flightplannermissionmodel_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightplannermissionmodel_tests
+             COMMAND flightplannermissionmodel_tests)
 
     if(APM_ENABLE_KDDOCKWIDGETS)
         add_executable(kddockwidgets_vendor_tests
