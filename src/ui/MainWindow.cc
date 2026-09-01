@@ -76,6 +76,7 @@ This file is part of the QGROUNDCONTROL project
 
 #include <QSettings>
 #include <QDockWidget>
+#include <QDialog>
 #include <QKeySequence>
 #include <QNetworkInterface>
 #include <QMessageBox>
@@ -1997,8 +1998,20 @@ void MainWindow::configure()
 
 void MainWindow::showSettings()
 {
-    QGCSettingsWidget* settings = new QGCSettingsWidget(this);
-    settings->show();
+    if (settingsDialog) {
+        settingsDialog->show();
+        settingsDialog->raise();
+        settingsDialog->activateWindow();
+        return;
+    }
+    settingsDialog = new QDialog(this);
+    settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
+    settingsDialog->setWindowTitle(tr("APM Planner 3.0 Settings"));
+    auto *layout = new QVBoxLayout(settingsDialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(new QGCSettingsWidget(settingsDialog));
+    settingsDialog->resize(1014, 839);
+    settingsDialog->show();
 }
 
 

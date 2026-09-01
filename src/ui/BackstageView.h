@@ -55,11 +55,14 @@ public:
     bool isGroupVisible(const QString &id) const;
 
 public slots:
+    void setAutomaticSelectionEnabled(bool enabled);
+    bool restoreInitialPage(const QString &preferredPage = QString());
     bool setCurrentPage(const QString &id);
     bool setPageVisible(const QString &id, bool visible);
     bool setGroupExpanded(const QString &id, bool expanded);
     bool setGroupVisible(const QString &id, bool visible);
     bool resetPage(const QString &id);
+    void refreshVisibility();
     void setLoading(bool loading,
                     const QString &message = QString(),
                     int progress = -1);
@@ -105,6 +108,7 @@ private:
     QStringList m_pageOrder;
     QString m_currentGroupId;
     QString m_currentPageId;
+    bool m_automaticSelectionEnabled = true;
 };
 
 #endif

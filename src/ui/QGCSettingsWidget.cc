@@ -10,12 +10,12 @@
 #include "UASManager.h"
 
 #include <QFileDialog>
+#include <QDialog>
 
-QGCSettingsWidget::QGCSettingsWidget(QWidget *parent, Qt::WindowFlags flags) :
-    QDialog(parent, flags),
+QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
+    QWidget(parent),
     ui(new Ui::QGCSettingsWidget)
 {
-    m_init = false;
     ui->setupUi(this);
 
     // Add all protocols
@@ -27,9 +27,6 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent, Qt::WindowFlags flags) :
             ui->tabWidget->addTab(msettings, "MAVLink");
         }
     }*/
-
-    this->window()->setWindowTitle(tr("APM Planner 3.0 Settings"));
-
 
 }
 
@@ -278,7 +275,8 @@ void QGCSettingsWidget::ratesChanged()
     setDataRateLineEdits();
 
     if (m_uas) {
-        ArduPilotMegaMAV *mav = dynamic_cast<ArduPilotMegaMAV*>(m_uas);
+        ArduPilotMegaMAV *mav =
+            dynamic_cast<ArduPilotMegaMAV *>(m_uas.data());
         if (mav != NULL){
             mav->RequestAllDataStreams();
         }

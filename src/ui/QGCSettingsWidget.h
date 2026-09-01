@@ -2,19 +2,20 @@
 #define QGCSETTINGSWIDGET_H
 
 #include "UASInterface.h"
-#include <QDialog>
+#include <QPointer>
+#include <QWidget>
 
 namespace Ui
 {
 class QGCSettingsWidget;
 }
 
-class QGCSettingsWidget : public QDialog
+class QGCSettingsWidget : public QWidget
 {
     Q_OBJECT
 
 public:
-    QGCSettingsWidget(QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::Sheet);
+    explicit QGCSettingsWidget(QWidget *parent = nullptr);
     ~QGCSettingsWidget() override;
 
 protected:
@@ -41,8 +42,8 @@ private:
 
 private:
     Ui::QGCSettingsWidget *ui;
-    bool m_init;
-    UASInterface *m_uas;
+    bool m_init = false;
+    QPointer<UASInterface> m_uas;
 };
 
 #endif // QGCSETTINGSWIDGET_H

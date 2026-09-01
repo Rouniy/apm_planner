@@ -19,6 +19,8 @@ private slots:
     void rejectsInvalidAndDuplicatePages();
     void collapsesPageGroups();
     void createsAndResetsLazyPages();
+    void evaluatesDeclarativeVisibilityWithoutCreatingHiddenPages();
+    void restoresPreferredPageWithoutCreatingEarlierFactories();
     void restoresSelectionWhenPagesReappear();
     void exposesLoadingState();
 };
@@ -139,6 +141,83 @@ void BackstageViewTest::createsAndResetsLazyPages()
     QVERIFY(!view.isPageCreated(definition.id));
     QVERIFY(view.setCurrentPage(definition.id));
     QCOMPARE(creationCount, 2);
+}
+
+void BackstageViewTest::evaluatesDeclarativeVisibilityWithoutCreatingHiddenPages()
+{
+    BackstageView view;
+    bool connected = false;
+    int connectedPageCreations = 0;
+
+    BackstagePage connectedPage;
+    connectedPage.id = QStringLiteral("connectedPage");
+    connectedPage.header = QStringLiteral("Connected Page");
+    connectedPage.visibleWhen = [&connected]() { return connected; };
+    connectedPage.factory = [&connectedPageCreations](QWidget *parent) {
+        ++connectedPageCreations;
+        return new QWidget(parent);
+    };
+    QVERIFY(view.addPage(connectedPage));
+    QVERIFY(!view.isPageVisible(connectedPage.id));
+    QVERIFY(!view.isPageCreated(connectedPage.id));
+    QVERIFY(view.currentPageId().isEmpty());
+
+    QVERIFY(view.addPage(QStringLiteral("offlinePage"),
+                         QStringLiteral("Offline Page"), new QWidget));
+    QCOMPARE(view.currentPageId(), QStringLiteral("offlinePage"));
+
+    connected = true;
+    view.refreshVisibility();
+    QVERIFY(view.isPageVisible(connectedPage.id));
+    QVERIFY(!view.isPageCreated(connectedPage.id));
+    QVERIFY(view.setCurrentPage(connectedPage.id));
+    QCOMPARE(connectedPageCreations, 1);
+
+    connected = false;
+    view.refreshVisibility();
+    QCOMPARE(view.currentPageId(), QStringLiteral("offlinePage"));
+}
+
+void BackstageViewTest::restoresPreferredPageWithoutCreatingEarlierFactories()
+{
+    BackstageView view;
+    view.setAutomaticSelectionEnabled(false);
+    int firstCreations = 0;
+    int plannerCreations = 0;
+
+    BackstagePage first;
+    first.id = QStringLiteral("ConfigFlightModesView");
+    first.header = QStringLiteral("Flight Modes");
+    first.factory = [&firstCreations](QWidget *parent) {
+        ++firstCreations;
+        return new QWidget(parent);
+    };
+    BackstagePage planner;
+    planner.id = QStringLiteral("ConfigPlannerView");
+    planner.header = QStringLiteral("Planner");
+    planner.factory = [&plannerCreations](QWidget *parent) {
+        ++plannerCreations;
+        return new QWidget(parent);
+    };
+    QVERIFY(view.addPage(first));
+    QVERIFY(view.addPage(planner));
+    QVERIFY(view.currentPageId().isEmpty());
+    QCOMPARE(firstCreations, 0);
+    QCOMPARE(plannerCreations, 0);
+
+    QVERIFY(view.restoreInitialPage(QStringLiteral("Planner")));
+    QCOMPARE(view.currentPageId(), planner.id);
+    QCOMPARE(firstCreations, 0);
+    QCOMPARE(plannerCreations, 1);
+
+    view.setAutomaticSelectionEnabled(false);
+    QVERIFY(view.resetPage(planner.id));
+    QVERIFY(view.currentPageId().isEmpty());
+    QCOMPARE(firstCreations, 0);
+    QCOMPARE(plannerCreations, 1);
+    QVERIFY(view.restoreInitialPage(planner.id));
+    QCOMPARE(firstCreations, 0);
+    QCOMPARE(plannerCreations, 2);
 }
 
 void BackstageViewTest::restoresSelectionWhenPagesReappear()

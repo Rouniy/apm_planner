@@ -280,20 +280,24 @@ bool BackstageView::addPageEntry(const BackstagePage &definition,
         m_pageStack->addWidget(pageWidget);
     }
     const QString groupId = definition.isSub ? m_currentGroupId : QString();
+    const bool initiallyVisible = !definition.visibleWhen
+        || definition.visibleWhen();
     m_pages.insert(definition.id,
-                   PageEntry{button, pageWidget, definition, groupId, true});
+                   PageEntry{button, pageWidget, definition, groupId,
+                             initiallyVisible});
     m_pageOrder.append(definition.id);
     if (!groupId.isEmpty()) {
         m_groups[groupId].pageIds.append(definition.id);
-        updatePageButtonVisibility(definition.id);
     }
+    updatePageButtonVisibility(definition.id);
 
     const QString id = definition.id;
     connect(button, &QAbstractButton::clicked, this, [this, id]() {
         setCurrentPage(id);
     });
 
-    if (m_pageOrder.size() == 1) {
+    if (m_automaticSelectionEnabled && m_currentPageId.isEmpty()
+        && !button->isHidden()) {
         setCurrentPage(definition.id);
     }
     return true;
@@ -337,6 +341,28 @@ bool BackstageView::isGroupExpanded(const QString &id) const
 bool BackstageView::isGroupVisible(const QString &id) const
 {
     return m_groups.contains(id) && !m_groups.value(id).button->isHidden();
+}
+
+void BackstageView::setAutomaticSelectionEnabled(bool enabled)
+{
+    m_automaticSelectionEnabled = enabled;
+}
+
+bool BackstageView::restoreInitialPage(const QString &preferredPage)
+{
+    m_automaticSelectionEnabled = true;
+    if (!preferredPage.isEmpty()) {
+        for (const QString &id : m_pageOrder) {
+            const PageEntry &entry = m_pages.value(id);
+            if (!entry.definition.isSub && !entry.button->isHidden()
+                && (id == preferredPage
+                    || entry.definition.header == preferredPage)) {
+                return setCurrentPage(id);
+            }
+        }
+    }
+    selectFallbackPage();
+    return !m_currentPageId.isEmpty();
 }
 
 bool BackstageView::setCurrentPage(const QString &id)
@@ -461,6 +487,24 @@ bool BackstageView::resetPage(const QString &id)
     return true;
 }
 
+void BackstageView::refreshVisibility()
+{
+    bool currentWasHidden = false;
+    for (const QString &id : m_pageOrder) {
+        auto iterator = m_pages.find(id);
+        if (iterator == m_pages.end() || !iterator->definition.visibleWhen) {
+            continue;
+        }
+        iterator->requestedVisible = iterator->definition.visibleWhen();
+        updatePageButtonVisibility(id);
+        currentWasHidden = currentWasHidden
+            || (iterator->button->isHidden() && m_currentPageId == id);
+    }
+    if (currentWasHidden || m_currentPageId.isEmpty()) {
+        selectFallbackPage();
+    }
+}
+
 void BackstageView::setLoading(bool loading, const QString &message, int progress)
 {
     m_loadingLabel->setText(message.isEmpty() ? tr("Loading parameters…") : message);
@@ -524,6 +568,9 @@ void BackstageView::updatePageButtonVisibility(const QString &id)
 
 void BackstageView::selectFallbackPage()
 {
+    if (!m_automaticSelectionEnabled) {
+        return;
+    }
     const QString fallback = firstVisiblePageId();
     if (!fallback.isEmpty()) {
         setCurrentPage(fallback);

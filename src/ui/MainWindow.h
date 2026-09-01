@@ -67,6 +67,7 @@ This file is part of the QGROUNDCONTROL project
 
 class QGCMapTool;
 class QGCFirmwareUpdate;
+class QDialog;
 class QSplashScreen;
 class QGCStatusBar;
 class DockableView;
@@ -474,6 +475,7 @@ protected:
     QMap<int, QDockWidget*> hilDocks;
 
     // Popup widgets
+    QPointer<QDialog> settingsDialog;
     QPointer<JoystickWidget> joystickWidget;
 
     QPointer<JoystickInput> joystick;
