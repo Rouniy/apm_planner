@@ -114,6 +114,12 @@ add_subdirectory(libs/opmapcontrol EXCLUDE_FROM_ALL)
 # External: quazip (can be via add_subdirectory or find_package if installed)
 add_subdirectory(libs/thirdParty/quazip EXCLUDE_FROM_ALL)
 
+option(APM_ENABLE_KDDOCKWIDGETS
+    "Build the vendored KDDockWidgets QtWidgets docking engine" ON)
+if(APM_ENABLE_KDDOCKWIDGETS)
+    add_subdirectory(libs/kddockwidgets)
+endif()
+
 add_library(apm_parameter_core STATIC
     src/core/VehicleTarget.h
     src/core/parameters/ParameterCodec.cpp
@@ -1044,4 +1050,18 @@ if(BUILD_TESTING)
     set_tests_properties(backstageview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    if(APM_ENABLE_KDDOCKWIDGETS)
+        add_executable(kddockwidgets_vendor_tests
+            tests/test_kddockwidgets_vendor.cpp
+        )
+        target_link_libraries(kddockwidgets_vendor_tests PRIVATE
+            KDAB::kddockwidgets
+            Qt::Test
+        )
+        add_test(NAME kddockwidgets_vendor_tests COMMAND kddockwidgets_vendor_tests)
+        set_tests_properties(kddockwidgets_vendor_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        )
+    endif()
 endif()
