@@ -43,6 +43,7 @@ protected:
     UASInterface *m_uas{nullptr};
     bool showNullMAVErrorMessageBox();
     void initConnections();
+    void replayCachedParameters();
     
 public slots:
     virtual void activeUASSet(UASInterface *uas);

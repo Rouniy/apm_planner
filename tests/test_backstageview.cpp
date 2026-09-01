@@ -1,7 +1,9 @@
 #include "ui/BackstageView.h"
 #include "ui/MainWindowHeader.h"
 
+#include <QAbstractButton>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSignalSpy>
 #include <QTest>
@@ -16,6 +18,8 @@ private slots:
     void selectsAndFallsBackToVisiblePages();
     void rejectsInvalidAndDuplicatePages();
     void collapsesPageGroups();
+    void createsAndResetsLazyPages();
+    void restoresSelectionWhenPagesReappear();
     void exposesLoadingState();
 };
 
@@ -96,6 +100,61 @@ void BackstageViewTest::collapsesPageGroups()
     QCOMPARE(view.currentPageId(), QStringLiteral("menuInstallFirmware"));
     QVERIFY(view.setGroupExpanded(QStringLiteral("mandatoryHardwareGroup"), true));
     QVERIFY(view.isPageVisible(QStringLiteral("menuFrameType")));
+
+    QVERIFY(view.setGroupVisible(QStringLiteral("mandatoryHardwareGroup"), false));
+    QVERIFY(!view.isGroupVisible(QStringLiteral("mandatoryHardwareGroup")));
+    QVERIFY(!view.isPageVisible(QStringLiteral("menuFrameType")));
+    QVERIFY(view.setGroupVisible(QStringLiteral("mandatoryHardwareGroup"), true));
+    QVERIFY(view.isGroupVisible(QStringLiteral("mandatoryHardwareGroup")));
+    QVERIFY(view.isPageVisible(QStringLiteral("menuFrameType")));
+}
+
+void BackstageViewTest::createsAndResetsLazyPages()
+{
+    BackstageView view;
+    QVERIFY(view.addPage(QStringLiteral("menuInstallFirmware"),
+                         QStringLiteral("Install Firmware"), new QWidget));
+
+    int creationCount = 0;
+    BackstagePage definition;
+    definition.id = QStringLiteral("menuFrameType");
+    definition.header = QStringLiteral("Frame Type");
+    definition.requiresConnection = true;
+    definition.factory = [&creationCount](QWidget *parent) {
+        ++creationCount;
+        return new QWidget(parent);
+    };
+    QVERIFY(view.addPage(definition));
+    QVERIFY(view.pageDefinition(definition.id).requiresConnection);
+    QVERIFY(!view.isPageCreated(definition.id));
+    QCOMPARE(creationCount, 0);
+
+    QVERIFY(view.setCurrentPage(definition.id));
+    QVERIFY(view.isPageCreated(definition.id));
+    QCOMPARE(creationCount, 1);
+    QCOMPARE(view.page(definition.id)->property("pageId").toString(), definition.id);
+
+    QVERIFY(view.setCurrentPage(QStringLiteral("menuInstallFirmware")));
+    QVERIFY(view.resetPage(definition.id));
+    QVERIFY(!view.isPageCreated(definition.id));
+    QVERIFY(view.setCurrentPage(definition.id));
+    QCOMPARE(creationCount, 2);
+}
+
+void BackstageViewTest::restoresSelectionWhenPagesReappear()
+{
+    BackstageView view;
+    QVERIFY(view.addPage(QStringLiteral("onlyPage"),
+                         QStringLiteral("Only Page"), new QWidget));
+    QSignalSpy spy(&view, &BackstageView::currentPageChanged);
+
+    QVERIFY(view.setPageVisible(QStringLiteral("onlyPage"), false));
+    QVERIFY(view.currentPageId().isEmpty());
+    QVERIFY(!view.findChild<QAbstractButton *>(QStringLiteral("onlyPage"))->isChecked());
+    QCOMPARE(spy.takeLast().at(0).toString(), QString());
+
+    QVERIFY(view.setPageVisible(QStringLiteral("onlyPage"), true));
+    QCOMPARE(view.currentPageId(), QStringLiteral("onlyPage"));
 }
 
 void BackstageViewTest::exposesLoadingState()
@@ -105,6 +164,15 @@ void BackstageViewTest::exposesLoadingState()
     auto *progress = view.findChild<QProgressBar *>(QStringLiteral("parameterLoadingProgress"));
     QVERIFY(overlay);
     QVERIFY(progress);
+    QCOMPARE(progress->height(), 20);
+    QVERIFY(view.findChild<QPushButton *>(QStringLiteral("stopParameterLoadingButton")));
+    QVERIFY(view.findChild<QPushButton *>(QStringLiteral("retryParameterLoadingButton")));
+    QSignalSpy stopSpy(&view, &BackstageView::stopLoadingRequested);
+    QSignalSpy retrySpy(&view, &BackstageView::retryLoadingRequested);
+    view.findChild<QPushButton *>(QStringLiteral("stopParameterLoadingButton"))->click();
+    view.findChild<QPushButton *>(QStringLiteral("retryParameterLoadingButton"))->click();
+    QCOMPARE(stopSpy.count(), 1);
+    QCOMPARE(retrySpy.count(), 1);
 
     view.setLoading(true, QStringLiteral("Parameters 12/24"), 50);
     QVERIFY(!overlay->isHidden());

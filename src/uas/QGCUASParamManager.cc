@@ -5,6 +5,7 @@ QGCUASParamManager::QGCUASParamManager(UASInterface* uas, QWidget *parent) :
     QWidget(parent),
     mav(uas),
     transmissionListMode(false),
+    m_parameterListReady(false),
     transmissionActive(false),
     transmissionTimeout(0),
     retransmissionTimeout(350),
@@ -12,6 +13,15 @@ QGCUASParamManager::QGCUASParamManager(UASInterface* uas, QWidget *parent) :
     retransmissionBurstRequestSize(5)
 {
     uas->setParamManager(this);
+}
+
+void QGCUASParamManager::setParameterListReady(bool ready)
+{
+    if (m_parameterListReady == ready) {
+        return;
+    }
+    m_parameterListReady = ready;
+    emit parameterListReadyChanged(ready);
 }
 QList<QString> QGCUASParamManager::getParameterNames(int component) const
 {
@@ -71,5 +81,4 @@ void QGCUASParamManager::requestParameterListUpdate(int component)
 {
 	Q_UNUSED(component);
 }
-
 

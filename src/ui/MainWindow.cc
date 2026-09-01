@@ -91,6 +91,10 @@ This file is part of the QGROUNDCONTROL project
 #include <QGCHilConfiguration.h>
 #include <QGCHilFlightGearConfiguration.h>
 
+namespace {
+MainWindow *s_mainWindowInstance = nullptr;
+}
+
 LogWindowSingleton &LogWindowSingleton::instance()
 {
    static LogWindowSingleton instance;
@@ -133,12 +137,11 @@ MainWindow* MainWindow::instance()
 {
     // This singleton impl. is NOT thread safe. Fortunately we do not need
     // thread safety as the first call is always done @ application start.
-    static MainWindow* instance{nullptr};
-    if(instance == nullptr)
+    if (s_mainWindowInstance == nullptr)
     {
-        instance = new MainWindow();
+        new MainWindow();
     }
-    return instance;
+    return s_mainWindowInstance;
 }
 
 // inline function definitions
@@ -186,6 +189,13 @@ MainWindow::MainWindow(QWidget *parent):
     m_dialog(nullptr),
     m_terminalDialog(NULL)
 {
+    // Some child widgets consult MainWindow::instance() from showEvent while
+    // this constructor is still assembling the central stack. Publish the
+    // singleton before creating those children to prevent recursive windows.
+    Q_ASSERT(s_mainWindowInstance == nullptr
+             || s_mainWindowInstance == this);
+    s_mainWindowInstance = this;
+
     QLOG_DEBUG() << "Creating MainWindow";
     setAttribute(Qt::WA_DeleteOnClose);
     hide();

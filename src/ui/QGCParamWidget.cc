@@ -677,16 +677,22 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
         }
     }
 
-    // Check if last parameter was received
+    // Check if the requested full list was completed before clearing the
+    // transfer-mode flag. Backstage pages use this terminal signal instead of
+    // guessing readiness from an arbitrary last packet index.
+    const bool completedParameterList = transmissionListMode && missCount == 0;
+    if (completedParameterList) {
+        transmissionListMode = false;
+        transmissionListSizeKnown.clear();
+        foreach (int key, transmissionMissingPackets.keys()) {
+            transmissionMissingPackets.value(key)->clear();
+        }
+        setParameterListReady(true);
+        emit parameterListUpToDate(component);
+    }
     if (missCount == 0 && missWriteCount == 0)
     {
         this->transmissionActive = false;
-        this->transmissionListMode = false;
-        transmissionListSizeKnown.clear();
-        foreach (int key, transmissionMissingPackets.keys())
-        {
-            transmissionMissingPackets.value(key)->clear();
-        }
 
         // Expand visual tree
         tree->expandItem(tree->topLevelItem(0));
@@ -868,6 +874,7 @@ void QGCParamWidget::requestParameterList()
     received.clear();
     // Clear transmission state
     transmissionListMode = true;
+    setParameterListReady(false);
     transmissionListSizeKnown.clear();
     foreach (int key, transmissionMissingPackets.keys())
     {
@@ -880,6 +887,26 @@ void QGCParamWidget::requestParameterList()
 
     mav->requestParameters();
     initialParamTimer->start(10000); //Give it 10 seconds to start getting parameters
+}
+
+void QGCParamWidget::cancelParameterList()
+{
+    initialParamTimer->stop();
+    transmissionListMode = false;
+    transmissionListSizeKnown.clear();
+    foreach (int key, transmissionMissingPackets.keys()) {
+        transmissionMissingPackets.value(key)->clear();
+    }
+    bool hasPendingWrites = false;
+    foreach (int key, transmissionMissingWriteAckPackets.keys()) {
+        hasPendingWrites = hasPendingWrites
+            || !transmissionMissingWriteAckPackets.value(key)->isEmpty();
+    }
+    transmissionActive = hasPendingWrites;
+    setRetransmissionGuardEnabled(hasPendingWrites);
+    setParameterListReady(false);
+    statusLabel->setText(tr("Parameter loading stopped."));
+    emit parameterListLoadCanceled();
 }
 
 void QGCParamWidget::parameterItemChanged(QTreeWidgetItem* current, int column)
@@ -992,8 +1019,10 @@ void QGCParamWidget::retransmissionGuardTick()
         // Check for timeout
         // stop retransmission attempts on timeout
         if (QGC::groundTimeMilliseconds() > transmissionTimeout) {
+            const bool parameterListTimedOut = transmissionListMode;
             setRetransmissionGuardEnabled(false);
             transmissionActive = false;
+            transmissionListMode = false;
 
             // Empty read retransmission list
             // Empty write retransmission list
@@ -1011,8 +1040,15 @@ void QGCParamWidget::retransmissionGuardTick()
                 missingWriteCount += transmissionMissingWriteAckPackets.value(component)->count();
                 transmissionMissingWriteAckPackets.value(component)->clear();
             }
-            statusLabel->setText(tr("TIMEOUT! MISSING: %1 read, %2 write.").arg(missingReadCount).arg(missingWriteCount));
-            QLOG_WARN() << tr("TIMEOUT! MISSING: %1 read, %2 write.").arg(missingReadCount).arg(missingWriteCount);
+            const QString reason = tr("TIMEOUT! MISSING: %1 read, %2 write.")
+                .arg(missingReadCount).arg(missingWriteCount);
+            statusLabel->setText(reason);
+            QLOG_WARN() << reason;
+            if (parameterListTimedOut) {
+                setParameterListReady(false);
+                emit parameterListLoadFailed(reason);
+            }
+            return;
         }
 
         // Re-request at maximum retransmissionBurstRequestSize parameters at once

@@ -21,7 +21,9 @@ This file is part of the APM_PLANNER project
 ======================================================================*/
 
 #include <QMessageBox>
+#include <QTimer>
 #include "AP2ConfigWidget.h"
+#include "QGCUASParamManager.h"
 
 AP2ConfigWidget::AP2ConfigWidget(QWidget *parent) : QWidget(parent)
 {
@@ -46,6 +48,28 @@ void AP2ConfigWidget::activeUASSet(UASInterface *uas)
         m_uas = uas;
         connect(m_uas, SIGNAL(parameterChanged(int,int,QString,QVariant)), this, SLOT(parameterChanged(int,int,QString,QVariant)));
         connect(m_uas, SIGNAL(parameterChanged(int,int,int,int,QString,QVariant)), this, SLOT(parameterChanged(int,int,int,int,QString,QVariant)));
+        // Derived activeUASSet implementations often populate combo boxes after
+        // calling this base method. Replay on the next event-loop turn so the
+        // complete page UI exists before cached values are applied.
+        QTimer::singleShot(0, this, [this]() { replayCachedParameters(); });
+    }
+}
+
+void AP2ConfigWidget::replayCachedParameters()
+{
+    if (!m_uas || !m_uas->getParamManager()) {
+        return;
+    }
+    QGCUASParamManager *manager = m_uas->getParamManager();
+    for (int component : manager->getComponentIds()) {
+        const QList<QString> names = manager->getParameterNames(component);
+        for (int index = 0; index < names.size(); ++index) {
+            const QString &name = names.at(index);
+            const QVariant value = manager->getParameterValue(component, name);
+            parameterChanged(m_uas->getUASID(), component, name, value);
+            parameterChanged(m_uas->getUASID(), component, names.size(),
+                             index, name, value);
+        }
     }
 }
 

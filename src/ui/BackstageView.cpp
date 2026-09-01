@@ -4,9 +4,11 @@
 #include <QButtonGroup>
 #include <QFontMetrics>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QStyle>
@@ -54,7 +56,7 @@ protected:
             background = QColor(QStringLiteral("#34d399"));
             foreground = QColor(QStringLiteral("#0d1210"));
         } else if (underMouse()) {
-            background = QColor(QStringLiteral("#202623"));
+            background = QColor(QStringLiteral("#2e2e2f"));
             foreground = Qt::white;
         }
         painter.fillRect(rect(), background);
@@ -122,12 +124,15 @@ BackstageView::BackstageView(QWidget *parent)
         "QToolButton[backstageGroup=\"true\"] { color: #e8e8e8; font-size: 13px; "
         "font-weight: 600; padding: 7px 14px; background: #0d1210; border: 0; "
         "text-align: left; min-height: 20px; }"
-        "QToolButton[backstageGroup=\"true\"]:hover { background: #202623; color: white; }"
-        "QWidget#parameterLoadingOverlay { background: rgba(13, 18, 16, 224); color: white; }"
+        "QToolButton[backstageGroup=\"true\"]:hover { background: #2e2e2f; color: white; }"
+        "QWidget#parameterLoadingOverlay { background: #1a201d; color: white; }"
         "QLabel#parameterLoadingLabel { color: white; font-size: 13px; font-weight: 600; }"
-        "QProgressBar#parameterLoadingProgress { min-width: 240px; max-width: 360px; "
-        "min-height: 8px; max-height: 8px; border: 0; background: #0d1210; }"
-        "QProgressBar#parameterLoadingProgress::chunk { background: #34d399; }"));
+        "QProgressBar#parameterLoadingProgress { min-height: 20px; max-height: 20px; "
+        "border: 1px solid #2a322d; background: #0d1210; color: white; }"
+        "QProgressBar#parameterLoadingProgress::chunk { background: #34d399; }"
+        "QPushButton[loadingAction=\"true\"] { min-height: 28px; padding: 3px 12px; "
+        "background: #202623; color: #e6ede9; border: 1px solid #2a322d; }"
+        "QPushButton[loadingAction=\"true\"]:hover { background: #2e2e2f; }"));
     m_pageGroup->setExclusive(true);
 
     auto *root = new QGridLayout(this);
@@ -165,16 +170,41 @@ BackstageView::BackstageView(QWidget *parent)
 
     m_loadingOverlay = new QWidget(contentHost);
     m_loadingOverlay->setObjectName(QStringLiteral("parameterLoadingOverlay"));
-    auto *loadingLayout = new QVBoxLayout(m_loadingOverlay);
-    loadingLayout->setAlignment(Qt::AlignCenter);
-    m_loadingLabel = new QLabel(tr("Loading parameters…"), m_loadingOverlay);
+    auto *overlayLayout = new QVBoxLayout(m_loadingOverlay);
+    overlayLayout->setAlignment(Qt::AlignCenter);
+    auto *loadingPanel = new QWidget(m_loadingOverlay);
+    loadingPanel->setObjectName(QStringLiteral("parameterLoadingPanel"));
+    loadingPanel->setFixedWidth(320);
+    auto *loadingLayout = new QVBoxLayout(loadingPanel);
+    loadingLayout->setContentsMargins(0, 0, 0, 0);
+    loadingLayout->setSpacing(14);
+    m_loadingLabel = new QLabel(tr("Loading parameters…"), loadingPanel);
     m_loadingLabel->setObjectName(QStringLiteral("parameterLoadingLabel"));
     m_loadingLabel->setAlignment(Qt::AlignCenter);
+    m_loadingLabel->setWordWrap(true);
     loadingLayout->addWidget(m_loadingLabel);
-    m_loadingProgress = new QProgressBar(m_loadingOverlay);
+    m_loadingProgress = new QProgressBar(loadingPanel);
     m_loadingProgress->setObjectName(QStringLiteral("parameterLoadingProgress"));
+    m_loadingProgress->setFixedHeight(20);
     m_loadingProgress->setTextVisible(false);
     loadingLayout->addWidget(m_loadingProgress);
+    auto *loadingActions = new QHBoxLayout;
+    loadingActions->setSpacing(10);
+    loadingActions->setAlignment(Qt::AlignCenter);
+    auto *stopButton = new QPushButton(tr("Stop Loading"), loadingPanel);
+    stopButton->setObjectName(QStringLiteral("stopParameterLoadingButton"));
+    stopButton->setProperty("loadingAction", true);
+    auto *retryButton = new QPushButton(tr("Retry Now"), loadingPanel);
+    retryButton->setObjectName(QStringLiteral("retryParameterLoadingButton"));
+    retryButton->setProperty("loadingAction", true);
+    loadingActions->addWidget(stopButton);
+    loadingActions->addWidget(retryButton);
+    loadingLayout->addLayout(loadingActions);
+    overlayLayout->addWidget(loadingPanel);
+    connect(stopButton, &QPushButton::clicked,
+            this, &BackstageView::stopLoadingRequested);
+    connect(retryButton, &QPushButton::clicked,
+            this, &BackstageView::retryLoadingRequested);
     contentLayout->addWidget(m_loadingOverlay, 0, 0);
     m_loadingOverlay->hide();
     root->addWidget(contentHost, 0, 1);
@@ -213,43 +243,65 @@ bool BackstageView::addPage(const QString &id,
                             bool subPage,
                             const QString &badge)
 {
-    if (id.isEmpty() || !pageWidget || m_pages.contains(id)) {
+    BackstagePage definition;
+    definition.id = id;
+    definition.header = title;
+    definition.badge = badge;
+    definition.isSub = subPage;
+    return addPageEntry(definition, pageWidget);
+}
+
+bool BackstageView::addPage(const BackstagePage &page)
+{
+    if (!page.factory) {
+        return false;
+    }
+    return addPageEntry(page, nullptr);
+}
+
+bool BackstageView::addPageEntry(const BackstagePage &definition,
+                                 QWidget *pageWidget)
+{
+    if (definition.id.isEmpty() || (!pageWidget && !definition.factory)
+        || m_pages.contains(definition.id)) {
         return false;
     }
 
-    auto *button = new BackstagePageButton(title, subPage, badge, this);
-    button->setObjectName(id);
-    button->setProperty("pageId", id);
+    auto *button = new BackstagePageButton(definition.header,
+                                           definition.isSub,
+                                           definition.badge,
+                                           this);
+    button->setObjectName(definition.id);
+    button->setProperty("pageId", definition.id);
     m_pageGroup->addButton(button);
     m_navigationLayout->insertWidget(m_navigationLayout->count() - 1, button);
-    pageWidget->setProperty("pageId", id);
-    m_pageStack->addWidget(pageWidget);
-    m_pages.insert(id, PageEntry{button, pageWidget, m_currentGroupId, true});
-    m_pageOrder.append(id);
-    if (!m_currentGroupId.isEmpty()) {
-        m_groups[m_currentGroupId].pageIds.append(id);
-        updatePageButtonVisibility(id);
+    if (pageWidget) {
+        pageWidget->setProperty("pageId", definition.id);
+        m_pageStack->addWidget(pageWidget);
+    }
+    const QString groupId = definition.isSub ? m_currentGroupId : QString();
+    m_pages.insert(definition.id,
+                   PageEntry{button, pageWidget, definition, groupId, true});
+    m_pageOrder.append(definition.id);
+    if (!groupId.isEmpty()) {
+        m_groups[groupId].pageIds.append(definition.id);
+        updatePageButtonVisibility(definition.id);
     }
 
+    const QString id = definition.id;
     connect(button, &QAbstractButton::clicked, this, [this, id]() {
         setCurrentPage(id);
     });
 
     if (m_pageOrder.size() == 1) {
-        setCurrentPage(id);
+        setCurrentPage(definition.id);
     }
     return true;
 }
 
 QString BackstageView::currentPageId() const
 {
-    QWidget *current = m_pageStack->currentWidget();
-    for (const QString &id : m_pageOrder) {
-        if (m_pages.value(id).page == current) {
-            return id;
-        }
-    }
-    return QString();
+    return m_currentPageId;
 }
 
 QStringList BackstageView::pageIds() const
@@ -262,6 +314,16 @@ QWidget *BackstageView::page(const QString &id) const
     return m_pages.value(id).page;
 }
 
+BackstagePage BackstageView::pageDefinition(const QString &id) const
+{
+    return m_pages.value(id).definition;
+}
+
+bool BackstageView::isPageCreated(const QString &id) const
+{
+    return m_pages.contains(id) && m_pages.value(id).page;
+}
+
 bool BackstageView::isPageVisible(const QString &id) const
 {
     return m_pages.contains(id) && !m_pages.value(id).button->isHidden();
@@ -272,17 +334,34 @@ bool BackstageView::isGroupExpanded(const QString &id) const
     return m_groups.contains(id) && m_groups.value(id).expanded;
 }
 
+bool BackstageView::isGroupVisible(const QString &id) const
+{
+    return m_groups.contains(id) && !m_groups.value(id).button->isHidden();
+}
+
 bool BackstageView::setCurrentPage(const QString &id)
 {
-    const auto iterator = m_pages.constFind(id);
-    if (iterator == m_pages.constEnd() || iterator->button->isHidden()) {
+    auto iterator = m_pages.find(id);
+    if (iterator == m_pages.end() || iterator->button->isHidden()) {
         return false;
     }
-    if (m_pageStack->currentWidget() == iterator->page && iterator->button->isChecked()) {
+    QWidget *pageWidget = ensurePageCreated(id);
+    if (!pageWidget) {
+        return false;
+    }
+    if (m_currentPageId == id && iterator->button->isChecked()) {
         return true;
     }
+
+    const QString previousId = m_currentPageId;
+    QWidget *previousPage = m_pages.value(previousId).page;
     iterator->button->setChecked(true);
-    m_pageStack->setCurrentWidget(iterator->page);
+    m_pageStack->setCurrentWidget(pageWidget);
+    m_currentPageId = id;
+    if (previousPage) {
+        emit pageDeactivated(previousId, previousPage);
+    }
+    emit pageActivated(id, pageWidget);
     emit currentPageChanged(id);
     return true;
 }
@@ -295,7 +374,9 @@ bool BackstageView::setPageVisible(const QString &id, bool visible)
     }
     iterator->requestedVisible = visible;
     updatePageButtonVisibility(id);
-    if (iterator->button->isHidden() && m_pageStack->currentWidget() == iterator->page) {
+    if (iterator->button->isHidden() && m_currentPageId == id) {
+        selectFallbackPage();
+    } else if (visible && m_currentPageId.isEmpty()) {
         selectFallbackPage();
     }
     return true;
@@ -314,9 +395,67 @@ bool BackstageView::setGroupExpanded(const QString &id, bool expanded)
         updatePageButtonVisibility(pageId);
         const PageEntry &entry = m_pages.value(pageId);
         currentWasHidden = currentWasHidden
-            || (entry.button->isHidden() && m_pageStack->currentWidget() == entry.page);
+            || (entry.button->isHidden() && m_currentPageId == pageId);
     }
     if (currentWasHidden) {
+        selectFallbackPage();
+    } else if (expanded && m_currentPageId.isEmpty()) {
+        selectFallbackPage();
+    }
+    return true;
+}
+
+bool BackstageView::setGroupVisible(const QString &id, bool visible)
+{
+    auto iterator = m_groups.find(id);
+    if (iterator == m_groups.end()) {
+        return false;
+    }
+    iterator->button->setVisible(visible);
+    bool currentWasHidden = false;
+    for (const QString &pageId : iterator->pageIds) {
+        auto pageIterator = m_pages.find(pageId);
+        if (pageIterator == m_pages.end()) {
+            continue;
+        }
+        pageIterator->button->setVisible(
+            visible && iterator->expanded && pageIterator->requestedVisible);
+        currentWasHidden = currentWasHidden
+            || (pageIterator->button->isHidden()
+                && m_currentPageId == pageId);
+    }
+    if (currentWasHidden) {
+        selectFallbackPage();
+    } else if (visible && m_currentPageId.isEmpty()) {
+        selectFallbackPage();
+    }
+    return true;
+}
+
+bool BackstageView::resetPage(const QString &id)
+{
+    auto iterator = m_pages.find(id);
+    if (iterator == m_pages.end() || !iterator->definition.factory) {
+        return false;
+    }
+    QWidget *pageWidget = iterator->page;
+    if (!pageWidget) {
+        return true;
+    }
+
+    const bool wasCurrent = m_currentPageId == id;
+    if (wasCurrent) {
+        emit pageDeactivated(id, pageWidget);
+        m_pageStack->setCurrentIndex(-1);
+        m_currentPageId.clear();
+        m_pageGroup->setExclusive(false);
+        iterator->button->setChecked(false);
+        m_pageGroup->setExclusive(true);
+    }
+    m_pageStack->removeWidget(pageWidget);
+    iterator->page = nullptr;
+    delete pageWidget;
+    if (wasCurrent) {
         selectFallbackPage();
     }
     return true;
@@ -347,6 +486,29 @@ QString BackstageView::firstVisiblePageId() const
     return QString();
 }
 
+QWidget *BackstageView::ensurePageCreated(const QString &id)
+{
+    auto iterator = m_pages.find(id);
+    if (iterator == m_pages.end()) {
+        return nullptr;
+    }
+    if (iterator->page) {
+        return iterator->page;
+    }
+    if (!iterator->definition.factory) {
+        return nullptr;
+    }
+
+    QWidget *pageWidget = iterator->definition.factory(m_pageStack);
+    if (!pageWidget) {
+        return nullptr;
+    }
+    pageWidget->setProperty("pageId", id);
+    m_pageStack->addWidget(pageWidget);
+    iterator->page = pageWidget;
+    return pageWidget;
+}
+
 void BackstageView::updatePageButtonVisibility(const QString &id)
 {
     auto iterator = m_pages.find(id);
@@ -355,7 +517,8 @@ void BackstageView::updatePageButtonVisibility(const QString &id)
     }
     const bool groupExpanded = iterator->groupId.isEmpty()
         || (m_groups.contains(iterator->groupId)
-            && m_groups.value(iterator->groupId).expanded);
+            && m_groups.value(iterator->groupId).expanded
+            && !m_groups.value(iterator->groupId).button->isHidden());
     iterator->button->setVisible(iterator->requestedVisible && groupExpanded);
 }
 
@@ -366,5 +529,20 @@ void BackstageView::selectFallbackPage()
         setCurrentPage(fallback);
         return;
     }
+    const QString previousId = m_currentPageId;
+    if (!previousId.isEmpty()) {
+        QWidget *currentPage = m_pages.value(previousId).page;
+        if (currentPage) {
+            emit pageDeactivated(previousId, currentPage);
+        }
+        QAbstractButton *button = m_pages.value(previousId).button;
+        m_pageGroup->setExclusive(false);
+        button->setChecked(false);
+        m_pageGroup->setExclusive(true);
+    }
+    m_currentPageId.clear();
     m_pageStack->setCurrentIndex(-1);
+    if (!previousId.isEmpty()) {
+        emit currentPageChanged(QString());
+    }
 }
