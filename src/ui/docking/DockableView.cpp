@@ -66,7 +66,8 @@ DockableView::DockableView(const QString &viewId, QWidget *parent)
     connect(d->host, &DockHost::layoutRestoreRejected,
             this, &DockableView::layoutRestoreRejected);
 #else
-    d->host = new QMainWindow(this);
+    d->host = new QMainWindow(this, Qt::Widget);
+    d->host->setWindowFlag(Qt::Window, false);
     d->host->setObjectName(QStringLiteral("%1FallbackDockHost").arg(d->viewId));
     d->host->setDockNestingEnabled(true);
     auto *placeholder = new QWidget(d->host);
@@ -74,6 +75,10 @@ DockableView::DockableView(const QString &viewId, QWidget *parent)
     d->host->setCentralWidget(placeholder);
 #endif
     layout->addWidget(d->host);
+    // A child QMainWindow starts with an explicit hidden state. Merely adding
+    // it to the page layout does not clear that state, so the no-KDD fallback
+    // otherwise leaves the whole DATA/PLAN docking surface invisible.
+    d->host->show();
 }
 
 DockableView::~DockableView() = default;
@@ -165,6 +170,7 @@ bool DockableView::addPanel(const QString &panelId,
     }
     d->panels.insert(id, panel);
     d->panelOrder.append(id);
+    panel->show();
     return true;
 #endif
 }

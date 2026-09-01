@@ -1,7 +1,12 @@
 #include "ui/FlightDataView.h"
 #include "ui/FlightPlannerView.h"
 
+#include <QApplication>
 #include <QLabel>
+#if !defined(APM_HAS_KDDOCKWIDGETS)
+#include <QDockWidget>
+#include <QMainWindow>
+#endif
 #include <QtTest/QTest>
 
 class FlightViewsTest final : public QObject
@@ -11,6 +16,7 @@ class FlightViewsTest final : public QObject
 private slots:
     void flightDataUsesStableMissionPlannerNames();
     void flightPlannerUsesStableMissionPlannerNames();
+    void flightViewsRenderEveryDefaultPanel();
 };
 
 void FlightViewsTest::flightDataUsesStableMissionPlannerNames()
@@ -52,6 +58,70 @@ void FlightViewsTest::flightPlannerUsesStableMissionPlannerNames()
     const QByteArray layout = view.saveLayout();
     QVERIFY(!layout.isEmpty());
     QVERIFY(view.restoreLayout(layout));
+}
+
+void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
+{
+    FlightDataView dataView;
+    dataView.resize(1280, 800);
+    auto *dataMap = new QLabel(QStringLiteral("map"));
+    auto *primaryFlightDisplay = new QLabel(QStringLiteral("pfd"));
+    auto *info = new QLabel(QStringLiteral("info"));
+    QVERIFY(dataView.setMapWidget(dataMap));
+    QVERIFY(dataView.setPrimaryFlightDisplay(primaryFlightDisplay));
+    QVERIFY(dataView.setInfoView(info));
+    dataView.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dataView));
+    QCoreApplication::processEvents();
+
+    for (QWidget *panel : {static_cast<QWidget *>(dataMap),
+                           static_cast<QWidget *>(primaryFlightDisplay),
+                           static_cast<QWidget *>(info)}) {
+        QVERIFY2(panel->isVisibleTo(&dataView), panel->objectName().toUtf8());
+        QVERIFY2(panel->width() > 0 && panel->height() > 0,
+                 panel->objectName().toUtf8());
+#if !defined(APM_HAS_KDDOCKWIDGETS)
+        auto *dock = qobject_cast<QDockWidget *>(panel->parentWidget());
+        QVERIFY(dock);
+        QVERIFY(!dock->isFloating());
+#endif
+    }
+
+    FlightPlannerView plannerView;
+    plannerView.resize(1280, 800);
+    auto *plannerMap = new QLabel(QStringLiteral("map"));
+    auto *waypoints = new QLabel(QStringLiteral("waypoints"));
+    auto *actions = new QLabel(QStringLiteral("actions"));
+    QVERIFY(plannerView.setMapWidget(plannerMap));
+    QVERIFY(plannerView.setWaypointPanel(waypoints));
+    QVERIFY(plannerView.setActionPanel(actions));
+    plannerView.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&plannerView));
+    QCoreApplication::processEvents();
+
+    for (QWidget *panel : {static_cast<QWidget *>(plannerMap),
+                           static_cast<QWidget *>(waypoints),
+                           static_cast<QWidget *>(actions)}) {
+        QVERIFY2(panel->isVisibleTo(&plannerView), panel->objectName().toUtf8());
+        QVERIFY2(panel->width() > 0 && panel->height() > 0,
+                 panel->objectName().toUtf8());
+#if !defined(APM_HAS_KDDOCKWIDGETS)
+        auto *dock = qobject_cast<QDockWidget *>(panel->parentWidget());
+        QVERIFY(dock);
+        QVERIFY(!dock->isFloating());
+#endif
+    }
+
+#if !defined(APM_HAS_KDDOCKWIDGETS)
+    auto *dataHost = dataView.findChild<QMainWindow *>(
+        QStringLiteral("FlightDataViewFallbackDockHost"));
+    auto *plannerHost = plannerView.findChild<QMainWindow *>(
+        QStringLiteral("FlightPlannerViewFallbackDockHost"));
+    QVERIFY(dataHost);
+    QVERIFY(plannerHost);
+    QVERIFY(!dataHost->isWindow());
+    QVERIFY(!plannerHost->isWindow());
+#endif
 }
 
 QTEST_MAIN(FlightViewsTest)
