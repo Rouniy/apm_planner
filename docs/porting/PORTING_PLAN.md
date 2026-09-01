@@ -32,6 +32,11 @@ criteria as the Mission Planner 10 reference.
    `MainWindowHeader`, `FlightDataView`, `FlightPlannerView`, `BackstageView`,
    `SetupView` and `ConfigView`; implementation-specific suffixes are reserved for
    adapters such as map backends and platform services.
+8. Legacy APM Planner plugin ABI/API and plugin-facing UI facades are explicitly
+   out of scope. `SubMainWindow`, `VIEW_*`, legacy action names and Qt dock-state
+   formats are transitional implementation details, not compatibility contracts.
+   Migration of user missions, parameters, logs, settings and tile data remains a
+   separate data-integrity requirement.
 
 ## Target architecture
 
@@ -45,6 +50,11 @@ MainWindow
     ├── ConfigView -> BackstageView
     ├── SimulationView
     └── HelpView
+
+FlightDataView / FlightPlannerView
+└── KDDockWidgets host (optional floating mode)
+    ├── deterministic Mission Planner layout is always the default
+    └── per-view affinity + versioned JSON restore
 
 VehicleSession(link, system, component, revision)
 ├── ParameterStore + metadata + load/transaction controllers
@@ -96,6 +106,9 @@ IMapView
 4. **Mission Planner shell**
    - Replace the old toolbar/menu/dock foundation with fixed header, stack,
      backstage and deterministic DATA/PLAN split layouts.
+   - Introduce KDDockWidgets through the isolated design in `DOCKING.md`; do not
+     carry the legacy `SubMainWindow` or `QMainWindow::saveState()` contract into
+     the new views.
    - Gate: screenshot scenes S01–S14 at 1120×720 and 1280×800, geometry tolerance
      ±1 px and SSIM at least 0.98 after masking volatile content.
 5. **SETUP and CONFIG**

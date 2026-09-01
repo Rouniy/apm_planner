@@ -60,8 +60,8 @@ SETUP	GCSViews/ConfigurationView/ConfigTerminalView.axaml	src/ui/configuration/T
 SETUP	GCSViews/ConfigurationView/MavFTPUIView.axaml		not-started	MAVFTP browse, transfer, delete/create and cancellation match
 SETUP	GCSViews/ConfigurationView/ConfigOnboardReplView.axaml		not-started	Onboard REPL transport, history, upload and cancellation match
 SETUP	GCSViews/ConfigurationView/ConfigScriptReplView.axaml		not-started	Script REPL/editor workflow matches
-SETUP	GCSViews/ConfigurationView/ConfigAdvancedView.axaml		not-started	Advanced tools page, guarded commands and status feedback match
-SETUP	GCSViews/ConfigurationView/ConfigDeveloperToolsView.axaml		not-started	Developer tools page, visibility gating and guarded operations match
+SETUP	Views/ActionPageView.axaml		not-started	Advanced Tools route via ConfigAdvancedViewModel; guarded commands and status feedback match
+SETUP	Views/ActionPageView.axaml		not-started	Developer Tools route via ConfigDeveloperToolsViewModel; visibility gating and guarded operations match
 SETUP	GCSViews/Setup/SikRadioView.axaml	src/ui/configuration/Radio3DRConfig.*;src/ui/configuration/RadioFlashWizard.*	partial	Local/remote radio parameters, copy, upload, reset and firmware match
 SETUP	GCSViews/Setup/NvModemView.axaml		not-started	NV4/NV5 discovery, route isolation, presets, keys, compare/save/reboot and diagnostics match
 SETUP	Views/OpenDroneIdView.axaml		not-started	Open Drone ID transport, identity/location/operator fields, validation and lifecycle match
@@ -93,8 +93,8 @@ SETUP	GCSViews/ConfigurationView/ConfigElevationSourcesView.axaml		not-started	T
 SETUP	GCSViews/ConfigurationView/ConfigMavCommandView.axaml		not-started	Typed COMMAND_LONG/INT composition, validation, ACK and history match
 CONFIG	GCSViews/ConfigurationView/MavFTPUIView.axaml		not-started	MAVFTP navigation entry and complete browse/transfer workflow match from CONFIG
 CONFIG	GCSViews/ConfigurationView/ConfigUserDefinedView.axaml		not-started	User-defined parameter panels, persistence and editor match; QGCToolWidget is not wired as this CONFIG page
-CONFIG	GCSViews/ConfigurationView/WarningManagerView.axaml		not-started	Rule list, editor, severity, speech/notification and persistence match
-CONFIG	GCSViews/ConfigurationView/ConfigParamLoadingView.axaml		not-started	Partial load progress, cancel/skip/retry and feature gating match
+CONFIG	GCSViews/ConfigurationView/WarningManagerView.axaml		not-started	Supporting warning manager (not a direct CONFIG route): rule list, editor, severity, speech/notification and persistence match
+CONFIG	GCSViews/ConfigurationView/ConfigParamLoadingView.axaml		not-started	Backstage loading overlay (not a navigation route): partial load progress, cancel/skip/retry and feature gating match
 TOOLS	Views/MAVLinkInspectorView.axaml	src/ui/QGCMAVLinkInspector.*	partial	Multi-link/target message tree, rates, field values, filtering and graphs match
 TOOLS	Views/MavlinkLogWindow.axaml	src/ui/QGCMAVLinkLogPlayer.*	partial	Tlog load, playback, speed, seek, pause and state isolation match
 TOOLS	Views/LogDownloadWindow.axaml	src/uas/LogDownloadDialog.*	partial	DataFlash list, selected/all download, erase, cancellation and export match
