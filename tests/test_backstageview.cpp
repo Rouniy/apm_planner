@@ -1,7 +1,10 @@
 #include "ui/BackstageView.h"
 #include "ui/MainWindowHeader.h"
+#include "ui/configuration/ConfigParamLoadingView.h"
+#include "ui/configuration/ConfigParamLoadingViewModel.h"
 
 #include <QAbstractButton>
+#include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -22,6 +25,8 @@ private slots:
     void evaluatesDeclarativeVisibilityWithoutCreatingHiddenPages();
     void restoresPreferredPageWithoutCreatingEarlierFactories();
     void restoresSelectionWhenPagesReappear();
+    void gatesParameterLoadingLikeMissionPlanner();
+    void modelsMissionPlannerParameterLoadingStates();
     void exposesLoadingState();
 };
 
@@ -240,10 +245,20 @@ void BackstageViewTest::exposesLoadingState()
 {
     BackstageView view;
     auto *overlay = view.findChild<QWidget *>(QStringLiteral("parameterLoadingOverlay"));
+    auto *loadingView = view.findChild<ConfigParamLoadingView *>();
     auto *progress = view.findChild<QProgressBar *>(QStringLiteral("parameterLoadingProgress"));
+    auto *status = view.findChild<QLabel *>(QStringLiteral("parameterLoadingStatus"));
+    auto *count = view.findChild<QLabel *>(QStringLiteral("parameterLoadingCount"));
     QVERIFY(overlay);
+    QVERIFY(loadingView);
     QVERIFY(progress);
+    QVERIFY(status);
+    QVERIFY(count);
+    QCOMPARE(loadingView->objectName(), QStringLiteral("ConfigParamLoadingView"));
+    QCOMPARE(view.findChild<QWidget *>(QStringLiteral("parameterLoadingPanel"))->width(), 320);
     QCOMPARE(progress->height(), 20);
+    QCOMPARE(progress->minimum(), 0);
+    QCOMPARE(progress->maximum(), 100);
     QVERIFY(view.findChild<QPushButton *>(QStringLiteral("stopParameterLoadingButton")));
     QVERIFY(view.findChild<QPushButton *>(QStringLiteral("retryParameterLoadingButton")));
     QSignalSpy stopSpy(&view, &BackstageView::stopLoadingRequested);
@@ -253,14 +268,83 @@ void BackstageViewTest::exposesLoadingState()
     QCOMPARE(stopSpy.count(), 1);
     QCOMPARE(retrySpy.count(), 1);
 
-    view.setLoading(true, QStringLiteral("Parameters 12/24"), 50);
+    view.setParameterLoadingState(true, 12, 24);
     QVERIFY(!overlay->isHidden());
     QCOMPARE(progress->minimum(), 0);
     QCOMPARE(progress->maximum(), 100);
     QCOMPARE(progress->value(), 50);
+    QCOMPARE(count->text(), QStringLiteral("12 / 24"));
+    QCOMPARE(status->text(), QStringLiteral("Loading parameters (12 / 24)…"));
 
-    view.setLoading(false);
+    view.setParameterLoadingState(false, 12, 24);
     QVERIFY(overlay->isHidden());
+}
+
+void BackstageViewTest::gatesParameterLoadingLikeMissionPlanner()
+{
+    QVERIFY(!BackstageView::shouldShowParameterLoading(false, false, false));
+    QVERIFY(!BackstageView::shouldShowParameterLoading(true, true, false));
+    QVERIFY(!BackstageView::shouldShowParameterLoading(true, false, true));
+    QVERIFY(BackstageView::shouldShowParameterLoading(true, false, false));
+
+    // RequiresConnection deliberately is not part of the reference truth table:
+    // incomplete parameters cover Planner and Install Firmware as well.
+    QVERIFY(BackstageView::shouldShowParameterLoading(true, false, false));
+}
+
+void BackstageViewTest::modelsMissionPlannerParameterLoadingStates()
+{
+    ConfigParamLoadingViewModel model;
+    QCOMPARE(model.progressPercent(), 0);
+    QCOMPARE(model.count(), QStringLiteral("0 / 0"));
+    QCOMPARE(model.status(), QStringLiteral(
+        "Waiting for the first parameter response. Select another device or retry; "
+        "old-device values remain hidden."));
+    QVERIFY(!model.parametersReady());
+    QVERIFY(!ConfigParamLoadingViewModel::hasAllParameters(0, 0));
+    QVERIFY(!ConfigParamLoadingViewModel::hasAllParameters(2, 3));
+    QVERIFY(ConfigParamLoadingViewModel::hasAllParameters(3, 3));
+    QVERIFY(ConfigParamLoadingViewModel::hasAllParameters(4, 3));
+
+    model.setState(2, 3);
+    QCOMPARE(model.progressPercent(), 66);
+    QCOMPARE(model.count(), QStringLiteral("2 / 3"));
+    QCOMPARE(model.status(), QStringLiteral("Loading parameters (2 / 3)…"));
+
+    model.setState(2, 3, true);
+    QVERIFY(model.loadingCancelled());
+    QCOMPARE(model.status(), QStringLiteral(
+        "Parameter loading stopped at 2 / 3. The connection remains active. "
+        "Received values are available in Full Parameter List; select Retry Now "
+        "for a complete list."));
+
+    model.setRequesting();
+    QVERIFY(!model.loadingCancelled());
+    QCOMPARE(model.status(), QStringLiteral("Requesting parameters…"));
+    model.setStopping();
+    QCOMPARE(model.status(), QStringLiteral(
+        "Stopping parameter loading; the connection remains active…"));
+
+    model.setState(9, 4, true, QStringLiteral("ignored on completion"));
+    QCOMPARE(model.progressPercent(), 100);
+    QVERIFY(model.parametersReady());
+    QVERIFY(!model.loadingCancelled());
+    QCOMPARE(model.status(), QStringLiteral("All parameters loaded."));
+
+    model.setState(-4, -8, true);
+    QCOMPARE(model.received(), 0);
+    QCOMPARE(model.reported(), 0);
+    QCOMPARE(model.progressPercent(), 0);
+    QCOMPARE(model.status(), QStringLiteral(
+        "Parameter loading stopped at 0 / unknown. The connection remains active. "
+        "Received values are available in Full Parameter List; select Retry Now "
+        "for a complete list."));
+
+    model.setState(1, 4, false, QStringLiteral("TIMEOUT"));
+    QCOMPARE(model.failure(), QStringLiteral("TIMEOUT"));
+    QCOMPARE(model.status(), QStringLiteral(
+        "Parameter loading failed: TIMEOUT Received values are available in Full "
+        "Parameter List; select Retry Now for a complete list."));
 }
 
 QTEST_MAIN(BackstageViewTest)

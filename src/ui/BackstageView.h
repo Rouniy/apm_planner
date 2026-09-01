@@ -9,10 +9,9 @@
 
 class QAbstractButton;
 class QButtonGroup;
-class QLabel;
-class QProgressBar;
 class QStackedWidget;
 class QVBoxLayout;
+class ConfigParamLoadingView;
 
 class BackstagePage
 {
@@ -53,6 +52,9 @@ public:
     bool isPageVisible(const QString &id) const;
     bool isGroupExpanded(const QString &id) const;
     bool isGroupVisible(const QString &id) const;
+    static bool shouldShowParameterLoading(bool connected,
+                                           bool parametersReady,
+                                           bool allowsPartialParameters);
 
 public slots:
     void setAutomaticSelectionEnabled(bool enabled);
@@ -63,9 +65,11 @@ public slots:
     bool setGroupVisible(const QString &id, bool visible);
     bool resetPage(const QString &id);
     void refreshVisibility();
-    void setLoading(bool loading,
-                    const QString &message = QString(),
-                    int progress = -1);
+    void setParameterLoadingState(bool visible, int received, int reported,
+                                  bool loadingCancelled = false,
+                                  const QString &failure = QString());
+    void setParameterLoadingRequesting();
+    void setParameterLoadingStopping();
 
 signals:
     void currentPageChanged(const QString &id);
@@ -101,8 +105,7 @@ private:
     QButtonGroup *m_pageGroup = nullptr;
     QStackedWidget *m_pageStack = nullptr;
     QWidget *m_loadingOverlay = nullptr;
-    QLabel *m_loadingLabel = nullptr;
-    QProgressBar *m_loadingProgress = nullptr;
+    ConfigParamLoadingView *m_parameterLoadingView = nullptr;
     QHash<QString, PageEntry> m_pages;
     QHash<QString, GroupEntry> m_groups;
     QStringList m_pageOrder;

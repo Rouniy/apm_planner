@@ -40,6 +40,7 @@ private slots:
                           int parameterId, QString parameterName,
                           QVariant value);
     void parameterListUpToDate(int component);
+    void parameterListLoadStarted();
     void parameterListReadyChanged(bool ready);
     void parameterListLoadFailed(const QString &reason);
     void parameterListLoadCanceled();
@@ -57,7 +58,7 @@ private:
     void resetConnectionPages();
     void resetParameterProgress();
     bool hasConnectedLink() const;
-    bool currentPageRequiresParameters() const;
+    bool currentPageAllowsPartialParameters() const;
     QWidget *createSerialPage(QWidget *parent);
     QWidget *createInitialParamsPage(QWidget *parent);
     QList<ConfigFriendlyParameterValue> parameterSnapshot(
@@ -71,9 +72,10 @@ private:
     QHash<int, int> m_expectedParameterCounts;
     QString m_parameterLoadFailure;
     QString m_firmwareVersion;
-    int m_parameterProgress = -1;
+    bool m_parameterLoadingCanceled = false;
     bool m_connected = false;
     bool m_parametersReady = false;
+    bool m_parameterRetryPending = false;
     bool m_advanced = false;
     bool m_officialFirmware = false;
 };

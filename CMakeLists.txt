@@ -498,6 +498,10 @@ set(SOURCES
     src/ui/configuration/ConfigPlannerAdvView.h
     src/ui/configuration/ConfigPlannerAdvViewModel.cpp
     src/ui/configuration/ConfigPlannerAdvViewModel.h
+    src/ui/configuration/ConfigParamLoadingView.cpp
+    src/ui/configuration/ConfigParamLoadingView.h
+    src/ui/configuration/ConfigParamLoadingViewModel.cpp
+    src/ui/configuration/ConfigParamLoadingViewModel.h
     src/ui/configuration/ArduCopterPidConfig.cc
     src/ui/configuration/ArduCopterPidConfig.h
     src/ui/configuration/ArduCopterPidConfig.ui
@@ -1233,6 +1237,10 @@ if(BUILD_TESTING)
         tests/test_backstageview.cpp
         src/ui/BackstageView.cpp
         src/ui/BackstageView.h
+        src/ui/configuration/ConfigParamLoadingView.cpp
+        src/ui/configuration/ConfigParamLoadingView.h
+        src/ui/configuration/ConfigParamLoadingViewModel.cpp
+        src/ui/configuration/ConfigParamLoadingViewModel.h
     )
     target_include_directories(backstageview_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

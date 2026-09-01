@@ -587,6 +587,8 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
         {
             // Mark list size as known
             transmissionListSizeKnown.insert(component, true);
+            m_parameterListReportedCount = qMax(0, paramCount);
+            m_parameterListReceivedCount = 0;
 
             // Mark all parameters as missing
             for (int i = 0; i < paramCount; ++i)
@@ -616,6 +618,13 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
     int index = transmissionMissingPackets.value(component)->indexOf(paramId);
     // If the MAV sent the parameter without request, it wont be in missing list
     if (index != -1) transmissionMissingPackets.value(component)->removeAt(index);
+    if (requestedListPacket && m_parameterListReportedCount > 0) {
+        m_parameterListReceivedCount = qBound(
+            0,
+            m_parameterListReportedCount
+                - transmissionMissingPackets.value(component)->count(),
+            m_parameterListReportedCount);
+    }
 
     bool justWritten = false;
     bool writeMismatch = false;
@@ -711,7 +720,8 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
     // Check if the requested full list was completed before clearing the
     // transfer-mode flag. Backstage pages use this terminal signal instead of
     // guessing readiness from an arbitrary last packet index.
-    const bool completedParameterList = requestedListPacket && missCount == 0;
+    const bool completedParameterList = requestedListPacket
+        && component == MAV_COMP_ID_PRIMARY && missCount == 0;
     if (completedParameterList) {
         transmissionListMode = false;
         transmissionListSizeKnown.clear();
@@ -739,7 +749,7 @@ void QGCParamWidget::addParameter(int uas, int component, QString parameterName,
 {
     //QLOG_DEBUG() << "PARAM WIDGET GOT PARAM:" << value;
     Q_UNUSED(uas);
-    if (initialParamTimer->isActive())
+    if (component == MAV_COMP_ID_PRIMARY && initialParamTimer->isActive())
     {
         initialParamTimer->stop();
     }
@@ -916,8 +926,11 @@ void QGCParamWidget::requestParameterList()
         changedValues.value(primaryComponent)->clear();
     }
     received.clear();
+    m_parameterListReceivedCount = 0;
+    m_parameterListReportedCount = 0;
     // Clear transmission state
     transmissionListMode = true;
+    emit parameterListLoadStarted();
     setParameterListReady(false);
     transmissionListSizeKnown.clear();
     foreach (int key, transmissionMissingPackets.keys())

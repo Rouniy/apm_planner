@@ -297,8 +297,11 @@ void SetupView::parameterChanged(int uas, int component, int parameterCount,
 {
     Q_UNUSED(parameterName)
     Q_UNUSED(value)
-    if (!m_connected || !m_uas || uas != m_uas->getUASID()
-        || parameterId == UINT16_MAX || parameterCount <= 0) {
+    if ((sender() && sender() != m_uas)
+        || !m_connected || !m_uas || uas != m_uas->getUASID()
+        || component != MAV_COMP_ID_PRIMARY || parameterCount <= 0
+        || parameterId < 0 || parameterId >= parameterCount
+        || parameterId == UINT16_MAX) {
         return;
     }
     if (m_expectedParameterCounts.value(component) != parameterCount) {
@@ -306,63 +309,70 @@ void SetupView::parameterChanged(int uas, int component, int parameterCount,
         m_expectedParameterCounts[component] = parameterCount;
     }
     m_receivedParameterIds[component].insert(parameterId);
-    int receivedTotal = 0;
-    int expectedTotal = 0;
-    for (auto iterator = m_expectedParameterCounts.constBegin();
-         iterator != m_expectedParameterCounts.constEnd(); ++iterator) {
-        expectedTotal += iterator.value();
-        receivedTotal += qMin(iterator.value(),
-                              m_receivedParameterIds.value(iterator.key()).size());
-    }
-    m_parameterProgress = expectedTotal > 0
-        ? qBound(0, qRound(100.0 * receivedTotal / expectedTotal), 100)
-        : -1;
     refreshLoadingOverlay();
 }
 
 void SetupView::parameterListUpToDate(int component)
 {
-    Q_UNUSED(component)
+    if ((sender() && sender() != m_parameterManager)
+        || component != MAV_COMP_ID_PRIMARY) {
+        return;
+    }
     m_parametersReady = true;
     m_parameterLoadFailure.clear();
-    m_parameterProgress = 100;
+    m_parameterLoadingCanceled = false;
+    m_parameterRetryPending = false;
+    refreshLoadingOverlay();
+}
+
+void SetupView::parameterListLoadStarted()
+{
+    if (sender() && sender() != m_parameterManager) {
+        return;
+    }
+    m_parametersReady = false;
+    m_parameterLoadFailure.clear();
+    m_parameterLoadingCanceled = false;
+    m_receivedParameterIds.clear();
+    m_expectedParameterCounts.clear();
     refreshLoadingOverlay();
 }
 
 void SetupView::parameterListReadyChanged(bool ready)
 {
+    if (sender() && sender() != m_parameterManager) {
+        return;
+    }
     m_parametersReady = ready;
     if (ready) {
         m_parameterLoadFailure.clear();
-        m_parameterProgress = 100;
+        m_parameterLoadingCanceled = false;
+        m_parameterRetryPending = false;
     }
     refreshLoadingOverlay();
 }
 
 void SetupView::parameterListLoadFailed(const QString &reason)
 {
+    if (sender() && sender() != m_parameterManager) {
+        return;
+    }
     m_parametersReady = false;
     m_parameterLoadFailure = reason;
+    m_parameterLoadingCanceled = false;
+    m_parameterRetryPending = false;
     refreshLoadingOverlay();
 }
 
 void SetupView::parameterListLoadCanceled()
 {
-    m_parametersReady = false;
-    int receivedTotal = 0;
-    int expectedTotal = 0;
-    for (auto iterator = m_expectedParameterCounts.constBegin();
-         iterator != m_expectedParameterCounts.constEnd(); ++iterator) {
-        expectedTotal += iterator.value();
-        receivedTotal += qMin(iterator.value(),
-                              m_receivedParameterIds.value(iterator.key()).size());
+    if (sender() && sender() != m_parameterManager) {
+        return;
     }
-    m_parameterLoadFailure = tr(
-        "Parameter loading stopped at %1/%2. Retry Now is required before "
-        "opening configuration pages.")
-        .arg(receivedTotal)
-        .arg(expectedTotal > 0 ? QString::number(expectedTotal)
-                               : tr("unknown"));
+    m_parametersReady = false;
+    m_parameterLoadFailure.clear();
+    m_parameterLoadingCanceled = true;
+    m_parameterRetryPending = false;
     refreshLoadingOverlay();
 }
 
@@ -389,20 +399,31 @@ void SetupView::parameterManagerChanged(QGCUASParamManager *manager)
 
 void SetupView::stopParameterLoading()
 {
+    if (!m_connected) {
+        return;
+    }
+    m_backstage->setParameterLoadingStopping();
     if (m_parameterManager) {
         m_parameterManager->cancelParameterList();
     } else {
-        parameterListLoadCanceled();
+        m_parametersReady = false;
+        m_parameterLoadFailure.clear();
+        m_parameterLoadingCanceled = true;
+        m_parameterRetryPending = false;
+        refreshLoadingOverlay();
     }
 }
 
 void SetupView::retryParameterLoading()
 {
-    resetParameterProgress();
-    if (m_parameterManager) {
-        m_parameterManager->requestParameterList();
+    if (!m_connected || !m_parameterManager || m_parameterRetryPending) {
+        return;
     }
+    resetParameterProgress();
+    m_parameterRetryPending = true;
+    m_parameterManager->requestParameterList();
     refreshLoadingOverlay();
+    m_backstage->setParameterLoadingRequesting();
 }
 
 void SetupView::firmwareVersionDetected(const QString &versionText)
@@ -469,12 +490,11 @@ void SetupView::refreshPageVisibility()
     refreshLoadingOverlay();
 }
 
-bool SetupView::currentPageRequiresParameters() const
+bool SetupView::currentPageAllowsPartialParameters() const
 {
     const BackstagePage definition =
         m_backstage->pageDefinition(m_backstage->currentPageId());
-    return definition.requiresConnection
-        && !definition.allowsPartialParameters;
+    return definition.allowsPartialParameters;
 }
 
 bool SetupView::hasConnectedLink() const
@@ -528,6 +548,9 @@ void SetupView::bindParameterManager(QGCUASParamManager *manager)
     connect(m_parameterManager,
             &QGCUASParamManager::parameterListUpToDate,
             this, &SetupView::parameterListUpToDate);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListLoadStarted,
+            this, &SetupView::parameterListLoadStarted);
     connect(m_parameterManager,
             &QGCUASParamManager::parameterListReadyChanged,
             this, &SetupView::parameterListReadyChanged);
@@ -718,28 +741,32 @@ void SetupView::resetParameterProgress()
 {
     m_parametersReady = false;
     m_parameterLoadFailure.clear();
-    m_parameterProgress = -1;
+    m_parameterLoadingCanceled = false;
+    m_parameterRetryPending = false;
     m_receivedParameterIds.clear();
     m_expectedParameterCounts.clear();
 }
 
 void SetupView::refreshLoadingOverlay()
 {
-    const bool loading = m_connected && currentPageRequiresParameters()
-        && !m_parametersReady;
+    const bool loading = BackstageView::shouldShowParameterLoading(
+        m_connected, m_parametersReady,
+        currentPageAllowsPartialParameters());
     int receivedTotal = 0;
     int expectedTotal = 0;
-    for (auto iterator = m_expectedParameterCounts.constBegin();
-         iterator != m_expectedParameterCounts.constEnd(); ++iterator) {
-        expectedTotal += iterator.value();
-        receivedTotal += qMin(iterator.value(),
-                              m_receivedParameterIds.value(iterator.key()).size());
+    if (m_parameterManager) {
+        expectedTotal = m_parameterManager->parameterListReportedCount();
+        receivedTotal = m_parameterManager->parameterListReceivedCount();
+    } else {
+        for (auto iterator = m_expectedParameterCounts.constBegin();
+             iterator != m_expectedParameterCounts.constEnd(); ++iterator) {
+            expectedTotal += iterator.value();
+            receivedTotal += qMin(
+                iterator.value(),
+                m_receivedParameterIds.value(iterator.key()).size());
+        }
     }
-    const QString message = !m_parameterLoadFailure.isEmpty()
-        ? m_parameterLoadFailure
-        : (expectedTotal > 0
-               ? tr("Loading parameters… %1/%2")
-                     .arg(receivedTotal).arg(expectedTotal)
-               : tr("Waiting for vehicle parameters…"));
-    m_backstage->setLoading(loading, message, m_parameterProgress);
+    m_backstage->setParameterLoadingState(
+        loading, receivedTotal, expectedTotal,
+        m_parameterLoadingCanceled, m_parameterLoadFailure);
 }

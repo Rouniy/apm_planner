@@ -43,6 +43,7 @@ private slots:
                           int parameterId, QString parameterName,
                           QVariant value);
     void parameterListUpToDate(int component);
+    void parameterListLoadStarted();
     void parameterListReadyChanged(bool ready);
     void parameterListLoadFailed(const QString &reason);
     void parameterListLoadCanceled();
@@ -82,9 +83,10 @@ private:
     QString m_parameterLoadFailure;
     QString m_preferredPageHeader;
     QString m_firmwareVersion;
-    int m_parameterProgress = -1;
+    bool m_parameterLoadingCanceled = false;
     bool m_connected = false;
     bool m_parametersReady = false;
+    bool m_parameterRetryPending = false;
     bool m_advanced = false;
     bool m_adjustingSelection = false;
     bool m_officialFirmware = false;

@@ -1,14 +1,13 @@
 #include "BackstageView.h"
 
+#include "configuration/ConfigParamLoadingView.h"
+#include "configuration/ConfigParamLoadingViewModel.h"
+
 #include <QAbstractButton>
 #include <QButtonGroup>
 #include <QFontMetrics>
 #include <QGridLayout>
-#include <QHBoxLayout>
-#include <QLabel>
 #include <QPainter>
-#include <QProgressBar>
-#include <QPushButton>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QStyle>
@@ -126,7 +125,8 @@ BackstageView::BackstageView(QWidget *parent)
         "text-align: left; min-height: 20px; }"
         "QToolButton[backstageGroup=\"true\"]:hover { background: #2e2e2f; color: white; }"
         "QWidget#parameterLoadingOverlay { background: #1a201d; color: white; }"
-        "QLabel#parameterLoadingLabel { color: white; font-size: 13px; font-weight: 600; }"
+        "QLabel#parameterLoadingStatus, QLabel#parameterLoadingCount { color: white; "
+        "font-size: 13px; font-weight: 600; }"
         "QProgressBar#parameterLoadingProgress { min-height: 20px; max-height: 20px; "
         "border: 1px solid #2a322d; background: #0d1210; color: white; }"
         "QProgressBar#parameterLoadingProgress::chunk { background: #34d399; }"
@@ -171,39 +171,14 @@ BackstageView::BackstageView(QWidget *parent)
     m_loadingOverlay = new QWidget(contentHost);
     m_loadingOverlay->setObjectName(QStringLiteral("parameterLoadingOverlay"));
     auto *overlayLayout = new QVBoxLayout(m_loadingOverlay);
-    overlayLayout->setAlignment(Qt::AlignCenter);
-    auto *loadingPanel = new QWidget(m_loadingOverlay);
-    loadingPanel->setObjectName(QStringLiteral("parameterLoadingPanel"));
-    loadingPanel->setFixedWidth(320);
-    auto *loadingLayout = new QVBoxLayout(loadingPanel);
-    loadingLayout->setContentsMargins(0, 0, 0, 0);
-    loadingLayout->setSpacing(14);
-    m_loadingLabel = new QLabel(tr("Loading parameters…"), loadingPanel);
-    m_loadingLabel->setObjectName(QStringLiteral("parameterLoadingLabel"));
-    m_loadingLabel->setAlignment(Qt::AlignCenter);
-    m_loadingLabel->setWordWrap(true);
-    loadingLayout->addWidget(m_loadingLabel);
-    m_loadingProgress = new QProgressBar(loadingPanel);
-    m_loadingProgress->setObjectName(QStringLiteral("parameterLoadingProgress"));
-    m_loadingProgress->setFixedHeight(20);
-    m_loadingProgress->setTextVisible(false);
-    loadingLayout->addWidget(m_loadingProgress);
-    auto *loadingActions = new QHBoxLayout;
-    loadingActions->setSpacing(10);
-    loadingActions->setAlignment(Qt::AlignCenter);
-    auto *stopButton = new QPushButton(tr("Stop Loading"), loadingPanel);
-    stopButton->setObjectName(QStringLiteral("stopParameterLoadingButton"));
-    stopButton->setProperty("loadingAction", true);
-    auto *retryButton = new QPushButton(tr("Retry Now"), loadingPanel);
-    retryButton->setObjectName(QStringLiteral("retryParameterLoadingButton"));
-    retryButton->setProperty("loadingAction", true);
-    loadingActions->addWidget(stopButton);
-    loadingActions->addWidget(retryButton);
-    loadingLayout->addLayout(loadingActions);
-    overlayLayout->addWidget(loadingPanel);
-    connect(stopButton, &QPushButton::clicked,
+    overlayLayout->setContentsMargins(0, 0, 0, 0);
+    m_parameterLoadingView = new ConfigParamLoadingView(m_loadingOverlay);
+    overlayLayout->addWidget(m_parameterLoadingView);
+    connect(m_parameterLoadingView,
+            &ConfigParamLoadingView::stopLoadingRequested,
             this, &BackstageView::stopLoadingRequested);
-    connect(retryButton, &QPushButton::clicked,
+    connect(m_parameterLoadingView,
+            &ConfigParamLoadingView::retryLoadingRequested,
             this, &BackstageView::retryLoadingRequested);
     contentLayout->addWidget(m_loadingOverlay, 0, 0);
     m_loadingOverlay->hide();
@@ -505,19 +480,34 @@ void BackstageView::refreshVisibility()
     }
 }
 
-void BackstageView::setLoading(bool loading, const QString &message, int progress)
+bool BackstageView::shouldShowParameterLoading(bool connected,
+                                               bool parametersReady,
+                                               bool allowsPartialParameters)
 {
-    m_loadingLabel->setText(message.isEmpty() ? tr("Loading parameters…") : message);
-    if (progress < 0) {
-        m_loadingProgress->setRange(0, 0);
-    } else {
-        m_loadingProgress->setRange(0, 100);
-        m_loadingProgress->setValue(qBound(0, progress, 100));
-    }
-    m_loadingOverlay->setVisible(loading);
-    if (loading) {
+    return connected && !parametersReady && !allowsPartialParameters;
+}
+
+void BackstageView::setParameterLoadingState(bool visible, int received,
+                                             int reported,
+                                             bool loadingCancelled,
+                                             const QString &failure)
+{
+    m_parameterLoadingView->viewModel()->setState(
+        received, reported, loadingCancelled, failure);
+    m_loadingOverlay->setVisible(visible);
+    if (visible) {
         m_loadingOverlay->raise();
     }
+}
+
+void BackstageView::setParameterLoadingRequesting()
+{
+    m_parameterLoadingView->viewModel()->setRequesting();
+}
+
+void BackstageView::setParameterLoadingStopping()
+{
+    m_parameterLoadingView->viewModel()->setStopping();
 }
 
 QString BackstageView::firstVisiblePageId() const

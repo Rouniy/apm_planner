@@ -21,6 +21,12 @@ public:
 
     bool parameterListReady() const { return m_parameterListReady; }
     bool parameterListInProgress() const { return transmissionListMode; }
+    int parameterListReceivedCount() const {
+        return m_parameterListReceivedCount;
+    }
+    int parameterListReportedCount() const {
+        return m_parameterListReportedCount;
+    }
     QList<int> getComponentIds() const { return parameters.keys(); }
 
     QList<QString> getParameterNames(int component) const;
@@ -49,6 +55,7 @@ signals:
     void parameterChanged(int component, QString parameter, QVariant value);
     void parameterChanged(int component, int parameterIndex, QVariant value);
     void parameterListUpToDate(int component);
+    void parameterListLoadStarted();
     void parameterListReadyChanged(bool ready);
     void parameterListLoadFailed(const QString &reason);
     void parameterListLoadCanceled();
@@ -72,6 +79,8 @@ protected:
     QMap<int, QMap<QString, QVariant>* > transmissionMissingWriteAckPackets; ///< Missing write ACK packets
     bool transmissionListMode;       ///< Currently requesting list
     bool m_parameterListReady;       ///< A full list completed without timeout
+    int m_parameterListReceivedCount = 0; ///< Unique primary-list packets received
+    int m_parameterListReportedCount = 0; ///< Primary param_count for current request
     QMap<int, bool> transmissionListSizeKnown;  ///< List size initialized?
     bool transmissionActive;         ///< Missing packets, working on list?
     quint64 transmissionTimeout;     ///< Timeout
