@@ -5,6 +5,7 @@
 #include "ArduRoverPidConfig.h"
 #include "BasicPidConfig.h"
 #include "CopterPidConfig.h"
+#include "ConfigPlannerAdvView.h"
 #include "FlightModeConfig.h"
 #include "GeoFenceConfig.h"
 #include "LinkInterface.h"
@@ -34,6 +35,7 @@ const QString kExtendedTuning = QStringLiteral("ConfigExtendedTuningView");
 const QString kOnboardOsd = QStringLiteral("ConfigOSDView");
 const QString kFullParameterList = QStringLiteral("RawParamsView");
 const QString kPlanner = QStringLiteral("ConfigPlannerView");
+const QString kPlannerAdvanced = QStringLiteral("ConfigPlannerAdvView");
 
 QWidget *scrollablePage(QWidget *content, const QString &objectName,
                         QWidget *parent)
@@ -147,6 +149,10 @@ void ConfigView::buildPages()
         return scrollablePage(settings, kPlanner, parent);
     };
     m_backstage->addPage(planner);
+
+    m_backstage->addPage(makeBackstagePage<ConfigPlannerAdvView>(
+        kPlannerAdvanced, tr("Planner (Advanced)"),
+        [this]() { return m_advanced; }, false, true));
 }
 
 void ConfigView::advModeChanged(bool advanced)

@@ -467,6 +467,8 @@ set(SOURCES
     src/ui/configuration/ApmSoftwareConfig.ui
     src/ui/configuration/ConfigView.cpp
     src/ui/configuration/ConfigView.h
+    src/ui/configuration/ConfigPlannerAdvView.cpp
+    src/ui/configuration/ConfigPlannerAdvView.h
     src/ui/configuration/ArduCopterPidConfig.cc
     src/ui/configuration/ArduCopterPidConfig.h
     src/ui/configuration/ArduCopterPidConfig.ui
