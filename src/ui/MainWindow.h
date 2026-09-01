@@ -394,6 +394,7 @@ protected:
 
     void storeViewState();
     void loadViewState();
+    void restoreDockableLayout(DockableView *view);
 
     void buildCustomWidget();
     void buildCommonWidgets();

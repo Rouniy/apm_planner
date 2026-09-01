@@ -108,7 +108,8 @@ bool DockHost::addDock(const QString &dockId,
     }
 
     auto *dock = new KDDockWidgets::DockWidget(
-        QStringLiteral("APMPlanner3.%1.%2").arg(d->viewId, id));
+        QStringLiteral("APMPlanner3.%1.%2").arg(d->viewId, id),
+        KDDockWidgets::DockWidgetBase::Option_NotClosable);
     dock->setObjectName(id);
     dock->setProperty("dockId", id);
     dock->setAffinityName(d->affinity);
@@ -138,11 +139,28 @@ QAction *DockHost::toggleAction(const QString &dockId) const
     return dock ? dock->toggleAction() : nullptr;
 }
 
+bool DockHost::isDockOpen(const QString &dockId) const
+{
+    KDDockWidgets::DockWidget *dock = d->docks.value(dockId, nullptr);
+    return dock && dock->isOpen();
+}
+
 bool DockHost::setDockVisible(const QString &dockId, bool visible)
 {
     KDDockWidgets::DockWidget *dock = d->docks.value(dockId, nullptr);
     if (!dock) {
         return false;
+    }
+    if (!visible && dock->isOpen()) {
+        int openCount = 0;
+        for (KDDockWidgets::DockWidget *candidate : d->docks) {
+            if (candidate && candidate->isOpen()) {
+                ++openCount;
+            }
+        }
+        if (openCount <= 1) {
+            return false;
+        }
     }
     if (visible) {
         dock->show();
@@ -150,6 +168,25 @@ bool DockHost::setDockVisible(const QString &dockId, bool visible)
         dock->close();
     }
     return true;
+}
+
+bool DockHost::hasOpenDock() const
+{
+    for (KDDockWidgets::DockWidget *dock : d->docks) {
+        if (dock && dock->isOpen()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DockHost::showAllDocks()
+{
+    for (const QString &dockId : d->dockOrder) {
+        if (KDDockWidgets::DockWidget *dock = d->docks.value(dockId, nullptr)) {
+            dock->show();
+        }
+    }
 }
 
 QByteArray DockHost::saveLayout() const
@@ -180,58 +217,60 @@ QByteArray DockHost::saveLayout() const
 
 bool DockHost::restoreLayout(const QByteArray &envelope)
 {
+    const auto reject = [this](const QString &reason) {
+        // A corrupt or all-closed persisted layout must never leave a core
+        // DATA/PLAN page as an empty white docking host.
+        showAllDocks();
+        emit layoutRestoreRejected(reason);
+        return false;
+    };
     QJsonParseError parseError;
     const QJsonDocument document = QJsonDocument::fromJson(envelope, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-        emit layoutRestoreRejected(tr("Dock layout is not valid JSON"));
-        return false;
+        return reject(tr("Dock layout is not valid JSON"));
     }
 
     const QJsonObject root = document.object();
     if (root.value(QStringLiteral("schema")).toString()
             != QString::fromLatin1(kLayoutSchema)
         || root.value(QStringLiteral("version")).toInt(-1) != kLayoutSchemaVersion) {
-        emit layoutRestoreRejected(tr("Dock layout schema is not supported"));
-        return false;
+        return reject(tr("Dock layout schema is not supported"));
     }
     if (root.value(QStringLiteral("viewId")).toString() != d->viewId
         || root.value(QStringLiteral("affinity")).toString() != d->affinity) {
-        emit layoutRestoreRejected(tr("Dock layout belongs to another view"));
-        return false;
+        return reject(tr("Dock layout belongs to another view"));
     }
     if (root.value(QStringLiteral("kddockwidgets")).toString()
         != QString::fromLatin1(kKddockwidgetsVersion)) {
-        emit layoutRestoreRejected(tr("Dock layout library version is not supported"));
-        return false;
+        return reject(tr("Dock layout library version is not supported"));
     }
 
     QStringList savedDockIds;
     const QJsonArray dockIds = root.value(QStringLiteral("docks")).toArray();
     for (const QJsonValue &dockId : dockIds) {
         if (!dockId.isString()) {
-            emit layoutRestoreRejected(tr("Dock layout panel list is invalid"));
-            return false;
+            return reject(tr("Dock layout panel list is invalid"));
         }
         savedDockIds.append(dockId.toString());
     }
     if (savedDockIds != d->dockOrder) {
-        emit layoutRestoreRejected(tr("Dock layout panel set does not match this view"));
-        return false;
+        return reject(tr("Dock layout panel set does not match this view"));
     }
 
     const QByteArray payload = QByteArray::fromBase64(
         root.value(QStringLiteral("payload")).toString().toLatin1());
     if (payload.isEmpty() || !QJsonDocument::fromJson(payload).isObject()) {
-        emit layoutRestoreRejected(tr("Dock layout payload is invalid"));
-        return false;
+        return reject(tr("Dock layout payload is invalid"));
     }
 
     KDDockWidgets::LayoutSaver saver(
         KDDockWidgets::RestoreOption_RelativeToMainWindow);
     saver.setAffinityNames(QStringList{d->affinity});
     if (!saver.restoreLayout(payload)) {
-        emit layoutRestoreRejected(tr("KDDockWidgets rejected the dock layout"));
-        return false;
+        return reject(tr("KDDockWidgets rejected the dock layout"));
+    }
+    if (!hasOpenDock()) {
+        showAllDocks();
     }
     return true;
 }

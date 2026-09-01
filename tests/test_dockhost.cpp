@@ -42,6 +42,13 @@ void DockHostTest::createsStableMissionPlannerDocks()
                                          QStringLiteral("QuickHost")}));
     QCOMPARE(map->property("dockId").toString(), QStringLiteral("FdMap"));
     QVERIFY(host.toggleAction(QStringLiteral("QuickHost")));
+    QVERIFY(host.hasOpenDock());
+
+    QVERIFY(host.setDockVisible(QStringLiteral("QuickHost"), false));
+    QVERIFY(host.setDockVisible(QStringLiteral("HudHost"), false));
+    QVERIFY(!host.setDockVisible(QStringLiteral("FdMap"), false));
+    QVERIFY(host.hasOpenDock());
+    host.showAllDocks();
 
     const QByteArray saved = host.saveLayout();
     QVERIFY(!saved.isEmpty());
@@ -52,6 +59,20 @@ void DockHostTest::createsStableMissionPlannerDocks()
              QStringLiteral("1.4.0"));
     QCOMPARE(envelope.value(QStringLiteral("docks")).toArray().size(), 3);
     QVERIFY(host.restoreLayout(saved));
+
+    // Simulate an older persisted state produced before core panels became
+    // non-closable. Restoring it must recover the complete visible surface.
+    for (const QString &dockId : host.dockIds()) {
+        host.toggleAction(dockId)->setChecked(false);
+    }
+    QVERIFY(!host.hasOpenDock());
+    const QByteArray allClosed = host.saveLayout();
+    QVERIFY(!allClosed.isEmpty());
+    QVERIFY(host.restoreLayout(allClosed));
+    QVERIFY(host.hasOpenDock());
+    for (const QString &dockId : host.dockIds()) {
+        QVERIFY(host.toggleAction(dockId)->isChecked());
+    }
 }
 
 void DockHostTest::rejectsForeignAndCorruptLayouts()
@@ -60,8 +81,11 @@ void DockHostTest::rejectsForeignAndCorruptLayouts()
     QVERIFY(host.addDock(QStringLiteral("Map"), QStringLiteral("Map"), new QLabel,
                          DockHost::Location::Left));
     QSignalSpy rejected(&host, &DockHost::layoutRestoreRejected);
+    host.toggleAction(QStringLiteral("Map"))->setChecked(false);
+    QVERIFY(!host.hasOpenDock());
     QVERIFY(!host.restoreLayout(QByteArrayLiteral("not-json")));
     QCOMPARE(rejected.count(), 1);
+    QVERIFY(host.hasOpenDock());
 
     QJsonObject foreign;
     foreign.insert(QStringLiteral("schema"), QStringLiteral("apmplanner-dock-layout"));

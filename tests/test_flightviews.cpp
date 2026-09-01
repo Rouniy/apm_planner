@@ -2,6 +2,7 @@
 #include "ui/FlightPlannerView.h"
 
 #include <QApplication>
+#include <QAction>
 #include <QLabel>
 #include <QStackedWidget>
 #if !defined(APM_HAS_KDDOCKWIDGETS)
@@ -48,18 +49,45 @@ void FlightViewsTest::flightPlannerUsesStableMissionPlannerNames()
     FlightPlannerView view;
     QCOMPARE(view.objectName(), QStringLiteral("FlightPlannerView"));
 
-    QVERIFY(view.setMapWidget(new QLabel(QStringLiteral("map"))));
-    QVERIFY(view.setWaypointPanel(new QLabel(QStringLiteral("waypoints"))));
-    QVERIFY(view.setActionPanel(new QLabel(QStringLiteral("actions"))));
+    auto *map = new QLabel(QStringLiteral("map"));
+    auto *waypoints = new QLabel(QStringLiteral("waypoints"));
+    auto *actions = new QLabel(QStringLiteral("actions"));
+    QVERIFY(view.setMapWidget(map));
+    QVERIFY(view.setWaypointPanel(waypoints));
+    QVERIFY(view.setActionPanel(actions));
 
     QCOMPARE(view.panelIds(),
              QStringList({FlightPlannerView::mapPanelId(),
                           FlightPlannerView::waypointPanelId(),
                           FlightPlannerView::actionPanelId()}));
     QVERIFY(view.setPanelVisible(FlightPlannerView::actionPanelId(), false));
+    QVERIFY(view.setPanelVisible(FlightPlannerView::waypointPanelId(), false));
+    QVERIFY(!view.setPanelVisible(FlightPlannerView::mapPanelId(), false));
     const QByteArray layout = view.saveLayout();
     QVERIFY(!layout.isEmpty());
     QVERIFY(view.restoreLayout(layout));
+
+    // Old versions allowed every dock to be closed and persisted a completely
+    // white page. A restored all-closed layout must reopen the full surface.
+#if defined(APM_HAS_KDDOCKWIDGETS)
+    for (const QString &panelId : view.panelIds()) {
+        view.panelToggleAction(panelId)->setChecked(false);
+    }
+#else
+    for (QWidget *content : {static_cast<QWidget *>(map),
+                             static_cast<QWidget *>(waypoints),
+                             static_cast<QWidget *>(actions)}) {
+        auto *dock = qobject_cast<QDockWidget *>(content->parentWidget());
+        QVERIFY(dock);
+        dock->hide();
+    }
+#endif
+    const QByteArray allClosedLayout = view.saveLayout();
+    QVERIFY(!allClosedLayout.isEmpty());
+    QVERIFY(view.restoreLayout(allClosedLayout));
+    for (const QString &panelId : view.panelIds()) {
+        QVERIFY(view.isPanelOpen(panelId));
+    }
 }
 
 void FlightViewsTest::flightViewsRenderEveryDefaultPanel()

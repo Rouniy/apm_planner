@@ -40,6 +40,7 @@ public:
                   const QString &relativeToPanelId = QString(),
                   const QSize &preferredSize = QSize());
     QAction *panelToggleAction(const QString &panelId) const;
+    bool isPanelOpen(const QString &panelId) const;
     bool setPanelVisible(const QString &panelId, bool visible);
     bool setPanelSizeWeights(const QStringList &panelIds,
                              const QList<int> &weights,

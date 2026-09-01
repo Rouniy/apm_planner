@@ -158,6 +158,7 @@ bool DockableView::addPanel(const QString &panelId,
 
     auto *panel = new QDockWidget(title, d->host);
     panel->setObjectName(id);
+    panel->setFeatures(panel->features() & ~QDockWidget::DockWidgetClosable);
     panel->setWidget(content);
     if (preferredSize.isValid()) {
         panel->resize(preferredSize);
@@ -174,6 +175,7 @@ bool DockableView::addPanel(const QString &panelId,
     }
     d->panels.insert(id, panel);
     d->panelOrder.append(id);
+    panel->toggleViewAction()->setChecked(true);
     panel->show();
     return true;
 #endif
@@ -189,6 +191,16 @@ QAction *DockableView::panelToggleAction(const QString &panelId) const
 #endif
 }
 
+bool DockableView::isPanelOpen(const QString &panelId) const
+{
+#if defined(APM_HAS_KDDOCKWIDGETS)
+    return d->host->isDockOpen(panelId);
+#else
+    QDockWidget *panel = d->panels.value(panelId, nullptr);
+    return panel && !panel->isHidden();
+#endif
+}
+
 bool DockableView::setPanelVisible(const QString &panelId, bool visible)
 {
 #if defined(APM_HAS_KDDOCKWIDGETS)
@@ -198,6 +210,18 @@ bool DockableView::setPanelVisible(const QString &panelId, bool visible)
     if (!panel) {
         return false;
     }
+    if (!visible && !panel->isHidden()) {
+        int visibleCount = 0;
+        for (QDockWidget *candidate : d->panels) {
+            if (candidate && !candidate->isHidden()) {
+                ++visibleCount;
+            }
+        }
+        if (visibleCount <= 1) {
+            return false;
+        }
+    }
+    panel->toggleViewAction()->setChecked(visible);
     panel->setVisible(visible);
     return true;
 #endif
@@ -271,6 +295,19 @@ bool DockableView::restoreLayout(const QByteArray &layout)
 #if defined(APM_HAS_KDDOCKWIDGETS)
     return d->host->restoreLayout(layout);
 #else
+    const auto showAllPanels = [this]() {
+        for (const QString &panelId : d->panelOrder) {
+            if (QDockWidget *panel = d->panels.value(panelId, nullptr)) {
+                panel->toggleViewAction()->setChecked(true);
+                panel->show();
+            }
+        }
+    };
+    const auto reject = [this, &showAllPanels](const QString &reason) {
+        showAllPanels();
+        emit layoutRestoreRejected(reason);
+        return false;
+    };
     const QJsonDocument document = QJsonDocument::fromJson(layout);
     const QJsonObject root = document.object();
     if (!document.isObject()
@@ -278,27 +315,33 @@ bool DockableView::restoreLayout(const QByteArray &layout)
             != QStringLiteral("apmplanner-fallback-dock-layout")
         || root.value(QStringLiteral("version")).toInt(-1) != kFallbackLayoutVersion
         || root.value(QStringLiteral("viewId")).toString() != d->viewId) {
-        emit layoutRestoreRejected(tr("Fallback dock layout is not compatible"));
-        return false;
+        return reject(tr("Fallback dock layout is not compatible"));
     }
     QStringList savedPanelIds;
     const QJsonArray panelIds = root.value(QStringLiteral("panels")).toArray();
     for (const QJsonValue &panelId : panelIds) {
         if (!panelId.isString()) {
-            emit layoutRestoreRejected(tr("Fallback dock layout panel list is invalid"));
-            return false;
+            return reject(tr("Fallback dock layout panel list is invalid"));
         }
         savedPanelIds.append(panelId.toString());
     }
     if (savedPanelIds != d->panelOrder) {
-        emit layoutRestoreRejected(tr("Fallback dock layout panels do not match this view"));
-        return false;
+        return reject(tr("Fallback dock layout panels do not match this view"));
     }
     const QByteArray payload = QByteArray::fromBase64(
         root.value(QStringLiteral("payload")).toString().toLatin1());
     if (payload.isEmpty() || !d->host->restoreState(payload, kFallbackLayoutVersion)) {
-        emit layoutRestoreRejected(tr("Fallback dock layout payload is invalid"));
-        return false;
+        return reject(tr("Fallback dock layout payload is invalid"));
+    }
+    bool hasVisiblePanel = false;
+    for (QDockWidget *panel : d->panels) {
+        if (panel && !panel->isHidden()) {
+            hasVisiblePanel = true;
+            break;
+        }
+    }
+    if (!hasVisiblePanel) {
+        showAllPanels();
     }
     return true;
 #endif

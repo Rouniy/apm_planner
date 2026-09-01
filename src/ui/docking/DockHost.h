@@ -38,7 +38,10 @@ public:
                  const QString &relativeToDockId = QString(),
                  const QSize &preferredSize = QSize());
     QAction *toggleAction(const QString &dockId) const;
+    bool isDockOpen(const QString &dockId) const;
     bool setDockVisible(const QString &dockId, bool visible);
+    bool hasOpenDock() const;
+    void showAllDocks();
 
     QByteArray saveLayout() const;
     bool restoreLayout(const QByteArray &envelope);

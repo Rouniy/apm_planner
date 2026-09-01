@@ -658,6 +658,11 @@ void MainWindow::buildCommonWidgets()
     if (!plannerView)
     {
         plannerView = new FlightPlannerView(this);
+        connect(plannerView, &DockableView::layoutRestoreRejected,
+                this, [this](const QString &reason) {
+                    QLOG_WARN() << "FlightPlannerView layout reset:" << reason;
+                    showStatusMessage(tr("PLAN layout was reset: %1").arg(reason));
+                });
         plannerView->setMapWidget(new QGCMapTool(this));
         addToCentralStackedWidget(plannerView, VIEW_MISSION, "Maps");
     }
@@ -666,6 +671,11 @@ void MainWindow::buildCommonWidgets()
     if (!pilotView)
     {
         pilotView = new FlightDataView(this);
+        connect(pilotView, &DockableView::layoutRestoreRejected,
+                this, [this](const QString &reason) {
+                    QLOG_WARN() << "FlightDataView layout reset:" << reason;
+                    showStatusMessage(tr("DATA layout was reset: %1").arg(reason));
+                });
         addToCentralStackedWidget(pilotView, VIEW_FLIGHT, "Pilot");
     }
 
@@ -977,7 +987,7 @@ void MainWindow::registerDockablePanel(DockableView *parent,
     centralWidgetToDockWidgetsMap[view][panelId] = content;
 
     if (QAction *toggleAction = parent->panelToggleAction(panelId)) {
-        menuAction->setChecked(toggleAction->isChecked());
+        menuAction->setChecked(parent->isPanelOpen(panelId));
         connect(toggleAction, &QAction::toggled,
                 menuAction, &QAction::setChecked, Qt::UniqueConnection);
     }
@@ -1181,7 +1191,12 @@ void MainWindow::showTool(bool show)
             {
                 if (auto *dockableView = qobject_cast<DockableView *>(
                         centerStack->currentWidget())) {
-                    dockableView->setPanelVisible(name, show);
+                    if (!dockableView->setPanelVisible(name, show)) {
+                        // Core DATA/PLAN surfaces must never become completely
+                        // empty. Reflect a rejected attempt to hide the final
+                        // panel back in the Tools menu action.
+                        act->setChecked(!show);
+                    }
                     return;
                 }
                 if (show)
@@ -2170,10 +2185,7 @@ void MainWindow::setActiveUAS(UASInterface* uas)
     }
     if (auto *dockableView = qobject_cast<DockableView *>(
             centerStack->currentWidget())) {
-        const QString layoutKey = getWindowStateKey() + QStringLiteral("_DOCK_LAYOUT_V1");
-        if (settings.contains(layoutKey)) {
-            dockableView->restoreLayout(settings.value(layoutKey).toByteArray());
-        }
+        restoreDockableLayout(dockableView);
     }
 
 }
@@ -2413,7 +2425,7 @@ void MainWindow::storeViewState()
 void MainWindow::loadViewState()
 {
     // Restore center stack state
-    int index = settings.value(getWindowStateKey()+"CENTER_WIDGET", -1).toInt();
+    const int index = settings.value(getWindowStateKey()+"CENTER_WIDGET", -1).toInt();
     // The offline plot view is usually the consequence of a logging run, always show the realtime view first
     if (centerStack->indexOf(engineeringView) == index)
     {
@@ -2421,72 +2433,59 @@ void MainWindow::loadViewState()
         //index = centerStack->indexOf(linechartWidget);
     }
 
-    if (index != -1)
+    // A perspective has one canonical central page. Persisted numeric stack
+    // indices become stale whenever pages are added or reordered, and trusting
+    // them can select a blank, unrelated widget for DATA or PLAN.
+    QWidget *expectedWidget = nullptr;
+    switch (currentView)
     {
-        centerStack->setCurrentIndex(index);
-    }
-    else
-    {
-        // Hide custom widgets
-        if (detectionDockWidget) detectionDockWidget->hide();
-        if (watchdogControlDockWidget) watchdogControlDockWidget->hide();
-
-        // Load defaults
-        switch (currentView)
-        {
         case VIEW_HARDWARE_CONFIG:
-            centerStack->setCurrentWidget(configView);
+            expectedWidget = configView;
             break;
         case VIEW_SOFTWARE_CONFIG:
-            centerStack->setCurrentWidget(softwareConfigView);
+            expectedWidget = softwareConfigView;
             break;
         case VIEW_HELP:
-            centerStack->setCurrentWidget(helpView);
+            expectedWidget = helpView;
             break;
         case VIEW_ENGINEER:
-            centerStack->setCurrentWidget(engineeringView);
+            expectedWidget = engineeringView;
             break;
         case VIEW_FLIGHT:
-            centerStack->setCurrentWidget(pilotView);
+            expectedWidget = pilotView;
             break;
         case VIEW_MAVLINK:
-            centerStack->setCurrentWidget(mavlinkView);
+            expectedWidget = mavlinkView;
             break;
         case VIEW_MISSION:
-            centerStack->setCurrentWidget(plannerView);
+            expectedWidget = plannerView;
             break;
-
         case VIEW_SIMULATION:
-            centerStack->setCurrentWidget(simView);
+            expectedWidget = simView;
             break;
-
         case VIEW_TERMINAL:
-            centerStack->setCurrentWidget(terminalView);
+            expectedWidget = terminalView;
             break;
-
         case VIEW_UNCONNECTED:
         case VIEW_FULL:
         default:
-            //centerStack->setCurrentWidget(mapWidget);
-            if (controlDockWidget)
-            {
-                controlDockWidget->hide();
-            }
-            if (listDockWidget)
-            {
-                listDockWidget->show();
-            }
             break;
-        }
+    }
+
+    if (expectedWidget && centerStack->indexOf(expectedWidget) >= 0) {
+        centerStack->setCurrentWidget(expectedWidget);
+    } else if (index >= 0 && index < centerStack->count()) {
+        centerStack->setCurrentIndex(index);
+    } else {
+        if (detectionDockWidget) detectionDockWidget->hide();
+        if (watchdogControlDockWidget) watchdogControlDockWidget->hide();
+        if (controlDockWidget) controlDockWidget->hide();
+        if (listDockWidget) listDockWidget->show();
     }
 
     QWidget *currentWidget = centerStack->currentWidget();
     if (auto *dockableView = qobject_cast<DockableView *>(currentWidget)) {
-        const QString layoutKey = getWindowStateKey()
-            + QStringLiteral("_DOCK_LAYOUT_V1");
-        if (settings.contains(layoutKey)) {
-            dockableView->restoreLayout(settings.value(layoutKey).toByteArray());
-        }
+        restoreDockableLayout(dockableView);
     } else if (SubMainWindow *win = qobject_cast<SubMainWindow *>(currentWidget)) {
         // Legacy Qt docking remains isolated to views that have not been ported yet.
         if (settings.contains(getWindowStateKey() + QStringLiteral("WIDGETS"))) {
@@ -2504,6 +2503,24 @@ void MainWindow::loadViewState()
             win->restoreState(settings.value(getWindowStateKey()).toByteArray(),
                               QGC::applicationVersion());
         }
+    }
+}
+
+void MainWindow::restoreDockableLayout(DockableView *view)
+{
+    if (!view) {
+        return;
+    }
+    const QString layoutKey = getWindowStateKey()
+        + QStringLiteral("_DOCK_LAYOUT_V1");
+    if (!settings.contains(layoutKey)) {
+        return;
+    }
+    if (!view->restoreLayout(settings.value(layoutKey).toByteArray())) {
+        // Do not retry a corrupt/incompatible state on every activation. The
+        // view has already restored all core panels before reporting failure.
+        settings.remove(layoutKey);
+        settings.sync();
     }
 }
 void MainWindow::setAdvancedMode(bool mode)
@@ -2540,9 +2557,9 @@ void MainWindow::loadOperatorView()
     {
         storeViewState();
         currentView = VIEW_MISSION;
-        ui.actionMissionView->setChecked(true);
-        loadViewState();
     }
+    ui.actionMissionView->setChecked(true);
+    loadViewState();
 }
 void MainWindow::loadHardwareConfigView()
 {
@@ -2606,9 +2623,9 @@ void MainWindow::loadPilotView()
     {
         storeViewState();
         currentView = VIEW_FLIGHT;
-        ui.actionFlightView->setChecked(true);
-        loadViewState();
     }
+    ui.actionFlightView->setChecked(true);
+    loadViewState();
 }
 
 void MainWindow::loadSimulationView()
