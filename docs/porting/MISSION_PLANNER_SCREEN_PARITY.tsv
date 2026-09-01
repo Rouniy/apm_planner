@@ -46,7 +46,7 @@ SETUP	GCSViews/ConfigurationView/ConfigGpsInjectView.axaml		not-started	Correcti
 SETUP	GCSViews/ConfigurationView/ConfigHWCANView.axaml		not-started	CAN ports, drivers, protocol, bitrate and reboot requirements match
 SETUP	GCSViews/ConfigurationView/ConfigDroneCanView.axaml		not-started	Node discovery, parameters, firmware update, allocation and restart match
 SETUP	Views/DroneCANInspectorView.axaml		not-started	Message tree, subscribers, field graphs and safe handler lifetime match
-SETUP	GCSViews/ConfigurationView/ConfigSerialView.axaml		not-started	All autopilot SERIALn protocol/baud/options dependencies and conflict warnings match; local-link SerialSettingsDialog is not an equivalent
+SETUP	GCSViews/ConfigurationView/ConfigSerialView.axaml	src/ui/configuration/ConfigSerialView.{h,cpp}; src/ui/configuration/ConfigSerialViewModel.{h,cpp}	in-progress	Qt view/model and unit tests cover SERIALn discovery, metadata enums/bitmask, RTS/CTS labels, dependency writes, ACK status and MAVLink-port warnings; visual cross-platform and live-vehicle validation remain
 SETUP	GCSViews/ConfigurationView/ConfigHWBTView.axaml		not-started	Bluetooth module discovery and configuration match
 SETUP	GCSViews/ConfigurationView/ConfigHWESP8266View.axaml		not-started	ESP8266 network setup, status, reset and firmware operations match
 SETUP	GCSViews/ConfigurationView/ConfigHWIDView.axaml		not-started	Hardware IDs, board identity, sensors and copy/export match

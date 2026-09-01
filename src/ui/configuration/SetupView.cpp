@@ -3,9 +3,11 @@
 #include "AccelCalibrationConfig.h"
 #include "AirspeedConfig.h"
 #include "ApmCustomFirmwareConfig.h"
+#include "ArduPilotMegaMAV.h"
 #include "BatteryMonitorConfig.h"
 #include "CameraGimbalConfig.h"
 #include "CompassConfig.h"
+#include "ConfigSerialView.h"
 #include "FailSafeConfig.h"
 #include "FlightModeConfig.h"
 #include "FrameTypeConfig.h"
@@ -18,8 +20,12 @@
 #include "RangeFinderConfig.h"
 #include "UASInterface.h"
 #include "UASManager.h"
+#include "APMFirmwareVersion.h"
+#include "AppPaths.h"
+#include "core/parameters/ParameterMetaDataRepository.h"
 #include "ui/BackstageView.h"
 
+#include <QDir>
 #include <QFrame>
 #include <QScrollArea>
 #include <QTimer>
@@ -32,6 +38,7 @@ const QString kFrameType = QStringLiteral("ConfigFrameClassTypeView");
 const QString kAccelCalibration = QStringLiteral("ConfigAccelCalibrationView");
 const QString kCompass = QStringLiteral("ConfigCompassView");
 const QString kRadioInput = QStringLiteral("ConfigRadioInputView");
+const QString kSerialPorts = QStringLiteral("ConfigSerialView");
 const QString kFlightModes = QStringLiteral("ConfigFlightModesView");
 const QString kFailSafe = QStringLiteral("ConfigFailSafeView");
 const QString kOptionalGroup = QStringLiteral("OptionalHardwareGroup");
@@ -77,11 +84,52 @@ BackstagePage makeBackstagePage(const QString &id, const QString &header,
     };
     return definition;
 }
+
+ParameterFirmwareFamily firmwareFamily(UASInterface *uas)
+{
+    if (!uas
+        || uas->getAutopilotType() != MAV_AUTOPILOT_ARDUPILOTMEGA) {
+        return ParameterFirmwareFamily::Unknown;
+    }
+    switch (uas->getSystemType()) {
+    case MAV_TYPE_FIXED_WING:
+    case MAV_TYPE_VTOL_DUOROTOR:
+    case MAV_TYPE_VTOL_QUADROTOR:
+    case MAV_TYPE_VTOL_TILTROTOR:
+    case MAV_TYPE_VTOL_RESERVED2:
+    case MAV_TYPE_VTOL_RESERVED3:
+    case MAV_TYPE_VTOL_RESERVED4:
+    case MAV_TYPE_VTOL_RESERVED5:
+        return ParameterFirmwareFamily::ArduPlane;
+    case MAV_TYPE_GROUND_ROVER:
+    case MAV_TYPE_SURFACE_BOAT:
+        return ParameterFirmwareFamily::Rover;
+    case MAV_TYPE_TRICOPTER:
+    case MAV_TYPE_QUADROTOR:
+    case MAV_TYPE_COAXIAL:
+    case MAV_TYPE_HELICOPTER:
+    case MAV_TYPE_HEXAROTOR:
+    case MAV_TYPE_OCTOROTOR:
+    case MAV_TYPE_DODECAROTOR:
+    case MAV_TYPE_DECAROTOR:
+        return ParameterFirmwareFamily::ArduCopter;
+    case MAV_TYPE_SUBMARINE:
+        return ParameterFirmwareFamily::ArduSub;
+    case MAV_TYPE_ANTENNA_TRACKER:
+        return ParameterFirmwareFamily::AntennaTracker;
+    default:
+        return ParameterFirmwareFamily::Unknown;
+    }
+}
 }
 
 SetupView::SetupView(QWidget *parent)
     : QWidget(parent),
-      m_backstage(new BackstageView(this))
+      m_backstage(new BackstageView(this)),
+      m_metadataRepository(new ParameterMetaDataRepository(
+          AppPaths::resourcePath(QStringLiteral("files/ardupilotmega")),
+          QDir(AppPaths::writableDataDirectory()).filePath(
+              QStringLiteral("cache/parameter-metadata"))))
 {
     setObjectName(QStringLiteral("SetupView"));
     auto *layout = new QVBoxLayout(this);
@@ -102,6 +150,8 @@ SetupView::SetupView(QWidget *parent)
     activeUASSet(UASManager::instance()->getActiveUAS());
 }
 
+SetupView::~SetupView() = default;
+
 void SetupView::buildPages()
 {
     m_backstage->addPage(makeBackstagePage<ApmCustomFirmwareConfig>(
@@ -116,6 +166,15 @@ void SetupView::buildPages()
         kCompass, tr("Compass"), true, true));
     m_backstage->addPage(makeBackstagePage<RadioCalibrationConfig>(
         kRadioInput, tr("Radio Calibration"), true, true));
+    BackstagePage serialPorts;
+    serialPorts.id = kSerialPorts;
+    serialPorts.header = tr("Serial Ports");
+    serialPorts.isSub = true;
+    serialPorts.requiresConnection = true;
+    serialPorts.factory = [this](QWidget *parent) {
+        return createSerialPage(parent);
+    };
+    m_backstage->addPage(serialPorts);
     m_backstage->addPage(makeBackstagePage<FlightModeConfig>(
         kFlightModes, tr("Flight Modes"), true, true));
     m_backstage->addPage(makeBackstagePage<FailSafeConfig>(
@@ -165,6 +224,8 @@ void SetupView::activeUASSet(UASInterface *uas)
 
     m_uas = uas;
     m_parameterManager = nullptr;
+    m_firmwareVersion.clear();
+    m_officialFirmware = false;
     resetParameterProgress();
 
     if (m_uas) {
@@ -178,6 +239,10 @@ void SetupView::activeUASSet(UASInterface *uas)
                 this, &SetupView::parameterChanged);
         connect(m_uas, &UASInterface::parameterManagerChanged,
                 this, &SetupView::parameterManagerChanged);
+        if (auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data())) {
+            connect(apm, &ArduPilotMegaMAV::versionDetected,
+                    this, &SetupView::firmwareVersionDetected);
+        }
         bindParameterManager(m_uas->getParamManager());
         m_parametersReady = m_parameterManager
             && m_parameterManager->parameterListReady();
@@ -196,6 +261,12 @@ void SetupView::activeUASSet(UASInterface *uas)
     refreshPageVisibility();
     if (targetChanged) {
         resetConnectionPages();
+    }
+    if (auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data())) {
+        if (apm->getFirmwareVersion().isValid()) {
+            firmwareVersionDetected(
+                apm->getFirmwareVersion().versionString());
+        }
     }
 }
 
@@ -323,6 +394,37 @@ void SetupView::retryParameterLoading()
     refreshLoadingOverlay();
 }
 
+void SetupView::firmwareVersionDetected(const QString &versionText)
+{
+    Q_UNUSED(versionText)
+    auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data());
+    if (!apm) {
+        return;
+    }
+    const APMFirmwareVersion firmware = apm->getFirmwareVersion();
+    if (!firmware.isValid()) {
+        return;
+    }
+    const QString normalized = QStringLiteral("%1.%2.%3")
+        .arg(firmware.majorNumber())
+        .arg(firmware.minorNumber())
+        .arg(firmware.patchNumber());
+    const bool official = firmware.isOfficial();
+    if (normalized == m_firmwareVersion
+        && official == m_officialFirmware) {
+        return;
+    }
+    m_firmwareVersion = normalized;
+    m_officialFirmware = official;
+
+    const bool selected = m_backstage->currentPageId() == kSerialPorts;
+    m_backstage->resetPage(kSerialPorts);
+    if (selected && m_connected
+        && m_backstage->isPageVisible(kSerialPorts)) {
+        m_backstage->setCurrentPage(kSerialPorts);
+    }
+}
+
 void SetupView::refreshPageVisibility()
 {
     const bool copter = m_connected && m_uas && m_uas->isMultirotor();
@@ -332,6 +434,10 @@ void SetupView::refreshPageVisibility()
     m_backstage->setPageVisible(kAccelCalibration, m_connected);
     m_backstage->setPageVisible(kCompass, m_connected);
     m_backstage->setPageVisible(kRadioInput, m_connected);
+    m_backstage->setPageVisible(
+        kSerialPorts,
+        m_connected
+            && firmwareFamily(m_uas) != ParameterFirmwareFamily::Unknown);
     m_backstage->setPageVisible(kFlightModes, m_connected);
     m_backstage->setPageVisible(kFailSafe, m_connected);
 
@@ -427,6 +533,92 @@ void SetupView::resetConnectionPages()
     if (m_connected && m_backstage->isPageVisible(selectedPage)) {
         m_backstage->setCurrentPage(selectedPage);
     }
+}
+
+QWidget *SetupView::createSerialPage(QWidget *parent)
+{
+    ParameterFirmwareFamily family = firmwareFamily(m_uas);
+    ParameterMetaDataCatalog catalog =
+        m_metadataRepository->catalog(
+            family,
+            m_officialFirmware ? m_firmwareVersion : QString());
+    if (!catalog.isValid()
+        && family != ParameterFirmwareFamily::Unknown
+        && family != ParameterFirmwareFamily::ArduCopter) {
+        catalog = m_metadataRepository->catalog(
+            ParameterFirmwareFamily::ArduCopter);
+    }
+
+    auto *page = new ConfigSerialView(catalog);
+    page->setParameterSnapshot(
+        parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+        MAV_COMP_ID_AUTOPILOT1);
+    connect(page, &ConfigSerialView::writeRequested,
+            page, [this, page](int componentId, const QString &name,
+                               const QVariant &value) {
+        if (!m_connected || !m_parameterManager) {
+            page->parameterWriteFailed(componentId, name,
+                                       tr("not connected"));
+            return;
+        }
+        if (!m_parameterManager->getParameterNames(componentId)
+                 .contains(name)) {
+            page->parameterWriteFailed(componentId, name,
+                                       tr("parameter unavailable"));
+            return;
+        }
+        m_parameterManager->setParameter(componentId, name, value);
+    });
+    if (m_uas) {
+        const int expectedUasId = m_uas->getUASID();
+        connect(m_uas,
+                QOverload<int, int, QString, QVariant>::of(
+                    &UASInterface::parameterChanged),
+                page, [page, expectedUasId](int uasId, int componentId,
+                                            const QString &name,
+                                            const QVariant &value) {
+            if (uasId == expectedUasId) {
+                page->parameterChanged(componentId, name, value);
+            }
+        });
+    }
+    if (m_parameterManager) {
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, [this, page](bool ready) {
+            if (ready && m_uas && m_parameterManager) {
+                page->setParameterSnapshot(
+                    parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+                    MAV_COMP_ID_AUTOPILOT1);
+            }
+        });
+    }
+
+    auto *scroll = new QScrollArea(parent);
+    scroll->setObjectName(kSerialPorts);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setWidget(page);
+    return scroll;
+}
+
+QList<ConfigFriendlyParameterValue> SetupView::parameterSnapshot(
+    int componentId) const
+{
+    QList<ConfigFriendlyParameterValue> result;
+    if (!m_parameterManager) {
+        return result;
+    }
+    const QList<QString> names =
+        m_parameterManager->getParameterNames(componentId);
+    for (const QString &name : names) {
+        QVariant value;
+        if (m_parameterManager->getParameterValue(componentId, name, value)) {
+            result.append({componentId, name, value});
+        }
+    }
+    return result;
 }
 
 void SetupView::resetParameterProgress()

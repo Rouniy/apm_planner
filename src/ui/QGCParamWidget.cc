@@ -607,15 +607,17 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
     //bool lastWritten = false;
     // Mark this parameter as received in write ACK list
     QMap<QString, QVariant>* map = transmissionMissingWriteAckPackets.value(component);
+    QVariant expectedWriteValue;
     if (map && map->contains(parameterName))
     {
         justWritten = true;
-        QVariant newval = map->value(parameterName);
-        if (map->value(parameterName) != value)
+        expectedWriteValue = map->value(parameterName);
+        if (expectedWriteValue != value)
         {
             writeMismatch = true;
+        } else {
+            map->remove(parameterName);
         }
-        map->remove(parameterName);
     }
 
     int missCount = 0;
@@ -655,7 +657,11 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
         QPalette pal = statusLabel->palette();
         pal.setColor(backgroundRole(), QGC::colorRed);
         statusLabel->setPalette(pal);
-        statusLabel->setText(tr("FAILURE: Wrote %1: sent %2 != onboard %3").arg(parameterName).arg(map->value(parameterName).toDouble()).arg(value.toDouble()));
+        statusLabel->setText(
+            tr("FAILURE: Wrote %1: sent %2 != onboard %3")
+                .arg(parameterName)
+                .arg(expectedWriteValue.toDouble())
+                .arg(value.toDouble()));
     }
     else
     {
@@ -1185,7 +1191,13 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
         return;
     }
 
-    if (parameterList->value(parameterName) == value)
+    const QMap<QString, QVariant> *pendingWrites =
+        transmissionMissingWriteAckPackets.value(component, nullptr);
+    const bool replacesPendingWrite = pendingWrites
+        && pendingWrites->contains(parameterName)
+        && pendingWrites->value(parameterName) != value;
+    if (parameterList->value(parameterName) == value
+        && !replacesPendingWrite)
     {
         statusLabel->setText(tr("REJ. %1 > max").arg(value.toDouble()));
         QLOG_INFO() << "setParameter: Value for" << parameterName << "did not change." << value.toDouble()

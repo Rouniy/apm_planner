@@ -1,14 +1,20 @@
 #ifndef SETUPVIEW_H
 #define SETUPVIEW_H
 
+#include "ParamField.h"
+
 #include <QHash>
+#include <QList>
 #include <QPointer>
 #include <QSet>
 #include <QString>
 #include <QVariant>
 #include <QWidget>
 
+#include <memory>
+
 class BackstageView;
+class ParameterMetaDataRepository;
 class QGCUASParamManager;
 class UASInterface;
 
@@ -18,6 +24,7 @@ class SetupView final : public QWidget
 
 public:
     explicit SetupView(QWidget *parent = nullptr);
+    ~SetupView() override;
 
 signals:
     void advancedModeChanged(bool advanced);
@@ -39,6 +46,7 @@ private slots:
     void parameterManagerChanged(QGCUASParamManager *manager);
     void stopParameterLoading();
     void retryParameterLoading();
+    void firmwareVersionDetected(const QString &versionText);
 
 private:
     void buildPages();
@@ -50,17 +58,23 @@ private:
     void resetParameterProgress();
     bool hasConnectedLink() const;
     bool currentPageRequiresParameters() const;
+    QWidget *createSerialPage(QWidget *parent);
+    QList<ConfigFriendlyParameterValue> parameterSnapshot(
+        int componentId) const;
 
     BackstageView *m_backstage = nullptr;
+    std::unique_ptr<ParameterMetaDataRepository> m_metadataRepository;
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
     QHash<int, QSet<int>> m_receivedParameterIds;
     QHash<int, int> m_expectedParameterCounts;
     QString m_parameterLoadFailure;
+    QString m_firmwareVersion;
     int m_parameterProgress = -1;
     bool m_connected = false;
     bool m_parametersReady = false;
     bool m_advanced = false;
+    bool m_officialFirmware = false;
 };
 
 #endif
