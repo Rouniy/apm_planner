@@ -232,9 +232,15 @@ MainWindow::MainWindow(QWidget *parent):
                                                   ui.actionSimulation_View,
                                                   ui.actionAbout_APM_Planner_2_0);
     m_mainWindowHeader->setToolsMenu(ui.menuTools);
+    connect(m_mainWindowHeader, &MainWindowHeader::fullScreenRequested,
+            ui.actionFullscreen, &QAction::trigger);
     connect(m_mainWindowHeader, &MainWindowHeader::configureLinkRequested,
             this, [this](int linkId) { configLink(linkId); });
     ui.menuBar->hide();
+
+    // Mission Planner 10 shell contract: 1280x800 initial geometry with a
+    // 1120x720 usable minimum on all desktop platforms.
+    setMinimumSize(1120, 720);
 
     customStatusBar = new QGCStatusBar(this);
     setStatusBar(customStatusBar);

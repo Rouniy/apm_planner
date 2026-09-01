@@ -51,10 +51,10 @@ protected:
         QColor foreground = m_subPage ? QColor(QStringLiteral("#c8c8c8"))
                                       : QColor(QStringLiteral("#e8e8e8"));
         if (isChecked()) {
-            background = QColor(QStringLiteral("#94c11f"));
-            foreground = QColor(QStringLiteral("#1a1a1b"));
+            background = QColor(QStringLiteral("#34d399"));
+            foreground = QColor(QStringLiteral("#0d1210"));
         } else if (underMouse()) {
-            background = QColor(QStringLiteral("#2e2e2f"));
+            background = QColor(QStringLiteral("#202623"));
             foreground = Qt::white;
         }
         painter.fillRect(rect(), background);
@@ -115,19 +115,19 @@ BackstageView::BackstageView(QWidget *parent)
     setObjectName(QStringLiteral("BackstageView"));
     setAttribute(Qt::WA_StyledBackground, true);
     setStyleSheet(QStringLiteral(
-        "BackstageView { background: #3a3b3c; color: white; }"
+        "BackstageView { background: #1a201d; color: white; font-family: sans-serif; }"
         "QScrollArea#backstageNavigation,"
         "QScrollArea#backstageNavigation QWidget#qt_scrollarea_viewport,"
-        "QWidget#backstageNavigationContent { background: #1a1a1b; border: 0; }"
+        "QWidget#backstageNavigationContent { background: #0d1210; border: 0; }"
         "QToolButton[backstageGroup=\"true\"] { color: #e8e8e8; font-size: 13px; "
-        "font-weight: 600; padding: 7px 14px; background: #1a1a1b; border: 0; "
+        "font-weight: 600; padding: 7px 14px; background: #0d1210; border: 0; "
         "text-align: left; min-height: 20px; }"
-        "QToolButton[backstageGroup=\"true\"]:hover { background: #2e2e2f; color: white; }"
-        "QWidget#parameterLoadingOverlay { background: rgba(31, 31, 32, 224); color: white; }"
+        "QToolButton[backstageGroup=\"true\"]:hover { background: #202623; color: white; }"
+        "QWidget#parameterLoadingOverlay { background: rgba(13, 18, 16, 224); color: white; }"
         "QLabel#parameterLoadingLabel { color: white; font-size: 13px; font-weight: 600; }"
         "QProgressBar#parameterLoadingProgress { min-width: 240px; max-width: 360px; "
-        "min-height: 8px; max-height: 8px; border: 0; background: #1a1a1b; }"
-        "QProgressBar#parameterLoadingProgress::chunk { background: #94c11f; }"));
+        "min-height: 8px; max-height: 8px; border: 0; background: #0d1210; }"
+        "QProgressBar#parameterLoadingProgress::chunk { background: #34d399; }"));
     m_pageGroup->setExclusive(true);
 
     auto *root = new QGridLayout(this);

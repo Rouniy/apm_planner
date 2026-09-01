@@ -86,6 +86,14 @@ HELP, then TOOLS, ARDUPILOT and the connection controls. Renaming an existing Qt
 implementation is allowed because the legacy plugin API is not supported; new
 names must match the corresponding Mission Planner 10 concept.
 
+The shell reference is the clean-profile Mission Planner 10 `Emerald` palette:
+header `#121614`, panel `#202623`, control `#1a201d`, input `#161b18`, deep
+background `#0d1210` and accent `#34d399`. The window starts at 1280x800 with a
+1120x720 minimum. The header is 64 logical pixels high, or 7 while auto-hidden
+and not hovered. Navigation uses the matching Font Awesome Free glyphs; their
+attribution is kept beside the SVG resources. These are screenshot-test tokens,
+not approximate theme suggestions.
+
 ## QGroundControl-derived communication safety
 
 QGroundControl is the architectural continuation of APM Planner and is the first

@@ -1,4 +1,5 @@
 #include "ui/BackstageView.h"
+#include "ui/MainWindowHeader.h"
 
 #include <QProgressBar>
 #include <QScrollArea>
@@ -11,6 +12,7 @@ class BackstageViewTest : public QObject
 
 private slots:
     void hasMissionPlannerGeometry();
+    void hasMissionPlannerHeaderGeometry();
     void selectsAndFallsBackToVisiblePages();
     void rejectsInvalidAndDuplicatePages();
     void collapsesPageGroups();
@@ -28,6 +30,13 @@ void BackstageViewTest::hasMissionPlannerGeometry()
     QVERIFY(navigation);
     QCOMPARE(navigation->width(), 210);
     QCOMPARE(navigation->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+}
+
+void BackstageViewTest::hasMissionPlannerHeaderGeometry()
+{
+    QCOMPARE(MainWindowHeader::headerHeightFor(false, false), 64);
+    QCOMPARE(MainWindowHeader::headerHeightFor(true, true), 64);
+    QCOMPARE(MainWindowHeader::headerHeightFor(true, false), 7);
 }
 
 void BackstageViewTest::selectsAndFallsBackToVisiblePages()

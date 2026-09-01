@@ -17,7 +17,9 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSettings>
 #include <QSpinBox>
+#include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -25,14 +27,15 @@
 namespace {
 const char kHeaderStyle[] = R"(
 MainWindowHeader {
-    background: #262728;
+    background: #121614;
     color: #ffffff;
+    font-family: sans-serif;
 }
 QScrollArea#mainNavigationScroll,
 QScrollArea#mainNavigationScroll QWidget#qt_scrollarea_viewport,
 QWidget#mainNavigationHost,
 QWidget#connectionPanel {
-    background: #262728;
+    background: #121614;
     border: 0;
 }
 QToolButton[mpNav="true"] {
@@ -40,27 +43,54 @@ QToolButton[mpNav="true"] {
     border: 0;
     color: #e0e0e0;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: bold;
     padding: 4px 10px;
-    min-width: 54px;
+    min-height: 64px;
+    max-height: 64px;
 }
 QToolButton[mpNav="true"]:hover {
-    background: #3a3b3c;
+    background: #202623;
     color: #ffffff;
 }
 QToolButton[mpNav="true"]:checked {
-    background: #94c11f;
-    color: #262728;
+    background: #34d399;
+    color: #0d1210;
+}
+QToolButton#MenuFlightData,
+QToolButton#MenuFlightPlanner {
+    min-width: 30px;
+    max-width: 30px;
+}
+QToolButton#MenuInitConfig {
+    min-width: 40px;
+    max-width: 40px;
+}
+QToolButton#MenuConfigTune {
+    min-width: 44px;
+    max-width: 44px;
+}
+QToolButton#MenuSimulation {
+    min-width: 64px;
+    max-width: 64px;
+}
+QToolButton#MenuHelp {
+    min-width: 30px;
+    max-width: 30px;
 }
 QToolButton#toolsButton {
     background: transparent;
     border: 0;
     color: #e0e0e0;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: bold;
     padding: 4px 10px;
+    min-height: 64px;
+    max-height: 64px;
+    min-width: 44px;
+    max-width: 44px;
 }
-QToolButton#toolsButton:hover { background: #3a3b3c; color: #ffffff; }
+QToolButton#toolsButton:hover { background: #202623; color: #ffffff; }
+QToolButton#toolsButton::menu-indicator { image: none; width: 0; }
 QToolButton#ardupilotLink {
     background: transparent;
     border: 0;
@@ -70,41 +100,135 @@ QToolButton#ardupilotLink {
     font-style: italic;
     padding-left: 16px;
     padding-right: 16px;
+    min-height: 64px;
+    max-height: 64px;
+    min-width: 150px;
+    max-width: 150px;
 }
+QToolButton#refreshLinksButton {
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: #34d399;
+    color: #06251a;
+}
+QToolButton#refreshLinksButton:hover { background: #10b981; color: #06251a; }
 QComboBox, QSpinBox {
-    min-height: 26px;
-    max-height: 26px;
-    background: #2d2d2d;
+    min-height: 28px;
+    max-height: 28px;
+    background: #161b18;
     color: #ffffff;
-    border: 1px solid #1f1f20;
+    border: 1px solid #2a322d;
     border-radius: 3px;
     padding: 0 6px;
 }
 QPushButton, QCheckBox {
-    min-height: 26px;
-    max-height: 26px;
+    min-height: 28px;
+    max-height: 28px;
     color: #ffffff;
+}
+QCheckBox#autoConnectCheckBox {
+    background: transparent;
+    color: #d8d8d8;
+    spacing: 5px;
+}
+QCheckBox#autoConnectCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border: 1px solid #68716c;
+    border-radius: 3px;
+    background: #0d1210;
+    image: none;
+}
+QCheckBox#autoConnectCheckBox::indicator:checked {
+    border-color: #34d399;
+    background: #34d399;
 }
 QPushButton#connectButton {
     min-width: 110px;
-    border: 1px solid #94c11f;
+    border: 1px solid #34d399;
     border-radius: 3px;
-    color: #405704;
+    color: #06251a;
     font-weight: 600;
-    background: #94c11f;
+    background: #34d399;
 }
-QPushButton#connectButton:hover { background: #a6d62b; }
-QLabel#connectionStatus { color: #cfcfcf; font-size: 10px; }
+QPushButton#connectButton:hover { background: #6ee7b7; }
+QLabel#connectionStatus {
+    color: #cfcfcf;
+    background: transparent;
+    border: 0;
+    font-size: 10px;
+}
 QProgressBar {
     min-width: 120px;
     max-width: 120px;
     min-height: 4px;
     max-height: 4px;
     border: 0;
-    background: #1a1a1b;
+    background: #0d1210;
 }
-QProgressBar::chunk { background: #94c11f; }
+QProgressBar::chunk { background: #34d399; }
+QScrollBar:horizontal {
+    height: 3px;
+    margin: 0;
+    border: 0;
+    background: transparent;
+}
+QScrollBar::handle:horizontal {
+    min-width: 24px;
+    border: 0;
+    border-radius: 0;
+    background: #34d399;
+}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal { width: 0; border: 0; }
 )";
+
+QString navigationIcon(const QString &objectName)
+{
+    if (objectName == QStringLiteral("MenuFlightData")) {
+        return QStringLiteral(":/files/images/missionplanner10/chart-line.svg");
+    }
+    if (objectName == QStringLiteral("MenuFlightPlanner")) {
+        return QStringLiteral(":/files/images/missionplanner10/map-location-dot.svg");
+    }
+    if (objectName == QStringLiteral("MenuInitConfig")) {
+        return QStringLiteral(":/files/images/missionplanner10/screwdriver-wrench.svg");
+    }
+    if (objectName == QStringLiteral("MenuConfigTune")) {
+        return QStringLiteral(":/files/images/missionplanner10/sliders.svg");
+    }
+    if (objectName == QStringLiteral("MenuSimulation")) {
+        return QStringLiteral(":/files/images/missionplanner10/gamepad.svg");
+    }
+    if (objectName == QStringLiteral("MenuHelp")) {
+        return QStringLiteral(":/files/images/missionplanner10/circle-question.svg");
+    }
+    return QString();
+}
+
+int navigationButtonWidth(const QString &objectName)
+{
+    if (objectName == QStringLiteral("MenuFlightData")
+        || objectName == QStringLiteral("MenuFlightPlanner")
+        || objectName == QStringLiteral("MenuHelp")) {
+        return 50;
+    }
+    if (objectName == QStringLiteral("MenuInitConfig")) {
+        return 60;
+    }
+    if (objectName == QStringLiteral("MenuConfigTune")) {
+        return 64;
+    }
+    if (objectName == QStringLiteral("MenuSimulation")) {
+        return 84;
+    }
+    return 54;
+}
 }
 
 MainWindowHeader::MainWindowHeader(QWidget *parent)
@@ -113,7 +237,7 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
 {
     setObjectName(QStringLiteral("mainWindowHeader"));
     setAttribute(Qt::WA_StyledBackground, true);
-    setFixedHeight(64);
+    setFixedHeight(headerHeightFor(false, false));
     setStyleSheet(QString::fromLatin1(kHeaderStyle));
     m_navigationGroup->setExclusive(true);
 
@@ -124,11 +248,9 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     auto *scroll = new QScrollArea(this);
     scroll->setObjectName(QStringLiteral("mainNavigationScroll"));
     scroll->setFrameShape(QFrame::NoFrame);
-    // A native scrollbar steals 16-20 px from the 64 px Mission Planner header
-    // and clips the icon/text buttons. Navigation still compresses through its
-    // scroll-area viewport; explicit overflow controls will be added with the
-    // final profile-dependent navigation registry.
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // MP10 uses an automatic horizontal overflow strip. A local 3 px style
+    // avoids the legacy application's 14 px scrollbar stealing header height.
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setWidgetResizable(true);
     m_navigationHost = new QWidget(scroll);
@@ -145,11 +267,13 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     m_toolsButton->setText(tr("TOOLS"));
     m_toolsButton->setPopupMode(QToolButton::InstantPopup);
     m_toolsButton->setFixedHeight(64);
+    m_toolsButton->setFixedWidth(64);
     root->addWidget(m_toolsButton);
 
     auto *ardupilot = new QToolButton(this);
     ardupilot->setText(tr("ARDUPILOT"));
     ardupilot->setObjectName(QStringLiteral("ardupilotLink"));
+    ardupilot->setFixedWidth(182);
     ardupilot->setCursor(Qt::PointingHandCursor);
     ardupilot->setToolTip(QStringLiteral("https://ardupilot.org"));
     connect(ardupilot, &QToolButton::clicked, this, []() {
@@ -160,9 +284,8 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     auto *connection = new QWidget(this);
     m_connectionPanel = connection;
     connection->setObjectName(QStringLiteral("connectionPanel"));
-    connection->setFixedWidth(542);
     auto *connectionRows = new QVBoxLayout(connection);
-    connectionRows->setContentsMargins(0, 3, 6, 3);
+    connectionRows->setContentsMargins(8, 3, 12, 3);
     connectionRows->setSpacing(2);
     auto *top = new QHBoxLayout;
     top->setContentsMargins(0, 0, 0, 0);
@@ -174,7 +297,7 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     top->addWidget(m_portCombo);
     m_baudSpin = new QSpinBox(connection);
     m_baudSpin->setObjectName(QStringLiteral("baudSpin"));
-    m_baudSpin->setRange(1200, 12500000);
+    m_baudSpin->setRange(1, 10000000);
     m_baudSpin->setFixedWidth(140);
     top->addWidget(m_baudSpin);
     m_vehicleCombo = new QComboBox(connection);
@@ -183,11 +306,12 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     top->addWidget(m_vehicleCombo);
     m_vehicleCombo->hide();
     m_vehicleCombo->setFixedWidth(0);
-    auto *automatic = new QCheckBox(tr("Auto"), connection);
-    automatic->setObjectName(QStringLiteral("autoConnectCheckBox"));
-    automatic->setChecked(true);
-    automatic->setFixedWidth(54);
-    top->addWidget(automatic);
+    m_autoConnectCheckBox = new QCheckBox(tr("Auto"), connection);
+    m_autoConnectCheckBox->setObjectName(QStringLiteral("autoConnectCheckBox"));
+    m_autoConnectCheckBox->setChecked(QSettings().value(
+        QStringLiteral("autoconnect"), false).toBool());
+    m_autoConnectCheckBox->setFixedWidth(54);
+    top->addWidget(m_autoConnectCheckBox);
     auto *refresh = new QToolButton(connection);
     refresh->setObjectName(QStringLiteral("refreshLinksButton"));
     refresh->setText(QStringLiteral("⟳"));
@@ -214,6 +338,26 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     connectionRows->addLayout(bottom);
     root->addWidget(connection);
 
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &QWidget::customContextMenuRequested, this,
+            [this](const QPoint &position) {
+                QMenu menu(this);
+                menu.addAction(m_autoHideAction);
+                QAction *fullScreen = menu.addAction(tr("Full Screen"));
+                connect(fullScreen, &QAction::triggered,
+                        this, &MainWindowHeader::fullScreenRequested);
+                menu.exec(mapToGlobal(position));
+            });
+
+    m_autoHideAction = new QAction(tr("Auto Hide Menu"), this);
+    m_autoHideAction->setObjectName(QStringLiteral("actionMenuAutoHide"));
+    m_autoHideAction->setCheckable(true);
+    connect(m_autoHideAction, &QAction::toggled,
+            this, &MainWindowHeader::setAutoHideEnabled);
+    const bool savedAutoHide = QSettings().value(
+        QStringLiteral("menu_autohide"), false).toBool();
+    m_autoHideAction->setChecked(savedAutoHide);
+
     connect(refresh, &QToolButton::clicked, this, &MainWindowHeader::refreshLinks);
     connect(m_portCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindowHeader::updateCurrentLink);
@@ -221,6 +365,10 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
             this, &MainWindowHeader::applyBaudRate);
     connect(m_connectButton, &QPushButton::clicked,
             this, &MainWindowHeader::toggleConnection);
+    connect(m_autoConnectCheckBox, &QCheckBox::toggled, this,
+            [](bool enabled) {
+                QSettings().setValue(QStringLiteral("autoconnect"), enabled);
+            });
     connect(LinkManager::instance(), SIGNAL(newLink(int)), this, SLOT(refreshLinks()));
     connect(LinkManager::instance(), SIGNAL(linkChanged(int)), this, SLOT(updateCurrentLink()));
     connect(UASManager::instance(), SIGNAL(UASCreated(UASInterface*)), this, SLOT(rebuildVehicleList()));
@@ -241,6 +389,15 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
 
     refreshLinks();
     rebuildVehicleList();
+    if (m_autoConnectCheckBox->isChecked()) {
+        QTimer::singleShot(0, this, [this]() {
+            const int linkId = currentLinkId();
+            if (linkId >= 0 && !LinkManager::instance()->getLinkConnected(linkId)) {
+                LinkManager::instance()->connectLink(linkId);
+                updateCurrentLink();
+            }
+        });
+    }
 }
 
 void MainWindowHeader::setNavigationActions(QAction *data,
@@ -277,8 +434,10 @@ QToolButton *MainWindowHeader::addNavigationButton(const QString &name,
     button->setText(name);
     button->setCheckable(true);
     button->setFixedHeight(64);
+    button->setFixedWidth(navigationButtonWidth(objectName));
     if (action) {
-        button->setIcon(action->icon());
+        const QString iconPath = navigationIcon(objectName);
+        button->setIcon(iconPath.isEmpty() ? action->icon() : QIcon(iconPath));
         button->setIconSize(QSize(20, 20));
         button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
         connect(button, &QToolButton::clicked, action, &QAction::trigger);
@@ -293,6 +452,45 @@ QToolButton *MainWindowHeader::addNavigationButton(const QString &name,
     m_navigationGroup->addButton(button);
     qobject_cast<QHBoxLayout *>(m_navigationHost->layout())->addWidget(button);
     return button;
+}
+
+bool MainWindowHeader::autoHideEnabled() const
+{
+    return m_autoHideEnabled;
+}
+
+void MainWindowHeader::setAutoHideEnabled(bool enabled)
+{
+    if (m_autoHideEnabled == enabled) {
+        updateHeaderHeight();
+        return;
+    }
+    m_autoHideEnabled = enabled;
+    if (m_autoHideAction && m_autoHideAction->isChecked() != enabled) {
+        m_autoHideAction->setChecked(enabled);
+    }
+    QSettings().setValue(QStringLiteral("menu_autohide"), enabled);
+    updateHeaderHeight();
+    emit autoHideEnabledChanged(enabled);
+}
+
+void MainWindowHeader::enterEvent(QEvent *event)
+{
+    m_headerHovered = true;
+    updateHeaderHeight();
+    QWidget::enterEvent(event);
+}
+
+void MainWindowHeader::leaveEvent(QEvent *event)
+{
+    m_headerHovered = false;
+    updateHeaderHeight();
+    QWidget::leaveEvent(event);
+}
+
+void MainWindowHeader::updateHeaderHeight()
+{
+    setFixedHeight(headerHeightFor(m_autoHideEnabled, m_headerHovered));
 }
 
 void MainWindowHeader::setToolsMenu(QMenu *menu)
@@ -418,10 +616,16 @@ void MainWindowHeader::rebuildVehicleList()
     if (activeIndex >= 0) {
         m_vehicleCombo->setCurrentIndex(activeIndex);
     }
-    const bool showVehicleSelector = vehicles.size() > 1;
+    // Mission Planner 10 exposes the explicit sysid/component selector as soon
+    // as one real MAVLink system exists, not only for multi-vehicle sessions.
+    const bool showVehicleSelector = !vehicles.isEmpty();
     m_vehicleCombo->setFixedWidth(showVehicleSelector ? 170 : 0);
     m_vehicleCombo->setVisible(showVehicleSelector);
-    m_connectionPanel->setFixedWidth(showVehicleSelector ? 718 : 542);
+    // The reference shell uses fixed DIP widths for this grid (180 + 140
+    // + optional 170 + controls, spacings and 8/12 margins). Qt scales these
+    // logical pixels for HiDPI, so preserving the exact width also prevents
+    // the navigation strip from stealing space and eliding the connection UI.
+    m_connectionPanel->setFixedWidth(showVehicleSelector ? 732 : 556);
     m_vehicleCombo->blockSignals(false);
 }
 

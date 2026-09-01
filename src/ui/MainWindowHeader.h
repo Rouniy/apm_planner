@@ -6,6 +6,7 @@
 
 class QAction;
 class QButtonGroup;
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QMenu;
@@ -21,6 +22,12 @@ class MainWindowHeader final : public QWidget
 public:
     explicit MainWindowHeader(QWidget *parent = nullptr);
 
+    bool autoHideEnabled() const;
+    static constexpr int headerHeightFor(bool autoHide, bool hovered) noexcept
+    {
+        return autoHide && !hovered ? 7 : 64;
+    }
+
     void setNavigationActions(QAction *data,
                               QAction *plan,
                               QAction *setup,
@@ -34,8 +41,17 @@ public:
     void startAnimation();
     void stopAnimation();
 
+public slots:
+    void setAutoHideEnabled(bool enabled);
+
 signals:
     void configureLinkRequested(int linkId);
+    void autoHideEnabledChanged(bool enabled);
+    void fullScreenRequested();
+
+protected:
+    void enterEvent(QEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private slots:
     void refreshLinks();
@@ -58,10 +74,16 @@ private:
     QComboBox *m_portCombo = nullptr;
     QSpinBox *m_baudSpin = nullptr;
     QComboBox *m_vehicleCombo = nullptr;
+    QCheckBox *m_autoConnectCheckBox = nullptr;
     QPushButton *m_connectButton = nullptr;
     QLabel *m_connectionStatus = nullptr;
     QProgressBar *m_connectionProgress = nullptr;
+    QAction *m_autoHideAction = nullptr;
     bool m_disableOverride = false;
+    bool m_autoHideEnabled = false;
+    bool m_headerHovered = false;
+
+    void updateHeaderHeight();
 };
 
 #endif

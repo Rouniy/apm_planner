@@ -1,5 +1,11 @@
 <RCC>
     <qresource prefix="/">
+        <file>files/images/missionplanner10/chart-line.svg</file>
+        <file>files/images/missionplanner10/map-location-dot.svg</file>
+        <file>files/images/missionplanner10/screwdriver-wrench.svg</file>
+        <file>files/images/missionplanner10/sliders.svg</file>
+        <file>files/images/missionplanner10/gamepad.svg</file>
+        <file>files/images/missionplanner10/circle-question.svg</file>
         <file>files/images/control/launch.svg</file>
         <file>files/images/status/dialog-error.svg</file>
         <file>files/images/status/dialog-warning.svg</file>
