@@ -606,9 +606,7 @@ public:
     }
     // TODO Will be removed
     /** @brief Set reference to the param manager **/
-    void setParamManager(QGCUASParamManager* manager) {
-        paramManager = manager;
-    }
+    void setParamManager(QGCUASParamManager* manager);
     int getSystemType();
 
     /**

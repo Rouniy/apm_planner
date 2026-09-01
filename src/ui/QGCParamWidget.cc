@@ -560,8 +560,12 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
         transmissionMissingPackets.insert(component, new QList<int>());
     }
 
-    // List mode is different from single parameter transfers
-    if (transmissionListMode) {
+    // PARAM_REQUEST_LIST is addressed to the primary autopilot. Unsolicited
+    // AP_Periph/camera packets may arrive concurrently, but must not expand
+    // or complete this load transaction.
+    const bool requestedListPacket = transmissionListMode
+        && component == MAV_COMP_ID_PRIMARY;
+    if (requestedListPacket) {
         // Only accept the list size once on the first packet from
         // each component
         if (!transmissionListSizeKnown.contains(component))
@@ -615,9 +619,15 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
     }
 
     int missCount = 0;
-    foreach (int key, transmissionMissingPackets.keys())
-    {
-        missCount +=  transmissionMissingPackets.value(key)->count();
+    if (transmissionListMode) {
+        const QList<int> *primaryMissing = transmissionMissingPackets.value(
+            MAV_COMP_ID_PRIMARY, nullptr);
+        missCount = primaryMissing ? primaryMissing->count() : 0;
+    } else {
+        foreach (int key, transmissionMissingPackets.keys())
+        {
+            missCount += transmissionMissingPackets.value(key)->count();
+        }
     }
 
     int missWriteCount = 0;
@@ -680,7 +690,7 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
     // Check if the requested full list was completed before clearing the
     // transfer-mode flag. Backstage pages use this terminal signal instead of
     // guessing readiness from an arbitrary last packet index.
-    const bool completedParameterList = transmissionListMode && missCount == 0;
+    const bool completedParameterList = requestedListPacket && missCount == 0;
     if (completedParameterList) {
         transmissionListMode = false;
         transmissionListSizeKnown.clear();
@@ -690,7 +700,7 @@ void QGCParamWidget::addParameter(int uas, int component, int paramCount, int pa
         setParameterListReady(true);
         emit parameterListUpToDate(component);
     }
-    if (missCount == 0 && missWriteCount == 0)
+    if (!transmissionListMode && missCount == 0 && missWriteCount == 0)
     {
         this->transmissionActive = false;
 
@@ -868,9 +878,22 @@ void QGCParamWidget::requestParameterList()
     loadSettings();
     // End of FIXME
 
-    // Clear view and request param list
-    clear();
-    parameters.clear();
+    // Refresh the autopilot list without discarding cached peripheral
+    // parameters. PARAM_REQUEST_LIST below targets the primary component;
+    // clearing every component here made camera/gimbal caches disappear.
+    const int primaryComponent = MAV_COMP_ID_PRIMARY;
+    if (components->contains(primaryComponent)) {
+        delete components->take(primaryComponent);
+    }
+    if (paramGroups.contains(primaryComponent)) {
+        delete paramGroups.take(primaryComponent);
+    }
+    if (parameters.contains(primaryComponent)) {
+        parameters.value(primaryComponent)->clear();
+    }
+    if (changedValues.contains(primaryComponent)) {
+        changedValues.value(primaryComponent)->clear();
+    }
     received.clear();
     // Clear transmission state
     transmissionListMode = true;

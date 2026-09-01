@@ -6,6 +6,7 @@
 #include "BasicPidConfig.h"
 #include "CopterPidConfig.h"
 #include "ConfigPlannerAdvView.h"
+#include "ConfigFriendlyParamsView.h"
 #include "FlightModeConfig.h"
 #include "GeoFenceConfig.h"
 #include "LinkInterface.h"
@@ -14,11 +15,15 @@
 #include "QGCUASParamManager.h"
 #include "UASInterface.h"
 #include "UASManager.h"
+#include "AppPaths.h"
+#include "core/parameters/ParameterMetaDataRepository.h"
 #include "ui/BackstageView.h"
 
 #include <QFrame>
+#include <QMessageBox>
 #include <QScrollArea>
 #include <QSettings>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <utility>
@@ -27,6 +32,8 @@ namespace {
 const QString kLastPageKey = QStringLiteral("config_lastpage");
 
 const QString kFlightModes = QStringLiteral("ConfigFlightModesView");
+const QString kStandardParams = QStringLiteral("ConfigFriendlyParamsView");
+const QString kAdvancedParams = QStringLiteral("ConfigFriendlyParamsAdvView");
 const QString kGeoFence = QStringLiteral("ConfigAC_FenceView");
 const QString kBasicTuning = QStringLiteral("ConfigBasicTuningView");
 const QString kPlaneTuning = QStringLiteral("ConfigArduplaneView");
@@ -79,7 +86,9 @@ BackstagePage makeBackstagePage(const QString &id, const QString &header,
 
 ConfigView::ConfigView(QWidget *parent)
     : QWidget(parent),
-      m_backstage(new BackstageView(this))
+      m_backstage(new BackstageView(this)),
+      m_metadataRepository(new ParameterMetaDataRepository(
+          AppPaths::resourcePath(QStringLiteral("files/ardupilotmega"))))
 {
     setObjectName(QStringLiteral("ConfigView"));
     auto *layout = new QVBoxLayout(this);
@@ -107,6 +116,8 @@ ConfigView::ConfigView(QWidget *parent)
     m_backstage->restoreInitialPage(m_preferredPageHeader);
 }
 
+ConfigView::~ConfigView() = default;
+
 void ConfigView::buildPages()
 {
     const auto connected = [this]() { return m_connected; };
@@ -123,6 +134,32 @@ void ConfigView::buildPages()
 
     m_backstage->addPage(makeBackstagePage<FlightModeConfig>(
         kFlightModes, tr("Flight Modes"), connected));
+
+    BackstagePage standardParameters;
+    standardParameters.id = kStandardParams;
+    standardParameters.header = tr("Standard Params");
+    standardParameters.requiresConnection = true;
+    standardParameters.visibleWhen = [this]() {
+        return m_connected && friendlyParametersSupported();
+    };
+    standardParameters.factory = [this](QWidget *parent) {
+        return createFriendlyParamsPage(false, parent);
+    };
+    m_backstage->addPage(standardParameters);
+
+    BackstagePage advancedParameters;
+    advancedParameters.id = kAdvancedParams;
+    advancedParameters.header = tr("Advanced Params");
+    advancedParameters.requiresConnection = true;
+    advancedParameters.isAdvanced = true;
+    advancedParameters.visibleWhen = [this]() {
+        return m_connected && m_advanced && friendlyParametersSupported();
+    };
+    advancedParameters.factory = [this](QWidget *parent) {
+        return createFriendlyParamsPage(true, parent);
+    };
+    m_backstage->addPage(advancedParameters);
+
     m_backstage->addPage(makeBackstagePage<GeoFenceConfig>(
         kGeoFence, tr("GeoFence"), copter));
     m_backstage->addPage(makeBackstagePage<BasicPidConfig>(
@@ -170,15 +207,16 @@ void ConfigView::activeUASSet(UASInterface *uas)
 {
     const bool targetChanged = m_uas != uas;
     if (!targetChanged && m_uas) {
+        if (m_parameterManager != m_uas->getParamManager()) {
+            parameterManagerChanged(m_uas->getParamManager());
+        }
         syncConnectionState();
         return;
     }
     if (m_uas) {
         disconnect(m_uas, nullptr, this, nullptr);
     }
-    if (m_parameterManager) {
-        disconnect(m_parameterManager, nullptr, this, nullptr);
-    }
+    bindParameterManager(nullptr);
 
     m_uas = uas;
     m_parameterManager = nullptr;
@@ -193,22 +231,11 @@ void ConfigView::activeUASSet(UASInterface *uas)
                 QOverload<int, int, int, int, QString, QVariant>::of(
                     &UASInterface::parameterChanged),
                 this, &ConfigView::parameterChanged);
-        m_parameterManager = m_uas->getParamManager();
-        if (m_parameterManager) {
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListUpToDate,
-                    this, &ConfigView::parameterListUpToDate);
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListReadyChanged,
-                    this, &ConfigView::parameterListReadyChanged);
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListLoadFailed,
-                    this, &ConfigView::parameterListLoadFailed);
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListLoadCanceled,
-                    this, &ConfigView::parameterListLoadCanceled);
-            m_parametersReady = m_parameterManager->parameterListReady();
-        }
+        connect(m_uas, &UASInterface::parameterManagerChanged,
+                this, &ConfigView::parameterManagerChanged);
+        bindParameterManager(m_uas->getParamManager());
+        m_parametersReady = m_parameterManager
+            && m_parameterManager->parameterListReady();
     }
 
     m_connected = hasConnectedLink();
@@ -242,10 +269,10 @@ void ConfigView::parameterChanged(int uas, int component, int parameterCount,
                                   int parameterId, QString parameterName,
                                   QVariant value)
 {
-    Q_UNUSED(uas)
     Q_UNUSED(parameterName)
     Q_UNUSED(value)
-    if (!m_connected || parameterId == UINT16_MAX || parameterCount <= 0) {
+    if (!m_connected || !m_uas || uas != m_uas->getUASID()
+        || parameterId == UINT16_MAX || parameterCount <= 0) {
         return;
     }
     if (m_expectedParameterCounts.value(component) != parameterCount) {
@@ -311,6 +338,28 @@ void ConfigView::parameterListLoadCanceled()
         .arg(expectedTotal > 0 ? QString::number(expectedTotal)
                                : tr("unknown"));
     refreshLoadingOverlay();
+}
+
+void ConfigView::parameterManagerChanged(QGCUASParamManager *manager)
+{
+    bindParameterManager(manager);
+    resetParameterProgress();
+    refreshPageVisibility();
+    resetVehiclePages(false);
+    restorePreferredPage();
+
+    const QPointer<QGCUASParamManager> expectedManager(manager);
+    QTimer::singleShot(0, this, [this, expectedManager]() {
+        if (!expectedManager || m_parameterManager != expectedManager) {
+            return;
+        }
+        m_parametersReady = expectedManager->parameterListReady();
+        if (m_connected && !m_parametersReady
+            && !expectedManager->parameterListInProgress()) {
+            expectedManager->requestParameterList();
+        }
+        refreshLoadingOverlay();
+    });
 }
 
 void ConfigView::stopParameterLoading()
@@ -390,6 +439,32 @@ void ConfigView::syncConnectionState()
     restorePreferredPage();
 }
 
+void ConfigView::bindParameterManager(QGCUASParamManager *manager)
+{
+    if (m_parameterManager == manager) {
+        return;
+    }
+    if (m_parameterManager) {
+        disconnect(m_parameterManager, nullptr, this, nullptr);
+    }
+    m_parameterManager = manager;
+    if (!m_parameterManager) {
+        return;
+    }
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListUpToDate,
+            this, &ConfigView::parameterListUpToDate);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListReadyChanged,
+            this, &ConfigView::parameterListReadyChanged);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListLoadFailed,
+            this, &ConfigView::parameterListLoadFailed);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListLoadCanceled,
+            this, &ConfigView::parameterListLoadCanceled);
+}
+
 void ConfigView::resetVehiclePages(bool targetChanged)
 {
     m_adjustingSelection = true;
@@ -429,6 +504,151 @@ void ConfigView::restorePreferredPage()
             return;
         }
     }
+}
+
+QWidget *ConfigView::createFriendlyParamsPage(bool advanced, QWidget *parent)
+{
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(family);
+    auto *page = new ConfigFriendlyParamsView(advanced, catalog, parent);
+    if (!catalog.isValid()) {
+        page->setUnavailableMessage(
+            tr("Parameter metadata is unavailable: %1")
+                .arg(m_metadataRepository->errorString(family)));
+    }
+    page->setObjectName(advanced ? kAdvancedParams : kStandardParams);
+    page->setParameterSnapshot(
+        parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+        MAV_COMP_ID_AUTOPILOT1);
+
+    connect(page, &ConfigFriendlyParamsView::refreshRequested,
+            page, [this](int componentId) {
+        if (!m_connected || !m_parameterManager) {
+            return;
+        }
+        if (m_uas && m_uas->isArmed()
+            && QMessageBox::question(
+                   this, tr("Refresh Params"),
+                   tr("The vehicle is armed. Refreshing the complete parameter "
+                      "list can consume telemetry bandwidth. Continue?"),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+        if (componentId != MAV_COMP_ID_AUTOPILOT1) {
+            const QList<QString> names =
+                m_parameterManager->getParameterNames(componentId);
+            for (const QString &name : names) {
+                m_parameterManager->requestParameterUpdate(componentId, name);
+            }
+            return;
+        }
+        retryParameterLoading();
+    });
+    connect(page, &ConfigFriendlyParamsView::writeRequested,
+            page, [this, page](int componentId, const QString &name,
+                               const QVariant &value) {
+        if (!m_connected || !m_parameterManager) {
+            page->parameterWriteFailed(componentId, name,
+                                       tr("not connected"));
+            return;
+        }
+        if (!m_parameterManager->getParameterNames(componentId)
+                 .contains(name)) {
+            page->parameterWriteFailed(componentId, name,
+                                       tr("parameter unavailable"));
+            return;
+        }
+        m_parameterManager->setParameter(componentId, name, value);
+    });
+    if (m_uas) {
+        const int expectedUasId = m_uas->getUASID();
+        connect(m_uas,
+                QOverload<int, int, QString, QVariant>::of(
+                    &UASInterface::parameterChanged),
+                page, [page, expectedUasId](int uasId, int componentId,
+                                            const QString &name,
+                                            const QVariant &value) {
+            if (uasId == expectedUasId) {
+                page->parameterChanged(componentId, name, value);
+            }
+        });
+    }
+    if (m_parameterManager) {
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, [this, page](bool ready) {
+            if (ready && m_uas && m_parameterManager) {
+                page->setParameterSnapshot(
+                    parameterSnapshot(MAV_COMP_ID_AUTOPILOT1),
+                    MAV_COMP_ID_AUTOPILOT1);
+            }
+        });
+    }
+    return page;
+}
+
+QList<ConfigFriendlyParameterValue> ConfigView::parameterSnapshot(
+    int componentId) const
+{
+    QList<ConfigFriendlyParameterValue> result;
+    if (!m_parameterManager) {
+        return result;
+    }
+    const QList<QString> names =
+        m_parameterManager->getParameterNames(componentId);
+    for (const QString &name : names) {
+        QVariant value;
+        if (m_parameterManager->getParameterValue(componentId, name, value)) {
+            result.append({componentId, name, value});
+        }
+    }
+    return result;
+}
+
+ParameterFirmwareFamily ConfigView::parameterFirmwareFamily() const
+{
+    if (!m_uas
+        || m_uas->getAutopilotType() != MAV_AUTOPILOT_ARDUPILOTMEGA) {
+        return ParameterFirmwareFamily::Unknown;
+    }
+    switch (m_uas->getSystemType()) {
+    case MAV_TYPE_FIXED_WING:
+    case MAV_TYPE_VTOL_DUOROTOR:
+    case MAV_TYPE_VTOL_QUADROTOR:
+    case MAV_TYPE_VTOL_TILTROTOR:
+    case MAV_TYPE_VTOL_RESERVED2:
+    case MAV_TYPE_VTOL_RESERVED3:
+    case MAV_TYPE_VTOL_RESERVED4:
+    case MAV_TYPE_VTOL_RESERVED5:
+        return ParameterFirmwareFamily::ArduPlane;
+    case MAV_TYPE_GROUND_ROVER:
+    case MAV_TYPE_SURFACE_BOAT:
+        return ParameterFirmwareFamily::Rover;
+    case MAV_TYPE_TRICOPTER:
+    case MAV_TYPE_QUADROTOR:
+    case MAV_TYPE_COAXIAL:
+    case MAV_TYPE_HELICOPTER:
+    case MAV_TYPE_HEXAROTOR:
+    case MAV_TYPE_OCTOROTOR:
+    case MAV_TYPE_DODECAROTOR:
+    case MAV_TYPE_DECAROTOR:
+        return ParameterFirmwareFamily::ArduCopter;
+    case MAV_TYPE_SUBMARINE:
+        return ParameterFirmwareFamily::ArduSub;
+    case MAV_TYPE_ANTENNA_TRACKER:
+        return ParameterFirmwareFamily::AntennaTracker;
+    default:
+        return ParameterFirmwareFamily::Unknown;
+    }
+}
+
+bool ConfigView::friendlyParametersSupported() const
+{
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    return family == ParameterFirmwareFamily::ArduCopter
+        || family == ParameterFirmwareFamily::ArduPlane
+        || family == ParameterFirmwareFamily::Rover;
 }
 
 void ConfigView::refreshLoadingOverlay()

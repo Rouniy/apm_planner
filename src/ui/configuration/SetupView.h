@@ -36,6 +36,7 @@ private slots:
     void parameterListReadyChanged(bool ready);
     void parameterListLoadFailed(const QString &reason);
     void parameterListLoadCanceled();
+    void parameterManagerChanged(QGCUASParamManager *manager);
     void stopParameterLoading();
     void retryParameterLoading();
 
@@ -44,6 +45,7 @@ private:
     void refreshPageVisibility();
     void refreshLoadingOverlay();
     void syncConnectionState();
+    void bindParameterManager(QGCUASParamManager *manager);
     void resetConnectionPages();
     void resetParameterProgress();
     bool hasConnectedLink() const;

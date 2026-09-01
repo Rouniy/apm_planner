@@ -181,4 +181,9 @@
     <qresource prefix="/general">
         <file alias="vera.ttf">files/styles/Vera.ttf</file>
     </qresource>
+    <qresource prefix="/metadata/ardupilotmega">
+        <file alias="arducopter.pdef.xml">files/ardupilotmega/arducopter.pdef.xml</file>
+        <file alias="arduplane.pdef.xml">files/ardupilotmega/arduplane.pdef.xml</file>
+        <file alias="ardurover.pdef.xml">files/ardupilotmega/ardurover.pdef.xml</file>
+    </qresource>
 </RCC>

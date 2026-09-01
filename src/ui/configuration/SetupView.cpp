@@ -22,6 +22,7 @@
 
 #include <QFrame>
 #include <QScrollArea>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace {
@@ -151,15 +152,16 @@ void SetupView::activeUASSet(UASInterface *uas)
 {
     const bool targetChanged = m_uas != uas;
     if (!targetChanged && m_uas) {
+        if (m_parameterManager != m_uas->getParamManager()) {
+            parameterManagerChanged(m_uas->getParamManager());
+        }
         syncConnectionState();
         return;
     }
     if (m_uas) {
         disconnect(m_uas, nullptr, this, nullptr);
     }
-    if (m_parameterManager) {
-        disconnect(m_parameterManager, nullptr, this, nullptr);
-    }
+    bindParameterManager(nullptr);
 
     m_uas = uas;
     m_parameterManager = nullptr;
@@ -174,22 +176,11 @@ void SetupView::activeUASSet(UASInterface *uas)
                 QOverload<int, int, int, int, QString, QVariant>::of(
                     &UASInterface::parameterChanged),
                 this, &SetupView::parameterChanged);
-        m_parameterManager = m_uas->getParamManager();
-        if (m_parameterManager) {
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListUpToDate,
-                    this, &SetupView::parameterListUpToDate);
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListReadyChanged,
-                    this, &SetupView::parameterListReadyChanged);
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListLoadFailed,
-                    this, &SetupView::parameterListLoadFailed);
-            connect(m_parameterManager,
-                    &QGCUASParamManager::parameterListLoadCanceled,
-                    this, &SetupView::parameterListLoadCanceled);
-            m_parametersReady = m_parameterManager->parameterListReady();
-        }
+        connect(m_uas, &UASInterface::parameterManagerChanged,
+                this, &SetupView::parameterManagerChanged);
+        bindParameterManager(m_uas->getParamManager());
+        m_parametersReady = m_parameterManager
+            && m_parameterManager->parameterListReady();
     }
 
     m_connected = hasConnectedLink();
@@ -222,10 +213,10 @@ void SetupView::parameterChanged(int uas, int component, int parameterCount,
                                  int parameterId, QString parameterName,
                                  QVariant value)
 {
-    Q_UNUSED(uas)
     Q_UNUSED(parameterName)
     Q_UNUSED(value)
-    if (!m_connected || parameterId == UINT16_MAX || parameterCount <= 0) {
+    if (!m_connected || !m_uas || uas != m_uas->getUASID()
+        || parameterId == UINT16_MAX || parameterCount <= 0) {
         return;
     }
     if (m_expectedParameterCounts.value(component) != parameterCount) {
@@ -291,6 +282,27 @@ void SetupView::parameterListLoadCanceled()
         .arg(expectedTotal > 0 ? QString::number(expectedTotal)
                                : tr("unknown"));
     refreshLoadingOverlay();
+}
+
+void SetupView::parameterManagerChanged(QGCUASParamManager *manager)
+{
+    bindParameterManager(manager);
+    resetParameterProgress();
+    refreshPageVisibility();
+    resetConnectionPages();
+
+    const QPointer<QGCUASParamManager> expectedManager(manager);
+    QTimer::singleShot(0, this, [this, expectedManager]() {
+        if (!expectedManager || m_parameterManager != expectedManager) {
+            return;
+        }
+        m_parametersReady = expectedManager->parameterListReady();
+        if (m_connected && !m_parametersReady
+            && !expectedManager->parameterListInProgress()) {
+            expectedManager->requestParameterList();
+        }
+        refreshLoadingOverlay();
+    });
 }
 
 void SetupView::stopParameterLoading()
@@ -376,6 +388,32 @@ void SetupView::syncConnectionState()
     }
     refreshPageVisibility();
     resetConnectionPages();
+}
+
+void SetupView::bindParameterManager(QGCUASParamManager *manager)
+{
+    if (m_parameterManager == manager) {
+        return;
+    }
+    if (m_parameterManager) {
+        disconnect(m_parameterManager, nullptr, this, nullptr);
+    }
+    m_parameterManager = manager;
+    if (!m_parameterManager) {
+        return;
+    }
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListUpToDate,
+            this, &SetupView::parameterListUpToDate);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListReadyChanged,
+            this, &SetupView::parameterListReadyChanged);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListLoadFailed,
+            this, &SetupView::parameterListLoadFailed);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListLoadCanceled,
+            this, &SetupView::parameterListLoadCanceled);
 }
 
 void SetupView::resetConnectionPages()

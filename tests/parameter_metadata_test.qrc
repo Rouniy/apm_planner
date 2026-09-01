@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/metadata/ardupilotmega">
+        <file alias="ardurover.pdef.xml">fixtures/metadata/ardurover.pdef.xml</file>
+    </qresource>
+</RCC>

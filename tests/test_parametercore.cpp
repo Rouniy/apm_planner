@@ -2,6 +2,7 @@
 
 #include "core/parameters/ParameterCodec.h"
 #include "core/parameters/ParameterMetaData.h"
+#include "core/parameters/ParameterMetaDataRepository.h"
 #include "core/parameters/ParameterStore.h"
 
 #include <QBuffer>
@@ -24,6 +25,8 @@ private slots:
     void pdefMetadataHandlesEnumsRangesAndMalformedXml();
     void packagedPdefsParse_data();
     void packagedPdefsParse();
+    void metadataRepositoryMapsPackagedFamilies();
+    void metadataRepositoryUsesResourceFallback();
 };
 
 void ParameterCoreTest::duplicatePacketsDoNotFakeCompletion()
@@ -279,6 +282,41 @@ void ParameterCoreTest::packagedPdefsParse()
         QCOMPARE(failsafe.values.first().rawCode, QStringLiteral("0.6"));
         QCOMPARE(failsafe.values.first().value.toDouble(), 0.6);
     }
+}
+
+void ParameterCoreTest::metadataRepositoryMapsPackagedFamilies()
+{
+    const QString directory = QDir(QStringLiteral(APM_TEST_SOURCE_DIR)).filePath(
+        QStringLiteral("files/ardupilotmega"));
+    ParameterMetaDataRepository repository(directory);
+
+    const ParameterMetaDataSource rover =
+        ParameterMetaDataRepository::sourceForFamily(
+            ParameterFirmwareFamily::Rover);
+    QCOMPARE(rover.fileName, QStringLiteral("ardurover.pdef.xml"));
+    QCOMPARE(rover.vehicleName, QStringLiteral("Rover"));
+
+    const ParameterMetaDataCatalog catalog = repository.catalog(
+        ParameterFirmwareFamily::Rover);
+    QVERIFY2(catalog.isValid(),
+             qPrintable(repository.errorString(ParameterFirmwareFamily::Rover)));
+    QVERIFY(catalog.contains(QStringLiteral("CRUISE_SPEED")));
+
+    QVERIFY(!repository.catalog(ParameterFirmwareFamily::Unknown).isValid());
+    QVERIFY(!repository.errorString(ParameterFirmwareFamily::Unknown).isEmpty());
+}
+
+void ParameterCoreTest::metadataRepositoryUsesResourceFallback()
+{
+    ParameterMetaDataRepository repository(
+        QStringLiteral("/path/that/does/not/contain/metadata"));
+    const ParameterMetaDataCatalog catalog = repository.catalog(
+        ParameterFirmwareFamily::Rover);
+    QVERIFY2(catalog.isValid(),
+             qPrintable(repository.errorString(ParameterFirmwareFamily::Rover)));
+    QVERIFY(catalog.contains(QStringLiteral("CRUISE_SPEED")));
+    QCOMPARE(catalog.value(QStringLiteral("CRUISE_SPEED")).title,
+             QStringLiteral("Cruise Speed"));
 }
 
 QTEST_APPLESS_MAIN(ParameterCoreTest)

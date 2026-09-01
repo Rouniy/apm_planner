@@ -352,7 +352,7 @@ public slots:
     virtual void setLocalOriginAtCurrentGPSPosition() = 0;
     /** @brief Set world frame origin / home position at this GPS position */
     virtual void setHomePosition(double lat, double lon, double alt) = 0;
-    /** @brief Request all onboard parameters of all components */
+    /** @brief Request all onboard parameters of the primary autopilot component */
     virtual void requestParameters() = 0;
     /** @brief Request one specific onboard parameter */
     virtual void requestParameter(int component, const QString& parameter) = 0;
@@ -547,6 +547,7 @@ signals:
     void autoModeChanged(bool autoMode);
     void parameterChanged(int uas, int component, QString parameterName, QVariant value);
     void parameterChanged(int uas, int component, int parameterCount, int parameterId, QString parameterName, QVariant value);
+    void parameterManagerChanged(QGCUASParamManager *manager);
     void patternDetected(int uasId, QString patternPath, float confidence, bool detected);
     void letterDetected(int uasId, QString letter, float confidence, bool detected);
     /**

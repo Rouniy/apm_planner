@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paramfile>
+  <vehicles>
+    <parameters name="Rover">
+      <param name="Rover:CRUISE_SPEED" humanName="Cruise Speed" user="Standard">
+        <field name="Documentation">Target cruise speed used by the resource fallback test.</field>
+        <field name="Units">m/s</field>
+      </param>
+    </parameters>
+  </vehicles>
+</paramfile>

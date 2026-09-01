@@ -1,6 +1,8 @@
 #ifndef CONFIGVIEW_H
 #define CONFIGVIEW_H
 
+#include "ParamField.h"
+
 #include <QHash>
 #include <QPointer>
 #include <QSet>
@@ -8,9 +10,14 @@
 #include <QVariant>
 #include <QWidget>
 
+#include <memory>
+
 class BackstageView;
+class ConfigFriendlyParamsView;
+class ParameterMetaDataRepository;
 class QGCUASParamManager;
 class UASInterface;
+enum class ParameterFirmwareFamily;
 
 class ConfigView final : public QWidget
 {
@@ -18,6 +25,7 @@ class ConfigView final : public QWidget
 
 public:
     explicit ConfigView(QWidget *parent = nullptr);
+    ~ConfigView() override;
 
 signals:
     void advancedModeChanged(bool advanced);
@@ -36,6 +44,7 @@ private slots:
     void parameterListReadyChanged(bool ready);
     void parameterListLoadFailed(const QString &reason);
     void parameterListLoadCanceled();
+    void parameterManagerChanged(QGCUASParamManager *manager);
     void stopParameterLoading();
     void retryParameterLoading();
     void currentPageChanged(const QString &pageId);
@@ -45,13 +54,19 @@ private:
     void refreshPageVisibility();
     void refreshLoadingOverlay();
     void syncConnectionState();
+    void bindParameterManager(QGCUASParamManager *manager);
     void resetVehiclePages(bool targetChanged);
     void resetParameterProgress();
     void restorePreferredPage();
+    QWidget *createFriendlyParamsPage(bool advanced, QWidget *parent);
+    QList<ConfigFriendlyParameterValue> parameterSnapshot(int componentId) const;
+    ParameterFirmwareFamily parameterFirmwareFamily() const;
+    bool friendlyParametersSupported() const;
     bool hasConnectedLink() const;
     bool currentPageAllowsPartialParameters() const;
 
     BackstageView *m_backstage = nullptr;
+    std::unique_ptr<ParameterMetaDataRepository> m_metadataRepository;
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
     QHash<int, QSet<int>> m_receivedParameterIds;

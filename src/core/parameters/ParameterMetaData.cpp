@@ -169,7 +169,7 @@ ParameterMetaData parseParameter(QXmlStreamReader *xml, const QString &group,
         fieldValue(result.fields, QStringLiteral("Increment")), &incrementOk);
     result.hasIncrement = incrementOk && result.increment > 0.0;
     if (!result.hasIncrement) {
-        result.increment = 1.0;
+        result.increment = 0.01;
     }
     result.bitmaskValues = parseBitmask(
         fieldValue(result.fields, QStringLiteral("Bitmask")));

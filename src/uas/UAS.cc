@@ -2318,6 +2318,28 @@ void UAS::requestParameters()
     QLOG_DEBUG() << __FILE__ << __LINE__ << "LOADING PARAM LIST";
 }
 
+void UAS::setParamManager(QGCUASParamManager *manager)
+{
+    if (paramManager == manager) {
+        return;
+    }
+    if (paramManager) {
+        disconnect(paramManager, nullptr, this, nullptr);
+    }
+    paramManager = manager;
+    if (paramManager) {
+        QGCUASParamManager *expectedManager = paramManager;
+        connect(paramManager, &QObject::destroyed, this,
+                [this, expectedManager]() {
+            if (paramManager == expectedManager) {
+                paramManager = nullptr;
+                emit parameterManagerChanged(nullptr);
+            }
+        });
+    }
+    emit parameterManagerChanged(paramManager);
+}
+
 void UAS::writeParametersToStorage()
 {
     mavlink_message_t msg;

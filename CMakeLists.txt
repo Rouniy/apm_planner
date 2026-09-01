@@ -129,6 +129,8 @@ add_library(apm_parameter_core STATIC
     src/core/parameters/ParameterCodec.h
     src/core/parameters/ParameterMetaData.cpp
     src/core/parameters/ParameterMetaData.h
+    src/core/parameters/ParameterMetaDataRepository.cpp
+    src/core/parameters/ParameterMetaDataRepository.h
     src/core/parameters/ParameterStore.cpp
     src/core/parameters/ParameterStore.h
 )
@@ -469,6 +471,11 @@ set(SOURCES
     src/ui/configuration/ApmSoftwareConfig.ui
     src/ui/configuration/ConfigView.cpp
     src/ui/configuration/ConfigView.h
+    src/ui/configuration/ConfigFriendlyParamsView.cpp
+    src/ui/configuration/ConfigFriendlyParamsView.h
+    src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
+    src/ui/configuration/ConfigFriendlyParamsViewModel.h
+    src/ui/configuration/ParamField.h
     src/ui/configuration/ConfigPlannerAdvView.cpp
     src/ui/configuration/ConfigPlannerAdvView.h
     src/ui/configuration/ArduCopterPidConfig.cc
@@ -1037,6 +1044,7 @@ if(BUILD_TESTING)
 
     add_executable(parameter_core_tests
         tests/test_parametercore.cpp
+        tests/parameter_metadata_test.qrc
     )
     target_link_libraries(parameter_core_tests PRIVATE
         apm_parameter_core
@@ -1063,6 +1071,29 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME qgcparamid_tests COMMAND qgcparamid_tests)
+
+    add_executable(friendlyparams_tests
+        tests/test_configfriendlyparamsview.cpp
+        src/ui/configuration/ConfigFriendlyParamsView.cpp
+        src/ui/configuration/ConfigFriendlyParamsView.h
+        src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
+        src/ui/configuration/ConfigFriendlyParamsViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(friendlyparams_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(friendlyparams_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME friendlyparams_tests COMMAND friendlyparams_tests)
+    set_tests_properties(friendlyparams_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(mavlink_component_tracker_tests
         tests/test_mavlinkcomponenttracker.cpp

@@ -40,7 +40,7 @@ struct ParameterMetaData
     QString rangeText;
     double minimum = 0.0;
     double maximum = 0.0;
-    double increment = 1.0;
+    double increment = 0.01;
     QList<ParameterMetaDataOption> values;
     QList<QPair<int, QString>> bitmaskValues;
     QMap<QString, QString> fields;
