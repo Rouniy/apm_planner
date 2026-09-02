@@ -65,6 +65,7 @@ private:
     QWidget *createDefaultSettingsPage(QWidget *parent);
     QWidget *createHWIDPage(QWidget *parent);
     QWidget *createADSBPage(QWidget *parent);
+    QWidget *createHWOSDPage(QWidget *parent);
     QWidget *createESP8266Page(QWidget *parent);
     QWidget *createMotorTestPage(QWidget *parent);
     QWidget *createBluetoothSetupPage(QWidget *parent);

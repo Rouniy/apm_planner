@@ -651,6 +651,10 @@ set(SOURCES
     src/ui/configuration/ConfigHWIDView.h
     src/ui/configuration/ConfigHWIDViewModel.cpp
     src/ui/configuration/ConfigHWIDViewModel.h
+    src/ui/configuration/ConfigHWOSDView.cpp
+    src/ui/configuration/ConfigHWOSDView.h
+    src/ui/configuration/ConfigHWOSDViewModel.cpp
+    src/ui/configuration/ConfigHWOSDViewModel.h
     src/ui/configuration/DeveloperToolParsers.cpp
     src/ui/configuration/DeveloperToolParsers.h
     src/ui/configuration/Esp8266Settings.cpp
@@ -2424,6 +2428,29 @@ if(BUILD_TESTING)
     add_test(NAME confighwesp8266view_tests
              COMMAND confighwesp8266view_tests)
     set_tests_properties(confighwesp8266view_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(confighwosdview_tests
+        tests/test_confighwosdview.cpp
+        src/ui/configuration/ConfigHWOSDView.cpp
+        src/ui/configuration/ConfigHWOSDView.h
+        src/ui/configuration/ConfigHWOSDViewModel.cpp
+        src/ui/configuration/ConfigHWOSDViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(confighwosdview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(confighwosdview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME confighwosdview_tests
+             COMMAND confighwosdview_tests)
+    set_tests_properties(confighwosdview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

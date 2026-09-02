@@ -22,13 +22,13 @@ The latest functional checkpoint is the commit containing this handoff, followin
 At this checkpoint:
 
 - CMake configure and one `cmake --build build -j12` completed successfully.
-- The complete test suite passed: **87/87 tests**.
-- Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, switched to SETUP without waiting for the firmware manifest, rendered the connected ADSB page, and closed the main window cleanly while SETUP network work was active.
+- The complete test suite passed: **88/88 tests**.
+- Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, switched to SETUP without waiting for the firmware manifest, rendered the connected dedicated OSD page, and closed the main window cleanly while SETUP network work was active.
 - The worktree was clean after the commit.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 127 product rows: 32 `in-progress`, 49 `partial`, 46 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 127 product rows: 33 `in-progress`, 48 `partial`, 46 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -47,6 +47,7 @@ These are working foundations, though their parity rows may remain partial becau
 - The MP10 HW ID page: `_ID`/`_DEVID` inventory, ArduPilot device-ID decoding and exact six-column sortable presentation.
 - The MP10 ADSB page: metadata-backed `ADSB_`/`AVD_` parameter editing and batching, search, uAvionix flight-ID/registration read/write cadence and exact-target message filtering.
 - The MP10 ESP8266 page: exact component-240 parameter loading, bytewise packed settings, 22 serialized writes, storage/reboot/reset commands and a target-safe Qt view lifecycle.
+- The MP10 SETUP OSD page: the exact legacy MinimOSD telemetry helper surface and its ordered 24-parameter 2 Hz write batch, with committed-snapshot filtering, partial-vehicle reporting and exact-target transaction lifecycle guards.
 - The MP10 Antenna Tracker output foundation: exact Maestro compact commands and ArduTracker/DegreeTracker text protocols with tested trim, reverse, clamp, wrap and tilt-flip arithmetic behind an injectable writer.
 - Advanced and Developer action inventories, working shared actions/parsers, Advanced Terminal and the user-facing trusted QML plugin manager.
 - Cooperative shutdown ordering, including close with the modeless inspector open, verified by the real-X11 smoke above.
@@ -63,7 +64,7 @@ The next coherent PLAN package should combine Grid, KML preview/export, a persis
 
 The SETUP phase must compare the whole MP10 navigation model with the Qt backstage model, then classify every route as working, partial, stub or missing. Prioritize pages that can be made end-to-end functional on existing exact-target/parameter/command services and already implemented widgets.
 
-The original navigation audit found 53 MP10 pages and 28 Qt routes. The current backstage registers 36 Qt routes; this is not a one-to-one count because the trusted QML manager is a native replacement/extension surface. The SETUP `OSD` route is the legacy MinimOSD telemetry-rate helper represented by `OsdConfig`; the separate CONFIG `Onboard OSD` canvas/editor is still absent. Many other MP10 workflows remain partial or missing.
+The original navigation audit found 53 MP10 pages and 28 Qt routes. The current backstage registers 36 Qt routes; this is not a one-to-one count because the trusted QML manager is a native replacement/extension surface. The SETUP `OSD` route now uses the dedicated `ConfigHWOSDView` legacy MinimOSD telemetry helper; the separate CONFIG `Onboard OSD` canvas/editor is still absent and remains incorrectly represented by the old `OsdConfig`. Many other MP10 workflows remain partial or missing.
 
 The verified SETUP packages include the common `ActionPageView`, the exact 16-action `ConfigAdvancedView` inventory with three working shared tools (MAVLink Inspector, Map Tile Cache and Proximity), a standalone inspector window, Advanced Terminal, and a user-facing trusted QML plugin manager. Developer Tools exposes the exact 32-action inventory and working byte/MAVLink/hardware-ID parsers. Default Settings, HW ID and ADSB are routed in MP10 order and connected to the committed exact-target parameter snapshot; ADSB identification uses the application-owned exact-link transmitter rather than a legacy global send path.
 

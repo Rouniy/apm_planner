@@ -19,6 +19,7 @@
 #include "ConfigGPSOrderView.h"
 #include "ConfigHWCANView.h"
 #include "ConfigHWIDView.h"
+#include "ConfigHWOSDView.h"
 #include "ConfigHWBTSerialService.h"
 #include "ConfigHWBTView.h"
 #include "ConfigHWESP8266View.h"
@@ -45,7 +46,6 @@
 #include "SerialLinkInterface.h"
 #include "TerminalConsole.h"
 #include "OpticalFlowConfig.h"
-#include "OsdConfig.h"
 #include "QGCUASParamManager.h"
 #include "QGCCore.h"
 #include "Radio3DRConfig.h"
@@ -389,8 +389,15 @@ void SetupView::buildPages()
         kAirspeed, tr("Airspeed"), true, true));
     m_backstage->addPage(makeBackstagePage<OpticalFlowConfig>(
         kOpticalFlow, tr("Optical Flow"), true, true));
-    m_backstage->addPage(makeBackstagePage<OsdConfig>(
-        kOsd, tr("OSD"), true, true));
+    BackstagePage osd;
+    osd.id = kOsd;
+    osd.header = tr("OSD");
+    osd.isSub = true;
+    osd.requiresConnection = true;
+    osd.factory = [this](QWidget *parent) {
+        return createHWOSDPage(parent);
+    };
+    m_backstage->addPage(osd);
     m_backstage->addPage(makeBackstagePage<CameraGimbalConfig>(
         kCameraGimbal, tr("Camera Gimbal"), true, true));
     BackstagePage motorTest;
@@ -1307,6 +1314,147 @@ QWidget *SetupView::createADSBPage(QWidget *parent)
                 expectedManager->store()->snapshot(expectedTarget.endpoint);
             page->setParameterSnapshot(
                 snapshot.records(), expectedComponent);
+        });
+    }
+
+    return page;
+}
+
+QWidget *SetupView::createHWOSDPage(QWidget *parent)
+{
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    const VehicleTargetLease expectedTarget = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const int expectedComponent = expectedTarget.isValid()
+        ? expectedTarget.endpoint.componentId : MAV_COMP_ID_AUTOPILOT1;
+
+    auto *page = new ConfigHWOSDView(parent);
+    const QPointer<UASInterface> expectedUas(m_uas);
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+    const QPointer<LinkInterface> expectedLink(
+        expectedTarget.isValid() && links
+            ? links->getLink(expectedTarget.endpoint.linkId) : nullptr);
+    const auto targetIsCurrent =
+        [this, targets, expectedTarget, expectedUas,
+         expectedManager, expectedLink]() {
+        return expectedTarget.isValid() && targets && expectedUas
+            && expectedManager && expectedLink
+            && m_uas == expectedUas
+            && m_parameterManager == expectedManager
+            && expectedUas->getUASID()
+                == expectedTarget.endpoint.systemId
+            && targets->isCurrentTarget(
+                expectedTarget.endpoint.linkId,
+                expectedTarget.endpoint.systemId,
+                expectedTarget.endpoint.componentId,
+                expectedTarget.generation);
+    };
+    const auto syncConnected =
+        [page, targetIsCurrent, expectedLink]() {
+        page->setConnected(
+            targetIsCurrent() && expectedLink
+            && expectedLink->isConnected());
+    };
+
+    if (expectedManager && expectedManager->store()
+        && expectedTarget.isValid()) {
+        page->setParameterSnapshot(
+            parameterSnapshot(expectedComponent), expectedComponent);
+    }
+    syncConnected();
+
+    connect(this, &SetupView::connectionStateChanged,
+            page, [syncConnected](bool) { syncConnected(); });
+    if (expectedLink) {
+        connect(expectedLink,
+                QOverload<bool>::of(&LinkInterface::connected),
+                page, [syncConnected](bool) { syncConnected(); });
+    }
+
+    connect(page, &ConfigHWOSDView::writeParamsRequested,
+            page,
+            [this, page, targetIsCurrent, expectedTarget,
+             expectedManager, expectedLink](
+                int componentId, const QVariantList &changes) {
+        if (!m_connected || !targetIsCurrent()
+            || !expectedManager || !expectedLink
+            || !expectedLink->isConnected()
+            || componentId != expectedTarget.endpoint.componentId
+            || changes.isEmpty()) {
+            page->parameterWriteSubmissionFailed(
+                tr("not connected to the selected target"));
+            return;
+        }
+        const QPointer<ConfigHWOSDView> guard(page);
+        const qulonglong batchId = expectedManager->writeParameters(
+            componentId, changes);
+        if (!guard) {
+            return;
+        }
+        if (batchId == 0) {
+            guard->parameterWriteSubmissionFailed(
+                tr("write was rejected for the selected target"));
+            return;
+        }
+        guard->parameterBatchSubmitted(componentId, batchId);
+    });
+
+    if (expectedManager) {
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteFailed,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong batchId, int componentId,
+                    const QString &name, int, const QString &reason) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterWriteFailed(
+                    batchId, componentId, name, reason);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteCancelled,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong batchId, int componentId,
+                    const QString &) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterBatchCancelled(batchId);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterBatchProgress,
+                page,
+                [page, targetIsCurrent](qulonglong batchId,
+                                        int completed, int total,
+                                        int succeeded, int failed) {
+            if (targetIsCurrent()) {
+                page->parameterBatchProgress(
+                    batchId, completed, total, succeeded, failed);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterBatchCompleted,
+                page,
+                [page, targetIsCurrent](qulonglong batchId,
+                                        int succeeded, int failed) {
+            if (targetIsCurrent()) {
+                page->parameterBatchCompleted(
+                    batchId, succeeded, failed);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page,
+                [this, page, targetIsCurrent, expectedManager,
+                 expectedComponent](bool ready) {
+            if (!ready || !targetIsCurrent() || !expectedManager
+                || !expectedManager->store()) {
+                return;
+            }
+            page->setParameterSnapshot(
+                parameterSnapshot(expectedComponent), expectedComponent);
         });
     }
 
