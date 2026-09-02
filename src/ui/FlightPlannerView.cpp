@@ -20,7 +20,7 @@ bool FlightPlannerView::setWaypointPanel(QWidget *waypointPanelWidget)
                                 mapPanelId(), QSize(932, 210));
     if (added) {
         // The MP10 planner reserves an exact 210 logical-pixel waypoint row.
-        waypointPanelWidget->setFixedHeight(210);
+        setPanelFixedExtent(waypointPanelId(), 210, Qt::Vertical);
         setPanelSizeWeights(QStringList{mapPanelId(), waypointPanelId()},
                             QList<int>{430, 210}, Qt::Vertical);
     }
@@ -35,7 +35,7 @@ bool FlightPlannerView::setActionPanel(QWidget *actionPanelWidget)
                                 mapPanelId(), QSize(168, 640));
     if (added) {
         // Mission Planner 10 uses a fixed 168 logical-pixel action column.
-        actionPanelWidget->setFixedWidth(168);
+        setPanelFixedExtent(actionPanelId(), 168, Qt::Horizontal);
         setPanelSizeWeights(QStringList{mapPanelId(), actionPanelId()},
                             QList<int>{932, 168}, Qt::Horizontal);
     }

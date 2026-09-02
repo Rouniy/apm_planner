@@ -160,13 +160,13 @@ void FlightViewsTest::flightPlannerUsesStableMissionPlannerNames()
     auto *waypoints = new QLabel(QStringLiteral("waypoints"));
     auto *actions = new QLabel(QStringLiteral("actions"));
     QVERIFY(view.setMapWidget(map));
-    QVERIFY(view.setWaypointPanel(waypoints));
     QVERIFY(view.setActionPanel(actions));
+    QVERIFY(view.setWaypointPanel(waypoints));
 
     QCOMPARE(view.panelIds(),
              QStringList({FlightPlannerView::mapPanelId(),
-                          FlightPlannerView::waypointPanelId(),
-                          FlightPlannerView::actionPanelId()}));
+                          FlightPlannerView::actionPanelId(),
+                          FlightPlannerView::waypointPanelId()}));
     QVERIFY(view.setPanelVisible(FlightPlannerView::actionPanelId(), false));
     QVERIFY(view.setPanelVisible(FlightPlannerView::waypointPanelId(), false));
     QVERIFY(!view.setPanelVisible(FlightPlannerView::mapPanelId(), false));
@@ -254,8 +254,8 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
     auto *waypoints = makePaintedPanel(QStringLiteral("waypoints"), waypointColor);
     auto *actions = makePaintedPanel(QStringLiteral("actions"), actionColor);
     QVERIFY(plannerView.setMapWidget(plannerMap));
-    QVERIFY(plannerView.setWaypointPanel(waypoints));
     QVERIFY(plannerView.setActionPanel(actions));
+    QVERIFY(plannerView.setWaypointPanel(waypoints));
     plannerView.show();
     QVERIFY(QTest::qWaitForWindowExposed(&plannerView));
     QCoreApplication::processEvents();
@@ -269,6 +269,53 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
     }
     QCOMPARE(actions->width(), 168);
     QCOMPARE(waypoints->height(), 210);
+    auto *plannerHorizontalSplitter = plannerView.findChild<QSplitter *>(
+        QStringLiteral("HorizontalDockSplitter"));
+    auto *plannerVerticalSplitter = plannerView.findChild<QSplitter *>(
+        QStringLiteral("VerticalDockSplitter"));
+    QVERIFY(plannerHorizontalSplitter);
+    QVERIFY(plannerVerticalSplitter);
+    QWidget *actionFrame = plannerHorizontalSplitter->widget(1);
+    QWidget *waypointFrame = plannerVerticalSplitter->widget(1);
+    QVERIFY(actionFrame);
+    QVERIFY(waypointFrame);
+    QCOMPARE(plannerHorizontalSplitter->widget(0),
+             static_cast<QWidget *>(plannerVerticalSplitter));
+    QCOMPARE(actions->parentWidget(), actionFrame);
+    QCOMPARE(waypoints->parentWidget(), waypointFrame);
+    for (int width : {1120, 1280, 1600}) {
+        plannerView.resize(width, 800);
+        QCoreApplication::processEvents();
+        QCOMPARE(plannerHorizontalSplitter->width(), width);
+        QCOMPARE(plannerHorizontalSplitter->sizes(),
+                 QList<int>({width - 4 - 168, 168}));
+        QCOMPARE(actionFrame->width(), 168);
+        QCOMPARE(actions->width(), 168);
+        QCOMPARE(actionFrame->height(), plannerView.height());
+        QCOMPARE(plannerVerticalSplitter->height(), plannerView.height());
+        QCOMPARE(plannerVerticalSplitter->sizes(),
+                 QList<int>({plannerView.height() - 4 - 210, 210}));
+        QCOMPARE(waypointFrame->height(), 210);
+        QCOMPARE(waypoints->height(), 210);
+        QCOMPARE(actionFrame->mapTo(&plannerView,
+                                    QPoint(actionFrame->width(), 0)).x(),
+                 plannerView.width());
+        QCOMPARE(actions->mapTo(actionFrame,
+                                QPoint(actions->width(), 0)).x(),
+                 actionFrame->width());
+    }
+    const QByteArray openLayout = plannerView.saveLayout();
+    QVERIFY(plannerView.setPanelVisible(
+        FlightPlannerView::actionPanelId(), false));
+    QVERIFY(!actionFrame->isVisible());
+    QVERIFY(plannerView.setPanelVisible(
+        FlightPlannerView::actionPanelId(), true));
+    QCoreApplication::processEvents();
+    QCOMPARE(actionFrame->width(), 168);
+    QVERIFY(plannerView.restoreLayout(openLayout));
+    QCoreApplication::processEvents();
+    QCOMPARE(actionFrame->width(), 168);
+    QCOMPARE(waypointFrame->height(), 210);
     verifyPaintedSurface(&plannerView,
                          {plannerMapColor, waypointColor, actionColor});
 
@@ -303,8 +350,8 @@ void FlightViewsTest::flightViewsRemainVisibleAfterStackSwitch()
     auto *waypoints = makePaintedPanel(QStringLiteral("waypoints"), waypointColor);
     auto *actions = makePaintedPanel(QStringLiteral("actions"), actionColor);
     QVERIFY(plannerView->setMapWidget(plannerMap));
-    QVERIFY(plannerView->setWaypointPanel(waypoints));
     QVERIFY(plannerView->setActionPanel(actions));
+    QVERIFY(plannerView->setWaypointPanel(waypoints));
     stack.addWidget(plannerView);
 
     stack.setCurrentWidget(dataView);

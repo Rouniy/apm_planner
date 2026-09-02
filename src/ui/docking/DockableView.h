@@ -50,6 +50,9 @@ public:
     bool setPanelSizeWeights(const QStringList &panelIds,
                              const QList<int> &weights,
                              Qt::Orientation orientation);
+    bool setPanelFixedExtent(const QString &panelId,
+                             int extent,
+                             Qt::Orientation orientation);
 
     QByteArray saveLayout() const;
     bool restoreLayout(const QByteArray &layout);

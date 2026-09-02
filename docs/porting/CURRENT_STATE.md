@@ -16,7 +16,7 @@ numeric vertical-speed presentation.
 
 The immediate user-directed order is:
 
-1. Fix the expanding PLAN action-panel wrapper that creates the empty right strip, then expose the already implemented Up/Down/Delete waypoint operations.
+1. Expose the already implemented Up/Down/Delete waypoint operations; the expanding PLAN action-panel wrapper/right strip is fixed and covered at 1120/1280/1600 widths.
 2. Verify and replace the ambiguous child-widget MAVLink Inspector ownership with an explicit modeless multi-instance window lifecycle.
 3. Make vertical speed and the rest of the Mission Planner HUD inventory visibly complete on DATA.
 4. Implement CONFIG Onboard OSD and then resume broad SETUP/TOOLS vertical slices in the master-backlog order.
@@ -24,7 +24,7 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-The latest functional checkpoint is `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`).
+The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`). The PLAN fixed-wrapper slice described below is the next verified checkpoint; use `git log` for its final commit id.
 
 At this checkpoint:
 
@@ -64,6 +64,13 @@ These are working foundations, though their parity rows may remain partial becau
 The direct action inventory has been compared against MP10 `FlightPlannerView.axaml`. MP10 has 24 direct layout items, including 19 interactive controls (12 buttons, two checkboxes, two combo boxes and three editors). The Qt panel has 38 direct items and 29 interactive controls, adding the working Polygon group, transfer cancellation/progress and another editor. No direct MP10 action is absent by count.
 
 Seven Qt actions remain deliberately disabled because their end-to-end workflow is not yet ported: Grid display, View KML, WMS, WMTS, Inject Custom Map, Use MAVFTP and Write Fast. The remaining controls are working or conditionally disabled according to connection/transfer state. The lower blank area follows the same top-aligned scrolling layout behavior as MP10 and is a deferred GUI difference, not a missing dock or hidden action group.
+
+The erroneous outer right strip is fixed separately from that legitimate inner
+spacing: `DockableView::setPanelFixedExtent()` now constrains both the splitter
+wrapper and its content. Production-order tests prove the exact 168-pixel
+ActionPanel width, 210-pixel WaypointPanel height, full-height right column and
+right-edge ownership across 1120, 1280 and 1600-pixel windows, including
+hide/show and saved-layout restore.
 
 The next coherent PLAN package should combine Grid, KML preview/export, a persistent custom XYZ source using the canonical cache identity, and store-aware undo for Polygon-to-Fence conversion. WMS/WMTS and MAVFTP/Write Fast can follow later. Main work has moved to SETUP as requested.
 

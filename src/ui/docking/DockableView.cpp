@@ -909,6 +909,41 @@ bool DockableView::setPanelSizeWeights(const QStringList &panelIds,
     return true;
 }
 
+bool DockableView::setPanelFixedExtent(const QString &panelId,
+                                       int extent,
+                                       Qt::Orientation orientation)
+{
+    Private::Panel *panel = d->panel(panelId);
+    if (!panel || !panel->frame || !panel->content || extent <= 0) {
+        return false;
+    }
+
+    if (!panel->preferredSize.isValid()) {
+        panel->preferredSize = QSize(0, 0);
+    }
+    if (orientation == Qt::Horizontal) {
+        panel->preferredSize.setWidth(extent);
+        panel->content->setFixedWidth(extent);
+        panel->frame->setFixedWidth(extent);
+    } else {
+        panel->preferredSize.setHeight(extent);
+        panel->content->setFixedHeight(extent);
+        panel->frame->setFixedHeight(extent);
+    }
+    panel->content->updateGeometry();
+    panel->frame->updateGeometry();
+
+    if (d->root) {
+        d->applyWeights(d->root.get());
+    }
+    QTimer::singleShot(0, this, [this]() {
+        if (d->root) {
+            d->applyWeights(d->root.get());
+        }
+    });
+    return true;
+}
+
 QByteArray DockableView::saveLayout() const
 {
     QJsonObject root;

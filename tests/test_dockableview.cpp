@@ -178,6 +178,18 @@ void DockableViewTest::createsNestedMissionPlannerSplitters()
     QVERIFY(view.setPanelSizeWeights(
         QStringList{QStringLiteral("Map"), QStringLiteral("WaypointPanel")},
         QList<int>{430, 210}, Qt::Vertical));
+    QVERIFY(view.setPanelFixedExtent(QStringLiteral("ActionPanel"), 168,
+                                     Qt::Horizontal));
+    QVERIFY(view.setPanelFixedExtent(QStringLiteral("WaypointPanel"), 210,
+                                     Qt::Vertical));
+    QCOMPARE(horizontal->widget(1)->minimumWidth(), 168);
+    QCOMPARE(horizontal->widget(1)->maximumWidth(), 168);
+    QCOMPARE(vertical->widget(1)->minimumHeight(), 210);
+    QCOMPARE(vertical->widget(1)->maximumHeight(), 210);
+    QVERIFY(!view.setPanelFixedExtent(QStringLiteral("Missing"), 100,
+                                      Qt::Horizontal));
+    QVERIFY(!view.setPanelFixedExtent(QStringLiteral("ActionPanel"), 0,
+                                      Qt::Horizontal));
     QVERIFY(!view.setPanelSizeWeights(
         QStringList{QStringLiteral("Map"), QStringLiteral("ActionPanel")},
         QList<int>{1, 0}, Qt::Horizontal));
