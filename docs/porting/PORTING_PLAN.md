@@ -1,5 +1,9 @@
 # APM Planner 3.0 — Mission Planner 10 porting plan
 
+The current execution order, complete prioritized backlog and per-wave gates are
+maintained in `MASTER_PORTING_BACKLOG.md`. This file remains the architectural
+contract; the master backlog is the operational plan.
+
 This document is the implementation contract for the Qt/CMake reimplementation.
 The screen inventory in `MISSION_PLANNER_SCREEN_PARITY.tsv` is the authoritative
 feature list. Existing APM Planner widgets are reusable only after their target,

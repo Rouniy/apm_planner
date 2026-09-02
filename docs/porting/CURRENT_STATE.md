@@ -8,23 +8,30 @@ The product goal is a cross-platform APM Planner 3.0 (`3.0.0`) that transfers th
 
 The current milestone is **broadly usable functionality**, not final pixel parity. Small spacing, color, label and geometry differences must be recorded and deferred instead of consuming the main implementation stream. Missing or inert actions are functional gaps and remain high priority.
 
+The complete prioritized route from the current checkpoint to functional and
+release parity is maintained in `MASTER_PORTING_BACKLOG.md`. Its Wave 1 records
+the current user-visible priorities: PLAN right-edge geometry, a true separate
+MAVLink Inspector window and complete visible DATA HUD telemetry including a
+numeric vertical-speed presentation.
+
 The immediate user-directed order is:
 
-1. Treat the PLAN right-column audit as complete: preserve its working controls and defer its seven named advanced gaps to coherent PLAN packages.
-2. Concentrate on SETUP: required pages, tabs, plugins and tools, reusing already implemented Qt services/widgets wherever possible.
-3. Track functional and GUI inaccuracies separately in `PORTING_DEVIATIONS.tsv`.
-4. Continue committing complete vertical slices rather than batches of disconnected UI stubs.
+1. Fix the expanding PLAN action-panel wrapper that creates the empty right strip, then expose the already implemented Up/Down/Delete waypoint operations.
+2. Verify and replace the ambiguous child-widget MAVLink Inspector ownership with an explicit modeless multi-instance window lifecycle.
+3. Make vertical speed and the rest of the Mission Planner HUD inventory visibly complete on DATA.
+4. Implement CONFIG Onboard OSD and then resume broad SETUP/TOOLS vertical slices in the master-backlog order.
+5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
 
 ## Verified checkpoint
 
-The latest functional checkpoint is the commit containing this handoff, following `e6fab89e` (`feat: port ESP8266 setup workflow`), `4d4a9a2a` (`feat: port ADS-B setup and harden firmware flow`) and `590a820d` (`feat: port Mission Planner setup tools and defaults`).
+The latest functional checkpoint is `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`).
 
 At this checkpoint:
 
 - CMake configure and one `cmake --build build -j12` completed successfully.
 - The complete test suite passed: **88/88 tests**.
 - Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, switched to SETUP without waiting for the firmware manifest, rendered the connected dedicated OSD page, and closed the main window cleanly while SETUP network work was active.
-- The worktree was clean after the commit.
+- Claude's three-file `AntennaTrackerGeometry` draft is intentionally left uncommitted for coordinator review; no other functional slice is pending at this checkpoint.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
