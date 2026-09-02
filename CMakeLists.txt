@@ -247,6 +247,8 @@ set(SOURCES
     src/comm/DroneCanMavlinkTransport.h
     src/comm/AdsbIdentificationClient.cpp
     src/comm/AdsbIdentificationClient.h
+    src/comm/Esp8266ParameterClient.cpp
+    src/comm/Esp8266ParameterClient.h
     src/comm/ExactLinkTransmitter.cpp
     src/comm/ExactLinkTransmitter.h
     src/comm/GpsCorrectionSource.cpp
@@ -649,6 +651,8 @@ set(SOURCES
     src/ui/configuration/ConfigHWIDViewModel.h
     src/ui/configuration/DeveloperToolParsers.cpp
     src/ui/configuration/DeveloperToolParsers.h
+    src/ui/configuration/Esp8266Settings.cpp
+    src/ui/configuration/Esp8266Settings.h
     src/ui/configuration/FrameDefaultCatalogService.cpp
     src/ui/configuration/FrameDefaultCatalogService.h
     src/ui/configuration/QmlPluginManagerView.cpp
@@ -686,6 +690,10 @@ set(SOURCES
     src/ui/configuration/ConfigHWBTView.h
     src/ui/configuration/ConfigHWBTViewModel.cpp
     src/ui/configuration/ConfigHWBTViewModel.h
+    src/ui/configuration/ConfigHWESP8266View.cpp
+    src/ui/configuration/ConfigHWESP8266View.h
+    src/ui/configuration/ConfigHWESP8266ViewModel.cpp
+    src/ui/configuration/ConfigHWESP8266ViewModel.h
     src/ui/configuration/ConfigMotorTestView.cpp
     src/ui/configuration/ConfigMotorTestView.h
     src/ui/configuration/ConfigMotorTestViewModel.cpp
@@ -2339,6 +2347,83 @@ if(BUILD_TESTING)
     )
     add_test(NAME adsb_identification_client_tests
              COMMAND adsb_identification_client_tests)
+
+    add_executable(esp8266settings_tests
+        tests/test_esp8266settings.cpp
+        src/ui/configuration/Esp8266Settings.cpp
+        src/ui/configuration/Esp8266Settings.h
+    )
+    target_include_directories(esp8266settings_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(esp8266settings_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME esp8266settings_tests COMMAND esp8266settings_tests)
+
+    add_executable(esp8266_parameter_client_tests
+        tests/test_esp8266parameterclient.cpp
+        src/comm/Esp8266ParameterClient.cpp
+        src/comm/Esp8266ParameterClient.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/configuration/Esp8266Settings.cpp
+        src/ui/configuration/Esp8266Settings.h
+    )
+    target_include_directories(esp8266_parameter_client_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(esp8266_parameter_client_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME esp8266_parameter_client_tests
+             COMMAND esp8266_parameter_client_tests)
+
+    add_executable(confighwesp8266view_tests
+        tests/test_confighwesp8266view.cpp
+        src/ui/configuration/ConfigHWESP8266View.cpp
+        src/ui/configuration/ConfigHWESP8266View.h
+        src/ui/configuration/ConfigHWESP8266ViewModel.cpp
+        src/ui/configuration/ConfigHWESP8266ViewModel.h
+        src/ui/configuration/Esp8266Settings.cpp
+        src/ui/configuration/Esp8266Settings.h
+        src/comm/Esp8266ParameterClient.cpp
+        src/comm/Esp8266ParameterClient.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(confighwesp8266view_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(confighwesp8266view_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME confighwesp8266view_tests
+             COMMAND confighwesp8266view_tests)
+    set_tests_properties(confighwesp8266view_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(vehicle_target_manager_tests
         tests/test_vehicletargetmanager.cpp

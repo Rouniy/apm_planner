@@ -21,6 +21,7 @@
 #include "ConfigHWIDView.h"
 #include "ConfigHWBTSerialService.h"
 #include "ConfigHWBTView.h"
+#include "ConfigHWESP8266View.h"
 #include "ConfigInitialParamsView.h"
 #include "ConfigMavCommandView.h"
 #include "ConfigMotorTestView.h"
@@ -34,6 +35,7 @@
 #include "comm/DroneCanGetSetClient.h"
 #include "comm/DroneCanMavlinkTransport.h"
 #include "comm/ExactLinkTransmitter.h"
+#include "comm/Esp8266ParameterClient.h"
 #include "comm/VehicleTargetManager.h"
 #include "FailSafeConfig.h"
 #include "FlightModeConfig.h"
@@ -99,6 +101,7 @@ const QString kCameraGimbal = QStringLiteral("ConfigMountView");
 const QString kMotorTest = QStringLiteral("ConfigMotorTestView");
 const QString kBluetoothSetup = QStringLiteral("ConfigHWBTView");
 const QString kParachute = QStringLiteral("ConfigParachuteView");
+const QString kESP8266 = QStringLiteral("ConfigHWESP8266View");
 const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
 const QString kAdvancedTools = QStringLiteral("ConfigAdvancedView");
 const QString kElevationSources = QStringLiteral("ConfigElevationSourcesView");
@@ -216,6 +219,10 @@ SetupView::SetupView(QWidget *parent)
             if (auto *adsb = qobject_cast<ConfigADSBView *>(page)) {
                 adsb->activate();
             }
+        } else if (id == kESP8266) {
+            if (auto *esp = qobject_cast<ConfigHWESP8266View *>(page)) {
+                esp->activate();
+            }
         }
     });
     connect(m_backstage, &BackstageView::pageDeactivated,
@@ -228,6 +235,10 @@ SetupView::SetupView(QWidget *parent)
         } else if (id == kADSB) {
             if (auto *adsb = qobject_cast<ConfigADSBView *>(page)) {
                 adsb->deactivate();
+            }
+        } else if (id == kESP8266) {
+            if (auto *esp = qobject_cast<ConfigHWESP8266View *>(page)) {
+                esp->deactivate();
             }
         }
     });
@@ -251,6 +262,7 @@ SetupView::~SetupView()
     m_backstage->resetPage(kMotorTest);
     m_backstage->resetPage(kDefaultSettings);
     m_backstage->resetPage(kADSB);
+    m_backstage->resetPage(kESP8266);
 }
 
 void SetupView::buildPages()
@@ -408,6 +420,18 @@ void SetupView::buildPages()
         return createParachutePage(parent);
     };
     m_backstage->addPage(parachute);
+    BackstagePage esp8266;
+    esp8266.id = kESP8266;
+    esp8266.header = tr("ESP8266 Setup");
+    esp8266.isSub = true;
+    esp8266.requiresConnection = true;
+    // The bridge owns a separate component-240 parameter list, so it must not
+    // be covered by the autopilot parameter-loading overlay.
+    esp8266.allowsPartialParameters = true;
+    esp8266.factory = [this](QWidget *parent) {
+        return createESP8266Page(parent);
+    };
+    m_backstage->addPage(esp8266);
     BackstagePage droneCan;
     droneCan.id = kDroneCAN;
     droneCan.header = tr("DroneCAN/UAVCAN");
@@ -793,6 +817,7 @@ void SetupView::refreshPageVisibility()
             && firmwareFamily(m_uas) != ParameterFirmwareFamily::ArduSub);
     m_backstage->setPageVisible(kBluetoothSetup, true);
     m_backstage->setPageVisible(kParachute, m_connected);
+    m_backstage->setPageVisible(kESP8266, m_connected);
     m_backstage->setPageVisible(kDroneCAN, true);
     m_backstage->setPageVisible(kHWCAN, m_connected);
 
@@ -1590,6 +1615,77 @@ QWidget *SetupView::createParachutePage(QWidget *parent)
         connect(m_parameterManager,
                 &QGCUASParamManager::parameterListLoadCanceled,
                 page, &ConfigParachuteView::refreshCanceled);
+    }
+    return page;
+}
+
+QWidget *SetupView::createESP8266Page(QWidget *parent)
+{
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    ExactLinkTransmitter *const transmitter = links
+        ? links->exactLinkTransmitter() : nullptr;
+    const VehicleTargetLease expectedTarget = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+
+    Esp8266ParameterClient *client = nullptr;
+    if (targets && transmitter) {
+        client = new Esp8266ParameterClient(targets, transmitter);
+        client->bind(expectedTarget);
+    }
+    auto *page = new ConfigHWESP8266View(client, parent);
+    if (client) {
+        client->setParent(page);
+    }
+
+    const QPointer<UASInterface> expectedUas(m_uas);
+    const QPointer<LinkInterface> expectedLink(
+        expectedTarget.isValid() && links
+            ? links->getLink(expectedTarget.endpoint.linkId) : nullptr);
+    const auto targetIsCurrent =
+        [this, targets, expectedTarget, expectedUas, expectedLink]() {
+        return m_connected && expectedTarget.isValid() && targets
+            && expectedUas && expectedLink
+            && m_uas == expectedUas
+            && expectedUas->getUASID()
+                == expectedTarget.endpoint.systemId
+            && targets->isCurrentTarget(
+                expectedTarget.endpoint.linkId,
+                expectedTarget.endpoint.systemId,
+                expectedTarget.endpoint.componentId,
+                expectedTarget.generation);
+    };
+    const auto syncConnected =
+        [page, targetIsCurrent, expectedLink]() {
+        page->setConnected(
+            targetIsCurrent() && expectedLink
+            && expectedLink->isConnected());
+    };
+    syncConnected();
+
+    connect(this, &SetupView::connectionStateChanged,
+            page, [syncConnected](bool) { syncConnected(); });
+    if (expectedLink) {
+        connect(expectedLink,
+                QOverload<bool>::of(&LinkInterface::connected),
+                page, [syncConnected](bool) { syncConnected(); });
+    }
+    if (client && expectedUas) {
+        connect(expectedUas, &UASInterface::mavlinkMessageRecieved,
+                page,
+                [client, targetIsCurrent, expectedTarget, expectedLink](
+                    LinkInterface *incomingLink,
+                    const mavlink_message_t &message) {
+            if (targetIsCurrent() && expectedLink
+                && incomingLink == expectedLink
+                && incomingLink->getId()
+                    == expectedTarget.endpoint.linkId
+                && message.sysid
+                    == expectedTarget.endpoint.systemId) {
+                client->observeMessage(incomingLink->getId(), message);
+            }
+        });
     }
     return page;
 }
