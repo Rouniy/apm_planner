@@ -1,5 +1,7 @@
 #include "FlightPlannerMissionModel.h"
 
+#include "MissionCommandCatalog.h"
+
 #include <QMetaType>
 
 #include <algorithm>
@@ -9,6 +11,15 @@
 FlightPlannerMissionModel::FlightPlannerMissionModel(QObject *parent)
     : QAbstractTableModel(parent)
 {
+    connect(MissionCommandCatalog::instance(),
+            &MissionCommandCatalog::catalogChanged, this, [this]() {
+        if (rowCount() > 0) {
+            emit dataChanged(index(0, CommandColumn),
+                             index(rowCount() - 1, CommandColumn),
+                             {Qt::DisplayRole});
+        }
+        refreshParameterHeaders();
+    });
 }
 
 int FlightPlannerMissionModel::rowCount(const QModelIndex &parent) const
@@ -164,11 +175,34 @@ QVariant FlightPlannerMissionModel::headerData(int section,
         QStringLiteral("Zone"), QStringLiteral("Easting"),
         QStringLiteral("Northing"), QStringLiteral("MGRS"),
     };
+    QString parameterLabel;
+    if (m_parameterHeaderRow >= 0) {
+        const WpRow *selected = rowAt(m_parameterHeaderRow);
+        if (selected) {
+            const QStringList labels = MissionCommandCatalog::instance()
+                                           ->EffectiveLabels(selected->Command());
+            const int labelIndex = section >= P1Column && section <= P4Column
+                ? section - P1Column
+                : section >= LatColumn && section <= AltColumn
+                    ? 4 + section - LatColumn : -1;
+            if (labelIndex >= 0 && labelIndex < labels.size()) {
+                parameterLabel = labels.at(labelIndex);
+            }
+        }
+    }
     if (section == AltColumn) {
-        return tr("Alt (%1)").arg(m_altitudeUnit);
+        if (!parameterLabel.isEmpty()) {
+            return parameterLabel;
+        }
+        return tr("%1 (%2)").arg(
+            QStringLiteral("Alt"),
+            m_altitudeUnit);
     }
     if (section == DistColumn) {
         return tr("Dist (%1)").arg(m_distanceUnit);
+    }
+    if (!parameterLabel.isEmpty()) {
+        return parameterLabel;
     }
     return section >= 0 && section < headers.size()
         ? headers.at(section) : QVariant();
@@ -233,6 +267,19 @@ QString FlightPlannerMissionModel::DistanceUnit() const
 double FlightPlannerMissionModel::DistanceMultiplier() const
 {
     return m_distanceMultiplier;
+}
+
+int FlightPlannerMissionModel::parameterHeaderRow() const
+{
+    return m_parameterHeaderRow;
+}
+
+void FlightPlannerMissionModel::setParameterHeaderRow(int row)
+{
+    const int normalized = row >= 0 && row < rowCount() ? row : -1;
+    if (m_parameterHeaderRow == normalized) return;
+    m_parameterHeaderRow = normalized;
+    refreshParameterHeaders();
 }
 
 void FlightPlannerMissionModel::setAltitudePresentation(
@@ -365,7 +412,9 @@ void FlightPlannerMissionModel::setMissionStore(MissionStore type)
     if (m_activeStore == type) return;
     beginResetModel();
     m_activeStore = type;
+    m_parameterHeaderRow = -1;
     endResetModel();
+    refreshParameterHeaders();
     emit missionTypeChanged(MissionType());
 }
 
@@ -427,7 +476,9 @@ void FlightPlannerMissionModel::clearActiveStore()
     if (activeStore().empty()) return;
     beginResetModel();
     activeStore().clear();
+    m_parameterHeaderRow = -1;
     endResetModel();
+    refreshParameterHeaders();
     emit rowsChanged(m_activeStore);
 }
 
@@ -444,7 +495,11 @@ void FlightPlannerMissionModel::replaceStore(MissionStore type,
     const bool active = type == m_activeStore;
     if (active) beginResetModel();
     store(type).swap(replacement);
-    if (active) endResetModel();
+    if (active) {
+        m_parameterHeaderRow = -1;
+        endResetModel();
+        refreshParameterHeaders();
+    }
     emit rowsChanged(type);
 }
 
@@ -536,8 +591,16 @@ void FlightPlannerMissionModel::publishRowChange(WpRow *row)
                 std::distance(rows.begin(), it));
             emit dataChanged(index(rowIndex, 0),
                              index(rowIndex, ColumnCount - 1));
+            if (rowIndex == m_parameterHeaderRow) {
+                refreshParameterHeaders();
+            }
         }
         emit rowsChanged(type);
         return;
     }
+}
+
+void FlightPlannerMissionModel::refreshParameterHeaders()
+{
+    emit headerDataChanged(Qt::Horizontal, P1Column, AltColumn);
 }

@@ -33,6 +33,7 @@ class ApmQmlApi final : public QObject
     Q_PROPERTY(QObject *vehicleTargetManager READ vehicleTargetManager CONSTANT)
     Q_PROPERTY(QObject *vehicleCommandService READ vehicleCommandService CONSTANT)
     Q_PROPERTY(QObject *parameterService READ parameterService CONSTANT)
+    Q_PROPERTY(QObject *missionCommandCatalog READ missionCommandCatalog CONSTANT)
     Q_PROPERTY(QObject *settings READ settings CONSTANT)
     Q_PROPERTY(QObject *mainWindow READ mainWindow NOTIFY mainWindowChanged)
     Q_PROPERTY(QObject *pluginManager READ pluginManager CONSTANT)
@@ -62,6 +63,7 @@ public:
     QObject *vehicleTargetManager() const;
     QObject *vehicleCommandService() const;
     QObject *parameterService() const;
+    QObject *missionCommandCatalog() const;
     QObject *settings() const { return m_settings.data(); }
     QObject *mainWindow() const { return m_mainWindow.data(); }
     QObject *pluginManager() const { return m_pluginManager.data(); }

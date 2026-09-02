@@ -55,6 +55,7 @@ private:
     void updateRouteSummary();
     void syncAltitudePresentation();
     void syncDistancePresentation();
+    void syncCommandHeaders();
 
     QPointer<FlightPlannerViewModel> m_viewModel;
     QTableView *m_waypointTable = nullptr;

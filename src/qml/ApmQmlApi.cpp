@@ -1,6 +1,7 @@
 #include "ApmQmlApi.h"
 
 #include "AppPaths.h"
+#include "ui/flightplanner/MissionCommandCatalog.h"
 #include "uas/UASInterface.h"
 
 #include <QCoreApplication>
@@ -145,6 +146,11 @@ QObject *ApmQmlApi::parameterService() const
             Qt::DirectConnection, Q_RETURN_ARG(QObject *, service));
     }
     return service;
+}
+
+QObject *ApmQmlApi::missionCommandCatalog() const
+{
+    return MissionCommandCatalog::instance();
 }
 
 int ApmQmlApi::getUASID() const
@@ -346,6 +352,9 @@ QObject *ApmQmlApi::service(const QString &name) const
     }
     if (name == QLatin1String("parameterService")) {
         return parameterService();
+    }
+    if (name == QLatin1String("missionCommandCatalog")) {
+        return missionCommandCatalog();
     }
     if (name == QLatin1String("settings")) {
         return m_settings.data();

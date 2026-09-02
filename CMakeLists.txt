@@ -158,6 +158,20 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/MavCommandCatalog.inc"
     "const std::array<CommandEntry, ${_apm_mav_command_count}> kCommands{{\n"
     "${_apm_mav_command_entries}}};\n")
 
+add_library(apm_mission_command_catalog STATIC
+    src/ui/flightplanner/MissionCommandCatalog.cpp
+    src/ui/flightplanner/MissionCommandCatalog.h
+)
+target_include_directories(apm_mission_command_catalog
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+)
+target_link_libraries(apm_mission_command_catalog PUBLIC Qt::Core)
+
 # AGLLIB math library & OPMapControl
 add_subdirectory(libs/alglib EXCLUDE_FROM_ALL)
 add_subdirectory(libs/opmapcontrol EXCLUDE_FROM_ALL)
@@ -692,6 +706,10 @@ set(SOURCES
     src/ui/configuration/ConfigElevationSourcesView.h
     src/ui/configuration/ConfigElevationSourcesViewModel.cpp
     src/ui/configuration/ConfigElevationSourcesViewModel.h
+    src/ui/configuration/ConfigMavCommandView.cpp
+    src/ui/configuration/ConfigMavCommandView.h
+    src/ui/configuration/ConfigMavCommandViewModel.cpp
+    src/ui/configuration/ConfigMavCommandViewModel.h
     src/ui/configuration/ElevationSourceService.cpp
     src/ui/configuration/ElevationSourceService.h
     src/ui/configuration/SrtmElevationSource.cpp
@@ -1131,6 +1149,7 @@ target_link_libraries(${APM_PLANNER_TARGET}
     alglib
     opmapcontrol
     apm_parameter_core
+    apm_mission_command_catalog
     ${ADDITIONAL_LIBS}
     ${APM_QT_AUDIO_LIBRARIES}
     ${APM_SDL2_TARGET}
@@ -1712,6 +1731,29 @@ if(BUILD_TESTING)
     add_test(NAME configelevationsourcesview_tests
         COMMAND configelevationsourcesview_tests)
     set_tests_properties(configelevationsourcesview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configmavcommandview_tests
+        tests/test_configmavcommandview.cpp
+        src/ui/configuration/ConfigMavCommandView.cpp
+        src/ui/configuration/ConfigMavCommandView.h
+        src/ui/configuration/ConfigMavCommandViewModel.cpp
+        src/ui/configuration/ConfigMavCommandViewModel.h
+    )
+    target_include_directories(configmavcommandview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configmavcommandview_tests PRIVATE
+        apm_mission_command_catalog
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configmavcommandview_tests
+        COMMAND configmavcommandview_tests)
+    set_tests_properties(configmavcommandview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
@@ -2308,6 +2350,17 @@ if(BUILD_TESTING)
     add_test(NAME servooutputdecoder_tests
         COMMAND servooutputdecoder_tests)
 
+    add_executable(missioncommandcatalog_tests
+        tests/test_missioncommandcatalog.cpp
+    )
+    target_link_libraries(missioncommandcatalog_tests PRIVATE
+        apm_mission_command_catalog
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME missioncommandcatalog_tests
+             COMMAND missioncommandcatalog_tests)
+
     add_executable(flightplannermissionmodel_tests
         tests/test_flightplannermissionmodel.cpp
         src/ui/flightplanner/FlightPlannerMissionModel.cpp
@@ -2323,6 +2376,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(flightplannermissionmodel_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Test
     )
@@ -2346,6 +2400,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(flightplannermissioncodec_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Test
     )
@@ -2418,6 +2473,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(missionelevationprofile_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Test
     )
@@ -2540,6 +2596,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(flightplannerpolygonmodel_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Test
     )
@@ -2588,6 +2645,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(fencerallycontroller_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Test
     )
@@ -2632,6 +2690,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(flightplannerviewmodel_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Test
     )
@@ -2678,6 +2737,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(flightplannerwaypointpanel_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Widgets
         Qt::Test
@@ -2741,6 +2801,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(qmlpluginmanager_tests PRIVATE
+        apm_mission_command_catalog
         Qt::Core
         Qt::Widgets
         Qt::Qml

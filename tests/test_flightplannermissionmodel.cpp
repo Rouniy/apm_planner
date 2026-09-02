@@ -1,4 +1,5 @@
 #include "ui/flightplanner/FlightPlannerMissionModel.h"
+#include "ui/flightplanner/MissionCommandCatalog.h"
 
 #include "QGCMAVLink.h"
 
@@ -19,6 +20,7 @@ private slots:
     void tableContractMatchesWaypointGrid();
     void altitudePresentationKeepsCanonicalMeters();
     void mapCommandMetadataMatchesMissionSemantics();
+    void selectedCommandUpdatesParameterHeadersWithoutDirtyingRows();
 };
 
 void FlightPlannerMissionModelTest::wpRowMatchesMissionPlannerContract()
@@ -72,6 +74,49 @@ void FlightPlannerMissionModelTest::wpRowMatchesMissionPlannerContract()
     QCOMPARE(saved.P1, 1.0);
     QCOMPARE(saved.P4, 4.0);
     QCOMPARE(saved.Alt, 123.5);
+}
+
+void FlightPlannerMissionModelTest::selectedCommandUpdatesParameterHeadersWithoutDirtyingRows()
+{
+    FlightPlannerMissionModel model;
+    WpRowData row;
+    row.Command = MAV_CMD_NAV_WAYPOINT;
+    model.appendRow(row);
+
+    QCOMPARE(model.parameterHeaderRow(), -1);
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::P1Column,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("P1"));
+    QSignalSpy headers(&model, &QAbstractItemModel::headerDataChanged);
+    model.setParameterHeaderRow(0);
+    QCOMPARE(model.parameterHeaderRow(), 0);
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::P1Column,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("Delay"));
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::P2Column,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("—"));
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::P4Column,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("Yaw"));
+    QVERIFY(headers.count() >= 1);
+
+    QVERIFY(model.setData(model.index(0,
+        FlightPlannerMissionModel::CommandColumn), QStringLiteral("LAND")));
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::P1Column,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("Abort"));
+
+    QSignalSpy rowsChanged(&model, &FlightPlannerMissionModel::rowsChanged);
+    QSignalSpy dataChanged(&model, &QAbstractItemModel::dataChanged);
+    MissionCommandCatalog::instance()->Reload();
+    QCOMPARE(rowsChanged.count(), 0);
+    QVERIFY(dataChanged.count() >= 1);
+
+    model.setParameterHeaderRow(-1);
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::P1Column,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("P1"));
 }
 
 void FlightPlannerMissionModelTest::coordinateRepresentationsRoundTrip()

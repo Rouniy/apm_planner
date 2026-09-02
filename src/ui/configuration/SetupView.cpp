@@ -17,6 +17,7 @@
 #include "ConfigHWBTSerialService.h"
 #include "ConfigHWBTView.h"
 #include "ConfigInitialParamsView.h"
+#include "ConfigMavCommandView.h"
 #include "ConfigMotorTestView.h"
 #include "ConfigParachuteView.h"
 #include "ConfigRadioOutputView.h"
@@ -84,6 +85,7 @@ const QString kBluetoothSetup = QStringLiteral("ConfigHWBTView");
 const QString kParachute = QStringLiteral("ConfigParachuteView");
 const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
 const QString kElevationSources = QStringLiteral("ConfigElevationSourcesView");
+const QString kMissionCommandList = QStringLiteral("ConfigMavCommandView");
 
 QWidget *scrollablePage(QWidget *content, const QString &objectName,
                         QWidget *parent)
@@ -349,6 +351,7 @@ void SetupView::buildPages()
 
     m_backstage->addGroup(tr(">> Advanced"), kAdvancedGroup);
     m_backstage->addPage(configElevationSourcesBackstagePage());
+    m_backstage->addPage(configMavCommandBackstagePage());
 }
 
 void SetupView::advModeChanged(bool advanced)
@@ -666,6 +669,7 @@ void SetupView::refreshPageVisibility()
 
     m_backstage->setGroupVisible(kAdvancedGroup, m_advanced);
     m_backstage->setPageVisible(kElevationSources, m_advanced);
+    m_backstage->setPageVisible(kMissionCommandList, m_advanced);
     refreshLoadingOverlay();
 }
 

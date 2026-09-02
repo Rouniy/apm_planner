@@ -186,6 +186,8 @@ QByteArray validQml()
         "  property string pluginIdSeen: plugin.id\n"
         "  property bool serviceMatches: APMPlanner.service(\"uasManager\") === APMPlanner.uasManager\n"
         "  property bool parameterServiceMatches: APMPlanner.service(\"parameterService\") === APMPlanner.parameterService\n"
+        "  property bool missionCatalogMatches: APMPlanner.service(\"missionCommandCatalog\") === APMPlanner.missionCommandCatalog\n"
+        "  property int missionCommandCount: APMPlanner.missionCommandCatalog.commandNames.length\n"
         "  property bool commandServiceMatches: APMPlanner.service(\"vehicleCommandService\") === APMPlanner.vehicleCommandService\n"
         "  property int customActionInvocations: 0\n"
         "  property string customActionArgument: \"\"\n"
@@ -335,6 +337,8 @@ void QmlPluginManagerTest::discoversAndOpensToolPageWithDirectCoreApi()
              manager.api()->vehicleCommandService());
     QVERIFY(view->rootObject()->property("serviceMatches").toBool());
     QVERIFY(view->rootObject()->property("parameterServiceMatches").toBool());
+    QVERIFY(view->rootObject()->property("missionCatalogMatches").toBool());
+    QVERIFY(view->rootObject()->property("missionCommandCount").toInt() > 100);
     QVERIFY(view->rootObject()->property("commandServiceMatches").toBool());
     QVERIFY(view->rootObject()->property("customActionRegistered").toBool());
     QCOMPARE(manager.api()->vehicleActions(),

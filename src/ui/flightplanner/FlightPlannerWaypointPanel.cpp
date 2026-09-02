@@ -199,7 +199,12 @@ public:
         if (!combo) return;
         const QString current = index.data(Qt::DisplayRole).toString();
         const int item = combo->findText(current, Qt::MatchFixedString);
-        if (item >= 0) combo->setCurrentIndex(item);
+        if (item >= 0) {
+            combo->setCurrentIndex(item);
+        } else {
+            combo->addItem(current);
+            combo->setCurrentIndex(combo->count() - 1);
+        }
     }
 
     void setModelData(QWidget *editor, QAbstractItemModel *model,
@@ -396,7 +401,22 @@ FlightPlannerWaypointPanel::FlightPlannerWaypointPanel(
         connect(model, &QAbstractItemModel::rowsMoved,
                 this, &FlightPlannerWaypointPanel::updateActions);
         connect(model, &QAbstractItemModel::modelReset,
-                this, [this]() { selectWaypoint(-1); });
+                this, [this]() {
+            selectWaypoint(-1);
+            syncCommandHeaders();
+        });
+        connect(model, &QAbstractItemModel::dataChanged, this,
+                [this](const QModelIndex &topLeft,
+                       const QModelIndex &bottomRight) {
+            if (m_selectedWaypoint >= topLeft.row()
+                && m_selectedWaypoint <= bottomRight.row()
+                && topLeft.column()
+                       <= FlightPlannerMissionModel::CommandColumn
+                && bottomRight.column()
+                       >= FlightPlannerMissionModel::CommandColumn) {
+                syncCommandHeaders();
+            }
+        });
         connect(m_viewModel, &QObject::destroyed, this, [this]() {
             m_waypointTable->setModel(nullptr);
             m_wpRadiusEditor->setEnabled(false);
@@ -647,7 +667,16 @@ void FlightPlannerWaypointPanel::handleCurrentRowChanged(
         m_selectedWaypoint = row;
         emit selectedWaypointChanged(row);
     }
+    syncCommandHeaders();
     updateActions();
+}
+
+void FlightPlannerWaypointPanel::syncCommandHeaders()
+{
+    if (m_viewModel) {
+        m_viewModel->Waypoints()->setParameterHeaderRow(
+            m_selectedWaypoint);
+    }
 }
 
 void FlightPlannerWaypointPanel::updateActions()
@@ -710,6 +739,7 @@ void FlightPlannerWaypointPanel::selectWaypoint(int row)
             m_selectedWaypoint = -1;
             emit selectedWaypointChanged(-1);
         }
+        syncCommandHeaders();
         updateActions();
         return;
     }
@@ -722,5 +752,6 @@ void FlightPlannerWaypointPanel::selectWaypoint(int row)
         m_selectedWaypoint = row;
         emit selectedWaypointChanged(row);
     }
+    syncCommandHeaders();
     updateActions();
 }

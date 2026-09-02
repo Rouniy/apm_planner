@@ -330,6 +330,27 @@ void FlightPlannerWaypointPanelTest::commandEditorFollowsMissionType()
 
     viewModel.AddWaypointAt(41.0, 29.0);
     QVERIFY(editorCommands().size() > 100);
+    selectRow(table, 0);
+    QCOMPARE(table->model()->headerData(
+                 FlightPlannerMissionModel::P1Column,
+                 Qt::Horizontal).toString(),
+             QStringLiteral("Delay"));
+
+    viewModel.Waypoints()->rowAt(0)->setCommand(65534);
+    const QModelIndex unknownIndex = table->model()->index(
+        0, FlightPlannerMissionModel::CommandColumn);
+    QWidget editorParent;
+    QStyleOptionViewItem option;
+    QAbstractItemDelegate *delegate = table->itemDelegateForColumn(
+        FlightPlannerMissionModel::CommandColumn);
+    QWidget *unknownEditor = delegate->createEditor(
+        &editorParent, option, unknownIndex);
+    auto *unknownCombo = qobject_cast<QComboBox *>(unknownEditor);
+    QVERIFY(unknownCombo);
+    delegate->setEditorData(unknownEditor, unknownIndex);
+    QCOMPARE(unknownCombo->currentText(), QStringLiteral("65534"));
+    delegate->setModelData(unknownEditor, table->model(), unknownIndex);
+    QCOMPARE(viewModel.Waypoints()->rowAt(0)->Command(), quint16(65534));
 
     viewModel.setMissionType(QStringLiteral("Fence"));
     viewModel.AddWaypointAt(41.0, 29.0);

@@ -1,5 +1,6 @@
 #include "WpRow.h"
 
+#include "MissionCommandCatalog.h"
 #include "comm/MissionItemProtocol.h"
 #include "QGCMAVLink.h"
 
@@ -14,14 +15,6 @@ constexpr double kSemiMajorAxis = 6378137.0;
 constexpr double kEccentricitySquared = 0.00669438;
 constexpr double kUtmScale = 0.9996;
 constexpr double kPi = 3.14159265358979323846;
-
-struct CommandEntry
-{
-    quint16 command;
-    const char *name;
-};
-
-#include "MavCommandCatalog.inc"
 
 double radians(double degrees)
 {
@@ -329,12 +322,20 @@ bool parseZone(const QString &text, int *signedZone)
 WpRow::WpRow(QObject *parent)
     : QObject(parent)
 {
+    connect(MissionCommandCatalog::instance(),
+            &MissionCommandCatalog::catalogChanged, this, [this]() {
+        emit commandNameChanged(CommandName());
+    });
 }
 
 WpRow::WpRow(const WpRowData &data, QObject *parent)
     : QObject(parent)
 {
     applyData(data);
+    connect(MissionCommandCatalog::instance(),
+            &MissionCommandCatalog::catalogChanged, this, [this]() {
+        emit commandNameChanged(CommandName());
+    });
 }
 
 int WpRow::Seq() const { return m_data.Seq; }
@@ -385,20 +386,13 @@ WpRowData WpRow::toData() const
 
 QStringList WpRow::CommandList()
 {
-    QStringList result;
-    result.reserve(static_cast<int>(kCommands.size()));
-    for (const CommandEntry &entry : kCommands) {
-        result.append(QString::fromLatin1(entry.name));
-    }
-    return result;
+    return MissionCommandCatalog::instance()->Names();
 }
 
 QString WpRow::CommandNameFor(quint16 command)
 {
-    const auto it = std::find_if(kCommands.begin(), kCommands.end(),
-        [command](const CommandEntry &entry) { return entry.command == command; });
-    return it == kCommands.end()
-        ? QString::number(command) : QString::fromLatin1(it->name);
+    const QString name = MissionCommandCatalog::instance()->GetName(command);
+    return name.isEmpty() ? QString::number(command) : name;
 }
 
 bool WpRow::commandForName(const QString &name, quint16 *command)
@@ -407,13 +401,7 @@ bool WpRow::commandForName(const QString &name, quint16 *command)
         return false;
     }
     const QString value = name.trimmed();
-    const auto it = std::find_if(kCommands.begin(), kCommands.end(),
-        [&value](const CommandEntry &entry) {
-            return value.compare(QString::fromLatin1(entry.name),
-                                 Qt::CaseInsensitive) == 0;
-        });
-    if (it != kCommands.end()) {
-        *command = it->command;
+    if (MissionCommandCatalog::instance()->TryGetId(value, command)) {
         return true;
     }
     bool ok = false;

@@ -74,6 +74,7 @@ public:
     double AltitudeMultiplier() const;
     QString DistanceUnit() const;
     double DistanceMultiplier() const;
+    int parameterHeaderRow() const;
     MissionStore missionStore() const;
     WpRow *rowAt(int row) const;
     QVector<WpRowData> rows(MissionStore store) const;
@@ -97,6 +98,7 @@ public slots:
     void appendStore(MissionStore store, const QVector<WpRowData> &rows);
     void setAltitudePresentation(double multiplier, const QString &unit);
     void setDistancePresentation(double multiplier, const QString &unit);
+    void setParameterHeaderRow(int row);
 
 signals:
     void missionTypeChanged(const QString &type);
@@ -114,6 +116,7 @@ private:
     std::unique_ptr<WpRow> makeRow(const WpRowData &data);
     void renumber(Store &rows);
     void publishRowChange(WpRow *row);
+    void refreshParameterHeaders();
 
     MissionStore m_activeStore = MissionStore::Mission;
     Store m_missionRows;
@@ -124,6 +127,7 @@ private:
     QString m_altitudeUnit = QStringLiteral("m");
     double m_distanceMultiplier = 1.0;
     QString m_distanceUnit = QStringLiteral("m");
+    int m_parameterHeaderRow = -1;
 };
 
 Q_DECLARE_METATYPE(FlightPlannerMissionModel::MissionStore)

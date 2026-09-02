@@ -4,6 +4,7 @@
 #include "AppPaths.h"
 #include "QmlPluginContext.h"
 #include "QmlPluginManifest.h"
+#include "ui/flightplanner/MissionCommandCatalog.h"
 
 #include <QAction>
 #include <QCoreApplication>
@@ -93,7 +94,7 @@ public:
 
         const QList<QObject *> coreObjects = {
             owner, api.get(), uasManager, linkManager, settings,
-            QCoreApplication::instance()
+            QCoreApplication::instance(), MissionCommandCatalog::instance()
         };
         for (QObject *object : coreObjects) {
             if (object) {

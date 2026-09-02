@@ -10,7 +10,8 @@ All user plugins use one application-owned `QQmlEngine`. The engine exports the
 module `APMPlanner.Core 1.0` and its singleton `APMPlanner`. The singleton gives
 direct access to the current `uasManager`, `activeVehicle`, `linkManager`,
 `vehicleTargetManager`, `vehicleCommandService`, `parameterService`, settings,
-main window, plugin manager, application metadata and resource/data paths.
+`missionCommandCatalog`, main window, plugin manager, application metadata and
+resource/data paths.
 Public API within one major is extended without renaming existing
 members. A new API major may break compatibility; plugin authors are responsible
 for updating their plugin.
@@ -96,6 +97,44 @@ wrappers only: plugin code that reads or writes mission, terrain, radius or
 MAVLink values must continue to use canonical SI units. `plannerDistanceUnits`
 formats short PLAN distances in `m|ft` and route totals in `km|miles`; Survey
 geometry and polygon offsets remain explicitly SI.
+
+### Mission command catalog
+
+`APMPlanner.missionCommandCatalog` and
+`APMPlanner.service("missionCommandCatalog")` return the same C++-owned catalog
+used by the PLAN command editor and the SETUP → Advanced → Mission Command List
+page. It merges the MAVLink commands compiled into APM Planner with user-defined
+IDs and seven optional parameter-label overrides.
+
+```qml
+var catalog = APMPlanner.missionCommandCatalog
+console.log(catalog.commandNames)
+console.log(catalog.GetId("WAYPOINT"))
+console.log(catalog.EffectiveLabels(16))
+
+catalog.SaveDefinitionMaps([
+    {
+        "id": 61000,
+        "name": "VENDOR_SCAN",
+        "parameterLabels": ["Rows", "", "", "", "Lat", "Lon", "Alt"]
+    }
+])
+```
+
+`definitions` contains maps with `id`, `name` and a normalized seven-string
+`parameterLabels` list. `GetName(id)`, `GetId(name)`, `GetLabels(id)` and
+`EffectiveLabels(id)` provide direct lookup. `SaveDefinitionMaps()` validates
+the complete candidate before changing settings; IDs and names must be unique,
+known IDs retain their canonical MAVLink name, and a custom ID cannot reuse a
+known name. Successful Save or `Reload()` increments `revision` and emits
+`catalogChanged`, immediately refreshing PLAN without creating mission undo
+state.
+
+For exact Mission Planner 10 interoperability the persisted settings are
+`PlannerExtraCommand` (name to seven labels) and `PlannerExtraCommandIDs`
+(custom name to unsigned 16-bit ID). A plugin that writes these raw settings
+directly must call `catalog.Reload()` afterwards so native and QML views receive
+the refresh signal.
 
 ## Exact MAVLink target registry
 
