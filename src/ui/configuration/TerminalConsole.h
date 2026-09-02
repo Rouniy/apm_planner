@@ -60,11 +60,13 @@ class TerminalConsole : public QWidget
 public:
     explicit TerminalConsole(QWidget *parent = 0);
     ~TerminalConsole();
+    bool isSerialPortOpen() const;
 
 public slots:
     void openSerialPort();
     void openSerialPort(const SerialSettings &settings);
     void closeSerialPort();
+    void deactivate();
     void writeData(const QByteArray &data);
     void readData();
     void sendResetCommand();

@@ -1943,7 +1943,12 @@ void ConfigRawParams::compareWithFile()
         || selection.path.isEmpty()) {
         return;
     }
-    const QString path = selection.path;
+    reviewAndStageParameterFile(selection.path);
+}
+
+void ConfigRawParams::reviewAndStageParameterFile(const QString &path)
+{
+    const qulonglong stateRevision = m_stateRevision;
     QMap<QString, double> values;
     if (!readParameterFile(path, &values)) {
         return;

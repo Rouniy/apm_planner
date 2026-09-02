@@ -75,6 +75,7 @@ class FlightDataView;
 class FlightPlannerView;
 class FlightPlannerViewModel;
 class QGCMapTool;
+class QGCMAVLinkInspector;
 class HelpView;
 
 /**
@@ -197,6 +198,8 @@ public slots:
     void showSettings();
     /** @brief Show the current PLAN mission elevation profile. */
     void showMissionElevation();
+    /** @brief Show the shared modeless MAVLink inspector tool window. */
+    void showMavlinkInspector();
     /** @brief Apply Mission Planner altitude display units to PLAN live. */
     void setPlannerAltitudeUnits(const QString &units);
     /** @brief Apply Mission Planner distance display units to PLAN live. */
@@ -498,7 +501,7 @@ protected:
     QPointer<QGCStatusBar> customStatusBar;
 
 
-    QPointer<QDockWidget> mavlinkInspectorWidget;
+    QPointer<QGCMAVLinkInspector> m_mavlinkInspectorWindow;
     QPointer<MAVLinkDecoder> mavlinkDecoder;
     QPointer<QDockWidget> mavlinkSenderWidget;
     QGCMAVLinkLogPlayer* logPlayer;

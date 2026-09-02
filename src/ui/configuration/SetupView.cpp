@@ -6,14 +6,18 @@
 #include "ArduPilotMegaMAV.h"
 #include "BatteryMonitorConfig.h"
 #include "CameraGimbalConfig.h"
+#include "ConfigAdvancedView.h"
 #include "ConfigBatteryMonitoring2View.h"
+#include "ConfigDefaultSettingsView.h"
 #include "CompassConfig.h"
 #include "ConfigDroneCanView.h"
+#include "ConfigDeveloperToolsView.h"
 #include "ConfigElevationSourcesView.h"
 #include "ConfigESCCalibrationView.h"
 #include "ConfigGpsInjectView.h"
 #include "ConfigGPSOrderView.h"
 #include "ConfigHWCANView.h"
+#include "ConfigHWIDView.h"
 #include "ConfigHWBTSerialService.h"
 #include "ConfigHWBTView.h"
 #include "ConfigInitialParamsView.h"
@@ -22,6 +26,8 @@
 #include "ConfigParachuteView.h"
 #include "ConfigRadioOutputView.h"
 #include "ConfigSerialView.h"
+#include "ConfigRawParams.h"
+#include "FrameDefaultCatalogService.h"
 #include "comm/DroneCanGetNodeInfoClient.h"
 #include "comm/DroneCanGetSetClient.h"
 #include "comm/DroneCanMavlinkTransport.h"
@@ -32,10 +38,13 @@
 #include "LinkInterface.h"
 #include "LinkManager.h"
 #include "SerialLinkInterface.h"
+#include "TerminalConsole.h"
 #include "OpticalFlowConfig.h"
 #include "OsdConfig.h"
 #include "QGCUASParamManager.h"
+#include "QGCCore.h"
 #include "Radio3DRConfig.h"
+#include "QmlPluginManagerView.h"
 #include "RadioCalibrationConfig.h"
 #include "RangeFinderConfig.h"
 #include "UASInterface.h"
@@ -49,6 +58,7 @@
 #include <QDateTime>
 #include <QFrame>
 #include <QFile>
+#include <QMessageBox>
 #include <QScrollArea>
 #include <QSettings>
 #include <QTimer>
@@ -58,6 +68,7 @@ namespace {
 const QString kInstallFirmware = QStringLiteral("InstallFirmwareView");
 const QString kMandatoryGroup = QStringLiteral("MandatoryHardwareGroup");
 const QString kFrameType = QStringLiteral("ConfigFrameClassTypeView");
+const QString kDefaultSettings = QStringLiteral("ConfigDefaultSettingsView");
 const QString kAccelCalibration = QStringLiteral("ConfigAccelCalibrationView");
 const QString kCompass = QStringLiteral("ConfigCompassView");
 const QString kRadioInput = QStringLiteral("ConfigRadioInputView");
@@ -67,6 +78,7 @@ const QString kEscCalibration = QStringLiteral("ConfigESCCalibrationView");
 const QString kFlightModes = QStringLiteral("ConfigFlightModesView");
 const QString kFailSafe = QStringLiteral("ConfigFailSafeView");
 const QString kInitialParams = QStringLiteral("ConfigInitialParamsView");
+const QString kHWID = QStringLiteral("ConfigHWIDView");
 const QString kOptionalGroup = QStringLiteral("OptionalHardwareGroup");
 const QString kSikRadio = QStringLiteral("SikRadioView");
 const QString kGPSInject = QStringLiteral("ConfigGpsInjectView");
@@ -84,8 +96,12 @@ const QString kMotorTest = QStringLiteral("ConfigMotorTestView");
 const QString kBluetoothSetup = QStringLiteral("ConfigHWBTView");
 const QString kParachute = QStringLiteral("ConfigParachuteView");
 const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
+const QString kAdvancedTools = QStringLiteral("ConfigAdvancedView");
 const QString kElevationSources = QStringLiteral("ConfigElevationSourcesView");
+const QString kDeveloperTools = QStringLiteral("ConfigDeveloperToolsView");
 const QString kMissionCommandList = QStringLiteral("ConfigMavCommandView");
+const QString kTerminal = QStringLiteral("ConfigTerminalView");
+const QString kQmlPlugins = QStringLiteral("QmlPluginManagerView");
 
 QWidget *scrollablePage(QWidget *content, const QString &objectName,
                         QWidget *parent)
@@ -166,7 +182,8 @@ SetupView::SetupView(QWidget *parent)
       m_metadataRepository(new ParameterMetaDataRepository(
           AppPaths::resourcePath(QStringLiteral("files/ardupilotmega")),
           QDir(AppPaths::writableDataDirectory()).filePath(
-              QStringLiteral("cache/parameter-metadata"))))
+              QStringLiteral("cache/parameter-metadata")))),
+      m_frameDefaultCatalogService(new FrameDefaultCatalogService(this))
 {
     setObjectName(QStringLiteral("SetupView"));
     m_droneCanBroker =
@@ -184,6 +201,24 @@ SetupView::SetupView(QWidget *parent)
         QStringLiteral("QGC_MAINWINDOW/ADVANCED_MODE"), false).toBool();
 
     buildPages();
+    connect(m_backstage, &BackstageView::pageActivated,
+            this, [](const QString &id, QWidget *page) {
+        if (id == kDefaultSettings) {
+            if (auto *defaults =
+                    qobject_cast<ConfigDefaultSettingsView *>(page)) {
+                defaults->activate();
+            }
+        }
+    });
+    connect(m_backstage, &BackstageView::pageDeactivated,
+            this, [](const QString &id, QWidget *page) {
+        if (id == kDefaultSettings) {
+            if (auto *defaults =
+                    qobject_cast<ConfigDefaultSettingsView *>(page)) {
+                defaults->deactivate();
+            }
+        }
+    });
     connect(m_backstage, &BackstageView::currentPageChanged,
             this, [this]() { refreshLoadingOverlay(); });
     connect(m_backstage, &BackstageView::stopLoadingRequested,
@@ -202,6 +237,7 @@ SetupView::~SetupView()
     // are still alive, so they can send their final stop commands safely.
     m_backstage->resetPage(kDroneCAN);
     m_backstage->resetPage(kMotorTest);
+    m_backstage->resetPage(kDefaultSettings);
 }
 
 void SetupView::buildPages()
@@ -212,6 +248,16 @@ void SetupView::buildPages()
     m_backstage->addGroup(tr(">> Mandatory Hardware"), kMandatoryGroup);
     m_backstage->addPage(makeBackstagePage<FrameTypeConfig>(
         kFrameType, tr("Frame Type"), true, true));
+    BackstagePage defaultSettings;
+    defaultSettings.id = kDefaultSettings;
+    defaultSettings.header = tr("Default Settings");
+    defaultSettings.isSub = true;
+    defaultSettings.requiresConnection = true;
+    defaultSettings.allowsPartialParameters = false;
+    defaultSettings.factory = [this](QWidget *parent) {
+        return createDefaultSettingsPage(parent);
+    };
+    m_backstage->addPage(defaultSettings);
     m_backstage->addPage(makeBackstagePage<AccelCalibrationConfig>(
         kAccelCalibration, tr("Accel Calibration"), true, true));
     m_backstage->addPage(makeBackstagePage<CompassConfig>(
@@ -258,6 +304,16 @@ void SetupView::buildPages()
         return createInitialParamsPage(parent);
     };
     m_backstage->addPage(initialParams);
+    BackstagePage hwId;
+    hwId.id = kHWID;
+    hwId.header = tr("HW ID");
+    hwId.isSub = true;
+    hwId.requiresConnection = true;
+    hwId.allowsPartialParameters = false;
+    hwId.factory = [this](QWidget *parent) {
+        return createHWIDPage(parent);
+    };
+    m_backstage->addPage(hwId);
 
     m_backstage->addGroup(tr(">> Optional Hardware"), kOptionalGroup);
     BackstagePage gpsInject;
@@ -350,8 +406,52 @@ void SetupView::buildPages()
     m_backstage->addPage(hwCan);
 
     m_backstage->addGroup(tr(">> Advanced"), kAdvancedGroup);
+    BackstagePage advancedTools;
+    advancedTools.id = kAdvancedTools;
+    advancedTools.header = tr("Advanced Tools");
+    advancedTools.isSub = true;
+    advancedTools.isAdvanced = true;
+    advancedTools.allowsPartialParameters = true;
+    advancedTools.factory = [this](QWidget *parent) {
+        return new ConfigAdvancedView(window(), parent);
+    };
+    m_backstage->addPage(advancedTools);
     m_backstage->addPage(configElevationSourcesBackstagePage());
+    BackstagePage developerTools;
+    developerTools.id = kDeveloperTools;
+    developerTools.header = tr("Developer Tools");
+    developerTools.isSub = true;
+    developerTools.isAdvanced = true;
+    developerTools.allowsPartialParameters = true;
+    developerTools.factory = [](QWidget *parent) {
+        return new ConfigDeveloperToolsView(parent);
+    };
+    m_backstage->addPage(developerTools);
     m_backstage->addPage(configMavCommandBackstagePage());
+    BackstagePage terminal;
+    terminal.id = kTerminal;
+    terminal.header = tr("Terminal");
+    terminal.isSub = true;
+    terminal.isAdvanced = true;
+    terminal.allowsPartialParameters = true;
+    terminal.factory = [](QWidget *parent) {
+        auto *page = new TerminalConsole(parent);
+        page->setObjectName(QStringLiteral("ConfigTerminalView"));
+        return page;
+    };
+    m_backstage->addPage(terminal);
+    BackstagePage qmlPlugins;
+    qmlPlugins.id = kQmlPlugins;
+    qmlPlugins.header = tr("QML Plugins");
+    qmlPlugins.isSub = true;
+    qmlPlugins.isAdvanced = true;
+    qmlPlugins.allowsPartialParameters = true;
+    qmlPlugins.factory = [](QWidget *parent) {
+        auto *core = qobject_cast<QGCCore *>(QCoreApplication::instance());
+        return new QmlPluginManagerView(
+            core ? core->qmlPluginManager() : nullptr, parent);
+    };
+    m_backstage->addPage(qmlPlugins);
 }
 
 void SetupView::advModeChanged(bool advanced)
@@ -611,6 +711,7 @@ void SetupView::firmwareVersionDetected(const QString &versionText)
 
     const QString selectedPage = m_backstage->currentPageId();
     m_backstage->resetPage(kEscCalibration);
+    m_backstage->resetPage(kDefaultSettings);
     m_backstage->resetPage(kMotorTest);
     m_backstage->resetPage(kRadioOutput);
     m_backstage->resetPage(kSerialPorts);
@@ -625,10 +726,12 @@ void SetupView::firmwareVersionDetected(const QString &versionText)
 
 void SetupView::refreshPageVisibility()
 {
-    const bool copter = m_connected && m_uas && m_uas->isMultirotor();
+    const bool copter = m_connected
+        && firmwareFamily(m_uas) == ParameterFirmwareFamily::ArduCopter;
 
     m_backstage->setGroupVisible(kMandatoryGroup, m_connected);
     m_backstage->setPageVisible(kFrameType, copter);
+    m_backstage->setPageVisible(kDefaultSettings, copter);
     m_backstage->setPageVisible(kAccelCalibration, m_connected);
     m_backstage->setPageVisible(kCompass, m_connected);
     m_backstage->setPageVisible(kRadioInput, m_connected);
@@ -646,6 +749,7 @@ void SetupView::refreshPageVisibility()
         m_connected
             && (family == ParameterFirmwareFamily::ArduCopter
                 || family == ParameterFirmwareFamily::ArduPlane));
+    m_backstage->setPageVisible(kHWID, m_connected);
 
     m_backstage->setGroupVisible(kOptionalGroup, true);
     m_backstage->setPageVisible(kGPSInject, true);
@@ -668,8 +772,12 @@ void SetupView::refreshPageVisibility()
     m_backstage->setPageVisible(kHWCAN, m_connected);
 
     m_backstage->setGroupVisible(kAdvancedGroup, m_advanced);
+    m_backstage->setPageVisible(kAdvancedTools, m_advanced);
     m_backstage->setPageVisible(kElevationSources, m_advanced);
+    m_backstage->setPageVisible(kDeveloperTools, m_advanced);
     m_backstage->setPageVisible(kMissionCommandList, m_advanced);
+    m_backstage->setPageVisible(kTerminal, m_advanced);
+    m_backstage->setPageVisible(kQmlPlugins, m_advanced);
     refreshLoadingOverlay();
 }
 
@@ -798,6 +906,149 @@ void SetupView::resetConnectionPages(bool restoreSelection)
         && m_backstage->isPageVisible(selectedPage)) {
         m_backstage->setCurrentPage(selectedPage);
     }
+}
+
+QWidget *SetupView::createDefaultSettingsPage(QWidget *parent)
+{
+    const ParameterFirmwareFamily family = firmwareFamily(m_uas);
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+
+    auto *page = new ConfigDefaultSettingsView(
+        m_frameDefaultCatalogService, catalog, parent,
+        enforceMetadataRanges);
+    page->setConnected(m_connected);
+    ConfigRawParams *const rawParams = page->rawParams();
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+
+    if (expectedManager && expectedManager->store()) {
+        const ParameterSnapshot snapshot = expectedManager->store()->snapshot();
+        page->setParameterSnapshot(
+            snapshot.records(), snapshot.endpoint().componentId);
+
+        connect(expectedManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                rawParams, &ConfigRawParams::parameterChanged);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteAcknowledged,
+                rawParams, &ConfigRawParams::parameterWriteAcknowledged);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteFailed,
+                rawParams, &ConfigRawParams::parameterWriteFailed);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteCancelled,
+                rawParams, &ConfigRawParams::parameterWriteCancelled);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterBatchProgress,
+                rawParams, &ConfigRawParams::parameterBatchProgress);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterBatchCompleted,
+                rawParams, &ConfigRawParams::parameterBatchCompleted);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterTargetChanged,
+                page, &ConfigDefaultSettingsView::parameterTargetChanged);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, [this, page, expectedManager](bool ready) {
+            if (!ready || !expectedManager
+                || m_parameterManager != expectedManager
+                || !expectedManager->store()) {
+                return;
+            }
+            const ParameterSnapshot refreshed =
+                expectedManager->store()->snapshot();
+            page->setParameterSnapshot(
+                refreshed.records(), refreshed.endpoint().componentId);
+        });
+    }
+
+    connect(page, &ConfigDefaultSettingsView::refreshRequested,
+            page, [this, expectedManager](int componentId) {
+        if (!m_connected || !expectedManager
+            || m_parameterManager != expectedManager) {
+            return;
+        }
+        if (m_uas && m_uas->isArmed()
+            && QMessageBox::question(
+                   this, tr("Refresh Params"),
+                   tr("The vehicle is armed. Refreshing the complete parameter "
+                      "list can consume telemetry bandwidth. Continue?"),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+        if (expectedManager->store()
+            && componentId
+                == expectedManager->store()->endpoint().componentId) {
+            retryParameterLoading();
+        }
+    });
+    connect(page, &ConfigDefaultSettingsView::writeRequested,
+            page, [this, page, expectedManager](
+                      int componentId, const QVariantList &changes) {
+        ConfigRawParams *const raw = page->rawParams();
+        if (!m_connected || !expectedManager
+            || m_parameterManager != expectedManager) {
+            raw->parameterWriteSubmissionFailed(tr("Not connected."));
+            return;
+        }
+        const QPointer<ConfigDefaultSettingsView> guard(page);
+        const qulonglong batchId = expectedManager->writeParameters(
+            componentId, changes);
+        if (!guard) {
+            return;
+        }
+        if (batchId == 0) {
+            guard->rawParams()->parameterWriteSubmissionFailed(
+                tr("The parameter batch was rejected for the selected target."));
+            return;
+        }
+        guard->rawParams()->parameterBatchSubmitted(
+            batchId, changes.size());
+    });
+    return page;
+}
+
+QWidget *SetupView::createHWIDPage(QWidget *parent)
+{
+    auto *page = new ConfigHWIDView(parent);
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+    if (expectedManager && expectedManager->store()) {
+        const ParameterSnapshot snapshot = expectedManager->store()->snapshot();
+        page->setParameterSnapshot(
+            snapshot.records(), snapshot.endpoint().componentId);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, [this, page, expectedManager](bool ready) {
+            if (!ready || !expectedManager
+                || m_parameterManager != expectedManager
+                || !expectedManager->store()) {
+                return;
+            }
+            const ParameterSnapshot refreshed =
+                expectedManager->store()->snapshot();
+            page->setParameterSnapshot(
+                refreshed.records(), refreshed.endpoint().componentId);
+        });
+    }
+    connect(page, &ConfigHWIDView::refreshRequested,
+            page, [this, page, expectedManager](int componentId) {
+        if (!m_connected || !expectedManager
+            || m_parameterManager != expectedManager
+            || !expectedManager->store()) {
+            return;
+        }
+        const ParameterSnapshot refreshed =
+            expectedManager->store()->snapshot();
+        page->setParameterSnapshot(refreshed.records(), componentId);
+    });
+    return page;
 }
 
 QWidget *SetupView::createMotorTestPage(QWidget *parent)

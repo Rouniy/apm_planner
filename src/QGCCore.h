@@ -67,6 +67,10 @@ public:
 
     void initialize();
     QGCMouseWheelEventFilter *getMouseWheelFilter() const { return m_mouseWheelFilter; }
+    QmlPluginManager *qmlPluginManager() const
+    {
+        return m_qmlPluginManager.get();
+    }
 
 public slots:
     void aboutToQuit();

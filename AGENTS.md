@@ -31,7 +31,7 @@ Reference trees:
 
 ## Work discipline
 
-- The coordinating agent owns all configure, build and test processes. Delegated agents must not configure or compile; use them for read-only research unless explicitly assigned a non-overlapping edit.
+- The coordinating agent schedules every configure, build and test process. Delegated agents must not configure or compile unless the coordinator grants an explicit, command-scoped build lease. A lease names the exact command, requires the preflight below, and must be released before any other build starts.
 - Run only one build process at a time, with at most `-j12`.
 - Immediately before **every** configure or build, run this exact command by itself:
 
@@ -39,16 +39,16 @@ Reference trees:
   pgrep -af '(^|/)(cc1plus|clang\+\+|g\+\+|c\+\+)( |$)' || true
   ```
 
-- Never start a build while another compiler/build is active. Tests also run from the coordinating agent.
+- Never start a build while another compiler/build is active. Only one build lease may exist at a time; agents without that lease remain read-only with respect to build products. Tests run from the coordinating agent unless their exact command is separately leased.
 - Preserve unrelated user changes in a dirty worktree.
 - Use thematic commits after a verified functional slice. Update `CURRENT_STATE.md`, the parity ledger and the deviations ledger in the same slice.
 - Do not delete old files merely because they look unused. Delete them only after their user-visible replacement is wired and verified.
-- If Claude is used, do not call `mcp__claude__Agent`. Use headless Claude Code through Bash, for example `claude -p "<task>" --output-format text`, in the intended working directory.
+- If Claude is used, do not call `mcp__claude__Agent`. Use headless Claude Code through Bash, for example `claude -p "<task>" --output-format text`, in the intended working directory. When coordinating through the local TCP bridge, use explicit file claims, cross-review, and the same build-lease rule.
 
 ## Current execution order
 
-1. Make the PLAN right action column functionally complete enough for daily use: compare its complete MP10 action/control list, remove unexplained blank space, wire existing capabilities and replace important disabled placeholders with working flows.
-2. Move to SETUP and port the required pages, plugins and tools in high-value functional groups.
+1. Keep the completed PLAN right-column audit as the baseline: its direct MP10 controls are all represented, while seven named advanced actions remain explicit functional gaps. Do not spend the main stream on its accepted bottom stretch.
+2. Concentrate on SETUP and port the required pages, plugins and tools in high-value functional groups, starting with Advanced Tools, Developer Tools, Terminal and the trusted QML plugin manager.
 3. Keep functional differences and GUI differences as separate entries in `PORTING_DEVIATIONS.tsv` so later polish is deliberate.
 4. Resume remaining DATA/PLAN/CONFIG/SIMULATION/HELP parity after the usable SETUP surface is established.
 

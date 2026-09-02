@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QStringList>
+#include <QVariantList>
 
 #include <memory>
 
@@ -22,6 +23,9 @@ class QmlPluginManager final : public QObject
     Q_PROPERTY(int pluginCount READ pluginCount NOTIFY pluginsChanged)
     Q_PROPERTY(QStringList pluginIds READ pluginIds NOTIFY pluginsChanged)
     Q_PROPERTY(QStringList errors READ errors NOTIFY pluginsChanged)
+    Q_PROPERTY(QVariantList plugins READ plugins NOTIFY pluginsChanged)
+    Q_PROPERTY(QStringList searchRoots READ searchRoots NOTIFY pluginsChanged)
+    Q_PROPERTY(QString writablePluginDirectory READ writablePluginDirectory CONSTANT)
 
 public:
     explicit QmlPluginManager(QObject *uasManager, QObject *linkManager,
@@ -35,14 +39,19 @@ public:
     int pluginCount() const;
     QStringList pluginIds() const;
     QStringList errors() const;
+    QVariantList plugins() const;
+    QStringList searchRoots() const;
+    QString writablePluginDirectory() const;
 
     void setMainWindow(QObject *mainWindow);
     void setActiveVehicle(QObject *activeVehicle);
 
     /** Scan explicit roots, or the installed and user roots when empty. */
-    Q_INVOKABLE void start(QMenu *toolsMenu,
-                           const QStringList &searchRoots = QStringList());
-    Q_INVOKABLE void shutdown();
+    void start(QMenu *toolsMenu,
+               const QStringList &searchRoots = QStringList());
+    Q_INVOKABLE void reload();
+    Q_INVOKABLE bool openPlugin(const QString &pluginId);
+    void shutdown();
 
 signals:
     void pluginsChanged();

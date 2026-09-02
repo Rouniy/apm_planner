@@ -68,6 +68,8 @@ public:
     bool stageParameter(const QString &name, const QString &expression,
                         bool allowOutOfRange = false,
                         QString *error = nullptr);
+    /** Compare an already validated .param file and stage only selected rows. */
+    void reviewAndStageParameterFile(const QString &path);
     void clearStagedChanges();
 
 signals:

@@ -221,6 +221,9 @@ void QGCMAVLinkLogPlayer::setMavlinkDecoder(MAVLinkDecoder *decoder)
 void QGCMAVLinkLogPlayer::setMavlinkInspector(QGCMAVLinkInspector *inspector)
 {
     m_mavlinkInspector = inspector;
+    if (m_logLink) {
+        m_logLink->setMavlinkInspector(inspector);
+    }
 }
 
 void QGCMAVLinkLogPlayer::playButtonClicked()

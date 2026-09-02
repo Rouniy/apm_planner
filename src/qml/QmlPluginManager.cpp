@@ -19,7 +19,9 @@
 #include <QQmlEngine>
 #include <QQmlError>
 #include <QQuickWidget>
+#include <QScopedValueRollback>
 #include <QSet>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtQml>
@@ -82,6 +84,7 @@ public:
         QmlPluginManifest manifest;
         QPointer<QAction> action;
         QPointer<QDialog> window;
+        bool opening = false;
     };
 
     Private(QmlPluginManager *owner, QObject *uasManager,
@@ -115,9 +118,14 @@ public:
 
     void clear()
     {
+        if (clearing) {
+            return;
+        }
+        QScopedValueRollback<bool> clearingGuard(clearing, true);
         for (Plugin &plugin : plugins) {
-            delete plugin.window.data();
+            QDialog *window = plugin.window.data();
             plugin.window = nullptr;
+            delete window;
         }
         plugins.clear();
 
@@ -141,19 +149,26 @@ public:
         emit q->pluginLoadError(pluginId, message);
     }
 
-    void openPlugin(int index)
+    bool openPlugin(int index)
     {
+        if (clearing || stopped) {
+            return false;
+        }
         if (index < 0 || index >= static_cast<int>(plugins.size())) {
-            return;
+            return false;
         }
 
         Plugin &plugin = plugins[static_cast<std::size_t>(index)];
+        if (plugin.opening) {
+            return false;
+        }
         if (plugin.window) {
             plugin.window->show();
             plugin.window->raise();
             plugin.window->activateWindow();
-            return;
+            return true;
         }
+        QScopedValueRollback<bool> openingGuard(plugin.opening, true);
 
         QWidget *parentWidget = qobject_cast<QWidget *>(api->mainWindow());
         auto *window = new QDialog(parentWidget);
@@ -186,20 +201,26 @@ public:
             reportError(plugin.manifest.id(), message);
             delete window;
             emit q->pluginsChanged();
-            return;
+            return false;
         }
 
         layout->addWidget(quickWidget);
         plugin.window = window;
         window->show();
+        return true;
     }
 
     QmlPluginManager *q = nullptr;
     std::unique_ptr<ApmQmlApi> api;
     std::unique_ptr<QQmlEngine> engine;
     QPointer<QMenu> pluginMenu;
+    QPointer<QMenu> toolsMenu;
     std::vector<Plugin> plugins;
     QStringList diagnostics;
+    QStringList searchRoots;
+    bool reloadPending = false;
+    bool stopped = false;
+    bool clearing = false;
 };
 
 QmlPluginManager::QmlPluginManager(QObject *uasManager, QObject *linkManager,
@@ -241,6 +262,35 @@ QStringList QmlPluginManager::errors() const
     return d->diagnostics;
 }
 
+QVariantList QmlPluginManager::plugins() const
+{
+    QVariantList details;
+    details.reserve(pluginCount());
+    for (const Private::Plugin &plugin : d->plugins) {
+        const QmlPluginManifest &manifest = plugin.manifest;
+        QVariantMap item;
+        item.insert(QStringLiteral("id"), manifest.id());
+        item.insert(QStringLiteral("name"), manifest.name());
+        item.insert(QStringLiteral("version"), manifest.version());
+        item.insert(QStringLiteral("author"), manifest.author());
+        item.insert(QStringLiteral("description"), manifest.description());
+        item.insert(QStringLiteral("directory"), manifest.pluginDirectory());
+        item.insert(QStringLiteral("title"), manifest.ui().title);
+        details.append(item);
+    }
+    return details;
+}
+
+QStringList QmlPluginManager::searchRoots() const
+{
+    return d->searchRoots;
+}
+
+QString QmlPluginManager::writablePluginDirectory() const
+{
+    return defaultSearchRoots().constLast();
+}
+
 void QmlPluginManager::setMainWindow(QObject *mainWindow)
 {
     d->api->setMainWindow(mainWindow);
@@ -258,6 +308,8 @@ void QmlPluginManager::start(QMenu *toolsMenu,
                              const QStringList &searchRoots)
 {
     d->clear();
+    d->stopped = false;
+    d->toolsMenu = toolsMenu;
 
     QStringList roots = searchRoots.isEmpty()
         ? defaultSearchRoots() : searchRoots;
@@ -266,6 +318,7 @@ void QmlPluginManager::start(QMenu *toolsMenu,
     }
     roots.removeDuplicates();
     std::sort(roots.begin(), roots.end());
+    d->searchRoots = roots;
 
     std::vector<QmlPluginManifest> candidates;
     QHash<QString, int> idCounts;
@@ -338,8 +391,39 @@ void QmlPluginManager::start(QMenu *toolsMenu,
     emit pluginsChanged();
 }
 
+void QmlPluginManager::reload()
+{
+    if (d->reloadPending || d->stopped) {
+        return;
+    }
+    d->reloadPending = true;
+    const QPointer<QMenu> toolsMenu = d->toolsMenu;
+    const QStringList roots = d->searchRoots;
+    // A trusted plugin may call reload() from its own QML callback. Defer the
+    // destructive engine/window reset until that callback has unwound.
+    QTimer::singleShot(0, this, [this, toolsMenu, roots]() {
+        d->reloadPending = false;
+        if (!d->stopped) {
+            start(toolsMenu.data(), roots);
+        }
+    });
+}
+
+bool QmlPluginManager::openPlugin(const QString &pluginId)
+{
+    for (int index = 0; index < pluginCount(); ++index) {
+        if (d->plugins[static_cast<std::size_t>(index)].manifest.id()
+            == pluginId) {
+            return d->openPlugin(index);
+        }
+    }
+    return false;
+}
+
 void QmlPluginManager::shutdown()
 {
+    d->stopped = true;
+    d->reloadPending = false;
     const bool hadState = !d->plugins.empty() || !d->diagnostics.isEmpty()
         || d->pluginMenu;
     d->clear();

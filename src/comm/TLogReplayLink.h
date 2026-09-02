@@ -5,7 +5,10 @@
 #include "MAVLinkDecoder.h"
 #include "QGCMAVLinkInspector.h"
 #include <atomic>
+#include <QMetaObject>
 #include <QMutex>
+
+Q_DECLARE_METATYPE(mavlink_message_t)
 
 class TLogReplayLink : public LinkInterface
 {
@@ -40,6 +43,9 @@ public:
     void disableTimeouts() { }
     void enableTimeouts() { }
 signals:
+    // Replay runs on its QThread. The inspector must always be updated on the
+    // GUI thread, and the connection must disappear before the widget does.
+    void inspectorMessage(LinkInterface *link, mavlink_message_t message);
     /*void bytesReceived(LinkInterface* link, QByteArray data);
     void connected();
     void connected(LinkInterface* linkInterface);
@@ -65,7 +71,7 @@ private:
     std::atomic_bool m_pause;
     MAVLinkDecoder *m_mavlinkDecoder;
     bool m_ownsMavlinkDecoder;
-    QGCMAVLinkInspector *m_mavlinkInspector;
+    QMetaObject::Connection m_inspectorConnection;
 };
 
 #endif // TLOGREPLYLINK_H

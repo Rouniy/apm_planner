@@ -15,6 +15,7 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QTableView>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <QTreeWidget>
 
@@ -104,6 +105,7 @@ private slots:
     void init();
     void fileCodecMatchesMissionPlannerContract();
     void fileCodecRejectsMalformedValueAndSavesSorted();
+    void reviewExistingFileStagesWithoutWriting();
     void widgetKeepsMissionPlannerNamesGeometryAndNaturalOrder();
     void stagedExpressionsRespectTypesRangesReadOnlyAndNoOps();
     void searchModifiedAndPrefixFiltersCompose();
@@ -178,6 +180,35 @@ void ConfigRawParamsTest::fileCodecRejectsMalformedValueAndSavesSorted()
         &saved, {{QStringLiteral("Z"), 2.5},
                  {QStringLiteral("A"), -1}}, &error));
     QCOMPARE(output, QByteArray("A,-1\nZ,2.5\n"));
+}
+
+void ConfigRawParamsTest::reviewExistingFileStagesWithoutWriting()
+{
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    const QByteArray contents("GAIN,2.5\nFORMAT_VERSION,999\n");
+    QCOMPARE(file.write(contents), qint64(contents.size()));
+    QVERIFY(file.flush());
+
+    ConfigRawParams view(catalogFixture());
+    view.setParameterSnapshot({
+        record(QStringLiteral("GAIN"), 1.0F, ParameterType::Real32),
+        record(QStringLiteral("FORMAT_VERSION"), qint32(120),
+               ParameterType::Int32)
+    });
+    QSignalSpy writes(&view, &ConfigRawParams::writeRequested);
+    QTimer::singleShot(0, []() {
+        auto *dialog = qobject_cast<QDialog *>(
+            QApplication::activeModalWidget());
+        QVERIFY(dialog);
+        dialog->accept();
+    });
+
+    view.reviewAndStageParameterFile(file.fileName());
+    QCOMPARE(view.stagedParameterCount(), 1);
+    QCOMPARE(view.stagedValue(QStringLiteral("GAIN")).toFloat(), 2.5F);
+    QVERIFY(!view.stagedValue(QStringLiteral("FORMAT_VERSION")).isValid());
+    QCOMPARE(writes.count(), 0);
 }
 
 void ConfigRawParamsTest::widgetKeepsMissionPlannerNamesGeometryAndNaturalOrder()

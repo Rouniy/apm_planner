@@ -19,11 +19,13 @@ using namespace kml;
 static bool writeSerial(QSerialPort* port, const char *s) {
     // QLOG_DEBUG() << "writeSerial(): cmd=" << s;
 
-    QMutex mutex;
-    QMutexLocker locker(&mutex);
+    if (!port || !port->isOpen()) {
+        return false;
+    }
 
     int written = port->write(s);
-    bool didWrite = port->waitForBytesWritten(-1);
+    // Never block the UI/serial event loop indefinitely on a lost device.
+    bool didWrite = port->waitForBytesWritten(1000);
 
     bool fail = ((!didWrite) || (written == -1));
 
@@ -37,18 +39,26 @@ static bool writeSerial(QSerialPort* port, const char *s) {
     return (!fail);
 }
 
-Worker::Worker(QSerialPort* port, QList<LogConsole::FileData>& fileData):
+Worker::Worker(QSerialPort* port, QList<LogConsole::FileData>& fileData,
+               QObject *parent):
+    QObject(parent),
     m_state(start),
     m_port(port),
     m_files(fileData),
     m_fdIndex(-1),
     m_blanks(0),
-    m_run(true)
+    m_run(true),
+    m_finished(false)
     {}
 
 Worker::~Worker() {}
 
 void Worker::process() {
+    if (!m_port || !m_port->isOpen()) {
+        emit error(tr("The terminal serial port is not open."));
+        onFinishAll();
+        return;
+    }
     connect(m_port, SIGNAL(readyRead()), this, SLOT(readData()));
 
     m_fdIndex = -1;
@@ -119,7 +129,14 @@ void Worker::onFinishFile() {
 }
 
 void Worker::onFinishAll() {
-    disconnect(m_port, SIGNAL(readyRead()), this, SLOT(readData()));
+    if (m_finished) {
+        return;
+    }
+    m_finished = true;
+    m_run = false;
+    if (m_port) {
+        disconnect(m_port, SIGNAL(readyRead()), this, SLOT(readData()));
+    }
     emit finishAll();
 }
 
@@ -154,7 +171,7 @@ void Worker::onLineRead(char *data) {
 
                 onFinishFile();
 
-                QTimer *timer = new QTimer();
+                QTimer *timer = new QTimer(this);
                 connect(timer, SIGNAL(timeout()), this, SLOT(readyNextFile()));
                 connect(timer, SIGNAL(timeout()), timer, SLOT(deleteLater()));
                 timer->start(1000);
@@ -196,10 +213,22 @@ void Worker::readData() {
 }
 
 void Worker::onCancel() {
+    if (m_finished) {
+        return;
+    }
+    m_finished = true;
+    m_run = false;
     QLOG_DEBUG() << "onCancel()";
     // Happens when the worker is cancelled
-    disconnect(m_port, SIGNAL(readyRead()), this, SLOT(readData()));
+    if (m_port) {
+        disconnect(m_port, SIGNAL(readyRead()), this, SLOT(readData()));
+    }
     emit cancelled();
+}
+
+void Worker::stop()
+{
+    onCancel();
 }
 
 //
@@ -225,6 +254,13 @@ LogConsole::LogConsole(QWidget *parent) :
 }
 
 LogConsole::~LogConsole() {
+    if (m_worker) {
+        Worker *worker = m_worker.data();
+        disconnect(worker, nullptr, this, nullptr);
+        worker->stop();
+        delete worker;
+        m_worker = nullptr;
+    }
     delete ui;
 }
 
@@ -253,10 +289,23 @@ void LogConsole::onShow(bool shown) {
         connect(m_serial, SIGNAL(readyRead()), this, SLOT(readData()));
     }
     else {
-        disconnect(m_serial, SIGNAL(readyRead()), this, SLOT(readData()));
+        if (m_worker) {
+            m_worker->stop();
+        }
+        if (m_serial) {
+            disconnect(m_serial, SIGNAL(readyRead()), this, SLOT(readData()));
+        }
     }
 
     setButtonEnabledStates();
+}
+
+void LogConsole::deactivate()
+{
+    onShow(false);
+    setSerial(nullptr);
+    setEnabled(false);
+    hide();
 }
 
 void LogConsole::readData() {
@@ -364,25 +413,26 @@ void LogConsole::pullSelectedClicked() {
         }
     }
 
-    disconnect(m_serial, SIGNAL(readyRead()), this, SLOT(readData()));
+    if (m_serial) {
+        disconnect(m_serial, SIGNAL(readyRead()), this, SLOT(readData()));
+    }
 
     if(files.size() > 0) {
-        QThread* thread = new QThread();
-        m_worker = new Worker(m_serial, files);
+        // QSerialPort must only be accessed from the thread that owns it.
+        // The worker is event-driven, so keep it on the UI/serial thread
+        // instead of using the former unsafe parentless QThread.
+        m_worker = new Worker(m_serial, files, this);
         m_worker->generateKml(ui->generateKmlCheck->isChecked());
-        m_worker->moveToThread(thread);
         connect(m_worker, SIGNAL(error(QString)), this, SLOT(dumpError(QString)));
         connect(m_worker, SIGNAL(startFile(QString)), this, SLOT(dumpFileStart(QString)));
         connect(m_worker, SIGNAL(finishFile(QString)), this, SLOT(dumpFileFinish(QString)));
         connect(m_worker, SIGNAL(bytesRead(long)), this, SLOT(dumpFileBytesRead(long)));
         connect(m_worker, SIGNAL(statusMsg(QString)), this, SLOT(dumpFileStatusMsg(QString)));
         connect(m_worker, SIGNAL(finishAll()), m_worker, SLOT(deleteLater()));
-        connect(thread, SIGNAL(started()), m_worker, SLOT(process()));
-        connect(m_worker, SIGNAL(finishAll()), thread, SLOT(quit()));
-        connect(thread, SIGNAL(finished()), thread, SLOT(deleteLater()));
+        connect(m_worker, SIGNAL(cancelled()), m_worker, SLOT(deleteLater()));
         connect(m_worker, SIGNAL(finishAll()), this, SLOT(workerStopped()));
         connect(m_worker, SIGNAL(cancelled()), this, SLOT(workerCancelled()));
-        thread->start();
+        QTimer::singleShot(0, m_worker, SLOT(process()));
     }
 
     setButtonEnabledStates();
@@ -526,4 +576,3 @@ void LogConsole::addListItem(QString &str) {
 void LogConsole::listItemCheckChanged() {
     setButtonEnabledStates();
 }
-

@@ -46,6 +46,14 @@ only the `toolPage` contribution. Valid plugins appear under Tools → QML Plugi
 and open lazily in a modeless `QQuickWidget` window. Relative QML components and
 assets remain local to the plugin directory.
 
+SETUP → Advanced → QML Plugins is the user-facing manager. It lists each valid
+manifest's name, id, version, author and directory, shows discovery/runtime
+diagnostics, opens the selected plugin or the writable user directory, and can
+reload discovery without restarting APM Planner. Reload closes open plugin
+windows, unregisters their runtime vehicle actions and rebuilds the Tools menu.
+Plugin code is never preserved across reload; persistent state belongs in the
+per-plugin settings API or plugin-owned files.
+
 ## QML entry point
 
 ```qml

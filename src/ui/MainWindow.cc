@@ -1430,13 +1430,10 @@ void MainWindow::buildCommonWidgets()
 
     { //This is required since we disabled the only existing parent window for the MAVLink Inspector
         QAction* tempAction = ui.menuTools->addAction(tr("MAVLink Inspector"));
+        tempAction->setObjectName(QStringLiteral("actionMavlinkInspector"));
         tempAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+I")));
-        tempAction->setCheckable(true);
-        connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
-        menuToDockNameMap[tempAction] = "MAVLINK_INSPECTOR_DOCKWIDGET";
-        /*QGCMAVLinkInspector *widget = new QGCMAVLinkInspector(mavlink,this);
-        logPlayer->setMavlinkInspector(widget);
-        createDockWidget(simView,widget,tr("MAVLink Inspector"),"MAVLINK_INSPECTOR_DOCKWIDGET",VIEW_SIMULATION,Qt::RightDockWidgetArea);*/
+        connect(tempAction, &QAction::triggered,
+                this, &MainWindow::showMavlinkInspector);
     }
 
     /*{ //Actuator status disabled until such a point that we can ensure it's completly operational
@@ -1748,13 +1745,6 @@ void MainWindow::loadDockWidget(QString name)
     else if (name == "EKF_MONITOR_DOCKWIDGET")
     {
         createDockWidget(centerStack->currentWidget(),new EKFMonitor(this),tr("EKF Monitor"),"EKF_MONITOR_DOCKWIDGET",currentView,Qt::RightDockWidgetArea);
-    }
-    else if (name == "MAVLINK_INSPECTOR_DOCKWIDGET")
-    {
-        QGCMAVLinkInspector *widget = new QGCMAVLinkInspector(this);
-        logPlayer->setMavlinkInspector(widget);
-        createDockWidget(centerStack->currentWidget(),widget,tr("MAVLink Inspector"),"MAVLINK_INSPECTOR_DOCKWIDGET",currentView,Qt::RightDockWidgetArea);
-        //logPlayer*/
     }
     else if (name == "PARAMETER_INTERFACE_DOCKWIDGET")
     {
@@ -3781,6 +3771,31 @@ void MainWindow::showTerminalConsole()
     if (m_terminalDialog){
         m_terminalDialog->raise();
     }
+}
+
+void MainWindow::showMavlinkInspector()
+{
+    if (!m_mavlinkInspectorWindow) {
+        auto *inspector = new QGCMAVLinkInspector(this);
+        inspector->setObjectName(QStringLiteral("MAVLinkInspectorWindow"));
+        inspector->setWindowFlag(Qt::Window, true);
+        inspector->setWindowTitle(tr("MAVLink Inspector"));
+        inspector->setAttribute(Qt::WA_DeleteOnClose, true);
+        inspector->resize(760, 560);
+        m_mavlinkInspectorWindow = inspector;
+        if (logPlayer) {
+            logPlayer->setMavlinkInspector(inspector);
+        }
+        connect(inspector, &QObject::destroyed, this, [this]() {
+            if (logPlayer) {
+                logPlayer->setMavlinkInspector(nullptr);
+            }
+        });
+    }
+
+    m_mavlinkInspectorWindow->show();
+    m_mavlinkInspectorWindow->raise();
+    m_mavlinkInspectorWindow->activateWindow();
 }
 
 void MainWindow::closeTerminalConsole()

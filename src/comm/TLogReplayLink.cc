@@ -18,10 +18,10 @@ TLogReplayLink::TLogReplayLink(QObject *parent) :
     m_posVar(0),
     m_pause(false),
     m_mavlinkDecoder(new MAVLinkDecoder()),
-    m_ownsMavlinkDecoder(true),
-    m_mavlinkInspector(NULL)
+    m_ownsMavlinkDecoder(true)
 {
     Q_UNUSED(parent);
+    qRegisterMetaType<mavlink_message_t>("mavlink_message_t");
 }
 
 TLogReplayLink::~TLogReplayLink()
@@ -134,7 +134,14 @@ void TLogReplayLink::setMavlinkDecoder(MAVLinkDecoder *decoder)
 }
 void TLogReplayLink::setMavlinkInspector(QGCMAVLinkInspector *inspector)
 {
-    m_mavlinkInspector = inspector;
+    QObject::disconnect(m_inspectorConnection);
+    m_inspectorConnection = QMetaObject::Connection();
+    if (inspector) {
+        m_inspectorConnection = QObject::connect(
+            this, &TLogReplayLink::inspectorMessage,
+            inspector, &QGCMAVLinkInspector::receiveMessage,
+            Qt::QueuedConnection);
+    }
 }
 
 void TLogReplayLink::run()
@@ -317,10 +324,7 @@ void TLogReplayLink::run()
                             object->messageReceived(this,message);
                         }
                         m_mavlinkDecoder->receiveMessage(this,message);
-                        if (m_mavlinkInspector)
-                        {
-                            m_mavlinkInspector->receiveMessage(this,message);
-                        }
+                        emit inspectorMessage(this, message);
                     }
                     else
                     {

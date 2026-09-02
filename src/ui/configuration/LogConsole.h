@@ -35,6 +35,7 @@ public:
 
     void setSerial(QSerialPort *);
     void onShow(bool shown);
+    void deactivate();
 
 signals:
     void statusMessage(QString);
@@ -60,10 +61,10 @@ private slots:
 
 private:
     Ui::LogConsole *ui;
-    QSerialPort *m_serial;
+    QPointer<QSerialPort> m_serial;
     PullMode m_pullMode;
     QString m_currentFile;
-    Worker* m_worker;
+    QPointer<Worker> m_worker;
 
     void processLine(QByteArray &data);
     void initConnections();
@@ -85,10 +86,9 @@ class Worker: public QObject {
     };
 
 public:
-    Worker(QSerialPort *, QList<LogConsole::FileData> &);
+    Worker(QSerialPort *, QList<LogConsole::FileData> &,
+           QObject *parent = nullptr);
     ~Worker();
-
-    void stop() { m_run = false; }
 
     void generateKml(bool gen = true) { m_generateKml = gen; }
     bool generatesKml() { return m_generateKml; }
@@ -97,6 +97,7 @@ public slots:
     void process();
     void readData();
     void readyNextFile();
+    void stop();
 
 signals:
     void startFile(QString);
@@ -124,6 +125,7 @@ private:
     int m_fdIndex;
     int m_blanks;
     bool m_run;
+    bool m_finished;
 };
 
 

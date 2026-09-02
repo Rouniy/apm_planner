@@ -154,18 +154,23 @@ void TerminalConsole::showEvent(QShowEvent *event)
 void TerminalConsole::hideEvent(QHideEvent *event)
 {
     Q_UNUSED(event);
-    // Stop the port list refeshing
-    m_timer.stop();
+    deactivate();
 }
 
 TerminalConsole::~TerminalConsole()
 {
+    deactivate();
     delete m_serial;
     if (!m_console.isNull()) delete m_console;
     delete m_statusBar;
     delete m_settingsDialog;
     delete m_logConsole;
     delete ui;
+}
+
+bool TerminalConsole::isSerialPortOpen() const
+{
+    return m_serial && m_serial->isOpen();
 }
 
 void TerminalConsole::populateSerialPorts()
@@ -265,6 +270,18 @@ void TerminalConsole::closeSerialPort()
     m_timer.start(2000); //re-start port scanning
 }
 
+void TerminalConsole::deactivate()
+{
+    if (m_logConsole) {
+        m_logConsole->deactivate();
+    }
+    if (isSerialPortOpen()) {
+        closeSerialPort();
+    }
+    // A hidden terminal must neither own the device nor scan ports.
+    m_timer.stop();
+}
+
 void TerminalConsole::sendResetCommand()
 {
     if (m_serial->isOpen()) {
@@ -320,8 +337,8 @@ void TerminalConsole::initConnections()
     connect(ui->linkComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(setLink(int)));
 
     // Serial Port Connections
-    connect(m_serial, SIGNAL(error(QSerialPort::SerialPortError)), this,
-            SLOT(handleError(QSerialPort::SerialPortError)));
+    connect(m_serial, &QSerialPort::errorOccurred,
+            this, &TerminalConsole::handleError);
 
     connect(m_serial, SIGNAL(readyRead()), this, SLOT(readData()));
     connect(m_console, SIGNAL(getData(QByteArray)), this, SLOT(writeData(QByteArray)));
@@ -408,6 +425,3 @@ void TerminalConsole::writeSettings()
     settings.endGroup();
     settings.sync();
 }
-
-
-

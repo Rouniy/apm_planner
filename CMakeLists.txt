@@ -629,6 +629,24 @@ set(SOURCES
     src/ui/configuration/ApmHardwareConfig.cc
     src/ui/configuration/ApmHardwareConfig.h
     src/ui/configuration/ApmHardwareConfig.ui
+    src/ui/configuration/ActionPageView.cpp
+    src/ui/configuration/ActionPageView.h
+    src/ui/configuration/ConfigAdvancedView.cpp
+    src/ui/configuration/ConfigAdvancedView.h
+    src/ui/configuration/ConfigDeveloperToolsView.cpp
+    src/ui/configuration/ConfigDeveloperToolsView.h
+    src/ui/configuration/ConfigDefaultSettingsView.cpp
+    src/ui/configuration/ConfigDefaultSettingsView.h
+    src/ui/configuration/ConfigHWIDView.cpp
+    src/ui/configuration/ConfigHWIDView.h
+    src/ui/configuration/ConfigHWIDViewModel.cpp
+    src/ui/configuration/ConfigHWIDViewModel.h
+    src/ui/configuration/DeveloperToolParsers.cpp
+    src/ui/configuration/DeveloperToolParsers.h
+    src/ui/configuration/FrameDefaultCatalogService.cpp
+    src/ui/configuration/FrameDefaultCatalogService.h
+    src/ui/configuration/QmlPluginManagerView.cpp
+    src/ui/configuration/QmlPluginManagerView.h
     src/ui/configuration/SetupView.cpp
     src/ui/configuration/SetupView.h
     src/ui/configuration/ApmHighlighter.cc
@@ -1656,6 +1674,74 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
+    add_executable(framedefaultcatalogservice_tests
+        tests/test_framedefaultcatalogservice.cpp
+        src/ui/configuration/FrameDefaultCatalogService.cpp
+        src/ui/configuration/FrameDefaultCatalogService.h
+    )
+    target_include_directories(framedefaultcatalogservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(framedefaultcatalogservice_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::Test
+    )
+    add_test(NAME framedefaultcatalogservice_tests
+        COMMAND framedefaultcatalogservice_tests)
+
+    add_executable(configdefaultsettingsview_tests
+        tests/test_configdefaultsettingsview.cpp
+        src/ui/configuration/ConfigDefaultSettingsView.cpp
+        src/ui/configuration/ConfigDefaultSettingsView.h
+        src/ui/configuration/ConfigRawParams.cpp
+        src/ui/configuration/ConfigRawParams.h
+        src/ui/configuration/FrameDefaultCatalogService.cpp
+        src/ui/configuration/FrameDefaultCatalogService.h
+    )
+    target_include_directories(configdefaultsettingsview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configdefaultsettingsview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Network
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configdefaultsettingsview_tests
+        COMMAND configdefaultsettingsview_tests)
+    set_tests_properties(configdefaultsettingsview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(confighwidview_tests
+        tests/test_confighwidview.cpp
+        src/ui/configuration/ConfigHWIDView.cpp
+        src/ui/configuration/ConfigHWIDView.h
+        src/ui/configuration/ConfigHWIDViewModel.cpp
+        src/ui/configuration/ConfigHWIDViewModel.h
+        src/ui/configuration/DeveloperToolParsers.cpp
+        src/ui/configuration/DeveloperToolParsers.h
+    )
+    target_include_directories(confighwidview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(confighwidview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME confighwidview_tests COMMAND confighwidview_tests)
+    set_tests_properties(confighwidview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
     add_executable(configuserdefinedview_tests
         tests/test_configuserdefinedview.cpp
         src/ui/configuration/ConfigUserDefinedView.cpp
@@ -1754,6 +1840,69 @@ if(BUILD_TESTING)
     add_test(NAME configmavcommandview_tests
         COMMAND configmavcommandview_tests)
     set_tests_properties(configmavcommandview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configadvancedview_tests
+        tests/test_configadvancedview.cpp
+        src/ui/configuration/ActionPageView.cpp
+        src/ui/configuration/ActionPageView.h
+        src/ui/configuration/ConfigAdvancedView.cpp
+        src/ui/configuration/ConfigAdvancedView.h
+    )
+    target_include_directories(configadvancedview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(configadvancedview_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME configadvancedview_tests
+        COMMAND configadvancedview_tests)
+    set_tests_properties(configadvancedview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(developertoolparsers_tests
+        tests/test_developertoolparsers.cpp
+        src/ui/configuration/DeveloperToolParsers.cpp
+        src/ui/configuration/DeveloperToolParsers.h
+    )
+    target_include_directories(developertoolparsers_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(developertoolparsers_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME developertoolparsers_tests
+        COMMAND developertoolparsers_tests)
+
+    add_executable(configdevelopertoolsview_tests
+        tests/test_configdevelopertoolsview.cpp
+        src/ui/configuration/ActionPageView.cpp
+        src/ui/configuration/ActionPageView.h
+        src/ui/configuration/ConfigDeveloperToolsView.cpp
+        src/ui/configuration/ConfigDeveloperToolsView.h
+        src/ui/configuration/DeveloperToolParsers.cpp
+        src/ui/configuration/DeveloperToolParsers.h
+    )
+    target_include_directories(configdevelopertoolsview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(configdevelopertoolsview_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME configdevelopertoolsview_tests
+        COMMAND configdevelopertoolsview_tests)
+    set_tests_properties(configdevelopertoolsview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
@@ -2791,6 +2940,8 @@ if(BUILD_TESTING)
         src/qml/QmlPluginManager.h
         src/qml/QmlPluginManifest.cpp
         src/qml/QmlPluginManifest.h
+        src/ui/configuration/QmlPluginManagerView.cpp
+        src/ui/configuration/QmlPluginManagerView.h
     )
     target_include_directories(qmlpluginmanager_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src

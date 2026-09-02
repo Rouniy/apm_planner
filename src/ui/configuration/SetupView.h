@@ -16,6 +16,7 @@ class BackstageView;
 class ConfigGpsInjectView;
 class ConfigDroneCanView;
 class DroneCanMavlinkTransport;
+class FrameDefaultCatalogService;
 class LinkInterface;
 class ParameterMetaDataRepository;
 class QGCUASParamManager;
@@ -61,6 +62,8 @@ private:
     void resetParameterProgress();
     bool hasConnectedLink() const;
     bool currentPageAllowsPartialParameters() const;
+    QWidget *createDefaultSettingsPage(QWidget *parent);
+    QWidget *createHWIDPage(QWidget *parent);
     QWidget *createMotorTestPage(QWidget *parent);
     QWidget *createBluetoothSetupPage(QWidget *parent);
     QWidget *createParachutePage(QWidget *parent);
@@ -86,6 +89,7 @@ private:
     DroneCanForwardingBroker::LeaseToken m_droneCanLease;
     QPointer<LinkInterface> m_droneCanLastPrimaryLink;
     std::unique_ptr<ParameterMetaDataRepository> m_metadataRepository;
+    QPointer<FrameDefaultCatalogService> m_frameDefaultCatalogService;
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
     QString m_parameterLoadFailure;

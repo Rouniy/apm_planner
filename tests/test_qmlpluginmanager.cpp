@@ -2,6 +2,7 @@
 
 #include "qml/ApmQmlApi.h"
 #include "qml/QmlPluginManager.h"
+#include "ui/configuration/QmlPluginManagerView.h"
 
 #include <QAction>
 #include <QApplication>
@@ -11,11 +12,15 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMenu>
+#include <QPlainTextEdit>
+#include <QPointer>
+#include <QPushButton>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickWidget>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QTableWidget>
 #include <QWidget>
 
 namespace
@@ -213,6 +218,9 @@ private slots:
     void clearsDestroyedActiveVehicleAndNotifies();
     void rejectsDuplicateIds();
     void isolatesBrokenQmlAtRuntime();
+    void exposesMetadataAndReloadsDiscovery();
+    void managerViewTracksPluginInventory();
+    void pluginCanRequestReloadWithoutDestroyingItsCallback();
 };
 
 void QmlPluginManagerTest::discoversAndOpensToolPageWithDirectCoreApi()
@@ -275,6 +283,7 @@ void QmlPluginManagerTest::discoversAndOpensToolPageWithDirectCoreApi()
         QStringLiteral("menuQmlPlugins"));
     QVERIFY(pluginMenu);
     QCOMPARE(pluginMenu->actions().size(), 2);
+
     QCOMPARE(pluginMenu->actions().first()->text(), QStringLiteral("Alpha Tool"));
 
     pluginMenu->actions().first()->trigger();
@@ -451,6 +460,140 @@ void QmlPluginManagerTest::isolatesBrokenQmlAtRuntime()
     QVERIFY(!manager.errors().isEmpty());
     QVERIFY(!mainWindow.findChild<QDialog *>(
         QStringLiteral("QmlPluginWindow_org.example.broken")));
+}
+
+void QmlPluginManagerTest::exposesMetadataAndReloadsDiscovery()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(createPlugin(root.path(), QStringLiteral("alpha"),
+                         QStringLiteral("org.example.alpha"),
+                         QStringLiteral("Alpha Tool"), validQml()));
+
+    QObject uasManager;
+    TestLinkManager linkManager;
+    QObject settings;
+    QMenu toolsMenu;
+    QmlPluginManager manager(&uasManager, &linkManager, &settings);
+    manager.start(&toolsMenu, {root.path(), root.path() + QStringLiteral("/.")});
+
+    QCOMPARE(manager.searchRoots(),
+             QStringList({QDir::cleanPath(root.path())}));
+    QCOMPARE(manager.pluginCount(), 1);
+    QCOMPARE(manager.plugins().size(), 1);
+    const QVariantMap alpha = manager.plugins().constFirst().toMap();
+    QCOMPARE(alpha.value(QStringLiteral("id")).toString(),
+             QStringLiteral("org.example.alpha"));
+    QCOMPARE(alpha.value(QStringLiteral("name")).toString(),
+             QStringLiteral("Alpha Tool"));
+    QCOMPARE(alpha.value(QStringLiteral("version")).toString(),
+             QStringLiteral("1.0.0"));
+    QCOMPARE(alpha.value(QStringLiteral("title")).toString(),
+             QStringLiteral("Alpha Tool"));
+    QVERIFY(QFileInfo(alpha.value(QStringLiteral("directory")).toString())
+                .isAbsolute());
+    QVERIFY(!manager.openPlugin(QStringLiteral("org.example.missing")));
+
+    QVERIFY(createPlugin(root.path(), QStringLiteral("bravo"),
+                         QStringLiteral("org.example.bravo"),
+                         QStringLiteral("Bravo Tool"), validQml()));
+    QSignalSpy changedSpy(&manager, &QmlPluginManager::pluginsChanged);
+    manager.reload();
+    manager.reload();
+    QTRY_COMPARE(changedSpy.size(), 1);
+    QTRY_COMPARE(manager.pluginCount(), 2);
+    QCOMPARE(manager.pluginIds(),
+             QStringList({QStringLiteral("org.example.alpha"),
+                          QStringLiteral("org.example.bravo")}));
+    QMenu *pluginMenu = toolsMenu.findChild<QMenu *>(
+        QStringLiteral("menuQmlPlugins"));
+    QVERIFY(pluginMenu);
+    QCOMPARE(pluginMenu->actions().size(), 2);
+
+    // A queued reload must not resurrect plugins after an immediate shutdown.
+    manager.reload();
+    manager.shutdown();
+    QCoreApplication::processEvents();
+    QCOMPARE(manager.pluginCount(), 0);
+    QVERIFY(!toolsMenu.findChild<QMenu *>(QStringLiteral("menuQmlPlugins")));
+}
+
+void QmlPluginManagerTest::managerViewTracksPluginInventory()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    QVERIFY(createPlugin(root.path(), QStringLiteral("alpha"),
+                         QStringLiteral("org.example.alpha"),
+                         QStringLiteral("Alpha Tool"), validQml()));
+
+    QObject uasManager;
+    TestLinkManager linkManager;
+    QObject settings;
+    QMenu toolsMenu;
+    QmlPluginManager manager(&uasManager, &linkManager, &settings);
+    QmlPluginManagerView view(&manager);
+
+    auto *table = view.findChild<QTableWidget *>(QStringLiteral("Plugins"));
+    auto *reload = view.findChild<QPushButton *>(
+        QStringLiteral("ReloadButton"));
+    auto *open = view.findChild<QPushButton *>(QStringLiteral("OpenButton"));
+    auto *diagnostics = view.findChild<QPlainTextEdit *>(
+        QStringLiteral("Diagnostics"));
+    QVERIFY(table);
+    QVERIFY(reload && reload->isEnabled());
+    QVERIFY(open && !open->isEnabled());
+    QVERIFY(diagnostics);
+    QCOMPARE(table->rowCount(), 0);
+
+    manager.start(&toolsMenu, {root.path()});
+    QCOMPARE(table->rowCount(), 1);
+    QCOMPARE(table->item(0, 0)->text(), QStringLiteral("Alpha Tool"));
+    QCOMPARE(table->item(0, 1)->text(), QStringLiteral("org.example.alpha"));
+    QCOMPARE(table->item(0, 2)->text(), QStringLiteral("1.0.0"));
+    QVERIFY(diagnostics->toPlainText().contains(QStringLiteral("No plugin")));
+
+    table->selectRow(0);
+    QVERIFY(open->isEnabled());
+}
+
+void QmlPluginManagerTest::pluginCanRequestReloadWithoutDestroyingItsCallback()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QByteArray reloadingQml = QByteArrayLiteral(
+        "import QtQuick 2.12\n"
+        "import APMPlanner.Core 1.0\n"
+        "Item { width: 32; height: 32; "
+        "Component.onCompleted: { "
+        "APMPlanner.pluginManager.openPlugin('org.example.reload'); "
+        "APMPlanner.pluginManager.reload(); } "
+        "Component.onDestruction: "
+        "APMPlanner.pluginManager.openPlugin('org.example.reload') }\n");
+    QVERIFY(createPlugin(root.path(), QStringLiteral("reload"),
+                         QStringLiteral("org.example.reload"),
+                         QStringLiteral("Reload Tool"), reloadingQml));
+
+    QObject uasManager;
+    TestLinkManager linkManager;
+    QObject settings;
+    QWidget mainWindow;
+    QMenu toolsMenu;
+    QmlPluginManager manager(&uasManager, &linkManager, &settings);
+    QVERIFY(manager.metaObject()->indexOfMethod("reload()") >= 0);
+    QVERIFY(manager.metaObject()->indexOfMethod("openPlugin(QString)") >= 0);
+    // Lifecycle methods remain C++ API: a plugin cannot synchronously destroy
+    // its own QQuickWidget by invoking start()/shutdown() from QML.
+    QVERIFY(manager.metaObject()->indexOfMethod("shutdown()") < 0);
+    manager.setMainWindow(&mainWindow);
+    manager.start(&toolsMenu, {root.path()});
+
+    QVERIFY(manager.openPlugin(QStringLiteral("org.example.reload")));
+    QPointer<QDialog> window = mainWindow.findChild<QDialog *>(
+        QStringLiteral("QmlPluginWindow_org.example.reload"));
+    QVERIFY(window);
+    QTRY_VERIFY(window.isNull());
+    QCOMPARE(manager.pluginCount(), 1);
+    QVERIFY(toolsMenu.findChild<QMenu *>(QStringLiteral("menuQmlPlugins")));
 }
 
 QTEST_MAIN(QmlPluginManagerTest)
