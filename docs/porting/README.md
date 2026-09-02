@@ -1,5 +1,10 @@
 # Mission Planner 10 to APM Planner 3.0 parity control
 
+Start with `CURRENT_STATE.md` for the active task, verified checkpoint and
+immediate implementation order. `PORTING_DEVIATIONS.tsv` keeps functional gaps
+separate from GUI differences so broad usability work is not confused with the
+later visual-polish pass. Repository-wide agent/build rules are in `AGENTS.md`.
+
 `MISSION_PLANNER_SCREEN_PARITY.tsv` is the acceptance ledger for the Qt/CMake
 reimplementation. It is based on the current reference tree at
 `/home/alex/SRC/MP/MissionPlanner`. The separately cloned original WinForms
