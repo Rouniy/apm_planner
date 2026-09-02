@@ -144,7 +144,8 @@ QList<ParamField> ConfigFriendlyParamsViewModel::visibleFields() const
     for (const ParamField &field : m_fields) {
         if (m_search.isEmpty()
             || field.name.contains(m_search, Qt::CaseInsensitive)
-            || field.label.contains(m_search, Qt::CaseInsensitive)) {
+            || field.label.contains(m_search, Qt::CaseInsensitive)
+            || field.description.contains(m_search, Qt::CaseInsensitive)) {
             result.append(field);
         }
     }

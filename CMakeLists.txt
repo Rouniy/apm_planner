@@ -245,6 +245,8 @@ set(SOURCES
     src/comm/DroneCanGetSetClient.h
     src/comm/DroneCanMavlinkTransport.cpp
     src/comm/DroneCanMavlinkTransport.h
+    src/comm/AdsbIdentificationClient.cpp
+    src/comm/AdsbIdentificationClient.h
     src/comm/ExactLinkTransmitter.cpp
     src/comm/ExactLinkTransmitter.h
     src/comm/GpsCorrectionSource.cpp
@@ -633,6 +635,10 @@ set(SOURCES
     src/ui/configuration/ActionPageView.h
     src/ui/configuration/ConfigAdvancedView.cpp
     src/ui/configuration/ConfigAdvancedView.h
+    src/ui/configuration/ConfigADSBView.cpp
+    src/ui/configuration/ConfigADSBView.h
+    src/ui/configuration/ConfigADSBViewModel.cpp
+    src/ui/configuration/ConfigADSBViewModel.h
     src/ui/configuration/ConfigDeveloperToolsView.cpp
     src/ui/configuration/ConfigDeveloperToolsView.h
     src/ui/configuration/ConfigDefaultSettingsView.cpp
@@ -1742,6 +1748,46 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
+    add_executable(configadsbview_tests
+        tests/test_configadsbview.cpp
+        src/ui/configuration/ConfigADSBView.cpp
+        src/ui/configuration/ConfigADSBView.h
+        src/ui/configuration/ConfigADSBViewModel.cpp
+        src/ui/configuration/ConfigADSBViewModel.h
+        src/ui/configuration/ConfigFriendlyParamsView.cpp
+        src/ui/configuration/ConfigFriendlyParamsView.h
+        src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
+        src/ui/configuration/ConfigFriendlyParamsViewModel.h
+        src/ui/configuration/ParamField.h
+        src/comm/AdsbIdentificationClient.cpp
+        src/comm/AdsbIdentificationClient.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(configadsbview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(configadsbview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configadsbview_tests COMMAND configadsbview_tests)
+    set_tests_properties(configadsbview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
     add_executable(configuserdefinedview_tests
         tests/test_configuserdefinedview.cpp
         src/ui/configuration/ConfigUserDefinedView.cpp
@@ -2268,6 +2314,31 @@ if(BUILD_TESTING)
     )
     add_test(NAME exact_link_transmitter_tests
              COMMAND exact_link_transmitter_tests)
+
+    add_executable(adsb_identification_client_tests
+        tests/test_adsbidentificationclient.cpp
+        src/comm/AdsbIdentificationClient.cpp
+        src/comm/AdsbIdentificationClient.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(adsb_identification_client_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(adsb_identification_client_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME adsb_identification_client_tests
+             COMMAND adsb_identification_client_tests)
 
     add_executable(vehicle_target_manager_tests
         tests/test_vehicletargetmanager.cpp

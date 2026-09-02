@@ -17,18 +17,18 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-The latest functional checkpoint is the commit containing this handoff, following `de7fd269` (`feat: add Mission Planner command catalog editor`) and the broad parity checkpoint `b79e2f73`.
+The latest functional checkpoint is the commit containing this handoff, following `590a820d` (`feat: port Mission Planner setup tools and defaults`), `de7fd269` (`feat: add Mission Planner command catalog editor`) and the broad parity checkpoint `b79e2f73`.
 
 At this checkpoint:
 
 - CMake configure and one `cmake --build build -j12` completed successfully.
-- The complete test suite passed: **81/81 tests**.
-- A real X11 main-window smoke test opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, opened, closed and reopened the modeless MAVLink Inspector, and then closed the main window while the inspector was open with exit code 0.
+- The complete test suite passed: **83/83 tests**.
+- Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, switched to SETUP without waiting for the firmware manifest, rendered the connected ADSB page, and closed the main window cleanly while SETUP network work was active.
 - The worktree was clean after the commit.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 127 product rows: 29 `in-progress`, 49 `partial`, 49 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 127 product rows: 30 `in-progress`, 49 `partial`, 48 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -45,6 +45,7 @@ These are working foundations, though their parity rows may remain partial becau
 - Mission Command List editor and catalog, exposed to PLAN and QML.
 - The MP10 Default Settings workflow: official frame catalog discovery/download/cache, compare/stage into the native raw-parameter editor, exact target-generation guards and operation-scoped cancellation.
 - The MP10 HW ID page: `_ID`/`_DEVID` inventory, ArduPilot device-ID decoding and exact six-column sortable presentation.
+- The MP10 ADSB page: metadata-backed `ADSB_`/`AVD_` parameter editing and batching, search, uAvionix flight-ID/registration read/write cadence and exact-target message filtering.
 - Advanced and Developer action inventories, working shared actions/parsers, Advanced Terminal and the user-facing trusted QML plugin manager.
 - Cooperative shutdown ordering, including close with the modeless inspector open, verified by the real-X11 smoke above.
 
@@ -60,11 +61,13 @@ The next coherent PLAN package should combine Grid, KML preview/export, a persis
 
 The SETUP phase must compare the whole MP10 navigation model with the Qt backstage model, then classify every route as working, partial, stub or missing. Prioritize pages that can be made end-to-end functional on existing exact-target/parameter/command services and already implemented widgets.
 
-The original navigation audit found 53 MP10 pages and 28 Qt routes. The current backstage registers 34 Qt routes; this is not a one-to-one count because the trusted QML manager is a native replacement/extension surface. The onboard OSD route remains miswired to the legacy telemetry-rate page, and many MP10 workflows are still absent or partial.
+The original navigation audit found 53 MP10 pages and 28 Qt routes. The current backstage registers 35 Qt routes; this is not a one-to-one count because the trusted QML manager is a native replacement/extension surface. The onboard OSD route remains miswired to the legacy telemetry-rate page, and many MP10 workflows are still absent or partial.
 
-The verified slice adds the common `ActionPageView`, the exact 16-action `ConfigAdvancedView` inventory with three working shared tools (MAVLink Inspector, Map Tile Cache and Proximity), a standalone inspector window, Advanced Terminal, and a user-facing trusted QML plugin manager. Developer Tools exposes the exact 32-action inventory and working byte/MAVLink/hardware-ID parsers. Default Settings and HW ID are now routed in MP10 order and connected to the committed exact-target parameter snapshot; their offline/unit coverage is part of the 81-test checkpoint.
+The verified SETUP packages include the common `ActionPageView`, the exact 16-action `ConfigAdvancedView` inventory with three working shared tools (MAVLink Inspector, Map Tile Cache and Proximity), a standalone inspector window, Advanced Terminal, and a user-facing trusted QML plugin manager. Developer Tools exposes the exact 32-action inventory and working byte/MAVLink/hardware-ID parsers. Default Settings, HW ID and ADSB are routed in MP10 order and connected to the committed exact-target parameter snapshot; ADSB identification uses the application-owned exact-link transmitter rather than a legacy global send path.
 
-A real-X11 smoke exposed a separate navigation/usability problem: first activation of SETUP can remain on the previously painted page while `ApmCustomFirmwareConfig` synchronously waits for the remote firmware manifest. Treat removal of that blocking construction path as the next high-priority shell fix before adding more SETUP pages.
+The first-activation SETUP stall is fixed: `ApmCustomFirmwareConfig` yields before serial enumeration, downloads the manifest asynchronously through a dedicated reply, uses progress-based inactivity watchdogs, and keeps firmware download/upload state isolated. Flash actions retain an immutable selected-device snapshot and remain locked until a terminal upload outcome; destruction aborts replies and stops uploader timers. The still-large uncompressed manifest, GUI-thread JSON parsing, serial enumeration and complete MP10 firmware-selector parity remain explicit follow-up work.
+
+The next audited SETUP packages are CubeID and Secure. CubeID is a target-aware firmware updater, not another HW-ID presentation; its CubePilot messages are absent from the current generated dialect and require a coordinated MAVLink update. `ConfigSecureView` manages bootloader public-key slots with `SECURE_COMMAND`, while `ConfigSecureApView` generates Ed25519 keys and signs bootloader/firmware files; MAVLink link signing remains a separate Advanced Tools workflow. The security pages need a reviewed cross-platform Ed25519 dependency before implementation.
 
 Legacy APM Planner binary plugins are not a requirement. Where MP10 calls something a plugin/page/tool, reproduce the user-visible function with a native Qt page/service or the trusted QML extension system; do not restore the old ABI.
 

@@ -532,6 +532,11 @@ VehicleTargetManager *LinkManager::vehicleTargetManager() const
     return m_vehicleTargetManager;
 }
 
+ExactLinkTransmitter *LinkManager::exactLinkTransmitter() const
+{
+    return m_exactLinkTransmitter;
+}
+
 VehicleCommandService *LinkManager::vehicleCommandService() const
 {
     return m_vehicleCommandService;

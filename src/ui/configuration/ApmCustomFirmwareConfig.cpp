@@ -32,12 +32,9 @@ This file is part of the APM_PLANNER project
 
 #include <QUrl>
 #include <QFileDialog>
-
-#if QT_VERSION < QT_VERSION_CHECK(5, 15, 0)
-#define NETWORKERROR QNetworkReply::error
-#else
-#define NETWORKERROR QNetworkReply::errorOccurred
-#endif
+#include <QNetworkAccessManager>
+#include <QNetworkRequest>
+#include <QTimer>
 
 ApmCustomFirmwareConfig::ApmCustomFirmwareConfig(QWidget *parent) :
     QWidget(parent),
@@ -59,6 +56,47 @@ ApmCustomFirmwareConfig::ApmCustomFirmwareConfig(QWidget *parent) :
     SetButtonState();
 
     mp_networkManager = new QNetworkAccessManager(this);
+    m_manifestTimeout = new QTimer(this);
+    m_manifestTimeout->setSingleShot(true);
+    connect(m_manifestTimeout, &QTimer::timeout, this, [this]() {
+        QPointer<QNetworkReply> reply = m_manifestReply;
+        if (!reply) {
+            return;
+        }
+        m_manifestReply.clear();
+        m_manifestState = ManifestState::Error;
+        m_lastManifestProgress = 0;
+        disconnect(reply.data(), nullptr, this, nullptr);
+        reply->abort();
+        reply->deleteLater();
+        const QString message = tr("Fetching available firmwares timed out.");
+        QLOG_WARN() << "ApmCustomFirmwareConfig:" << message;
+        mp_Ui->statusInfoWidget->append(message);
+        if (isVisible()) {
+            QMessageBox::warning(this, tr("Error"), message);
+        }
+    });
+
+    m_firmwareTimeout = new QTimer(this);
+    m_firmwareTimeout->setSingleShot(true);
+    connect(m_firmwareTimeout, &QTimer::timeout, this, [this]() {
+        QPointer<QNetworkReply> reply = m_firmwareReply;
+        if (!reply) {
+            return;
+        }
+        m_firmwareReply.clear();
+        m_lastFirmwareProgress = 0;
+        disconnect(reply.data(), nullptr, this, nullptr);
+        reply->abort();
+        reply->deleteLater();
+        finishOperation();
+        const QString message = tr("Downloading firmware timed out.");
+        QLOG_WARN() << "ApmCustomFirmwareConfig:" << message;
+        mp_Ui->statusInfoWidget->append(message);
+        if (isVisible()) {
+            QMessageBox::warning(this, tr("Error"), message);
+        }
+    });
 
     // setup progress bar
     mp_Ui->progressBar->setMinimum(0);
@@ -73,25 +111,62 @@ ApmCustomFirmwareConfig::ApmCustomFirmwareConfig(QWidget *parent) :
     connect(mp_Ui->fwDownloadButton, &QPushButton::clicked, this, &ApmCustomFirmwareConfig::firmwareDownloadBtnClicked);
 }
 
+ApmCustomFirmwareConfig::~ApmCustomFirmwareConfig()
+{
+    m_manifestTimeout->stop();
+    m_firmwareTimeout->stop();
+
+    const auto abortReply = [this](QPointer<QNetworkReply> &reply) {
+        QPointer<QNetworkReply> activeReply = reply;
+        reply.clear();
+        if (!activeReply) {
+            return;
+        }
+        disconnect(activeReply.data(), nullptr, this, nullptr);
+        activeReply->abort();
+    };
+    abortReply(m_manifestReply);
+    abortReply(m_firmwareReply);
+    if (mp_px4Updater) {
+        disconnect(mp_px4Updater.data(), nullptr, this, nullptr);
+        mp_px4Updater->stop();
+        mp_px4Updater.reset();
+    }
+    delete mp_Ui;
+}
+
 void ApmCustomFirmwareConfig::showEvent(QShowEvent *event)
 {
-    Q_UNUSED(event)
+    QWidget::showEvent(event);
     QLOG_DEBUG() << "ApmCustomFirmwareConfig: Install Firmware selected";
     MainWindow::instance()->toolBar().disableConnectWidget(true);
 
-    // fetch firmware list if not already done
-    if (m_availableFirmwares.empty())
-    {
-        fetchAvailableFirmware();
+    if (m_activationWorkScheduled) {
+        return;
     }
-
-    FillDeviceList();
+    m_activationWorkScheduled = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_activationWorkScheduled = false;
+        if (!isVisible()) {
+            return;
+        }
+        if (m_availableFirmwares.empty()
+            && (m_manifestState == ManifestState::Idle
+                || m_manifestState == ManifestState::Error)) {
+            fetchAvailableFirmware();
+        }
+        // Keep the existing automatic refresh, but run it only after the view
+        // switch has returned to the event loop. QSerialPortInfo enumeration
+        // remains synchronous and should move behind an injectable worker in a
+        // follow-up change.
+        FillDeviceList();
+    });
 }
 
 void ApmCustomFirmwareConfig::hideEvent(QHideEvent *event)
 {
-    Q_UNUSED(event)
     MainWindow::instance()->toolBar().disableConnectWidget(false);
+    QWidget::hideEvent(event);
 }
 
 QTableWidgetItem *ApmCustomFirmwareConfig::createItem(const QString &itemText) const
@@ -104,6 +179,9 @@ QTableWidgetItem *ApmCustomFirmwareConfig::createItem(const QString &itemText) c
 
 void ApmCustomFirmwareConfig::FillDeviceList()
 {
+    if (operationBusy()) {
+        return;
+    }
     mp_Ui->deviceListWidget->clearContents();
 
     m_portInfoList = QSerialPortInfo::availablePorts();
@@ -142,6 +220,9 @@ void ApmCustomFirmwareConfig::FillDeviceList()
 void ApmCustomFirmwareConfig::deviceTableCellClicked(int row, int column)
 {
     Q_UNUSED(column)
+    if (operationBusy() || row < 0 || row >= m_portInfoList.size()) {
+        return;
+    }
     mp_Ui->deviceListWidget->selectRow(row);
     m_selectedDeviceIndex = row;
 
@@ -161,6 +242,9 @@ void ApmCustomFirmwareConfig::deviceTableCellClicked(int row, int column)
 void ApmCustomFirmwareConfig::firmwareTableCellClicked(int row, int column)
 {
     Q_UNUSED(column)
+    if (operationBusy() || row < 0 || row >= m_versionIndex.size()) {
+        return;
+    }
     mp_Ui->fwListWidget->selectRow(row);
     m_selectedFwIndex = m_versionIndex.at(row);
     QLOG_DEBUG() << "Selected Firmware on index:" << m_selectedFwIndex;
@@ -174,6 +258,11 @@ void ApmCustomFirmwareConfig::firmwareTableCellClicked(int row, int column)
 void ApmCustomFirmwareConfig::flashLocalFWButtonClicked()
 {
     QLOG_DEBUG() << "ApmCustomFirmwareConfig: flashLocalFWButtonClicked.";
+    if (operationBusy() || !captureSelectedDevice()) {
+        return;
+    }
+    m_operation = Operation::DownloadAndFlash;
+    SetButtonState();
     QFileDialog dialog(this);
     dialog.setAcceptMode(QFileDialog::AcceptOpen);
     dialog.setFileMode(QFileDialog::ExistingFile);
@@ -198,16 +287,23 @@ void ApmCustomFirmwareConfig::flashLocalFWButtonClicked()
         else
         {
             mp_Ui->statusInfoWidget->append("Failed to open  " + firmwareFile.fileName());
+            finishOperation();
         }
     }
     else
     {
         QLOG_DEBUG() << "Firmware select cancelled.";
+        finishOperation();
     }
 }
 
 void ApmCustomFirmwareConfig::StartFlashFirmware(const QString &firmwareFileName)
 {
+    if (mp_px4Updater || !m_operationDeviceValid) {
+        QLOG_WARN() << "ApmCustomFirmwareConfig: refusing overlapping or targetless flash";
+        finishOperation();
+        return;
+    }
     mp_Ui->statusInfoWidget->append("Start flashing firmware.");
 
     mp_px4Updater.reset(new PX4FirmwareUploader());
@@ -223,6 +319,7 @@ void ApmCustomFirmwareConfig::StartFlashFirmware(const QString &firmwareFileName
     connect(mp_px4Updater.data(), &PX4FirmwareUploader::devicePlugDetected, this, &ApmCustomFirmwareConfig::deviceReplugDetected);
 
     mp_px4Updater->loadFile(firmwareFileName);
+    SetButtonState();
 }
 
 bool ApmCustomFirmwareConfig::openFirmwareFile(const QFileInfo &firmwareFile)
@@ -301,6 +398,9 @@ bool ApmCustomFirmwareConfig::openFirmwareFile(const QFileInfo &firmwareFile)
 void ApmCustomFirmwareConfig::flashFWButtonClicked()
 {
     QLOG_DEBUG() << "ApmCustomFirmwareConfig::flashFWButtonClicked";
+    if (operationBusy() || !captureSelectedDevice()) {
+        return;
+    }
     m_operation = Operation::DownloadAndFlash;
     startDownloadFirmware();
 }
@@ -308,29 +408,49 @@ void ApmCustomFirmwareConfig::flashFWButtonClicked()
 void ApmCustomFirmwareConfig::firmwareDownloadBtnClicked()
 {
     QLOG_DEBUG() << "ApmCustomFirmwareConfig::firmwareDownloadBtnClicked";
+    if (operationBusy()) {
+        return;
+    }
+    m_operationDeviceValid = false;
     m_operation = Operation::DownloadOnly;
     startDownloadFirmware();
 }
 
 void ApmCustomFirmwareConfig::fetchAvailableFirmware()
 {
+    if (m_manifestState == ManifestState::Loading || m_manifestReply) {
+        return;
+    }
+
     QUrl url(s_JSONUrl);
     QLOG_DEBUG() << "ApmCustomFirmwareConfig: Fetching available firmwares from: " << url.toString();
     mp_Ui->progressbarLabel->setText("<h4>Downloading Firmware information</h4>");
     mp_Ui->statusInfoWidget->append("Fetching available firmwares from: " + url.toString());
-    mp_networkReply.reset(mp_networkManager->get(QNetworkRequest(url)));
+    m_manifestState = ManifestState::Loading;
+    QNetworkReply *reply = mp_networkManager->get(QNetworkRequest(url));
+    m_manifestReply = reply;
+    m_lastManifestProgress = 0;
 
-    connect(mp_networkReply.data(), &QNetworkReply::finished, this, &ApmCustomFirmwareConfig::availFirmwarefetchFinished);
-    connect(mp_networkReply.data(), QOverload<QNetworkReply::NetworkError>::of(&NETWORKERROR), this, &ApmCustomFirmwareConfig::firmwareFetchError);
-    connect(mp_networkReply.data(), QOverload<qint64, qint64>::of(&QNetworkReply::downloadProgress), this, &ApmCustomFirmwareConfig::downloadProgress);
-
+    connect(reply, &QNetworkReply::finished, this,
+            &ApmCustomFirmwareConfig::availFirmwarefetchFinished);
+    connect(reply, &QNetworkReply::downloadProgress, this,
+            &ApmCustomFirmwareConfig::downloadProgress);
+    m_manifestTimeout->start(s_NetworkTimeoutMs);
 }
 
 void ApmCustomFirmwareConfig::startDownloadFirmware()
 {
-    if (m_selectedFwIndex == s_InvalidIndex)
+    if (m_firmwareReply || mp_px4Updater) {
+        return;
+    }
+    if (m_operation == Operation::None
+        || (m_operation == Operation::DownloadAndFlash
+            && !m_operationDeviceValid)
+        || m_selectedFwIndex < 0
+        || m_selectedFwIndex >= m_availableFirmwares.size())
     {
         QLOG_DEBUG() << "No Firmware selected";
+        finishOperation();
         return;
     }
 
@@ -339,6 +459,11 @@ void ApmCustomFirmwareConfig::startDownloadFirmware()
     if (iter != fwObject.end())
     {
         QUrl url(iter->toString());
+        if (!url.isValid() || url.isEmpty()) {
+            QLOG_WARN() << "Selected firmware has an invalid URL:" << url;
+            finishOperation();
+            return;
+        }
         QLOG_DEBUG() << "Downloading " << url.toString();
         auto pfIter = fwObject.find(s_Platform);
         QString label("<h4>Downloading Firmware for ");
@@ -347,26 +472,60 @@ void ApmCustomFirmwareConfig::startDownloadFirmware()
         mp_Ui->progressbarLabel->setText(label);
         mp_Ui->progressBar->reset();
         mp_Ui->statusInfoWidget->append("Downloading firmware " + url.toString());
-        mp_networkReply.reset(mp_networkManager->get(QNetworkRequest(url)));
+        m_downloadFirmwareIndex = m_selectedFwIndex;
+        QNetworkReply *reply = mp_networkManager->get(QNetworkRequest(url));
+        m_firmwareReply = reply;
+        m_lastFirmwareProgress = 0;
 
-        connect(mp_networkReply.data(), &QNetworkReply::finished, this, &ApmCustomFirmwareConfig::downloadFirmwareFinished);
-        connect(mp_networkReply.data(), QOverload<QNetworkReply::NetworkError>::of(&NETWORKERROR), this, &ApmCustomFirmwareConfig::firmwareFetchError);
-        connect(mp_networkReply.data(), QOverload<qint64, qint64>::of(&QNetworkReply::downloadProgress), this, &ApmCustomFirmwareConfig::downloadProgress);
+        connect(reply, &QNetworkReply::finished, this,
+                &ApmCustomFirmwareConfig::downloadFirmwareFinished);
+        connect(reply, &QNetworkReply::downloadProgress, this,
+                &ApmCustomFirmwareConfig::downloadProgress);
+        m_firmwareTimeout->start(s_NetworkTimeoutMs);
+        SetButtonState();
     }
     else
     {
         QLOG_WARN() << "No valid URL found in selected firmware - not downloading anything.";
         QMessageBox::warning(this ,"Error", "No valid URL found in selected firmware entry");
+        finishOperation();
     }
+}
+
+bool ApmCustomFirmwareConfig::operationBusy() const
+{
+    return m_operation != Operation::None || m_firmwareReply || mp_px4Updater;
+}
+
+bool ApmCustomFirmwareConfig::captureSelectedDevice()
+{
+    if (m_selectedDeviceIndex < 0
+        || m_selectedDeviceIndex >= m_portInfoList.size()) {
+        m_operationDeviceValid = false;
+        return false;
+    }
+    m_operationDevice = m_portInfoList.at(m_selectedDeviceIndex);
+    m_operationDeviceValid = true;
+    return true;
+}
+
+void ApmCustomFirmwareConfig::finishOperation()
+{
+    m_operation = Operation::None;
+    m_downloadFirmwareIndex = s_InvalidIndex;
+    m_operationDeviceValid = false;
+    SetButtonState();
 }
 
 void ApmCustomFirmwareConfig::SetButtonState()
 {
+    const bool busy = operationBusy();
     bool flash = false;
     bool download = false;
     bool flashlocal = false;
 
-    if(m_selectedFwIndex != s_InvalidIndex)
+    if(m_selectedFwIndex >= 0
+        && m_selectedFwIndex < m_availableFirmwares.size())
     {
         // we only can flash apj or px4 files hex must be flashed woth other tools
         auto fwObject = m_availableFirmwares[m_selectedFwIndex].toObject();
@@ -375,9 +534,10 @@ void ApmCustomFirmwareConfig::SetButtonState()
         {
             if ((jsonIter.value().toString() == "apj") || (jsonIter.value().toString() == "px4"))
             {
-                if (m_selectedDeviceIndex != s_InvalidIndex)
+                if (m_selectedDeviceIndex >= 0
+                    && m_selectedDeviceIndex < m_portInfoList.size())
                 {
-                    flash = true; // only apj or px4 and selected device (target)
+                    flash = !busy; // only apj or px4 and selected device (target)
                 }
             }
             else
@@ -385,39 +545,75 @@ void ApmCustomFirmwareConfig::SetButtonState()
                 mp_Ui->statusInfoWidget->append("Only *.apj or *.px4 files can be flashed. All other formats need external tools.");
             }
         }
-        download = true;
+        download = !busy;
     }
 
-    if(m_selectedDeviceIndex != s_InvalidIndex)
+    if (m_selectedDeviceIndex >= 0
+        && m_selectedDeviceIndex < m_portInfoList.size())
     {
-        flashlocal = true;
+        flashlocal = !busy;
     }
 
     mp_Ui->flashButton->setEnabled(flash);
     mp_Ui->fwDownloadButton->setEnabled(download);
     mp_Ui->flashLocalFWButton->setEnabled(flashlocal);
+    mp_Ui->refreshButton->setEnabled(!busy);
+    mp_Ui->deviceListWidget->setEnabled(!busy);
+    mp_Ui->fwListWidget->setEnabled(!busy);
+    mp_Ui->fwCategoryBox->setEnabled(!busy);
+    mp_Ui->fwPlatformBox->setEnabled(!busy);
+    mp_Ui->fwTypeBox->setEnabled(!busy);
+    mp_Ui->fwVersionBox->setEnabled(!busy);
 }
 
 void ApmCustomFirmwareConfig::availFirmwarefetchFinished()
 {
+    QNetworkReply *reply = qobject_cast<QNetworkReply *>(sender());
+    if (!reply) {
+        return;
+    }
+    if (reply != m_manifestReply.data()) {
+        reply->deleteLater();
+        return;
+    }
+
     QLOG_DEBUG() << "ApmCustomFirmwareConfig: Fetching available firmwares finished";
 
-    disconnect(mp_networkReply.data(), &QNetworkReply::finished, this, &ApmCustomFirmwareConfig::availFirmwarefetchFinished);
-    disconnect(mp_networkReply.data(), QOverload<QNetworkReply::NetworkError>::of(&NETWORKERROR), this, &ApmCustomFirmwareConfig::firmwareFetchError);
-    disconnect(mp_networkReply.data(), QOverload<qint64, qint64>::of(&QNetworkReply::downloadProgress), this, &ApmCustomFirmwareConfig::downloadProgress);
+    m_manifestTimeout->stop();
+    m_manifestReply.clear();
+    m_lastManifestProgress = 0;
+    disconnect(reply, nullptr, this, nullptr);
+
+    if (reply->error() != QNetworkReply::NoError) {
+        m_manifestState = ManifestState::Error;
+        const QString message = tr("Fetching available firmwares failed: %1")
+                                    .arg(reply->errorString());
+        QLOG_WARN() << "ApmCustomFirmwareConfig:" << message;
+        mp_Ui->statusInfoWidget->append(message);
+        reply->deleteLater();
+        if (isVisible()) {
+            QMessageBox::warning(this, tr("Error"), message);
+        }
+        return;
+    }
 
     mp_Ui->statusInfoWidget->append("Fetching done.");
 
     QJsonParseError parseError;
-    QJsonDocument availFirmware = QJsonDocument::fromJson(mp_networkReply->readAll(), &parseError);
+    QJsonDocument availFirmware = QJsonDocument::fromJson(reply->readAll(), &parseError);
+    reply->deleteLater();
     if(parseError.error != QJsonParseError::NoError)
     {
+        m_manifestState = ManifestState::Error;
         QLOG_INFO() << "ApmCustomFirmwareConfig: Failed to parse available firmware list: " << parseError.errorString();
-        QMessageBox::warning(this ,"Error", "Failed to parse available firmware list: " + parseError.errorString());
+        if (isVisible()) {
+            QMessageBox::warning(this ,"Error", "Failed to parse available firmware list: " + parseError.errorString());
+        }
         return;
     }
 
     // Do some validations
+    bool validManifest = false;
     auto jsonObject = availFirmware.object();
     auto jsonIter = jsonObject.find(s_JSONFormat);
     if(jsonIter != jsonObject.end())
@@ -425,10 +621,11 @@ void ApmCustomFirmwareConfig::availFirmwarefetchFinished()
         QLOG_DEBUG() << "ApmCustomFirmwareConfig: Firmware list version is " << jsonIter.value().toString();
         if(jsonIter.value().toString() == s_JSONFormatVer)
         {
-            jsonIter = jsonObject.find("firmware");
-            if(jsonIter != jsonObject.end())
+            jsonIter = jsonObject.find(s_JSONFWName);
+            if(jsonIter != jsonObject.end() && jsonIter->isArray())
             {
                 m_availableFirmwares = jsonIter.value().toArray();
+                validManifest = true;
                 QLOG_DEBUG() << "ApmCustomFirmwareConfig: Found " << m_availableFirmwares.size() << " firmwares.";
                 mp_Ui->statusInfoWidget->append("Found " + QString::number(m_availableFirmwares.size()) + " firmwares.");
             }
@@ -453,22 +650,12 @@ void ApmCustomFirmwareConfig::availFirmwarefetchFinished()
         mp_Ui->statusInfoWidget->append("Firmware list does not have format field.");
     }
 
-    // trigger once to fill initially
-    fillFirmwareCategoryBox();
-    mp_networkReply.reset(); // calls deleteLater
-}
-
-void ApmCustomFirmwareConfig::firmwareFetchError(QNetworkReply::NetworkError error)
-{
-    QLOG_DEBUG() << "ApmCustomFirmwareConfig: Firmware fetch Error: " << error;
-    disconnect(mp_networkReply.data(), &QNetworkReply::finished, this, &ApmCustomFirmwareConfig::availFirmwarefetchFinished);
-    disconnect(mp_networkReply.data(), QOverload<QNetworkReply::NetworkError>::of(&NETWORKERROR), this, &ApmCustomFirmwareConfig::firmwareFetchError);
-    disconnect(mp_networkReply.data(), QOverload<qint64, qint64>::of(&QNetworkReply::downloadProgress), this, &ApmCustomFirmwareConfig::downloadProgress);
-
-    mp_Ui->statusInfoWidget->append("Fetching available firmwares failed due to a network error");
-    QMessageBox::warning(this ,"Error", "Fetching available firmwares failed due to a network error");
-
-    mp_networkReply.reset(); // calls deleteLater
+    m_manifestState = validManifest ? ManifestState::Ready
+                                    : ManifestState::Error;
+    if (validManifest) {
+        // Trigger once to fill initially.
+        fillFirmwareCategoryBox();
+    }
 }
 
 void ApmCustomFirmwareConfig::fillFirmwareVersionBox(int index)
@@ -690,21 +877,81 @@ void ApmCustomFirmwareConfig::fillFirmwareList(int index)
 
 void ApmCustomFirmwareConfig::downloadProgress(qint64 bytesReceived, qint64 bytesTotal)
 {
+    if (QNetworkReply *reply = qobject_cast<QNetworkReply *>(sender())) {
+        if (reply == m_manifestReply.data()) {
+            if (bytesReceived > m_lastManifestProgress) {
+                m_lastManifestProgress = bytesReceived;
+                m_manifestTimeout->start(s_NetworkTimeoutMs);
+            }
+        } else if (reply == m_firmwareReply.data()) {
+            if (bytesReceived > m_lastFirmwareProgress) {
+                m_lastFirmwareProgress = bytesReceived;
+                m_firmwareTimeout->start(s_NetworkTimeoutMs);
+            }
+        } else {
+            return;
+        }
+    }
     mp_Ui->progressBar->setMaximum(static_cast<int>(bytesTotal));
     mp_Ui->progressBar->setValue(static_cast<int>(bytesReceived));
 }
 
 void ApmCustomFirmwareConfig::downloadFirmwareFinished()
 {
-    QLOG_DEBUG() << "ApmCustomFirmwareConfig: downloading firmware finished successful";
+    QNetworkReply *reply = qobject_cast<QNetworkReply *>(sender());
+    if (!reply) {
+        return;
+    }
+    if (reply != m_firmwareReply.data()) {
+        reply->deleteLater();
+        return;
+    }
 
-    disconnect(mp_networkReply.data(), &QNetworkReply::finished, this, &ApmCustomFirmwareConfig::downloadFirmwareFinished);
-    disconnect(mp_networkReply.data(), QOverload<QNetworkReply::NetworkError>::of(&NETWORKERROR), this, &ApmCustomFirmwareConfig::firmwareFetchError);
-    disconnect(mp_networkReply.data(), QOverload<qint64, qint64>::of(&QNetworkReply::downloadProgress), this, &ApmCustomFirmwareConfig::downloadProgress);
+    QLOG_DEBUG() << "ApmCustomFirmwareConfig: firmware download finished";
 
-    if (m_operation == Operation::DownloadOnly)
+    m_firmwareTimeout->stop();
+    m_firmwareReply.clear();
+    m_lastFirmwareProgress = 0;
+    disconnect(reply, nullptr, this, nullptr);
+
+    const Operation completedOperation = m_operation;
+    const int firmwareIndex = m_downloadFirmwareIndex;
+    m_downloadFirmwareIndex = s_InvalidIndex;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        const QString message = tr("Downloading firmware failed: %1")
+                                    .arg(reply->errorString());
+        QLOG_WARN() << "ApmCustomFirmwareConfig:" << message;
+        mp_Ui->statusInfoWidget->append(message);
+        reply->deleteLater();
+        finishOperation();
+        if (isVisible()) {
+            QMessageBox::warning(this, tr("Error"), message);
+        }
+        return;
+    }
+
+    if (completedOperation != Operation::DownloadOnly
+        && completedOperation != Operation::DownloadAndFlash) {
+        QLOG_WARN() << "ApmCustomFirmwareConfig: ignoring firmware reply for stale operation";
+        reply->deleteLater();
+        finishOperation();
+        return;
+    }
+
+    const QByteArray firmwarePayload = reply->readAll();
+    reply->deleteLater();
+    if (firmwareIndex < 0 || firmwareIndex >= m_availableFirmwares.size()) {
+        QLOG_WARN() << "ApmCustomFirmwareConfig: downloaded firmware selection is stale";
+        mp_Ui->statusInfoWidget->append(
+            tr("Downloaded firmware selection is no longer available."));
+        finishOperation();
+        return;
+    }
+
+    if (completedOperation == Operation::DownloadOnly)
     {
-        auto fwObject = m_availableFirmwares[m_selectedFwIndex].toObject();
+        auto fwObject = m_availableFirmwares[firmwareIndex].toObject();
         auto iter = fwObject.find(s_FWFormat);
         if (iter != fwObject.end())
         {
@@ -738,7 +985,7 @@ void ApmCustomFirmwareConfig::downloadFirmwareFinished()
                 {
                     QLOG_WARN() << "ApmCustomFirmwareConfig unable to open file for writing.";
                 }
-                output.write(mp_networkReply->readAll());
+                output.write(firmwarePayload);
                 output.close();
                 if(type == "hex")
                 {
@@ -753,20 +1000,25 @@ void ApmCustomFirmwareConfig::downloadFirmwareFinished()
         {
             QLOG_INFO() << "Firmwareobject has no valid format - dropping all data";
         }
+        finishOperation();
     }
-    else if (m_operation == Operation::DownloadAndFlash)
+    else if (completedOperation == Operation::DownloadAndFlash)
     {
         mp_tempFWFile.reset(new QTemporaryFile);
-        mp_tempFWFile->open();
-        mp_tempFWFile->write(mp_networkReply->readAll());
+        if (!mp_tempFWFile->open()
+            || mp_tempFWFile->write(firmwarePayload) != firmwarePayload.size()) {
+            mp_Ui->statusInfoWidget->append(
+                tr("Unable to create a temporary firmware file."));
+            mp_tempFWFile.reset();
+            finishOperation();
+            return;
+        }
         mp_tempFWFile->flush();
         mp_tempFWFile->close();
 
         StartFlashFirmware(mp_tempFWFile->fileName());
     }
 
-    m_operation = Operation::None;
-    mp_networkReply.reset();   // calls deleteLater
  }
 
  void ApmCustomFirmwareConfig::statusUpdate(QString update)
@@ -783,6 +1035,17 @@ void ApmCustomFirmwareConfig::downloadFirmwareFinished()
  {
      QMessageBox::information(this, "Error", "Error during upload:" + error);
      mp_Ui->statusInfoWidget->append("Error during upload: " + error);
+     // Some uploader error paths emit complete(), others do not. Defer
+     // cleanup so deleting the signal sender never happens in its own stack.
+     QTimer::singleShot(0, this, [this]() {
+         if (mp_px4Updater) {
+             disconnect(mp_px4Updater.data(), nullptr, this, nullptr);
+             mp_px4Updater->stop();
+             mp_px4Updater.reset();
+         }
+         mp_tempFWFile.reset();
+         finishOperation();
+     });
  }
 
  void ApmCustomFirmwareConfig::startFlashing()
@@ -801,17 +1064,28 @@ void ApmCustomFirmwareConfig::downloadFirmwareFinished()
      mp_Ui->progressbarLabel->setText(label);
      mp_Ui->progressBar->setValue(mp_Ui->progressBar->maximum()); // force to 100%
 
-     mp_px4Updater.reset();
+     if (mp_px4Updater) {
+         disconnect(mp_px4Updater.data(), nullptr, this, nullptr);
+         mp_px4Updater->stop();
+         mp_px4Updater.reset();
+     }
      mp_tempFWFile.reset();
+     finishOperation();
  }
 
  void ApmCustomFirmwareConfig::requestDeviceReplug()
  {
      QLOG_DEBUG() << "ApmCustomFirmwareConfig::requestDeviceReplug";
 
-     QSerialPortInfo info = m_portInfoList.at(m_selectedDeviceIndex);
+     if (!mp_px4Updater || !m_operationDeviceValid) {
+         mp_Ui->statusInfoWidget->append(
+             tr("The selected flashing device is no longer available."));
+         QTimer::singleShot(0, this, [this]() { cancelButtonClicked(); });
+         return;
+     }
 
-     mp_Ui->statusInfoWidget->append("Waiting for replug of fc connected to " + info.portName());
+     mp_Ui->statusInfoWidget->append(
+         "Waiting for replug of fc connected to " + m_operationDevice.portName());
      mp_requestDeviceReplug.reset(new QMessageBox);
      mp_requestDeviceReplug->setText("Please unplug, and plug back in the flight controller. After replugging the selected Firmware will be flashed!");
      mp_requestDeviceReplug->setStandardButtons(QMessageBox::Cancel);
@@ -825,8 +1099,10 @@ void ApmCustomFirmwareConfig::downloadFirmwareFinished()
  {
      QLOG_DEBUG() << "ApmCustomFirmwareConfig::deviceReplugDetected";
 
-     mp_requestDeviceReplug->hide();
-     mp_requestDeviceReplug.reset();
+     if (mp_requestDeviceReplug) {
+         mp_requestDeviceReplug->hide();
+         mp_requestDeviceReplug.reset();
+     }
 
      mp_Ui->statusInfoWidget->append("Flight controller reconnected - reading bootloader data.");
  }
@@ -835,10 +1111,17 @@ void ApmCustomFirmwareConfig::downloadFirmwareFinished()
  {
      QLOG_DEBUG() << "Cancel button pressed";
 
-     mp_px4Updater.reset();
+     if (mp_requestDeviceReplug) {
+         mp_requestDeviceReplug->hide();
+         mp_requestDeviceReplug.reset();
+     }
+     if (mp_px4Updater) {
+         disconnect(mp_px4Updater.data(), nullptr, this, nullptr);
+         mp_px4Updater->stop();
+         mp_px4Updater.reset();
+     }
      mp_tempFWFile.reset();
+     finishOperation();
 
      mp_Ui->statusInfoWidget->append("Canceled");
  }
-
-#undef NETWORKERROR

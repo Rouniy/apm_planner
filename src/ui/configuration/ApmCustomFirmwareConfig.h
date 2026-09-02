@@ -39,6 +39,9 @@ This file is part of the APM_PLANNER project
 #include <QNetworkReply>
 #include <QMessageBox>
 #include <QFileInfo>
+#include <QPointer>
+
+class QTimer;
 
 // UI forward declaration allow faster compiling on UI changes
 namespace Ui
@@ -56,6 +59,7 @@ class ApmCustomFirmwareConfig : public QWidget
 
 public:
     ApmCustomFirmwareConfig(QWidget *parent = nullptr);
+    ~ApmCustomFirmwareConfig() override;
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -90,6 +94,14 @@ private:
         DownloadAndFlash
     };
 
+    enum class ManifestState
+    {
+        Idle,
+        Loading,
+        Ready,
+        Error
+    };
+
 
     static constexpr const char *s_JSONUrl      {"https://firmware.ardupilot.org/manifest.json"};  //!< URL string for fetching firmware info
     static constexpr const char *s_JSONFormat   {"format-version"};  //!< Format version field name
@@ -105,6 +117,7 @@ private:
     static constexpr const char *s_MavType      {"mav-type"};
 
     static constexpr int s_InvalidIndex = -1;   //!< value for invalid index
+    static constexpr int s_NetworkTimeoutMs = 180000;
 
 
 
@@ -115,8 +128,11 @@ private:
     QJsonObject            m_firmwareData;  //!< Firmware Data if a file was opened
     QByteArray             m_flashImage;    //!< Flash Image which can directly flashed into the FC
 
-    QNetworkAccessManager *mp_networkManager{nullptr};                        //!< Network manager
-    QScopedPointer<QNetworkReply, QScopedPointerDeleteLater> mp_networkReply; //!< Network reply object for downloading all Firmware data
+    QNetworkAccessManager *mp_networkManager{nullptr}; //!< Network manager
+    QPointer<QNetworkReply> m_manifestReply;
+    QPointer<QNetworkReply> m_firmwareReply;
+    QTimer *m_manifestTimeout{nullptr};
+    QTimer *m_firmwareTimeout{nullptr};
 
     QJsonArray             m_availableFirmwares;    //!< array with all available firmwares
     QVector<int>           m_categoryIndex;         //!< index to all FW of the selected category (stable, beta, ...)
@@ -125,9 +141,16 @@ private:
     QVector<int>           m_versionIndex;          //!< index to all FW of the selected category, platform, mavtype and version
 
     Operation              m_operation{Operation::None};    //!< Operation - Download only or download and flash
+    ManifestState          m_manifestState{ManifestState::Idle};
 
     int                    m_selectedFwIndex{s_InvalidIndex};     //!< List index of the selected Firmware
     int                    m_selectedDeviceIndex{s_InvalidIndex}; //!< List index of the device to flash.
+    int                    m_downloadFirmwareIndex{s_InvalidIndex};
+    QSerialPortInfo        m_operationDevice;
+    bool                   m_operationDeviceValid{false};
+    qint64                 m_lastManifestProgress{0};
+    qint64                 m_lastFirmwareProgress{0};
+    bool                   m_activationWorkScheduled{false};
 
     QScopedPointer<QMessageBox> mp_requestDeviceReplug;
 
@@ -153,6 +176,10 @@ private:
 
     void SetButtonState();
 
+    bool operationBusy() const;
+    bool captureSelectedDevice();
+    void finishOperation();
+
 private slots:
     void FillDeviceList();
 
@@ -167,8 +194,6 @@ private slots:
     void firmwareDownloadBtnClicked();
 
     void availFirmwarefetchFinished();
-
-    void firmwareFetchError(QNetworkReply::NetworkError error);
 
     void fillFirmwareVersionBox(int index);
 

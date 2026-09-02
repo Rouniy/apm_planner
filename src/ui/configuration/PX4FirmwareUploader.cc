@@ -85,7 +85,12 @@ void PX4FirmwareUploader::loadFile(QString filename)
     m_waitingForSync = false;
 
     QFile json(filename);
-    json.open(QIODevice::ReadOnly);
+    if (!json.open(QIODevice::ReadOnly))
+    {
+        stop();
+        emit error(tr("Unable to open the firmware file."));
+        return;
+    }
     QByteArray jsonbytes = json.readAll();
     QString jsonstring(jsonbytes);
     json.close();
@@ -146,6 +151,8 @@ void PX4FirmwareUploader::loadFile(QString filename)
     if (uncompressed.size() != m_loadedFwSize)
     {
         QLOG_INFO() << "Error in decompressing firmware. Please re-download and try again";
+        stop();
+        emit error(tr("Error decompressing firmware. Please download it again."));
         return;
     }
     //Per QUpgrade, pad it to a 4 byte multiple.
@@ -166,18 +173,18 @@ void PX4FirmwareUploader::loadFile(QString filename)
 void PX4FirmwareUploader::stop()
 {
     //Stop has been requested, close out the port, kill the thread.
+    if (mp_checkTimer)
+    {
+        mp_checkTimer->stop();
+        mp_checkTimer.reset();
+    }
+    if (mp_eraseTimeoutTimer)
+    {
+        mp_eraseTimeoutTimer->stop();
+        mp_eraseTimeoutTimer.reset();
+    }
     if (mp_port)
     {
-        if (mp_checkTimer)
-        {
-            mp_checkTimer->stop();
-            mp_checkTimer.reset();
-        }
-        if (mp_eraseTimeoutTimer)
-        {
-            mp_eraseTimeoutTimer->stop();
-            mp_eraseTimeoutTimer.reset();
-        }
         mp_port->close();
         mp_port.reset();
     }

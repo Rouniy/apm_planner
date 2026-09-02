@@ -75,6 +75,7 @@ public:
 
     MAVLinkProtocol* getProtocol() const;
     VehicleTargetManager *vehicleTargetManager() const;
+    ExactLinkTransmitter *exactLinkTransmitter() const;
     VehicleCommandService *vehicleCommandService() const;
     ParameterService *parameterService() const;
     QGCUASParamManager *parameterManager() const;

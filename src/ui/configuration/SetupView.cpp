@@ -7,6 +7,7 @@
 #include "BatteryMonitorConfig.h"
 #include "CameraGimbalConfig.h"
 #include "ConfigAdvancedView.h"
+#include "ConfigADSBView.h"
 #include "ConfigBatteryMonitoring2View.h"
 #include "ConfigDefaultSettingsView.h"
 #include "CompassConfig.h"
@@ -28,9 +29,11 @@
 #include "ConfigSerialView.h"
 #include "ConfigRawParams.h"
 #include "FrameDefaultCatalogService.h"
+#include "comm/AdsbIdentificationClient.h"
 #include "comm/DroneCanGetNodeInfoClient.h"
 #include "comm/DroneCanGetSetClient.h"
 #include "comm/DroneCanMavlinkTransport.h"
+#include "comm/ExactLinkTransmitter.h"
 #include "comm/VehicleTargetManager.h"
 #include "FailSafeConfig.h"
 #include "FlightModeConfig.h"
@@ -79,6 +82,7 @@ const QString kFlightModes = QStringLiteral("ConfigFlightModesView");
 const QString kFailSafe = QStringLiteral("ConfigFailSafeView");
 const QString kInitialParams = QStringLiteral("ConfigInitialParamsView");
 const QString kHWID = QStringLiteral("ConfigHWIDView");
+const QString kADSB = QStringLiteral("ConfigADSBView");
 const QString kOptionalGroup = QStringLiteral("OptionalHardwareGroup");
 const QString kSikRadio = QStringLiteral("SikRadioView");
 const QString kGPSInject = QStringLiteral("ConfigGpsInjectView");
@@ -208,6 +212,10 @@ SetupView::SetupView(QWidget *parent)
                     qobject_cast<ConfigDefaultSettingsView *>(page)) {
                 defaults->activate();
             }
+        } else if (id == kADSB) {
+            if (auto *adsb = qobject_cast<ConfigADSBView *>(page)) {
+                adsb->activate();
+            }
         }
     });
     connect(m_backstage, &BackstageView::pageDeactivated,
@@ -216,6 +224,10 @@ SetupView::SetupView(QWidget *parent)
             if (auto *defaults =
                     qobject_cast<ConfigDefaultSettingsView *>(page)) {
                 defaults->deactivate();
+            }
+        } else if (id == kADSB) {
+            if (auto *adsb = qobject_cast<ConfigADSBView *>(page)) {
+                adsb->deactivate();
             }
         }
     });
@@ -238,6 +250,7 @@ SetupView::~SetupView()
     m_backstage->resetPage(kDroneCAN);
     m_backstage->resetPage(kMotorTest);
     m_backstage->resetPage(kDefaultSettings);
+    m_backstage->resetPage(kADSB);
 }
 
 void SetupView::buildPages()
@@ -314,6 +327,16 @@ void SetupView::buildPages()
         return createHWIDPage(parent);
     };
     m_backstage->addPage(hwId);
+    BackstagePage adsb;
+    adsb.id = kADSB;
+    adsb.header = tr("ADSB");
+    adsb.isSub = true;
+    adsb.requiresConnection = true;
+    adsb.allowsPartialParameters = false;
+    adsb.factory = [this](QWidget *parent) {
+        return createADSBPage(parent);
+    };
+    m_backstage->addPage(adsb);
 
     m_backstage->addGroup(tr(">> Optional Hardware"), kOptionalGroup);
     BackstagePage gpsInject;
@@ -719,6 +742,7 @@ void SetupView::firmwareVersionDetected(const QString &versionText)
     m_backstage->resetPage(kParachute);
     m_backstage->resetPage(kGPSOrder);
     m_backstage->resetPage(kHWCAN);
+    m_backstage->resetPage(kADSB);
     if (m_connected && m_backstage->isPageVisible(selectedPage)) {
         m_backstage->setCurrentPage(selectedPage);
     }
@@ -750,6 +774,7 @@ void SetupView::refreshPageVisibility()
             && (family == ParameterFirmwareFamily::ArduCopter
                 || family == ParameterFirmwareFamily::ArduPlane));
     m_backstage->setPageVisible(kHWID, m_connected);
+    m_backstage->setPageVisible(kADSB, m_connected);
 
     m_backstage->setGroupVisible(kOptionalGroup, true);
     m_backstage->setPageVisible(kGPSInject, true);
@@ -1048,6 +1073,218 @@ QWidget *SetupView::createHWIDPage(QWidget *parent)
             expectedManager->store()->snapshot();
         page->setParameterSnapshot(refreshed.records(), componentId);
     });
+    return page;
+}
+
+QWidget *SetupView::createADSBPage(QWidget *parent)
+{
+    const ParameterFirmwareFamily family = firmwareFamily(m_uas);
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    if (!catalog.isValid()
+        && family != ParameterFirmwareFamily::Unknown
+        && family != ParameterFirmwareFamily::ArduCopter) {
+        catalog = m_metadataRepository->catalog(
+            ParameterFirmwareFamily::ArduCopter);
+    }
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    ExactLinkTransmitter *const transmitter = links
+        ? links->exactLinkTransmitter() : nullptr;
+    const VehicleTargetLease expectedTarget = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const int expectedComponent = expectedTarget.isValid()
+        ? expectedTarget.endpoint.componentId : MAV_COMP_ID_AUTOPILOT1;
+
+    AdsbIdentificationClient *client = nullptr;
+    if (targets && transmitter) {
+        client = new AdsbIdentificationClient(targets, transmitter);
+        client->bind(expectedTarget);
+    }
+    auto *page = new ConfigADSBView(
+        client, catalog, parent, enforceMetadataRanges);
+    if (client) {
+        client->setParent(page);
+    }
+
+    const QPointer<UASInterface> expectedUas(m_uas);
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+    const QPointer<LinkInterface> expectedLink(
+        expectedTarget.isValid() && links
+            ? links->getLink(expectedTarget.endpoint.linkId) : nullptr);
+    const auto targetIsCurrent =
+        [this, targets, expectedTarget, expectedUas,
+         expectedManager, expectedLink]() {
+        return expectedTarget.isValid() && targets && expectedUas
+            && expectedManager && expectedLink
+            && m_uas == expectedUas
+            && m_parameterManager == expectedManager
+            && expectedUas->getUASID()
+                == expectedTarget.endpoint.systemId
+            && targets->isCurrentTarget(
+                expectedTarget.endpoint.linkId,
+                expectedTarget.endpoint.systemId,
+                expectedTarget.endpoint.componentId,
+                expectedTarget.generation);
+    };
+    const auto syncConnected =
+        [page, targetIsCurrent, expectedLink]() {
+        page->setConnected(
+            targetIsCurrent() && expectedLink
+            && expectedLink->isConnected());
+    };
+
+    if (expectedManager && expectedManager->store()
+        && expectedTarget.isValid()) {
+        const ParameterSnapshot snapshot =
+            expectedManager->store()->snapshot(expectedTarget.endpoint);
+        page->setParameterSnapshot(
+            snapshot.records(), expectedComponent);
+    }
+    syncConnected();
+
+    connect(this, &SetupView::connectionStateChanged,
+            page, [syncConnected](bool) { syncConnected(); });
+    if (expectedLink) {
+        connect(expectedLink,
+                QOverload<bool>::of(&LinkInterface::connected),
+                page, [syncConnected](bool) { syncConnected(); });
+    }
+
+    connect(page, &ConfigADSBView::refreshRequested,
+            page, [this, page, targetIsCurrent, expectedManager](int) {
+        if (!m_connected || !targetIsCurrent() || !expectedManager
+            || m_parameterManager != expectedManager) {
+            page->parameterWriteSubmissionFailed(
+                tr("not connected to the selected target"));
+            return;
+        }
+        expectedManager->requestParameterList();
+    });
+
+    connect(page, &ConfigADSBView::writeRequested,
+            page,
+            [this, page, targetIsCurrent, expectedTarget,
+             expectedManager, expectedLink](
+                int componentId, const QString &name,
+                const QVariant &value) {
+        const auto reject = [page, componentId, name, value](
+                                const QString &reason) {
+            page->parameterWriteFailed(
+                componentId, name, value, reason);
+        };
+        if (!m_connected || !targetIsCurrent()
+            || !expectedManager || !expectedLink
+            || !expectedLink->isConnected()
+            || componentId != expectedTarget.endpoint.componentId) {
+            reject(tr("not connected to the selected target"));
+            return;
+        }
+        const QVariantList changes{QVariantMap{
+            {QStringLiteral("name"), name},
+            {QStringLiteral("value"), value}
+        }};
+        if (expectedManager->writeParameters(
+                componentId, changes) == 0) {
+            reject(tr("write was rejected for the selected target"));
+        }
+    });
+
+    connect(page, &ConfigADSBView::writeParamsRequested,
+            page,
+            [this, page, targetIsCurrent, expectedTarget,
+             expectedManager, expectedLink](
+                int componentId, const QVariantList &changes) {
+        if (!m_connected || !targetIsCurrent()
+            || !expectedManager || !expectedLink
+            || !expectedLink->isConnected()
+            || componentId != expectedTarget.endpoint.componentId) {
+            page->parameterWriteSubmissionFailed(
+                tr("not connected to the selected target"));
+            return;
+        }
+        const QPointer<ConfigADSBView> guard(page);
+        const qulonglong batchId = expectedManager->writeParameters(
+            componentId, changes);
+        if (!guard) {
+            return;
+        }
+        if (batchId == 0) {
+            guard->parameterWriteSubmissionFailed(
+                tr("write was rejected for the selected target"));
+            return;
+        }
+        guard->parameterBatchSubmitted(componentId, batchId);
+    });
+
+    if (client && expectedUas) {
+        connect(expectedUas, &UASInterface::mavlinkMessageRecieved,
+                page,
+                [client, targetIsCurrent, expectedTarget, expectedLink](
+                    LinkInterface *incomingLink,
+                    const mavlink_message_t &message) {
+            if (targetIsCurrent() && expectedLink
+                && incomingLink == expectedLink
+                && incomingLink->getId()
+                    == expectedTarget.endpoint.linkId) {
+                client->observeMessage(incomingLink->getId(), message);
+            }
+        });
+    }
+
+    if (expectedManager) {
+        connect(expectedManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                page, &ConfigADSBView::parameterChanged);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteFailed,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong, int componentId,
+                    const QString &name, int, const QString &reason) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterWriteFailed(
+                    componentId, name, reason);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteCancelled,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong, int componentId,
+                    const QString &name) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterWriteFailed(
+                    componentId, name, tr("write cancelled"));
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterBatchCompleted,
+                page, &ConfigADSBView::parameterBatchCompleted);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page,
+                [page, targetIsCurrent, expectedManager,
+                 expectedTarget, expectedComponent](bool ready) {
+            if (!ready || !targetIsCurrent() || !expectedManager
+                || !expectedManager->store()) {
+                return;
+            }
+            const ParameterSnapshot snapshot =
+                expectedManager->store()->snapshot(expectedTarget.endpoint);
+            page->setParameterSnapshot(
+                snapshot.records(), expectedComponent);
+        });
+    }
+
     return page;
 }
 
