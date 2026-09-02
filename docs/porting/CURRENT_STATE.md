@@ -17,18 +17,18 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-The latest functional checkpoint is the commit containing this handoff, following `4d4a9a2a` (`feat: port ADS-B setup and harden firmware flow`), `590a820d` (`feat: port Mission Planner setup tools and defaults`) and `de7fd269` (`feat: add Mission Planner command catalog editor`).
+The latest functional checkpoint is the commit containing this handoff, following `e6fab89e` (`feat: port ESP8266 setup workflow`), `4d4a9a2a` (`feat: port ADS-B setup and harden firmware flow`) and `590a820d` (`feat: port Mission Planner setup tools and defaults`).
 
 At this checkpoint:
 
 - CMake configure and one `cmake --build build -j12` completed successfully.
-- The complete test suite passed: **86/86 tests**.
+- The complete test suite passed: **87/87 tests**.
 - Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, switched to SETUP without waiting for the firmware manifest, rendered the connected ADSB page, and closed the main window cleanly while SETUP network work was active.
 - The worktree was clean after the commit.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 127 product rows: 31 `in-progress`, 49 `partial`, 47 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 127 product rows: 32 `in-progress`, 49 `partial`, 46 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -47,6 +47,7 @@ These are working foundations, though their parity rows may remain partial becau
 - The MP10 HW ID page: `_ID`/`_DEVID` inventory, ArduPilot device-ID decoding and exact six-column sortable presentation.
 - The MP10 ADSB page: metadata-backed `ADSB_`/`AVD_` parameter editing and batching, search, uAvionix flight-ID/registration read/write cadence and exact-target message filtering.
 - The MP10 ESP8266 page: exact component-240 parameter loading, bytewise packed settings, 22 serialized writes, storage/reboot/reset commands and a target-safe Qt view lifecycle.
+- The MP10 Antenna Tracker output foundation: exact Maestro compact commands and ArduTracker/DegreeTracker text protocols with tested trim, reverse, clamp, wrap and tilt-flip arithmetic behind an injectable writer.
 - Advanced and Developer action inventories, working shared actions/parsers, Advanced Terminal and the user-facing trusted QML plugin manager.
 - Cooperative shutdown ordering, including close with the modeless inspector open, verified by the real-X11 smoke above.
 
@@ -72,7 +73,7 @@ The first-activation SETUP stall is fixed: `ApmCustomFirmwareConfig` yields befo
 
 The next audited SETUP packages are CubeID and Secure. CubeID is a target-aware firmware updater, not another HW-ID presentation; its CubePilot messages are absent from the current generated dialect and require a coordinated MAVLink update. `ConfigSecureView` manages bootloader public-key slots with `SECURE_COMMAND`, while `ConfigSecureApView` generates Ed25519 keys and signs bootloader/firmware files; MAVLink link signing remains a separate Advanced Tools workflow. The security pages need a reviewed cross-platform Ed25519 dependency before implementation.
 
-The three Antenna Tracker routes are audited in `SETUP_ANTENNA_TRACKER_AUDIT.md`. The next implementation sequence is the pure Maestro/ArduTracker/DegreeTracker output codecs, a cancellable raw-serial service, shared serial/live view models and geometry, then the exact-target 25-field parameter page. The old `AntennaTrackerConfig` remains until these replacements are routed and verified.
+The three Antenna Tracker routes are audited in `SETUP_ANTENNA_TRACKER_AUDIT.md`. The pure Maestro/ArduTracker/DegreeTracker output codecs are now implemented and tested; the next sequence is a cancellable raw-serial service, shared serial/live view models and geometry, then the exact-target 25-field parameter page. The old `AntennaTrackerConfig` remains until these replacements are routed and verified.
 
 Legacy APM Planner binary plugins are not a requirement. Where MP10 calls something a plugin/page/tool, reproduce the user-visible function with a native Qt page/service or the trusted QML extension system; do not restore the old ABI.
 

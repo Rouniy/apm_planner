@@ -67,7 +67,7 @@ SETUP	GCSViews/Setup/SikRadioView.axaml	src/ui/configuration/Radio3DRConfig.*;sr
 SETUP	GCSViews/Setup/NvModemView.axaml		not-started	NV4/NV5 discovery, route isolation, presets, keys, compare/save/reboot and diagnostics match
 SETUP	Views/OpenDroneIdView.axaml		not-started	Open Drone ID transport, identity/location/operator fields, validation and lifecycle match
 SETUP	GCSViews/ConfigurationView/ConfigJoystickView.axaml	src/ui/JoystickWidget.*	partial	Device/axis/button mapping, calibration, enable and vehicle output match
-SETUP	GCSViews/ConfigurationView/ConfigAntennaTrackerView.axaml		not-started	Tracker connection, calibration, servo ranges, testing and home match; existing AntennaTrackerConfig is a UI-only stub
+SETUP	GCSViews/ConfigurationView/ConfigAntennaTrackerView.axaml	src/ui/configuration/AntennaTrackerOutputs.*;tests/test_antennatrackeroutputs.cpp	in-progress	The MP10 Maestro, ArduTracker and DegreeTracker factory/protocol layer is implemented with exact setup/target byte and text formats, trim/reverse/clamp/wrap/180-degree flip arithmetic, configuration validation, injectable writes and deterministic lifecycle tests; the cancellable QSerialPort service, serial/live views, geometry, SiK trim search, routing and hardware evidence remain, and the old AntennaTrackerConfig is still only a stub
 SETUP	GCSViews/ConfigurationView/ConfigAntennaTrackerParamView.axaml		not-started	Tracker-specific parameter page matches; existing AntennaTrackerConfig is a UI-only stub
 SETUP	Views/AntennaTrackerUIView.axaml		not-started	Live target tracking and all output protocols match
 SETUP	GCSViews/ConfigurationView/ConfigTradHeliView.axaml		not-started	Legacy traditional-heli setup matches

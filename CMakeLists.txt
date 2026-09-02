@@ -625,6 +625,8 @@ set(SOURCES
     src/ui/configuration/AirspeedConfig.cc
     src/ui/configuration/AirspeedConfig.h
     src/ui/configuration/AirspeedConfig.ui
+    src/ui/configuration/AntennaTrackerOutputs.cpp
+    src/ui/configuration/AntennaTrackerOutputs.h
     src/ui/configuration/AntennaTrackerConfig.cc
     src/ui/configuration/AntennaTrackerConfig.h
     src/ui/configuration/AntennaTrackerConfig.ui
@@ -2424,6 +2426,21 @@ if(BUILD_TESTING)
     set_tests_properties(confighwesp8266view_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_executable(antennatrackeroutputs_tests
+        tests/test_antennatrackeroutputs.cpp
+        src/ui/configuration/AntennaTrackerOutputs.cpp
+        src/ui/configuration/AntennaTrackerOutputs.h
+    )
+    target_include_directories(antennatrackeroutputs_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(antennatrackeroutputs_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME antennatrackeroutputs_tests
+             COMMAND antennatrackeroutputs_tests)
 
     add_executable(vehicle_target_manager_tests
         tests/test_vehicletargetmanager.cpp
