@@ -15,6 +15,7 @@ public:
     explicit QtAudioOutput(QObject *parent = nullptr);
 
     bool playFile(const QString &fileName);
+    bool isSpeechReady() const;
     bool speak(const QString &text);
     QStringList availableVoices() const;
     void selectFemaleVoice();

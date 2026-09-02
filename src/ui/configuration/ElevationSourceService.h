@@ -110,6 +110,9 @@ public:
     virtual bool isNativeGdalAvailable() const;
     virtual bool sampleAltitude(double latitude, double longitude,
                                 double *altitude) const;
+    virtual QString srtmCacheDirectory() const;
+    virtual bool srtmAutoDownloadEnabled() const;
+    virtual void setSrtmAutoDownloadEnabled(bool enabled);
     virtual QByteArray renderRasterTile(int tileX, int tileY, int zoom,
                                         int tileSize = 256) const;
 
@@ -129,6 +132,8 @@ signals:
     void scanCancelled(bool startup);
     void busyChanged(bool busy);
     void nativeRastersChanged();
+    void srtmTileAvailable(const QString &tileName);
+    void srtmDownloadFailed(const QString &tileName, const QString &error);
 
 private:
     class Private;

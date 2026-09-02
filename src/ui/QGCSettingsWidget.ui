@@ -49,14 +49,14 @@
           <item>
            <widget class="QRadioButton" name="outdoorStyle">
             <property name="text">
-             <string>Use outdoor mission style (light background)</string>
+             <string>Mission Planner 10 Emerald (default)</string>
             </property>
            </widget>
           </item>
           <item>
            <widget class="QRadioButton" name="indoorStyle">
             <property name="text">
-             <string>Use indoor mission style (black background)</string>
+             <string>Legacy indoor style</string>
             </property>
            </widget>
           </item>

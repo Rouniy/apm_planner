@@ -3,6 +3,7 @@
 
 #include "maptype.h"
 
+#include <QList>
 #include <QObject>
 #include <QString>
 
@@ -17,8 +18,6 @@ class MapTileSourceFactory : public QObject
 
 public:
     static constexpr const char *SettingsKey = "MapType";
-    static constexpr const char *LegacySettingsKey =
-        "QGC_MAPWIDGET/MAP_TYPE";
     static constexpr const char *GdalUnavailableStatus =
         "Configure GDAL Custom before selecting it.";
 
@@ -35,6 +34,7 @@ public:
     bool IsGdalConfigured() const;
 
     static bool IsKnownMapType(core::MapType::Types type);
+    static QList<core::MapType::Types> CacheableMapTypes();
     static QString SettingsName(core::MapType::Types type);
     static core::MapType::Types MapTypeFromSettingsName(
         const QString &name);
@@ -45,6 +45,7 @@ public:
 
 public slots:
     bool SetMapType(core::MapType::Types type);
+    void InvalidateMapType(core::MapType::Types type);
     void RefreshMapType();
 
 signals:

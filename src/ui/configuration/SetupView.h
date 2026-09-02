@@ -2,11 +2,10 @@
 #define SETUPVIEW_H
 
 #include "ParamField.h"
+#include "comm/DroneCanForwardingBroker.h"
 
-#include <QHash>
 #include <QList>
 #include <QPointer>
-#include <QSet>
 #include <QString>
 #include <QVariant>
 #include <QWidget>
@@ -14,6 +13,10 @@
 #include <memory>
 
 class BackstageView;
+class ConfigGpsInjectView;
+class ConfigDroneCanView;
+class DroneCanMavlinkTransport;
+class LinkInterface;
 class ParameterMetaDataRepository;
 class QGCUASParamManager;
 class UASInterface;
@@ -28,6 +31,7 @@ public:
 
 signals:
     void advancedModeChanged(bool advanced);
+    void connectionStateChanged(bool connected);
 
 public slots:
     void advModeChanged(bool advanced);
@@ -36,9 +40,7 @@ private slots:
     void activeUASSet(UASInterface *uas);
     void vehicleConnected();
     void vehicleDisconnected();
-    void parameterChanged(int uas, int component, int parameterCount,
-                          int parameterId, QString parameterName,
-                          QVariant value);
+    void parameterTargetChanged();
     void parameterListUpToDate(int component);
     void parameterListLoadStarted();
     void parameterListReadyChanged(bool ready);
@@ -55,23 +57,41 @@ private:
     void refreshLoadingOverlay();
     void syncConnectionState();
     void bindParameterManager(QGCUASParamManager *manager);
-    void resetConnectionPages();
+    void resetConnectionPages(bool restoreSelection = true);
     void resetParameterProgress();
     bool hasConnectedLink() const;
     bool currentPageAllowsPartialParameters() const;
+    QWidget *createMotorTestPage(QWidget *parent);
+    QWidget *createBluetoothSetupPage(QWidget *parent);
+    QWidget *createParachutePage(QWidget *parent);
+    QWidget *createGpsInjectPage(QWidget *parent);
+    QWidget *createGPSOrderPage(QWidget *parent);
+    QWidget *createBatteryMonitoring2Page(QWidget *parent);
+    QWidget *createDroneCanPage(QWidget *parent);
+    QWidget *createHWCANPage(QWidget *parent);
+    QWidget *createEscCalibrationPage(QWidget *parent);
+    QWidget *createRadioOutputPage(QWidget *parent);
     QWidget *createSerialPage(QWidget *parent);
     QWidget *createInitialParamsPage(QWidget *parent);
+    bool bindDroneCanTransport();
+    LinkInterface *selectDroneCanLink() const;
     QList<ConfigFriendlyParameterValue> parameterSnapshot(
         int componentId) const;
 
     BackstageView *m_backstage = nullptr;
+    QPointer<ConfigGpsInjectView> m_gpsInjectPage;
+    QPointer<ConfigDroneCanView> m_droneCanPage;
+    QPointer<DroneCanForwardingBroker> m_droneCanBroker;
+    QPointer<DroneCanMavlinkTransport> m_droneCanTransport;
+    DroneCanForwardingBroker::LeaseToken m_droneCanLease;
+    QPointer<LinkInterface> m_droneCanLastPrimaryLink;
     std::unique_ptr<ParameterMetaDataRepository> m_metadataRepository;
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
-    QHash<int, QSet<int>> m_receivedParameterIds;
-    QHash<int, int> m_expectedParameterCounts;
     QString m_parameterLoadFailure;
     QString m_firmwareVersion;
+    QString m_targetPageToRestore;
+    qulonglong m_parameterTargetRevision = 0;
     bool m_parameterLoadingCanceled = false;
     bool m_connected = false;
     bool m_parametersReady = false;

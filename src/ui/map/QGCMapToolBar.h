@@ -4,10 +4,11 @@
 #include <QWidget>
 #include <QMenu>
 #include <QActionGroup>
+#include <QPointer>
 
 #include "maptype.h"
 
-class QGCMapWidget;
+class AbstractMapWidget;
 
 namespace Ui {
     class QGCMapToolBar;
@@ -21,7 +22,7 @@ public:
     explicit QGCMapToolBar(QWidget *parent = 0);
     ~QGCMapToolBar();
 
-    void setMap(QGCMapWidget* map);
+    void setMap(AbstractMapWidget *map);
 
 public slots:
     void tileLoadStart();
@@ -31,6 +32,7 @@ public slots:
     void setUAVTrailDistance();
     void setUpdateInterval();
     void setMapType();
+    void setMapWidgetBackend();
     void updateMapType(core::MapType::Types type);
     void showMapStatus(const QString &status);
     void goHome();
@@ -38,20 +40,24 @@ public slots:
 private:
     void loadSettings();
     void storeSettings();
+    void rebuildMapWidgetsMenu();
+    void syncMapWidgetBackend(const QString &backendId);
 
 private:
     Ui::QGCMapToolBar *ui;
 
 protected:
-    QGCMapWidget* map;
+    QPointer<AbstractMapWidget> map;
     QMenu optionsMenu;
     QMenu trailPlotMenu;
     QMenu updateTimesMenu;
     QMenu mapTypesMenu;
+    QMenu mapWidgetsMenu;
 
     QActionGroup* trailSettingsGroup;
     QActionGroup* updateTimesGroup;
     QActionGroup* mapTypesGroup;
+    QActionGroup* mapWidgetsGroup;
 };
 
 #endif // QGCMAPTOOLBAR_H

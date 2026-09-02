@@ -21,6 +21,7 @@ class FlightDataViewModel final : public QObject
     Q_PROPERTY(double GroundSpeed READ groundSpeed NOTIFY telemetryChanged)
     Q_PROPERTY(double VerticalSpeed READ verticalSpeed NOTIFY telemetryChanged)
     Q_PROPERTY(double SatCount READ satCount NOTIFY telemetryChanged)
+    Q_PROPERTY(double GpsHdop READ gpsHdop NOTIFY telemetryChanged)
     Q_PROPERTY(int GpsFixType READ gpsFixType NOTIFY telemetryChanged)
     Q_PROPERTY(bool Armed READ armed NOTIFY telemetryChanged)
     Q_PROPERTY(bool PrearmOk READ prearmOk NOTIFY telemetryChanged)
@@ -39,6 +40,9 @@ class FlightDataViewModel final : public QObject
     Q_PROPERTY(double TurnRate READ turnRate NOTIFY telemetryChanged)
     Q_PROPERTY(double WpDist READ wpDist NOTIFY telemetryChanged)
     Q_PROPERTY(int WpNo READ wpNo NOTIFY telemetryChanged)
+    Q_PROPERTY(int MissionItemCount READ missionItemCount NOTIFY telemetryChanged)
+    Q_PROPERTY(double MissionProgress READ missionProgress NOTIFY telemetryChanged)
+    Q_PROPERTY(QString MissionProgressText READ missionProgressText NOTIFY telemetryChanged)
     Q_PROPERTY(double BatteryVoltage2 READ batteryVoltage2 NOTIFY telemetryChanged)
     Q_PROPERTY(int BatteryRemaining2 READ batteryRemaining2 NOTIFY telemetryChanged)
     Q_PROPERTY(double BatCurrent2 READ currentAmps2 NOTIFY telemetryChanged)
@@ -62,6 +66,7 @@ public:
     double groundSpeed() const { return m_groundSpeed; }
     double verticalSpeed() const { return m_verticalSpeed; }
     double satCount() const { return m_satCount; }
+    double gpsHdop() const { return m_gpsHdop; }
     int gpsFixType() const { return m_gpsFixType; }
     bool armed() const { return m_armed; }
     bool prearmOk() const { return m_prearmOk; }
@@ -80,6 +85,9 @@ public:
     double turnRate() const { return m_turnRate; }
     double wpDist() const { return m_wpDist; }
     int wpNo() const { return m_wpNo; }
+    int missionItemCount() const { return m_missionItemCount; }
+    double missionProgress() const { return m_missionProgress; }
+    QString missionProgressText() const { return m_missionProgressText; }
     double batteryVoltage2() const { return m_batteryVoltage2; }
     int batteryRemaining2() const { return m_batteryRemaining2; }
     double currentAmps2() const { return m_currentAmps2; }
@@ -106,6 +114,7 @@ public slots:
     void updateNavMode(int uasId, int mode, const QString &text);
     void updateGpsFix(UASInterface *uas, int fix);
     void updateSatelliteCount(int count, const QString &name);
+    void updateGpsHdop(double value, const QString &name);
     void updateDropRate(int uasId, float receiveDrop);
     void updateNavigation(UASInterface *uas, double altitudeError,
                           double speedError, double xtrackError);
@@ -121,6 +130,7 @@ public slots:
 
 signals:
     void telemetryChanged();
+    void batteryTelemetryChanged(double voltage, double remainingPercent);
     void activeUASChanged(UASInterface *uas);
 
 private:
@@ -128,6 +138,7 @@ private:
     void publish();
     void applyToHud();
     void connectWaypointManager(UASWaypointManager *manager);
+    void updateMissionProgress();
     bool isCurrentUas(UASInterface *uas) const;
 
     QPointer<UASInterface> m_uas;
@@ -142,6 +153,7 @@ private:
     double m_groundSpeed = 0.0;
     double m_verticalSpeed = 0.0;
     double m_satCount = 0.0;
+    double m_gpsHdop = 0.0;
     int m_gpsFixType = 0;
     bool m_armed = false;
     bool m_prearmOk = false;
@@ -160,6 +172,9 @@ private:
     double m_turnRate = 0.0;
     double m_wpDist = 0.0;
     int m_wpNo = 0;
+    int m_missionItemCount = 0;
+    double m_missionProgress = 0.0;
+    QString m_missionProgressText = QStringLiteral("No mission loaded");
     double m_batteryVoltage2 = 0.0;
     int m_batteryRemaining2 = 0;
     double m_currentAmps2 = 0.0;

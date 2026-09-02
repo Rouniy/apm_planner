@@ -137,133 +137,133 @@ FailSafeConfig::FailSafeConfig(QWidget *parent) : AP2ConfigWidget(parent)
 
 void FailSafeConfig::gcsChecked(bool checked)
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
     if (checked)
     {
-        m_uas->setParameter(1,"FS_GCS_ENABL",1);
+        m_parameterManager->setParameter(1,"FS_GCS_ENABL",1);
     }
     else
     {
-        m_uas->setParameter(1,"FS_GCS_ENABL",0);
+        m_parameterManager->setParameter(1,"FS_GCS_ENABL",0);
     }
 }
 
 void FailSafeConfig::throttleActionChecked(bool checked)
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
     if (checked)
     {
-        m_uas->setParameter(1,"THR_FS_ACTION",1);
+        m_parameterManager->setParameter(1,"THR_FS_ACTION",1);
     }
     else
     {
-        m_uas->setParameter(1,"THR_FS_ACTION",0);
+        m_parameterManager->setParameter(1,"THR_FS_ACTION",0);
     }
 }
 
 void FailSafeConfig::throttleChecked(bool checked)
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
     if (checked)
     {
-        m_uas->setParameter(1,"THR_FAILSAFE",1);
+        m_parameterManager->setParameter(1,"THR_FAILSAFE",1);
     }
     else
     {
-        m_uas->setParameter(1,"THR_FAILSAFE",0);
+        m_parameterManager->setParameter(1,"THR_FAILSAFE",0);
     }
 }
 
 void FailSafeConfig::batteryVoltChanged()
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
-    m_uas->setParameter(1,m_lowVoltParam,ui.batteryVoltSpinBox->value());
+    m_parameterManager->setParameter(1,m_lowVoltParam,ui.batteryVoltSpinBox->value());
 }
 
 void FailSafeConfig::batteryCapChanged()
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
-    m_uas->setParameter(1,"FS_BATT_MAH",ui.batteryCapSpinBox->value());
+    m_parameterManager->setParameter(1,"FS_BATT_MAH",ui.batteryCapSpinBox->value());
 }
 
 void FailSafeConfig::throttlePwmChanged()
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
     if (m_uas->isFixedWing())
     {
-        m_uas->setParameter(1,"THR_FS_VALUE",ui.throttlePwmSpinBox->value());
+        m_parameterManager->setParameter(1,"THR_FS_VALUE",ui.throttlePwmSpinBox->value());
     }
     else if (m_uas->isMultirotor())
     {
-        m_uas->setParameter(1,"FS_THR_VALUE",ui.throttlePwmSpinBox->value());
+        m_parameterManager->setParameter(1,"FS_THR_VALUE",ui.throttlePwmSpinBox->value());
     }
 }
 
 void FailSafeConfig::throttleFailSafeChanged(int index)
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
-    m_uas->setParameter(1,"FS_THR_ENABLE",index);
+    m_parameterManager->setParameter(1,"FS_THR_ENABLE",index);
 }
 
 void FailSafeConfig::fsLongClicked(bool checked)
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
     if (checked)
     {
-        m_uas->setParameter(1,"FS_LONG_ACTN",1);
+        m_parameterManager->setParameter(1,"FS_LONG_ACTN",1);
     }
     else
     {
-        m_uas->setParameter(1,"FS_LONG_ACTN",0);
+        m_parameterManager->setParameter(1,"FS_LONG_ACTN",0);
     }
 }
 
 void FailSafeConfig::fsShortClicked(bool checked)
 {
-    if (!m_uas)
+    if (!m_uas || !m_parameterManager)
     {
         showNullMAVErrorMessageBox();
         return;
     }
     if (checked)
     {
-        m_uas->setParameter(1,"FS_SHORT_ACTN",1);
+        m_parameterManager->setParameter(1,"FS_SHORT_ACTN",1);
     }
     else
     {
-        m_uas->setParameter(1,"FS_SHORT_ACTN",0);
+        m_parameterManager->setParameter(1,"FS_SHORT_ACTN",0);
     }
 }
 
@@ -274,7 +274,7 @@ void FailSafeConfig::batteryFailSafeChanged(int index)
         showNullMAVErrorMessageBox();
         return;
     }
-    m_uas->setParameter(1,"FS_BATT_ENABLE",index);
+    m_parameterManager->setParameter(1,"FS_BATT_ENABLE",index);
 }
 
 FailSafeConfig::~FailSafeConfig()

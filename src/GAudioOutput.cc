@@ -60,10 +60,16 @@ bool GAudioOutput::isMuted() const
     return muted;
 }
 
+bool GAudioOutput::isSpeechReady() const
+{
+    return !muted && !emergency && audioBackend
+        && audioBackend->isSpeechReady();
+}
+
 bool GAudioOutput::say(QString text, int severity)
 {
     Q_UNUSED(severity)
-    if (muted || emergency || text == QStringLiteral("system %1")) {
+    if (!isSpeechReady() || text == QStringLiteral("system %1")) {
         return false;
     }
     return audioBackend->speak(text);

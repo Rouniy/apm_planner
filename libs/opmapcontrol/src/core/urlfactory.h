@@ -32,6 +32,7 @@
 #include <QUrl>
 #include <QtNetwork/QNetworkRequest>
 #include <QtNetwork/QNetworkReply>
+#include <QMutex>
 #include <QTimer>
 #include <QCoreApplication>
 #include "providerstrings.h"

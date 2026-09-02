@@ -57,7 +57,6 @@ UDPClientLink::UDPClientLink(QHostAddress host, quint16 port) :
 UDPClientLink::~UDPClientLink()
 {
     disconnect();
-	this->deleteLater();
 }
 
 /**

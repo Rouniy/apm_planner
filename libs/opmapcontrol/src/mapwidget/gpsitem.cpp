@@ -168,12 +168,16 @@ namespace mapcontrol
         trailLine->setVisible(value);
     }
 
-    void GPSItem::DeleteTrail()const
+    void GPSItem::DeleteTrail()
     {
         foreach(QGraphicsItem* i,trail->childItems())
             delete i;
         foreach(QGraphicsItem* i,trailLine->childItems())
             delete i;
+        coord = internals::PointLatLng();
+        lastcoord = internals::PointLatLng();
+        lasttrailline = internals::PointLatLng();
+        timer.restart();
     }
 
     double GPSItem::Distance3D(const internals::PointLatLng &coord, const int &altitude)

@@ -43,7 +43,7 @@ class MapTileSourceFactoryTest final : public QObject
 
 private slots:
     void normalizationUsesExactMissionPlannerFallback();
-    void migratesLegacyIntegerToOneRootString();
+    void cacheMaintenanceUsesTheFiveMissionPlannerProviders();
     void preservesUnknownFutureProvider();
     void gdalSelectionRequiresConfiguration();
     void configuredGdalSelectionIsGlobalAndRefreshable();
@@ -77,21 +77,47 @@ void MapTileSourceFactoryTest::normalizationUsesExactMissionPlannerFallback()
     QVERIFY(status.isEmpty());
 }
 
-void MapTileSourceFactoryTest::migratesLegacyIntegerToOneRootString()
+void MapTileSourceFactoryTest::cacheMaintenanceUsesTheFiveMissionPlannerProviders()
 {
+    const QList<core::MapType::Types> expected = {
+        core::MapType::GoogleSatellite,
+        core::MapType::GoogleHybrid,
+        core::MapType::BingSatellite,
+        core::MapType::OpenStreetMap,
+        core::MapType::ArcGIS_Satellite
+    };
+    QCOMPARE(MapTileSourceFactory::CacheableMapTypes(), expected);
+
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
                        QSettings::IniFormat);
-    settings.setValue(QStringLiteral("QGC_MAPWIDGET/MAP_TYPE"),
-                      static_cast<int>(core::MapType::GoogleHybrid));
+    settings.setValue(QStringLiteral("MapType"),
+                      QStringLiteral("OpenStreetMap"));
     FakeElevationSourceService service;
-
     MapTileSourceFactory factory(&service, &settings);
-    QCOMPARE(factory.CurrentMapType(), core::MapType::GoogleHybrid);
-    QCOMPARE(settings.value(QStringLiteral("MapType")).toString(),
-             QStringLiteral("GoogleHybridMap"));
-    QVERIFY(!settings.contains(QStringLiteral("QGC_MAPWIDGET/MAP_TYPE")));
+    QSignalSpy refreshed(&factory,
+                         &MapTileSourceFactory::MapRefreshRequested);
+
+    const core::RawTile satelliteTile(
+        core::MapType::GoogleSatellite, core::Point(4, 5), 6);
+    const core::RawTile streetTile(
+        core::MapType::OpenStreetMap, core::Point(7, 8), 9);
+    core::OPMaps::Instance()->AddTileToMemoryCache(
+        satelliteTile, QByteArrayLiteral("satellite"));
+    core::OPMaps::Instance()->AddTileToMemoryCache(
+        streetTile, QByteArrayLiteral("street"));
+
+    factory.InvalidateMapType(core::MapType::GoogleSatellite);
+    QCOMPARE(refreshed.count(), 0);
+    QVERIFY(core::OPMaps::Instance()->GetTileFromMemoryCache(
+                satelliteTile).isEmpty());
+    QCOMPARE(core::OPMaps::Instance()->GetTileFromMemoryCache(streetTile),
+             QByteArrayLiteral("street"));
+    factory.InvalidateMapType(core::MapType::OpenStreetMap);
+    QCOMPARE(refreshed.count(), 1);
+    QVERIFY(core::OPMaps::Instance()->GetTileFromMemoryCache(
+                streetTile).isEmpty());
 }
 
 void MapTileSourceFactoryTest::preservesUnknownFutureProvider()

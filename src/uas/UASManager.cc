@@ -11,12 +11,15 @@
 #include <QList>
 #include <QApplication>
 #include <QMessageBox>
+#include <QPointer>
 #include <QTimer>
 #include <QSettings>
 #include "UAS.h"
 #include "UASInterface.h"
 #include "UASManager.h"
 #include "QGC.h"
+#include "comm/DroneCanForwardingBroker.h"
+#include "comm/DroneCanMavlinkTransport.h"
 
 #include <QVector3D>
 #include <QMatrix3x3>
@@ -27,15 +30,15 @@
 
 UASManager* UASManager::instance()
 {
-    static UASManager* _instance = 0;
-    if(_instance == 0) {
+    static QPointer<UASManager> _instance;
+    if (_instance.isNull()) {
         _instance = new UASManager();
 
         // Set the application as parent to ensure that this object
         // will be destroyed when the main application exits
         _instance->setParent(qApp);
     }
-    return _instance;
+    return _instance.data();
 }
 
 void UASManager::storeSettings()
@@ -209,7 +212,7 @@ void UASManager::uavChangedHomePosition(int uav, double lat, double lon, double 
     // FIXME: Accept any home position change for now from the active UAS
     // this means that the currently select UAS can change the home location
     // of the whole swarm. This makes sense, but more control might be needed
-    if (uav == activeUAS->getUASID())
+    if (activeUAS && uav == activeUAS->getUASID())
     {
         if (setHomePosition(lat, lon, alt))
         {
@@ -238,21 +241,67 @@ UASManager::UASManager() :
         homeAlt(25.0),
         homeFrame(MAV_FRAME_GLOBAL)
 {
+    m_droneCanForwardingBroker = new DroneCanForwardingBroker(this);
+    m_droneCanMavlinkTransport = new DroneCanMavlinkTransport(
+        m_droneCanForwardingBroker, this);
     loadSettings();
     setLocalNEDSafetyBorders(1, -1, 0, -1, 1, -1);
 }
 
 UASManager::~UASManager()
 {
+    shutdown();
+}
+
+void UASManager::quiesceTransports()
+{
+    if (m_droneCanForwardingBroker) {
+        m_droneCanForwardingBroker->shutdown();
+    }
+}
+
+void UASManager::shutdown()
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    m_shuttingDown = true;
+
+    quiesceTransports();
     storeSettings();
-    // Delete all systems
-    foreach (UASInterface* mav, systems) {
+
+    // Clear the registry before destroying its entries. UAS and link
+    // destructors can otherwise re-enter removeUAS() with a half-destroyed
+    // object while the application is closing.
+    const QList<UASInterface *> registeredSystems = systems;
+    const bool hadActiveSystem = activeUAS != nullptr;
+    systems.clear();
+    activeUAS = nullptr;
+    UASWaypointManager *offlineManager = offlineUASWaypointManager;
+    offlineUASWaypointManager = nullptr;
+
+    if (hadActiveSystem) {
+        emit activeUASSet(static_cast<UASInterface *>(nullptr));
+    }
+    for (UASInterface *mav : registeredSystems) {
+        if (!mav) {
+            continue;
+        }
+        // Notify native widgets while the pointer is still a valid UAS. This
+        // lets legacy raw-pointer consumers detach before destruction.
+        emit UASDeleted(mav);
+        disconnect(mav, nullptr, this, nullptr);
         delete mav;
     }
+    delete offlineManager;
 }
 
 void UASManager::addUAS(UASInterface* uas)
 {
+    if (m_shuttingDown || !uas || systems.contains(uas)) {
+        return;
+    }
+
     // WARNING: The active uas is set here
     // and then announced below. This is necessary
     // to make sure the getActiveUAS() function
@@ -265,23 +314,20 @@ void UASManager::addUAS(UASInterface* uas)
         activeUAS = uas;
     }
 
-    // Only execute if there is no UAS at this index
-    if (!systems.contains(uas))
-    {
-        systems.append(uas);
-        connect(uas, SIGNAL(destroyed(QObject*)), this, SLOT(removeUAS(QObject*)));
-        // Set home position on UAV if set in UI
-        // - this is done on a per-UAV basis
-        // Set home position in UI if UAV chooses a new one (caution! if multiple UAVs are connected, take care!)
-        connect(uas, SIGNAL(homePositionChanged(int,double,double,double)), this, SLOT(uavChangedHomePosition(int,double,double,double)));
-        emit UASCreated(uas);
-    }
+    systems.append(uas);
+    connect(uas, SIGNAL(destroyed(QObject*)), this, SLOT(removeUAS(QObject*)));
+    // Set home position on UAV if set in UI
+    // - this is done on a per-UAV basis
+    // Set home position in UI if UAV chooses a new one (caution! if multiple UAVs are connected, take care!)
+    connect(uas, SIGNAL(homePositionChanged(int,double,double,double)), this, SLOT(uavChangedHomePosition(int,double,double,double)));
+    emit UASCreated(uas);
 
     // If there is no active UAS yet, set the first one as the active UAS
     if (firstUAS)
     {
         setActiveUAS(uas);
-        if (offlineUASWaypointManager->getWaypointEditableList().size() > 0)
+        if (offlineUASWaypointManager
+                && offlineUASWaypointManager->getWaypointEditableList().size() > 0)
         {
             if (QMessageBox::question(0,"Question","Do you want to append the offline waypoints to the ones currently on the UAV?",QMessageBox::Yes,QMessageBox::No) == QMessageBox::Yes)
             {
@@ -302,47 +348,64 @@ void UASManager::addUAS(UASInterface* uas)
 
 void UASManager::removeUAS(QObject* uas)
 {
-    UASInterface* mav = qobject_cast<UASInterface*>(uas);
-    removeUAS(mav);
+    if (m_shuttingDown || !uas) {
+        return;
+    }
+
+    // QObject::destroyed is emitted after the derived destructor has run, so
+    // qobject_cast<UASInterface*> is no longer valid here. Compare identities
+    // only and never publish the already-destroyed pointer to UI consumers.
+    int listIndex = -1;
+    for (int i = 0; i < systems.size(); ++i) {
+        if (static_cast<QObject *>(systems.at(i)) == uas) {
+            listIndex = i;
+            break;
+        }
+    }
+    if (listIndex < 0) {
+        return;
+    }
+
+    UASInterface *removed = systems.takeAt(listIndex);
+    if (activeUAS != removed) {
+        return;
+    }
+    activeUAS = nullptr;
+    if (!systems.isEmpty()) {
+        setActiveUAS(systems.first());
+    } else {
+        emit activeUASSet(static_cast<UASInterface *>(nullptr));
+    }
 }
 
 void UASManager::removeUAS(UASInterface* uas)
 {
-    UASInterface* mav = uas;
-
-    if (mav) {
-        int listindex = systems.indexOf(mav);
-
-        if (mav == activeUAS)
-        {
-            if (systems.count() > 1)
-            {
-                // We only set a new UAS if more than one is present
-                if (listindex != 0)
-                {
-                    // The system to be removed is not at position 1
-                    // set position one as new active system
-                    setActiveUAS(systems.first());
-                }
-                else
-                {
-                    // The system to be removed is at position 1,
-                    // select the next system
-                    setActiveUAS(systems.at(1));
-                }
-            }
-            else
-            {
-                // sends a null pointer if no UAS is present any more.
-                // It requires listeners of activeUASSet signal to
-                // check for NULL, otherwise bad stuff will happen!
-                activeUAS = NULL;
-                emit activeUASSet(activeUAS);
-            }
-        }
-        systems.removeAt(listindex);
-        emit UASDeleted(mav);
+    if (m_shuttingDown || !uas) {
+        return;
     }
+
+    const int listIndex = systems.indexOf(uas);
+    if (listIndex < 0) {
+        return;
+    }
+
+    const bool wasActive = uas == activeUAS;
+    systems.removeAt(listIndex);
+    disconnect(uas, nullptr, this, nullptr);
+
+    if (wasActive) {
+        activeUAS = nullptr;
+        if (!systems.isEmpty()) {
+            setActiveUAS(systems.first());
+        } else {
+            emit activeUASSet(static_cast<UASInterface *>(nullptr));
+        }
+    }
+    emit UASDeleted(uas);
+    // UASManager owns every vehicle accepted by addUAS().  Deferred deletion
+    // keeps direct UASDeleted consumers safe for the duration of the signal
+    // while ensuring a disconnected vehicle cannot be orphaned indefinitely.
+    uas->deleteLater();
 }
 
 QList<UASInterface*> UASManager::getUASList()
@@ -368,6 +431,7 @@ UASWaypointManager *UASManager::getActiveUASWaypointManager()
     if (!offlineUASWaypointManager)
     {
         offlineUASWaypointManager = new UASWaypointManager(NULL);
+        offlineUASWaypointManager->setParent(this);
     }
     return offlineUASWaypointManager;
 
@@ -462,4 +526,3 @@ void UASManager::setActiveUAS(UASInterface* uas)
         emit activeUASStatusChanged(uas->getUASID(), true);
     }
 }
-

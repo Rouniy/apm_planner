@@ -1,9 +1,11 @@
 #include "FlightDataViewModel.h"
 
+#include "FlightDataMissionProgress.h"
 #include "HudControl.h"
 #include "UASInterface.h"
 #include "UASManager.h"
 #include "UASWaypointManager.h"
+#include "Waypoint.h"
 
 #include <QtMath>
 
@@ -83,6 +85,7 @@ void FlightDataViewModel::resetTelemetry()
     m_roll = m_pitch = m_yaw = 0.0;
     m_alt = m_airSpeed = m_groundSpeed = m_verticalSpeed = 0.0;
     m_satCount = 0.0;
+    m_gpsHdop = 0.0;
     m_gpsFixType = 0;
     m_armed = false;
     m_prearmOk = false;
@@ -93,6 +96,9 @@ void FlightDataViewModel::resetTelemetry()
     m_windDir = m_windVel = m_aoa = m_ssa = 0.0;
     m_xTrackError = m_turnRate = m_wpDist = 0.0;
     m_wpNo = 0;
+    m_missionItemCount = 0;
+    m_missionProgress = 0.0;
+    m_missionProgressText = tr("No mission loaded");
     m_batteryVoltage2 = m_currentAmps2 = 0.0;
     m_batteryRemaining2 = 0;
     m_throttlePercent = 0.0;
@@ -157,6 +163,8 @@ void FlightDataViewModel::setActiveUAS(UASInterface *uas)
                 this, &FlightDataViewModel::updateHeartbeatTimeout);
         connect(m_uas, SIGNAL(satelliteCountChanged(int,QString)),
                 this, SLOT(updateSatelliteCount(int,QString)));
+        connect(m_uas, SIGNAL(gpsHdopChanged(double,QString)),
+                this, SLOT(updateGpsHdop(double,QString)));
 
         m_roll = m_uas->getRoll() * kRadiansToDegrees;
         m_pitch = m_uas->getPitch() * kRadiansToDegrees;
@@ -188,6 +196,72 @@ void FlightDataViewModel::connectWaypointManager(UASWaypointManager *manager)
             this, &FlightDataViewModel::updateWaypoint);
     connect(m_waypointManager, &UASWaypointManager::waypointDistanceChanged,
             this, &FlightDataViewModel::updateWaypointDistance);
+    connect(m_waypointManager,
+            QOverload<>::of(&UASWaypointManager::waypointEditableListChanged),
+            this, [this]() {
+        updateMissionProgress();
+        publish();
+    });
+    connect(m_waypointManager,
+            QOverload<>::of(&UASWaypointManager::waypointViewOnlyListChanged),
+            this, [this]() {
+        updateMissionProgress();
+        publish();
+    });
+    updateMissionProgress();
+}
+
+void FlightDataViewModel::updateMissionProgress()
+{
+    if (!m_waypointManager) {
+        m_missionItemCount = 0;
+        m_missionProgress = 0.0;
+        m_missionProgressText = tr("No mission loaded");
+        return;
+    }
+
+    double homeLatitude = 0.0;
+    double homeLongitude = 0.0;
+    QVector<FlightDataMissionPoint> missionPoints;
+    QList<Waypoint *> waypoints = m_waypointManager->getWaypointViewOnlyList();
+    if (waypoints.isEmpty()) {
+        waypoints = m_waypointManager->getWaypointEditableList();
+    }
+    missionPoints.reserve(waypoints.size());
+    for (Waypoint *waypoint : waypoints) {
+        if (!waypoint || !waypoint->isGlobalFrame()
+            || !waypoint->isNavigationType()) {
+            continue;
+        }
+        if (waypoint->getId() == 0) {
+            homeLatitude = waypoint->getLatitude();
+            homeLongitude = waypoint->getLongitude();
+            continue;
+        }
+        FlightDataMissionPoint point;
+        point.sequence = waypoint->getId();
+        point.latitude = waypoint->getLatitude();
+        point.longitude = waypoint->getLongitude();
+        missionPoints.append(point);
+    }
+
+    const FlightDataMissionProgress progress =
+        FlightDataMissionProgressCalculator::Calculate(
+            homeLatitude, homeLongitude, missionPoints,
+            m_wpNo, m_wpDist);
+    m_missionItemCount = progress.itemCount;
+    m_missionProgress = progress.percent;
+    if (progress.itemCount == 0) {
+        m_missionProgressText = tr("No mission loaded");
+        return;
+    }
+    m_missionProgressText =
+        tr("Mission WP %1/%2  \u2022  %3 / %4 m  \u2022  next %5 m")
+            .arg(m_wpNo)
+            .arg(progress.itemCount)
+            .arg(progress.travelledDistanceMeters, 0, 'f', 0)
+            .arg(progress.totalDistanceMeters, 0, 'f', 0)
+            .arg(m_wpDist, 0, 'f', 0);
 }
 
 void FlightDataViewModel::publish()
@@ -288,6 +362,7 @@ void FlightDataViewModel::updateBattery(UASInterface *uas, double voltage,
     m_batteryVoltage = voltage;
     m_currentAmps = current;
     m_batteryRemaining = qBound(0, qRound(percent), 100);
+    emit batteryTelemetryChanged(voltage, percent);
     publish();
 }
 
@@ -338,6 +413,13 @@ void FlightDataViewModel::updateSatelliteCount(int count, const QString &name)
     publish();
 }
 
+void FlightDataViewModel::updateGpsHdop(double value, const QString &name)
+{
+    Q_UNUSED(name)
+    m_gpsHdop = value;
+    publish();
+}
+
 void FlightDataViewModel::updateDropRate(int uasId, float receiveDrop)
 {
     if (!m_uas || uasId != m_uas->getUASID()) return;
@@ -356,6 +438,7 @@ void FlightDataViewModel::updateNavigation(UASInterface *uas, double altitudeErr
         m_navBearing = m_uas->property("bearingToWaypoint").toDouble();
         m_wpDist = m_uas->property("distToWaypoint").toDouble();
     }
+    updateMissionProgress();
     publish();
 }
 
@@ -375,6 +458,7 @@ void FlightDataViewModel::updateValue(int uasId, const QString &name,
         m_navBearing = number;
     } else if (nameContains(name, QStringLiteral("distToWaypoint"))) {
         m_wpDist = number;
+        updateMissionProgress();
     } else if (nameContains(name, QStringLiteral("Wind Direction"))
                || nameContains(name, QStringLiteral("wind_dir"))) {
         m_windDir = number;
@@ -449,11 +533,13 @@ void FlightDataViewModel::updateHeartbeatTimeout(bool timeout, unsigned int mill
 void FlightDataViewModel::updateWaypoint(quint16 sequence)
 {
     m_wpNo = sequence;
+    updateMissionProgress();
     publish();
 }
 
 void FlightDataViewModel::updateWaypointDistance(double distance)
 {
     m_wpDist = distance;
+    updateMissionProgress();
     publish();
 }

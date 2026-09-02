@@ -134,7 +134,7 @@ HelpView::HelpView(QWidget *parent)
                                             content));
 
     auto *libraries = makeTextLabel(
-        tr("Libraries: Qt, KDDockWidgets, MAVLink, QuaZip, SDL, alglib, "
+        tr("Libraries: Qt, MAVLink, QuaZip, SDL, alglib, "
            "QCustomPlot, OPMapControl"),
         content, QStringLiteral("helpLibrariesLabel"));
     libraries->setContentsMargins(0, 10, 0, 0);

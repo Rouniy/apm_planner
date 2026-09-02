@@ -30,12 +30,13 @@ This file is part of the QGROUNDCONTROL project
  */
 
 #include "QGCCore.h"
-#include "AppSettingsMigration.h"
 #include "logging.h"
 #include "configuration.h"
 #include "QGC.h"
 #include "MainWindow.h"
+#include "Settings.h"
 #include "GAudioOutput.h"
+#include "qml/QmlPluginManager.h"
 #include "ui/configuration/ElevationSourceService.h"
 #include "ui/map/NativeGdalMapService.h"
 
@@ -71,21 +72,12 @@ QGCCore::QGCCore(int &argc, char* argv[]) : QApplication(argc, argv)
     // Set settings format
     QSettings::setDefaultFormat(QSettings::IniFormat);
 
-    // Establish the 3.0 identity before any component creates a default QSettings.
+    // Establish product identity before any component creates a default QSettings.
     this->setOrganizationName(QLatin1String(QGC_ORGANIZATION_NAME));
     this->setOrganizationDomain("org.ardupilot");
     this->setApplicationName(QGC_APPLICATION_NAME);
-    this->setApplicationDisplayName(QGC_APPLICATION_NAME);
+    this->setApplicationDisplayName(QGC_APPLICATION_DISPLAY_NAME);
     this->setApplicationVersion(QGC_APPLICATION_VERSION);
-
-    // The application name is part of the QSettings namespace. Copy the complete
-    // legacy profile once, without replacing values already written by 3.0. This
-    // preserves custom data, log, mission and parameter paths as well as all other
-    // preferences before the first settings read.
-    AppSettingsMigration::migrateLegacyUserSettings(
-                QLatin1String(QGC_ORGANIZATION_NAME),
-                QLatin1String(QGC_LEGACY_APPLICATION_NAME),
-                QLatin1String(QGC_APPLICATION_NAME));
 
     m_mouseWheelFilter = new QGCMouseWheelEventFilter(this);
 
@@ -94,6 +86,26 @@ QGCCore::QGCCore(int &argc, char* argv[]) : QApplication(argc, argv)
 
 void QGCCore::aboutToQuit()
 {
+    shutdownCore();
+}
+
+void QGCCore::shutdownCore()
+{
+    if (m_coreShutDown) {
+        return;
+    }
+    m_coreShutDown = true;
+
+    // TLogReplayLink is UI-owned rather than LinkManager-owned and directly
+    // feeds decoded data. Join it before any manager it can reference.
+    if (mainWindow && mainWindow->getLogPlayer()) {
+        mainWindow->getLogPlayer()->shutdown();
+    }
+
+    // Plugin QML objects directly reference the application managers. Destroy
+    // all plugin hosts and their shared engine before shutting the core down.
+    m_qmlPluginManager.reset();
+    m_qmlSettings.reset();
     m_nativeGdalMapService.reset();
     ElevationSourceService::instance()->shutdown();
     LinkManager::instance()->shutdown();
@@ -173,6 +185,26 @@ void QGCCore::initialize()
     splashScreen->showMessage(tr("Starting UAS Manager"), Qt::AlignLeft | Qt::AlignBottom, QColor(62, 93, 141));
     startUASManager();
 
+    // Register APMPlanner.Core before MainWindow constructs any further QML
+    // views. All user plugins share this one engine and run in-process.
+    m_qmlSettings.reset(new Settings);
+    m_qmlPluginManager.reset(new QmlPluginManager(
+        UASManager::instance(), LinkManager::instance(),
+        m_qmlSettings.get()));
+    connect(m_qmlPluginManager.get(), &QmlPluginManager::pluginLoadError,
+            this, [](const QString &pluginId, const QString &message) {
+        QLOG_WARN() << "QML plugin" << pluginId << message;
+    });
+    m_qmlPluginManager->setActiveVehicle(
+        UASManager::instance()->silentGetActiveUAS());
+    connect(UASManager::instance(),
+            QOverload<UASInterface *>::of(&UASManager::activeUASSet),
+            this, [this](UASInterface *uas) {
+        if (m_qmlPluginManager) {
+            m_qmlPluginManager->setActiveVehicle(uas);
+        }
+    });
+
     // Start the user interface
     splashScreen->showMessage(tr("Starting User Interface"), Qt::AlignLeft | Qt::AlignBottom, QColor(62, 93, 141));
     // Start UI
@@ -197,6 +229,8 @@ void QGCCore::initialize()
 #endif
 
     mainWindow = MainWindow::instance();
+    m_qmlPluginManager->setMainWindow(mainWindow);
+    m_qmlPluginManager->start(mainWindow->toolsMenu());
 
     // Remove splash screen
     splashScreen->finish(mainWindow);
@@ -214,16 +248,11 @@ void QGCCore::initialize()
  **/
 QGCCore::~QGCCore()
 {
+    shutdownCore();
     QGC::saveSettings();
     QGC::close();
-    // Delete singletons
-    // First systems
-    delete UASManager::instance();
-    // then links
-
-    // Finally the main window
-    //delete MainWindow::instance();
-    //The main window now autodeletes on close.
+    // UASManager is parented to QApplication. LinkManager::shutdown() has
+    // already quiesced it; QApplication owns the final destruction.
 }
 
 /**
@@ -245,37 +274,5 @@ void QGCCore::startLinkManager()
 void QGCCore::startUASManager()
 {
     QLOG_INFO() << "Start UAS Manager";
-    // Load UAS plugins
-    QDir pluginsDir(qApp->applicationDirPath());
-
-#if defined(Q_OS_WIN)
-    if (pluginsDir.dirName().toLower() == "debug" || pluginsDir.dirName().toLower() == "release")
-        pluginsDir.cdUp();
-#elif defined(Q_OS_LINUX)
-    if (pluginsDir.dirName().toLower() == "debug" || pluginsDir.dirName().toLower() == "release")
-        pluginsDir.cdUp();
-#elif defined(Q_OS_MAC)
-    if (pluginsDir.dirName() == "MacOS") {
-        pluginsDir.cdUp();
-        pluginsDir.cdUp();
-        pluginsDir.cdUp();
-    }
-#endif
-    pluginsDir.cd("plugins");
-
     UASManager::instance();
-
-    // Load plugins
-
-    QStringList pluginFileNames;
-
-    foreach (const QString& fileName, pluginsDir.entryList(QDir::Files)) {
-        QPluginLoader loader(pluginsDir.absoluteFilePath(fileName));
-        QObject *plugin = loader.instance();
-        if (plugin) {
-            //populateMenus(plugin);
-            pluginFileNames += fileName;
-            //printf(QString("Loaded plugin from " + fileName + "\n").toStdString().c_str());
-        }
-    }
 }

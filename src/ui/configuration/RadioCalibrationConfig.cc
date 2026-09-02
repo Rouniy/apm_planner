@@ -621,33 +621,33 @@ void RadioCalibrationConfig::throttleClicked(bool state)
 
 void RadioCalibrationConfig::setParamChannelRev(const QString& param, bool state)
 {
-    if(m_uas){
-        int channel = m_uas->getParamManager()->getParameterValue(1, param).toInt();
+    if(m_parameterManager){
+        int channel = m_parameterManager->getParameterValue(1, param).toInt();
         QString channelString = QString("RC" + QString::number(channel) + "_REV");
         if (state)
-            m_uas->setParameter(1, channelString, -1.0);
+            m_parameterManager->setParameter(1, channelString, -1.0);
         else
-            m_uas->setParameter(1, channelString, 1.0); // We use 0 as the default, not 1.0 (which you can also use)
+            m_parameterManager->setParameter(1, channelString, 1.0); // We use 0 as the default, not 1.0 (which you can also use)
     }
 }
 
 void RadioCalibrationConfig::elevonsChecked(bool state)
 {
-    if(m_uas){
+    if(m_parameterManager){
         if (state)
-            m_uas->setParameter(1, "ELEVON_MIXING", 1.0);
+            m_parameterManager->setParameter(1, "ELEVON_MIXING", 1.0);
         else
-            m_uas->setParameter(1, "ELEVON_MIXING", 0.0);
+            m_parameterManager->setParameter(1, "ELEVON_MIXING", 0.0);
         }
 }
 
 void RadioCalibrationConfig::elevonsReversed(bool state)
 {
-    if(m_uas){
+    if(m_parameterManager){
         if (state)
-            m_uas->setParameter(1, "ELEVON_REVERSE", 1.0);
+            m_parameterManager->setParameter(1, "ELEVON_REVERSE", 1.0);
         else
-            m_uas->setParameter(1, "ELEVON_REVERSE", 0.0);
+            m_parameterManager->setParameter(1, "ELEVON_REVERSE", 0.0);
         }
 }
 
@@ -663,8 +663,8 @@ void RadioCalibrationConfig::elevonsCh2Rev(bool state)
 
 void RadioCalibrationConfig::elevonOutput()
 {
-    if(m_uas){
-        m_uas->setParameter(1, "ELEVON_OUTPUT", ui->elevonOutputComboBox->currentIndex());
+    if(m_parameterManager){
+        m_parameterManager->setParameter(1, "ELEVON_OUTPUT", ui->elevonOutputComboBox->currentIndex());
     }
 }
 
@@ -801,4 +801,3 @@ void RadioCalibrationConfig::writeDZButtonPressed()
         QLOG_DEBUG() << deadZoneTpl.arg(i+1) << " = " << rcDeadzone[i];
     }
 }
-

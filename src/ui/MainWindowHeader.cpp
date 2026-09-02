@@ -1,11 +1,16 @@
 #include "MainWindowHeader.h"
 
 #include "LinkManager.h"
+#include "ParameterService.h"
 #include "SerialLinkInterface.h"
 #include "UASInterface.h"
 #include "UASManager.h"
+#include "VehicleEndpoint.h"
+#include "VehicleTargetManager.h"
+#include "core/parameters/ParameterStore.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
@@ -18,6 +23,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTimer>
 #include <QToolButton>
@@ -25,11 +31,15 @@
 #include <QVBoxLayout>
 
 namespace {
+constexpr int LinkIdRole = Qt::UserRole + 1;
+constexpr int SystemIdRole = Qt::UserRole + 2;
+constexpr int ComponentIdRole = Qt::UserRole + 3;
+
 const char kHeaderStyle[] = R"(
 MainWindowHeader {
     background: #121614;
     color: #ffffff;
-    font-family: sans-serif;
+    font-family: "Bitstream Vera Sans";
 }
 QScrollArea#mainNavigationScroll,
 QScrollArea#mainNavigationScroll QWidget#qt_scrollarea_viewport,
@@ -300,12 +310,10 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     m_baudSpin->setRange(1, 10000000);
     m_baudSpin->setFixedWidth(140);
     top->addWidget(m_baudSpin);
-    m_vehicleCombo = new QComboBox(connection);
-    m_vehicleCombo->setObjectName(QStringLiteral("vehicleCombo"));
-    m_vehicleCombo->setFixedWidth(170);
-    top->addWidget(m_vehicleCombo);
-    m_vehicleCombo->hide();
-    m_vehicleCombo->setFixedWidth(0);
+    m_targetCombo = new QComboBox(connection);
+    m_targetCombo->setObjectName(QStringLiteral("cmb_sysid"));
+    m_targetCombo->setFixedWidth(170);
+    m_targetCombo->setEnabled(false);
     m_autoConnectCheckBox = new QCheckBox(tr("Auto"), connection);
     m_autoConnectCheckBox->setObjectName(QStringLiteral("autoConnectCheckBox"));
     m_autoConnectCheckBox->setChecked(QSettings().value(
@@ -326,6 +334,7 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     auto *bottom = new QHBoxLayout;
     bottom->setContentsMargins(0, 0, 0, 0);
     bottom->setSpacing(6);
+    bottom->addWidget(m_targetCombo);
     m_connectionStatus = new QLabel(tr("No connection"), connection);
     m_connectionStatus->setObjectName(QStringLiteral("connectionStatus"));
     bottom->addWidget(m_connectionStatus, 1);
@@ -375,24 +384,19 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
             });
     connect(LinkManager::instance(), SIGNAL(newLink(int)), this, SLOT(refreshLinks()));
     connect(LinkManager::instance(), SIGNAL(linkChanged(int)), this, SLOT(updateCurrentLink()));
-    connect(UASManager::instance(), SIGNAL(UASCreated(UASInterface*)), this, SLOT(rebuildVehicleList()));
-    connect(UASManager::instance(), SIGNAL(UASDeleted(UASInterface*)), this, SLOT(rebuildVehicleList()));
     connect(UASManager::instance(), SIGNAL(activeUASSet(UASInterface*)),
             this, SLOT(activeVehicleChanged(UASInterface*)));
-    connect(m_vehicleCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-            [this](int index) {
-                if (index < 0) {
-                    return;
-                }
-                UASInterface *uas = UASManager::instance()->getUASForId(
-                    m_vehicleCombo->itemData(index).toInt());
-                if (uas) {
-                    UASManager::instance()->setActiveUAS(uas);
-                }
-            });
+    VehicleTargetManager *const targets =
+        LinkManager::instance()->vehicleTargetManager();
+    connect(targets, &VehicleTargetManager::endpointsChanged,
+            this, &MainWindowHeader::rebuildTargetList);
+    connect(targets, &VehicleTargetManager::currentTargetChanged,
+            this, &MainWindowHeader::syncCurrentTarget);
+    connect(m_targetCombo, QOverload<int>::of(&QComboBox::activated),
+            this, &MainWindowHeader::selectTarget);
 
     refreshLinks();
-    rebuildVehicleList();
+    rebuildTargetList();
     if (m_autoConnectCheckBox->isChecked()) {
         QTimer::singleShot(0, this, [this]() {
             const int linkId = currentLinkId();
@@ -624,38 +628,89 @@ void MainWindowHeader::toggleConnection()
     updateCurrentLink();
 }
 
-void MainWindowHeader::rebuildVehicleList()
+void MainWindowHeader::rebuildTargetList()
 {
-    const int activeId = UASManager::instance()->getActiveUAS()
-        ? UASManager::instance()->getActiveUAS()->getUASID() : -1;
-    m_vehicleCombo->blockSignals(true);
-    m_vehicleCombo->clear();
-    const QList<UASInterface *> vehicles = UASManager::instance()->getUASList();
-    for (UASInterface *vehicle : vehicles) {
-        m_vehicleCombo->addItem(
-            tr("Vehicle %1 · %2").arg(vehicle->getUASID()).arg(vehicle->getUASName()),
-            vehicle->getUASID());
+    const VehicleTargetLease current =
+        LinkManager::instance()->vehicleTargetManager()->acquireTarget();
+    const QSignalBlocker blocker(m_targetCombo);
+    m_targetCombo->clear();
+    const QList<VehicleEndpoint> endpoints =
+        LinkManager::instance()->vehicleTargetManager()->endpoints();
+    int selectedIndex = -1;
+    for (const VehicleEndpoint &endpoint : endpoints) {
+        if (endpoint.componentId == MAV_COMP_ID_MISSIONPLANNER) {
+            continue;
+        }
+        const int index = m_targetCombo->count();
+        m_targetCombo->addItem(endpoint.displayName());
+        m_targetCombo->setItemData(index, endpoint.linkId, LinkIdRole);
+        m_targetCombo->setItemData(index, endpoint.systemId, SystemIdRole);
+        m_targetCombo->setItemData(
+            index, endpoint.componentId, ComponentIdRole);
+        if (current.isValid()
+            && current.endpoint.sameIdentity(endpoint)) {
+            selectedIndex = index;
+        }
     }
-    const int activeIndex = m_vehicleCombo->findData(activeId);
-    if (activeIndex >= 0) {
-        m_vehicleCombo->setCurrentIndex(activeIndex);
+    m_targetCombo->setCurrentIndex(selectedIndex);
+    m_targetCombo->setEnabled(m_targetCombo->count() > 0);
+    m_connectionPanel->setFixedWidth(556);
+}
+
+void MainWindowHeader::syncCurrentTarget()
+{
+    const VehicleTargetLease current =
+        LinkManager::instance()->vehicleTargetManager()->acquireTarget();
+    const QSignalBlocker blocker(m_targetCombo);
+    int selectedIndex = -1;
+    for (int index = 0; index < m_targetCombo->count(); ++index) {
+        if (current.isValid()
+            && m_targetCombo->itemData(index, LinkIdRole).toInt()
+                == current.endpoint.linkId
+            && m_targetCombo->itemData(index, SystemIdRole).toInt()
+                == current.endpoint.systemId
+            && m_targetCombo->itemData(index, ComponentIdRole).toInt()
+                == current.endpoint.componentId) {
+            selectedIndex = index;
+            break;
+        }
     }
-    // Mission Planner 10 exposes the explicit sysid/component selector as soon
-    // as one real MAVLink system exists, not only for multi-vehicle sessions.
-    const bool showVehicleSelector = !vehicles.isEmpty();
-    m_vehicleCombo->setFixedWidth(showVehicleSelector ? 170 : 0);
-    m_vehicleCombo->setVisible(showVehicleSelector);
-    // The reference shell uses fixed DIP widths for this grid (180 + 140
-    // + optional 170 + controls, spacings and 8/12 margins). Qt scales these
-    // logical pixels for HiDPI, so preserving the exact width also prevents
-    // the navigation strip from stealing space and eliding the connection UI.
-    m_connectionPanel->setFixedWidth(showVehicleSelector ? 732 : 556);
-    m_vehicleCombo->blockSignals(false);
+    m_targetCombo->setCurrentIndex(selectedIndex);
+    if (current.isValid()) {
+        const int portIndex = m_portCombo->findData(current.endpoint.linkId);
+        if (portIndex >= 0) {
+            m_portCombo->setCurrentIndex(portIndex);
+        }
+    }
+}
+
+void MainWindowHeader::selectTarget(int index)
+{
+    if (index < 0 || index >= m_targetCombo->count()) {
+        return;
+    }
+    VehicleTargetManager *const targets =
+        LinkManager::instance()->vehicleTargetManager();
+    const int linkId = m_targetCombo->itemData(index, LinkIdRole).toInt();
+    const int systemId = m_targetCombo->itemData(index, SystemIdRole).toInt();
+    const int componentId =
+        m_targetCombo->itemData(index, ComponentIdRole).toInt();
+    if (!targets->selectTarget(linkId, systemId, componentId)) {
+        syncCurrentTarget();
+        return;
+    }
+    const VehicleTargetLease selected = targets->acquireTarget();
+    ParameterService *const parameters =
+        LinkManager::instance()->parameterService();
+    if (selected.isValid() && parameters
+        && !parameters->store()->snapshot(selected.endpoint).isComplete()
+        && !(QApplication::keyboardModifiers() & Qt::ControlModifier)) {
+        parameters->requestCurrentParameterList();
+    }
 }
 
 void MainWindowHeader::activeVehicleChanged(UASInterface *uas)
 {
-    rebuildVehicleList();
     if (uas) {
         m_connectionStatus->setText(tr("Vehicle %1 · %2")
                                     .arg(uas->getUASID()).arg(uas->getUASName()));

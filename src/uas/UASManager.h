@@ -37,6 +37,9 @@ This file is part of the QGROUNDCONTROL project
 #include <QMutex>
 #include <UASInterface.h>
 
+class DroneCanForwardingBroker;
+class DroneCanMavlinkTransport;
+
 /**
  * @brief Central manager for all connected aerial vehicles
  *
@@ -50,6 +53,21 @@ class UASManager : public QObject
 public:
     static UASManager* instance();
     ~UASManager();
+
+    /** Stop all vehicle-owned services and destroy registered vehicles.
+     *  Safe to call repeatedly during application teardown. */
+    void quiesceTransports();
+    void shutdown();
+    bool isShuttingDown() const { return m_shuttingDown; }
+
+    DroneCanForwardingBroker *droneCanForwardingBroker() const
+    {
+        return m_droneCanForwardingBroker;
+    }
+    DroneCanMavlinkTransport *droneCanMavlinkTransport() const
+    {
+        return m_droneCanMavlinkTransport;
+    }
 
     /**
      * @brief Get the currently selected UAS
@@ -251,6 +269,9 @@ protected:
     QList<UASInterface*> systems;
     UASInterface* activeUAS;
     UASWaypointManager *offlineUASWaypointManager;
+    DroneCanForwardingBroker *m_droneCanForwardingBroker = nullptr;
+    DroneCanMavlinkTransport *m_droneCanMavlinkTransport = nullptr;
+    bool m_shuttingDown = false;
     QMutex activeUASMutex;
     double homeLat;
     double homeLon;

@@ -4,13 +4,16 @@
 #include <QMap>
 #include <QTimer>
 #include <QVector>
+#include "AbstractMapWidget.h"
 #include "../../../libs/opmapcontrol/opmapcontrol.h"
 #include "../flightplanner/FlightPlannerMissionModel.h"
+#include "../flightplanner/FlightPlannerNavigation.h"
 #include "../flightplanner/WpRow.h"
 
 class UASInterface;
 class UASWaypointManager;
 class Waypoint;
+class QContextMenuEvent;
 typedef mapcontrol::WayPointItem WayPointItem;
 
 /**
@@ -20,7 +23,9 @@ class QGCMapWidget : public mapcontrol::OPMapWidget
 {
     Q_OBJECT
 public:
-    explicit QGCMapWidget(QWidget *parent = 0);
+    explicit QGCMapWidget(const QString &settingsGroup,
+                          bool liveVehicleEnabled,
+                          QWidget *parent = nullptr);
     ~QGCMapWidget();
 //    /** @brief Convert meters to pixels */
 //    float metersToPixels(double meters);
@@ -36,6 +41,8 @@ public:
     /** @brief Get the trail interval */
     float getTrailInterval() { return trailInterval; }
     bool missionPlanningEnabled() const { return m_missionPlanningEnabled; }
+    int CurrentZoomLevel() const;
+    internals::RectLatLng VisibleTileExtent() const;
 
 signals:
     void homePositionChanged(double latitude, double longitude, double altitude);
@@ -43,12 +50,21 @@ signals:
     void waypointCreated(Waypoint* wp);
     void waypointChanged(Waypoint* wp);
     void plannerCoordinateRequested(double latitude, double longitude);
+    void plannerContextMenuRequested(double latitude, double longitude,
+                                     const QPoint &globalPosition,
+                                     int waypointSequence);
     void plannerWaypointMoved(int seq, double latitude, double longitude);
 
 public slots:
     void setMissionPlanningEnabled(bool enabled);
     void setPlannerRows(const QVector<WpRowData> &rows,
                         FlightPlannerMissionModel::MissionStore store);
+    void setPlannerAltitudePresentation(double multiplier,
+                                        const QString &unit);
+    void setPlannerNavigationParameters(
+        const FlightPlannerNavigationParameters &parameters);
+    void setPlannerDrawnPolygon(const QVector<MapCoordinate> &points);
+    void setPlannerMeasurement(const QVector<MapCoordinate> &points);
     void setPlannerHome(double latitude, double longitude, double altitude);
     void clearPlannerHome();
     void setPlannerSelection(int seq);
@@ -96,33 +112,25 @@ public slots:
     /** @brief Set trail to time mode and set time @param seconds The minimum time between trail dots in seconds. If set to a value < 0, trails will be disabled*/
     void setTrailModeTimed(int seconds)
     {
+        trailType = seconds >= 0
+            ? mapcontrol::UAVTrailType::ByTimeElapsed
+            : mapcontrol::UAVTrailType::NoTrail;
+        trailInterval = seconds;
         foreach(mapcontrol::UAVItem* uav, GetUAVS())
         {
-            if (seconds >= 0)
-            {
-                uav->SetTrailTime(seconds);
-                uav->SetTrailType(mapcontrol::UAVTrailType::ByTimeElapsed);
-            }
-            else
-            {
-                uav->SetTrailType(mapcontrol::UAVTrailType::NoTrail);
-            }
+            configureTrail(uav);
         }
     }
     /** @brief Set trail to distance mode and set time @param meters The minimum distance between trail dots in meters. The actual distance depends on the MAV's update rate as well. If set to a value < 0, trails will be disabled*/
     void setTrailModeDistance(int meters)
     {
+        trailType = meters >= 0
+            ? mapcontrol::UAVTrailType::ByDistance
+            : mapcontrol::UAVTrailType::NoTrail;
+        trailInterval = meters;
         foreach(mapcontrol::UAVItem* uav, GetUAVS())
         {
-            if (meters >= 0)
-            {
-                uav->SetTrailDistance(meters);
-                uav->SetTrailType(mapcontrol::UAVTrailType::ByDistance);
-            }
-            else
-            {
-                uav->SetTrailType(mapcontrol::UAVTrailType::NoTrail);
-            }
+            configureTrail(uav);
         }
     }
     /** @brief Delete all trails */
@@ -148,10 +156,14 @@ protected slots:
 private:
     void sendGuidedAction(Waypoint *wp, double alt);
     bool isValidGpsLocation(UASInterface* system) const;
+    void configureTrail(mapcontrol::UAVItem *uav);
     void rebuildPlannerGraphics();
+    void rebuildPlannerRoute();
     void clearPlannerGraphics();
     void clearPlannerLines();
     void redrawPlannerLines();
+    void redrawPlannerMeasurement();
+    int plannerWaypointSequenceAt(const QPoint &viewportPosition) const;
     void updateLegacyWaypointVisibility();
     QColor plannerColor() const;
 
@@ -167,6 +179,7 @@ protected:
     void mousePressEvent(QMouseEvent *event);
     void mouseReleaseEvent(QMouseEvent *event);
     void mouseDoubleClickEvent(QMouseEvent* event);
+    void contextMenuEvent(QContextMenuEvent *event) override;
 
     UASWaypointManager* currWPManager; ///< The current waypoint manager
     bool offlineMode;
@@ -202,19 +215,28 @@ protected:
     double m_lastLon;
 
     bool m_missionPlanningEnabled = false;
+    bool m_liveVehicleEnabled = true;
     bool m_plannerGraphicsUpdate = false;
     bool m_plannerHomeValid = false;
     double m_plannerHomeLatitude = 0.0;
     double m_plannerHomeLongitude = 0.0;
     double m_plannerHomeAltitude = 0.0;
+    double m_plannerAltitudeMultiplier = 1.0;
+    QString m_plannerAltitudeUnit = QStringLiteral("m");
     int m_plannerSelection = -1;
     QVector<WpRowData> m_plannerRows;
+    QVector<MapCoordinate> m_plannerDrawnPolygon;
+    QVector<MapCoordinate> m_plannerMeasurementPoints;
+    QVector<FlightPlannerRoutePoint> m_plannerRenderedRoute;
+    FlightPlannerNavigationParameters m_plannerNavigation;
     FlightPlannerMissionModel::MissionStore m_plannerStore =
             FlightPlannerMissionModel::MissionStore::Mission;
     QMap<int, mapcontrol::WayPointItem*> m_plannerIcons;
     QMap<mapcontrol::WayPointItem*, int> m_plannerIconSequences;
     mapcontrol::WayPointItem *m_plannerHomeIcon = nullptr;
     QGraphicsItemGroup *m_plannerLineGroup = nullptr;
+    QGraphicsItemGroup *m_plannerMeasurementGroup = nullptr;
+    QString m_settingsGroup;
 
 };
 

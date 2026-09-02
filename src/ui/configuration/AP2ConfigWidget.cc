@@ -23,6 +23,7 @@ This file is part of the APM_PLANNER project
 #include <QMessageBox>
 #include <QTimer>
 #include "AP2ConfigWidget.h"
+#include "LinkManager.h"
 #include "QGCUASParamManager.h"
 
 AP2ConfigWidget::AP2ConfigWidget(QWidget *parent) : QWidget(parent)
@@ -37,17 +38,30 @@ void AP2ConfigWidget::initConnections()
 
 void AP2ConfigWidget::activeUASSet(UASInterface *uas)
 {
-    if (m_uas)
-    {
-        disconnect(m_uas, SIGNAL(parameterChanged(int,int,QString,QVariant)), this, SLOT(parameterChanged(int,int,QString,QVariant)));
-        disconnect(m_uas, SIGNAL(parameterChanged(int,int,int,int,QString,QVariant)), this, SLOT(parameterChanged(int,int,int,int,QString,QVariant)));
-        m_uas = nullptr;
+    if (m_parameterManager) {
+        disconnect(m_parameterManager, nullptr, this, nullptr);
     }
-    if (uas)
-    {
-        m_uas = uas;
-        connect(m_uas, SIGNAL(parameterChanged(int,int,QString,QVariant)), this, SLOT(parameterChanged(int,int,QString,QVariant)));
-        connect(m_uas, SIGNAL(parameterChanged(int,int,int,int,QString,QVariant)), this, SLOT(parameterChanged(int,int,int,int,QString,QVariant)));
+    m_uas = uas;
+    m_parameterManager = LinkManager::instance()->parameterManager();
+    if (m_uas && m_parameterManager) {
+        connect(m_parameterManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                this,
+                [this](int component, const QString &name,
+                       const QVariant &value) {
+            const int systemId = m_uas ? m_uas->getUASID() : -1;
+            parameterChanged(systemId, component, name, value);
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterValueReceived,
+                this,
+                [this](int component, int count, int index,
+                       const QString &name, const QVariant &value, int type) {
+            Q_UNUSED(type)
+            const int systemId = m_uas ? m_uas->getUASID() : -1;
+            parameterChanged(systemId, component, count, index, name, value);
+        });
         // Derived activeUASSet implementations often populate combo boxes after
         // calling this base method. Replay on the next event-loop turn so the
         // complete page UI exists before cached values are applied.
@@ -57,10 +71,10 @@ void AP2ConfigWidget::activeUASSet(UASInterface *uas)
 
 void AP2ConfigWidget::replayCachedParameters()
 {
-    if (!m_uas || !m_uas->getParamManager()) {
+    if (!m_uas || !m_parameterManager) {
         return;
     }
-    QGCUASParamManager *manager = m_uas->getParamManager();
+    QGCUASParamManager *manager = m_parameterManager.data();
     for (int component : manager->getComponentIds()) {
         const QList<QString> names = manager->getParameterNames(component);
         for (int index = 0; index < names.size(); ++index) {

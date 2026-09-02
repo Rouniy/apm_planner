@@ -1,9 +1,13 @@
 #include "QGCMapToolBar.h"
 #include "UASManager.h"
 #include "ArduPilotMegaMAV.h"
-#include "QGCMapWidget.h"
+#include "AbstractMapWidget.h"
 #include "MapTileSourceFactory.h"
+#include "MapWidgetFactory.h"
+#include "uavtrailtype.h"
 #include "ui_QGCMapToolBar.h"
+
+#include <QSettings>
 
 QGCMapToolBar::QGCMapToolBar(QWidget *parent) :
     QWidget(parent),
@@ -13,57 +17,71 @@ QGCMapToolBar::QGCMapToolBar(QWidget *parent) :
     trailPlotMenu(this),
     updateTimesMenu(this),
     mapTypesMenu(this),
+    mapWidgetsMenu(this),
     trailSettingsGroup(new QActionGroup(this)),
     updateTimesGroup(new QActionGroup(this)),
-    mapTypesGroup(new QActionGroup(this))
+    mapTypesGroup(new QActionGroup(this)),
+    mapWidgetsGroup(new QActionGroup(this))
 {
     ui->setupUi(this);
 }
 
 static const struct {
     const char*    name;
-    MapType::Types type;
+    core::MapType::Types type;
 } sMapTypes[] = {
-    { "Bing Hybrid", MapType::BingHybrid },
-    { "Bing Map", MapType::BingMap },
-    { "Bing Satellite", MapType::BingSatellite },
-    { "Google Hybrid", MapType::GoogleHybrid },
-    { "Google Map", MapType::GoogleMap },
-    { "Google Satellite", MapType::GoogleSatellite },
-    { "Google Terrain", MapType::GoogleTerrain },
-    { "OpenStreetMap", MapType::OpenStreetMap },
-    { "ArcGIS Map", MapType::ArcGIS_Map },
-    { "Esri World Imagery", MapType::ArcGIS_Satellite },
-    { "ArcGIS Terrain", MapType::ArcGIS_Terrain },
-    { "ArcGIS World Topo", MapType::ArcGIS_WorldTopo },
-    { "Statkart Topo", MapType::Statkart_Topo },
-    { "Statkart Basemap", MapType::Statkart_Basemap },
-    { "Eniro N,S,F,D,P", MapType::Eniro_Topo },
-    { "Japan Map", MapType::JapanMap },
-    { "GDAL Custom", MapType::GDALCustom },
+    { "Bing Hybrid", core::MapType::BingHybrid },
+    { "Bing Map", core::MapType::BingMap },
+    { "Bing Satellite", core::MapType::BingSatellite },
+    { "Google Hybrid", core::MapType::GoogleHybrid },
+    { "Google Map", core::MapType::GoogleMap },
+    { "Google Satellite", core::MapType::GoogleSatellite },
+    { "Google Terrain", core::MapType::GoogleTerrain },
+    { "OpenStreetMap", core::MapType::OpenStreetMap },
+    { "ArcGIS Map", core::MapType::ArcGIS_Map },
+    { "Esri World Imagery", core::MapType::ArcGIS_Satellite },
+    { "ArcGIS Terrain", core::MapType::ArcGIS_Terrain },
+    { "ArcGIS World Topo", core::MapType::ArcGIS_WorldTopo },
+    { "Statkart Topo", core::MapType::Statkart_Topo },
+    { "Statkart Basemap", core::MapType::Statkart_Basemap },
+    { "Eniro N,S,F,D,P", core::MapType::Eniro_Topo },
+    { "Japan Map", core::MapType::JapanMap },
+    { "GDAL Custom", core::MapType::GDALCustom },
 };
 
 static const size_t sNumMapTypes = sizeof(sMapTypes) / sizeof(sMapTypes[0]);
 
-void QGCMapToolBar::setMap(QGCMapWidget* map)
+void QGCMapToolBar::setMap(AbstractMapWidget *map)
 {
+    if (this->map) {
+        Q_ASSERT(this->map == map);
+        return;
+    }
     this->map = map;
 
     loadSettings();
 
     if (map)
     {
-        connect(ui->goToButton, SIGNAL(clicked()), map, SLOT(showGoToDialog()));
+        connect(ui->goToButton, &QPushButton::clicked,
+                map, &AbstractMapWidget::ShowGoToDialog);
         connect(ui->goHomeButton, SIGNAL(clicked()), this, SLOT(goHome()));
-        connect(ui->lastPosButton, SIGNAL(clicked()), map, SLOT(lastPosition()));
-        connect(ui->clearTrailsButton, SIGNAL(clicked()), map, SLOT(deleteTrails()));
-        connect(map, SIGNAL(OnTileLoadStart()), this, SLOT(tileLoadStart()));
-        connect(map, SIGNAL(OnTileLoadComplete()), this, SLOT(tileLoadEnd()));
-        connect(map, SIGNAL(OnTilesStillToLoad(int)), this, SLOT(tileLoadProgress(int)));
-        connect(ui->ripMapButton, SIGNAL(clicked()), map, SLOT(cacheVisibleRegion()));
+        connect(ui->lastPosButton, &QPushButton::clicked,
+                map, &AbstractMapWidget::LastPosition);
+        connect(ui->clearTrailsButton, &QPushButton::clicked,
+                map, &AbstractMapWidget::DeleteTrails);
+        connect(map, &AbstractMapWidget::TileLoadStarted,
+                this, &QGCMapToolBar::tileLoadStart);
+        connect(map, &AbstractMapWidget::TileLoadCompleted,
+                this, &QGCMapToolBar::tileLoadEnd);
+        connect(map, &AbstractMapWidget::TilesStillToLoad,
+                this, &QGCMapToolBar::tileLoadProgress);
+        connect(ui->ripMapButton, &QPushButton::clicked,
+                map, &AbstractMapWidget::CacheVisibleRegion);
 
-        map->setFollowUAVEnabled(ui->followPushButton->isChecked());
-        connect(ui->followPushButton, SIGNAL(clicked(bool)), map, SLOT(setFollowUAVEnabled(bool)));
+        map->SetFollowUAVEnabled(ui->followPushButton->isChecked());
+        connect(ui->followPushButton, &QPushButton::clicked,
+                map, &AbstractMapWidget::SetFollowUAVEnabled);
 
         // Edit mode handling
         ui->editButton->hide();
@@ -87,7 +105,7 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
 
         //setup the mapTypesMenu
         QAction* action;
-        MapType::Types mapType = map->GetMapType();
+        core::MapType::Types mapType = map->CurrentMapType();
         for (size_t i = 0; i < sNumMapTypes; ++i) {
             action = mapTypesMenu.addAction(tr(sMapTypes[i].name), this, SLOT(setMapType()));
             action->setData(sMapTypes[i].type);
@@ -96,6 +114,25 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
             if (mapType == sMapTypes[i].type) action->setChecked(true);
         }
         optionsMenu.addMenu(&mapTypesMenu);
+
+        mapWidgetsMenu.setTitle(tr("&Map widget"));
+        mapWidgetsGroup->setExclusive(true);
+        MapWidgetFactory *widgetFactory = MapWidgetFactory::instance();
+        rebuildMapWidgetsMenu();
+        optionsMenu.addMenu(&mapWidgetsMenu);
+        connect(widgetFactory, &MapWidgetFactory::StatusMessage,
+                this, &QGCMapToolBar::showMapStatus,
+                Qt::UniqueConnection);
+        connect(widgetFactory, &MapWidgetFactory::BackendChanged,
+                this, &QGCMapToolBar::syncMapWidgetBackend,
+                Qt::UniqueConnection);
+        connect(widgetFactory,
+                &MapWidgetFactory::AvailableBackendsChanged,
+                this, &QGCMapToolBar::rebuildMapWidgetsMenu,
+                Qt::UniqueConnection);
+        if (!widgetFactory->LastStatus().isEmpty()) {
+            showMapStatus(widgetFactory->LastStatus());
+        }
         connect(MapTileSourceFactory::instance(),
                 &MapTileSourceFactory::MapTypeChanged,
                 this, &QGCMapToolBar::updateMapType,
@@ -117,7 +154,7 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
             action->setData(uavTrailTimeList[i]);
             action->setCheckable(true);
             trailSettingsGroup->addAction(action);
-            if (static_cast<mapcontrol::UAVTrailType::Types>(map->getTrailType()) == mapcontrol::UAVTrailType::ByTimeElapsed && map->getTrailInterval() == uavTrailTimeList[i])
+            if (static_cast<mapcontrol::UAVTrailType::Types>(map->TrailType()) == mapcontrol::UAVTrailType::ByTimeElapsed && map->TrailInterval() == uavTrailTimeList[i])
             {
                 // This is the current active time, set the action checked
                 action->setChecked(true);
@@ -129,7 +166,7 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
             action->setData(uavTrailDistanceList[i]);
             action->setCheckable(true);
             trailSettingsGroup->addAction(action);
-            if (static_cast<mapcontrol::UAVTrailType::Types>(map->getTrailType()) == mapcontrol::UAVTrailType::ByDistance && map->getTrailInterval() == uavTrailDistanceList[i])
+            if (static_cast<mapcontrol::UAVTrailType::Types>(map->TrailType()) == mapcontrol::UAVTrailType::ByDistance && map->TrailInterval() == uavTrailDistanceList[i])
             {
                 // This is the current active time, set the action checked
                 action->setChecked(true);
@@ -151,7 +188,7 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
             QAction* action = updateTimesMenu.addAction(tr("%1 seconds").arg(time), this, SLOT(setUpdateInterval()));
             action->setData(time);
             action->setCheckable(true);
-            if (time == map->getUpdateRateLimit())
+            if (time == map->UpdateRateLimit())
             {
                 action->blockSignals(true);
                 action->setChecked(true);
@@ -164,7 +201,7 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
         // still add it as new option
         if (!updateTimesGroup->checkedAction())
         {
-            float time = map->getUpdateRateLimit();
+            float time = map->UpdateRateLimit();
             QAction* action = updateTimesMenu.addAction(tr("uptate every %1 seconds").arg(time), this, SLOT(setUpdateInterval()));
             action->setData(time);
             action->setCheckable(true);
@@ -179,6 +216,9 @@ void QGCMapToolBar::setMap(QGCMapWidget* map)
 
 void QGCMapToolBar::setUAVTrailTime()
 {
+    if (!map) {
+        return;
+    }
     QObject* sender = QObject::sender();
     QAction* action = qobject_cast<QAction*>(sender);
 
@@ -188,7 +228,7 @@ void QGCMapToolBar::setUAVTrailTime()
         int trailTime = action->data().toInt(&ok);
         if (ok)
         {
-            (map->setTrailModeTimed(trailTime));
+            map->SetTrailModeTimed(trailTime);
             ui->posLabel->setText(tr("Trail mode: Every %1 second%2").arg(trailTime).arg((trailTime > 1) ? "s" : ""));
         }
     }
@@ -196,6 +236,9 @@ void QGCMapToolBar::setUAVTrailTime()
 
 void QGCMapToolBar::setUAVTrailDistance()
 {
+    if (!map) {
+        return;
+    }
     QObject* sender = QObject::sender();
     QAction* action = qobject_cast<QAction*>(sender);
 
@@ -205,14 +248,17 @@ void QGCMapToolBar::setUAVTrailDistance()
         int trailDistance = action->data().toInt(&ok);
         if (ok)
         {
-            map->setTrailModeDistance(trailDistance);
-            ui->posLabel->setText(tr("Trail mode: Every %1 meter%2").arg(trailDistance).arg((trailDistance == 1) ? "s" : ""));
+            map->SetTrailModeDistance(trailDistance);
+            ui->posLabel->setText(tr("Trail mode: Every %1 meter%2").arg(trailDistance).arg((trailDistance > 1) ? "s" : ""));
         }
     }
 }
 
 void QGCMapToolBar::setUpdateInterval()
 {
+    if (!map) {
+        return;
+    }
     QObject* sender = QObject::sender();
     QAction* action = qobject_cast<QAction*>(sender);
 
@@ -222,9 +268,69 @@ void QGCMapToolBar::setUpdateInterval()
         float time = action->data().toFloat(&ok);
         if (ok)
         {
-            map->setUpdateRateLimit(time);
+            map->SetUpdateRateLimit(time);
             ui->posLabel->setText(tr("Map update rate limit: %1 second%2").arg(time).arg((time != 1.0f) ? "s" : ""));
         }
+    }
+}
+
+void QGCMapToolBar::setMapWidgetBackend()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action) {
+        return;
+    }
+    MapWidgetFactory *factory = MapWidgetFactory::instance();
+    const QString backendId = action->data().toString();
+    if (!factory->SetBackend(backendId)) {
+        return;
+    }
+    if (map && backendId != map->BackendId()) {
+        showMapStatus(tr("Map widget will change after restart: %1")
+                          .arg(action->text()));
+    } else {
+        showMapStatus(tr("Map widget: %1").arg(action->text()));
+    }
+}
+
+void QGCMapToolBar::rebuildMapWidgetsMenu()
+{
+    for (QAction *action : mapWidgetsGroup->actions()) {
+        mapWidgetsGroup->removeAction(action);
+    }
+    mapWidgetsMenu.clear();
+    MapWidgetFactory *factory = MapWidgetFactory::instance();
+    for (const MapWidgetBackendInfo &backend
+         : factory->AvailableBackends()) {
+        QAction *action = mapWidgetsMenu.addAction(
+            backend.displayName, this, SLOT(setMapWidgetBackend()));
+        action->setObjectName(
+            QStringLiteral("MapWidgetBackend_%1").arg(backend.id));
+        action->setData(backend.id);
+        action->setCheckable(true);
+        mapWidgetsGroup->addAction(action);
+    }
+    syncMapWidgetBackend(factory->RequestedBackend());
+}
+
+void QGCMapToolBar::syncMapWidgetBackend(const QString &backendId)
+{
+    QString selected = backendId;
+    if (mapWidgetsGroup->actions().isEmpty()) {
+        return;
+    }
+    bool available = false;
+    for (QAction *action : mapWidgetsGroup->actions()) {
+        if (action->data().toString() == selected) {
+            available = true;
+            break;
+        }
+    }
+    if (!available) {
+        selected = MapWidgetFactory::instance()->CurrentBackend();
+    }
+    for (QAction *action : mapWidgetsGroup->actions()) {
+        action->setChecked(action->data().toString() == selected);
     }
 }
 
@@ -242,7 +348,7 @@ void QGCMapToolBar::setMapType()
             MapTileSourceFactory *factory =
                 MapTileSourceFactory::instance();
             factory->SetMapType(
-                static_cast<MapType::Types>(mapType));
+                static_cast<core::MapType::Types>(mapType));
             updateMapType(factory->CurrentMapType());
             if (!factory->LastStatus().isEmpty()) {
                 showMapStatus(factory->LastStatus());
@@ -258,7 +364,7 @@ void QGCMapToolBar::updateMapType(core::MapType::Types type)
             action->data().toInt() == static_cast<int>(type));
     }
     ui->posLabel->setText(tr("Map type: %1").arg(
-        MapType::StrByType(type)));
+        core::MapType::StrByType(type)));
 }
 
 void QGCMapToolBar::showMapStatus(const QString &status)
@@ -294,6 +400,9 @@ void QGCMapToolBar::tileLoadProgress(int progress)
 
 void QGCMapToolBar::goHome()
 {
+    if (!map) {
+        return;
+    }
     UASManager *umanager = UASManager::instance();
     if (umanager){
         ArduPilotMegaMAV* apmUas= dynamic_cast<ArduPilotMegaMAV*>(umanager->getActiveUAS());
@@ -301,11 +410,11 @@ void QGCMapToolBar::goHome()
             UASWaypointManager* wpManager = apmUas->getWaypointManager();
             const Waypoint* homeWp = wpManager->getWaypoint(0); // Waypoint 0 is home in APM
             if (homeWp){
-                map->updateHomePosition(homeWp->getLatitude(), homeWp->getLongitude(), homeWp->getAltitude());
-                map->goHome();
+                map->UpdateHomePosition(homeWp->getLatitude(), homeWp->getLongitude(), homeWp->getAltitude());
+                map->GoHome();
             }
         } else {
-            map->goHome();
+            map->GoHome();
         }
     }
 }
@@ -334,5 +443,6 @@ QGCMapToolBar::~QGCMapToolBar()
     delete trailSettingsGroup;
     delete updateTimesGroup;
     delete mapTypesGroup;
+    delete mapWidgetsGroup;
     // FIXME Delete all actions
 }

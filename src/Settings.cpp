@@ -29,6 +29,7 @@ QVariant Settings::value(const QString& key, const QVariant& defaultValue)
 QVariant Settings::valueWithPrefix(const QString& prefix, const QString& key, const QVariant& defaultValue)
 {
     m_settings.beginGroup(prefix);
-    return m_settings.value(key, defaultValue);
+    const QVariant result = m_settings.value(key, defaultValue);
     m_settings.endGroup();
+    return result;
 }

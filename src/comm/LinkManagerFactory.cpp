@@ -17,6 +17,9 @@ void LinkManagerFactory::connectLinkSignals(LinkInterface *link, LinkManager *lm
 int LinkManagerFactory::addSerialConnection()
 {
     LinkManager *lmgr = LinkManager::instance();
+    if (lmgr->isShuttingDown()) {
+        return -1;
+    }
     SerialConnection *link = new SerialConnection();
     connectLinkSignals(link, lmgr);
 
@@ -29,6 +32,9 @@ int LinkManagerFactory::addSerialConnection()
 int LinkManagerFactory::addSerialConnection(QString port,int baud)
 {
     LinkManager *lmgr = LinkManager::instance();
+    if (lmgr->isShuttingDown()) {
+        return -1;
+    }
     SerialConnection *link = new SerialConnection();
     connectLinkSignals(link, lmgr);
 
@@ -44,6 +50,9 @@ int LinkManagerFactory::addSerialConnection(QString port,int baud)
 int LinkManagerFactory::addUdpConnection(QHostAddress addr,int port)
 {
     LinkManager *lmgr = LinkManager::instance();
+    if (lmgr->isShuttingDown()) {
+        return -1;
+    }
     UDPLink* link = new UDPLink(addr,port);
     connectLinkSignals(link, lmgr);
 
@@ -56,6 +65,9 @@ int LinkManagerFactory::addUdpConnection(QHostAddress addr,int port)
 int LinkManagerFactory::addUdpClientConnection(QHostAddress addr,int port)
 {
     LinkManager *lmgr = LinkManager::instance();
+    if (lmgr->isShuttingDown()) {
+        return -1;
+    }
     UDPClientLink* link = new UDPClientLink(addr,port);
     connectLinkSignals(link, lmgr);
 
@@ -66,6 +78,9 @@ int LinkManagerFactory::addUdpClientConnection(QHostAddress addr,int port)
 int LinkManagerFactory::addTcpConnection(QHostAddress addr, QString hostName, int port,bool asServer)
 {
     LinkManager *lmgr = LinkManager::instance();
+    if (lmgr->isShuttingDown()) {
+        return -1;
+    }
 
     TCPLink *link = new TCPLink(addr, hostName, port, asServer);
 
@@ -78,4 +93,3 @@ int LinkManagerFactory::addTcpConnection(QHostAddress addr, QString hostName, in
     }
     return link->getId();
 }
-

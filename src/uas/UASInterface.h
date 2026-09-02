@@ -35,14 +35,18 @@ This file is part of the QGROUNDCONTROL project
 #include <QObject>
 #include <QList>
 #include <QAction>
+#include <QByteArray>
 #include <QColor>
 #include <QPointer>
+#include <QVariant>
 
 #include "LinkInterface.h"
 #include "ProtocolInterface.h"
 #include "UASWaypointManager.h"
 #include "QGCUASParamManager.h"
 #include "RadioCalibration/RadioCalibrationData.h"
+
+class Proximity;
 
 enum BatteryType
 {
@@ -118,10 +122,13 @@ public:
 
     //virtual QColor getColor() = 0;
     virtual int getUASID() const = 0; ///< Get the ID of the connected UAS
+    virtual Proximity *getProximity() = 0;
     /** @brief The time interval the robot is switched on **/
     virtual quint64 getUptime() const = 0;
     /** @brief Get the status flag for the communication **/
     virtual int getCommunicationStatus() const = 0;
+    /** @brief True while at least one transport link can reach the vehicle. **/
+    virtual bool isConnected() const = 0;
 
     virtual double getLocalX() const = 0;
     virtual double getLocalY() const = 0;
@@ -162,6 +169,13 @@ public:
     virtual UASWaypointManager* getWaypointManager(void) = 0;
     /** @brief Get reference to the param manager **/
     virtual QGCUASParamManager* getParamManager() const = 0;
+    /** @brief Get component ids represented in the local parameter cache. */
+    Q_INVOKABLE virtual QList<int> getComponentIds() = 0;
+    /** @brief Get cached parameter names for one component. */
+    Q_INVOKABLE virtual QList<QString> getParameterNames(int component) = 0;
+    /** @brief Get one cached parameter without requesting it from the vehicle. */
+    Q_INVOKABLE virtual QVariant getParameterValue(
+        int component, const QString &parameter) const = 0;
     // TODO Will be removed
     /** @brief Set reference to the param manager **/
     virtual void setParamManager(QGCUASParamManager* manager) = 0;
@@ -300,6 +314,14 @@ public slots:
     virtual void executeCommand(MAV_CMD command) = 0;
     /** @brief Executes a command **/
     virtual void executeCommand(MAV_CMD command, int confirmation, float param1, float param2, float param3, float param4, float param5, float param6, float param7, int component) = 0;
+    /** @brief Executes a command on exactly one pinned link. */
+    virtual bool executeCommandOnLink(
+        LinkInterface *link, MAV_CMD command, int confirmation,
+        float param1, float param2, float param3, float param4,
+        float param5, float param6, float param7, int component) = 0;
+    /** @brief Send one already encoded MAVLink message on one pinned link. */
+    virtual bool sendMessageOnLink(LinkInterface *link,
+                                   const mavlink_message_t &message) = 0;
     /** @brief Executes a command ack, with success boolean **/
     virtual void executeCommandAck(int num, bool success) = 0;
 
@@ -427,6 +449,7 @@ public slots:
 
     /** @brief Send raw GPS for sensor HIL */
     virtual void sendHilGps(quint64 time_us, double lat, double lon, double alt, int fix_type, float eph, float epv, float vel, float vn, float ve, float vd, float cog, int satellites) = 0;
+    virtual bool injectGpsData(const QByteArray &data) = 0;
 
     // Donwload Log Files over MAVLink.
     virtual void logRequestList(uint16_t start, uint16_t end) = 0;
@@ -474,6 +497,11 @@ signals:
 
     /** @brief A text message from the system has been received */
     void textMessageReceived(int uasid, int componentid, int severity, QString text);
+
+    /** @brief Structured inbound COMMAND_ACK from the vehicle. */
+    void commandAckReceived(int uasid, int componentid, int command,
+                            int result, int progress, int resultParam2,
+                            int targetSystem, int targetComponent);
 
     void navModeChanged(int uasid, int mode, const QString& text);
 
@@ -625,6 +653,8 @@ signals:
 
     /** @brief Value of a remote control channel (raw) */
     void remoteControlChannelRawChanged(int channelId, float raw);
+    /** @brief Servo output PWM in microseconds, using one-based channel IDs */
+    void servoOutputChanged(int oneBasedChannel, int pwm);
     /** @brief Value of a remote control channel (scaled)*/
     void remoteControlChannelScaledChanged(int channelId, float normalized);
     /** @brief Remote control RSSI changed */

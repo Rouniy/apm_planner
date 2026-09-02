@@ -111,14 +111,9 @@ MAVLinkSimulationLink::MAVLinkSimulationLink(QString readFile, QString writeFile
 
 MAVLinkSimulationLink::~MAVLinkSimulationLink()
 {
-    //TODO Check destructor
-    //    fileStream->flush();
-    //    outStream->flush();
-    // Force termination, there is no
-    // need for cleanup since
-    // this thread is not manipulating
-    // any relevant data
-    terminate();
+    disconnect();
+    requestInterruption();
+    wait();
     delete simulationFile;
 }
 
@@ -132,7 +127,7 @@ void MAVLinkSimulationLink::run()
     system.custom_mode = MAV_MODE_FLAG_MANUAL_INPUT_ENABLED | MAV_MODE_FLAG_SAFETY_ARMED;
     system.system_status = MAV_STATE_UNINIT;
 
-    forever
+    while (!isInterruptionRequested())
     {
         static quint64 last = 0;
 
@@ -911,8 +906,7 @@ void MAVLinkSimulationLink::readBytes()
  **/
 bool MAVLinkSimulationLink::disconnect()
 {
-
-    if(isConnected())
+    if (isConnected())
     {
         //        timer->stop();
 
@@ -921,8 +915,9 @@ bool MAVLinkSimulationLink::disconnect()
         emit disconnected();
         emit connected(false);
 
-        //exit();
     }
+
+    requestInterruption();
 
     return true;
 }

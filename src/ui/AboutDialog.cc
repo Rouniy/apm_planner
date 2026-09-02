@@ -12,7 +12,7 @@ AboutDialog::AboutDialog(QWidget *parent) :
     ui->setupUi(this);
     connect(ui->okButton, SIGNAL(clicked()), this, SLOT(accept()));
 
-    ui->appnameLabel->setText(QGC_APPLICATION_NAME);
+    ui->appnameLabel->setText(QGC_APPLICATION_DISPLAY_NAME);
     ui->versionLabel->setText(tr("Version %1 (%2)")
                               .arg(QGC_APPLICATION_VERSION)
                               .arg(define2string(GIT_COMMIT)));

@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
+        <file>files/APMotorLayout.json</file>
         <file>files/images/missionplanner10/chart-line.svg</file>
         <file>files/images/missionplanner10/map-location-dot.svg</file>
         <file>files/images/missionplanner10/screwdriver-wrench.svg</file>

@@ -40,6 +40,7 @@ This file is part of the APM_PLANNER project
 #include <mavlink.h>
 
 #include "LinkInterface.h"
+#include "MAVLinkFrameParser.h"
 #include "QGC.h"
 #include "configuration.h"
 
@@ -77,11 +78,22 @@ public:
      * \return - Number of lost messages
      */
     quint64 getTotalMessagesLost(int mavLinkID) const;
+    void forgetLink(int linkId);
 
 public slots:
     void receiveBytes(LinkInterface* link, const QByteArray &dataBytes);
 
 private:
+    struct LinkReceiveState
+    {
+        MAVLinkFrameParser parser;
+        int nonMavlinkCount = 0;
+        int radioVersionMismatchCount = 0;
+        bool decodedFirstPacket = false;
+        bool checkedUserNonMavlink = false;
+        bool warnedUserNonMavlink = false;
+    };
+
     void handleMessage(LinkInterface *link, const mavlink_message_t &message);
 
     quint8 m_systemID    = QGC::defaultMavlinkSystemId;
@@ -101,10 +113,12 @@ private:
     QMap<int, quint64> totalLossCounter;
     QMap<int, quint64> currReceiveCounter;
     QMap<int, quint64> currLossCounter;
-    QMap<int,QMap<int, quint8> > lastIndex;
+    QMap<int, LinkReceiveState> m_linkReceiveStates;
+    QMap<int, QMap<int, QMap<int, quint8>>> m_lastIndexByLink;
 
 signals:
     void protocolStatusMessage(const QString& title, const QString& message);
+    void outboundVersionChanged(int linkId, unsigned int version);
     void receiveLossChanged(int id,float value);
     void messageReceived(LinkInterface *link,mavlink_message_t message);
 };

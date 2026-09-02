@@ -40,10 +40,58 @@ This file is part of the APM_PLANNER project
 #include "UDPClientLink.h"
 #include "TCPLink.h"
 #include "UASObject.h"
+#include "ExactLinkTransmitter.h"
+#include "ParameterService.h"
+#include "QGCUASParamManager.h"
+#include "VehicleCommandService.h"
+#include "VehicleEndpoint.h"
+#include "VehicleTargetManager.h"
 #include <QApplication>
+#include <QPointer>
 #include <QSettings>
 #include <QtSerialPort/qserialportinfo.h>
 #include <QTimer>
+
+namespace
+{
+
+QString mavTypeName(quint8 type)
+{
+    static const char *const names[] = {
+        "GENERIC", "FIXED WING", "QUADROTOR", "COAXIAL", "HELICOPTER",
+        "ANTENNA TRACKER", "GCS", "AIRSHIP", "FREE BALLOON", "ROCKET",
+        "GROUND ROVER", "SURFACE BOAT", "SUBMARINE", "HEXAROTOR",
+        "OCTOROTOR", "TRICOPTER", "FLAPPING WING", "KITE",
+        "ONBOARD CONTROLLER", "VTOL DUOROTOR", "VTOL QUADROTOR",
+        "VTOL TILTROTOR", "VTOL RESERVED2", "VTOL RESERVED3",
+        "VTOL RESERVED4", "VTOL RESERVED5", "GIMBAL", "ADSB", "PARAFOIL",
+        "DODECAROTOR", "CAMERA", "CHARGING STATION", "FLARM", "SERVO",
+        "ODID", "DECAROTOR", "BATTERY", "PARACHUTE", "LOG", "OSD",
+        "IMU", "GPS", "WINCH"
+    };
+    return type < sizeof(names) / sizeof(names[0])
+        ? QString::fromLatin1(names[type]) : QString::number(type);
+}
+
+QString componentNameFromDiscoveryMessage(const mavlink_message_t &message)
+{
+    if (message.compid != MAV_COMP_ID_AUTOPILOT1) {
+        return VehicleEndpoint::defaultComponentName(message.compid);
+    }
+    if (message.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
+        mavlink_heartbeat_t heartbeat = {};
+        mavlink_msg_heartbeat_decode(&message, &heartbeat);
+        return mavTypeName(heartbeat.type);
+    }
+    if (message.msgid == MAVLINK_MSG_ID_HIGH_LATENCY2) {
+        mavlink_high_latency2_t highLatency = {};
+        mavlink_msg_high_latency2_decode(&message, &highLatency);
+        return mavTypeName(highLatency.type);
+    }
+    return VehicleEndpoint::defaultComponentName(message.compid);
+}
+
+} // namespace
 
 
 LinkManager* LinkManager::instance()
@@ -56,18 +104,52 @@ LinkManager::LinkManager(QObject *parent) :
     QObject(parent),
     m_mavlinkLoggingEnabled(true)
 {
+    m_vehicleTargetManager = new VehicleTargetManager(this);
+    m_exactLinkTransmitter = new ExactLinkTransmitter(
+        [this](int linkId, const QByteArray &frame) {
+            QPointer<LinkInterface> link(
+                m_connectionMap.value(linkId, nullptr));
+            if (!link || !link->isConnected() || frame.isEmpty()) {
+                return false;
+            }
+            link->writeBytes(frame.constData(), frame.size());
+            return link && m_connectionMap.value(linkId, nullptr) == link
+                && link->isConnected();
+        }, this);
+    m_vehicleCommandService = new VehicleCommandService(
+        m_vehicleTargetManager, m_exactLinkTransmitter, this);
+    m_vehicleCommandService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
+    m_parameterService = new ParameterService(
+        m_vehicleTargetManager, m_exactLinkTransmitter, this);
+    m_parameterService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
+    m_parameterManager = new QGCUASParamManager(
+        m_parameterService, m_vehicleTargetManager, this);
+    connect(m_vehicleTargetManager,
+            &VehicleTargetManager::currentTargetChanged,
+            this, &LinkManager::syncActiveUasToTarget);
+    connect(UASManager::instance(),
+            QOverload<UASInterface *>::of(&UASManager::activeUASSet),
+            this, &LinkManager::syncTargetToActiveUas);
     m_mavlinkDecoder.reset(new MAVLinkDecoder(this));
     m_mavlinkProtocol.reset(new MAVLinkProtocol());
     m_mavlinkProtocol->setConnectionManager(this);
     connect(m_mavlinkProtocol.data(),SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),m_mavlinkDecoder.data(),SLOT(receiveMessage(LinkInterface*,mavlink_message_t)));
     connect(m_mavlinkProtocol.data(),SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),this,SLOT(receiveMessage(LinkInterface*,mavlink_message_t)));
     connect(m_mavlinkProtocol.data(),SIGNAL(protocolStatusMessage(QString,QString)),this,SLOT(protocolStatusMessageRec(QString,QString)));
+    connect(m_mavlinkProtocol.data(), &MAVLinkProtocol::outboundVersionChanged,
+            m_exactLinkTransmitter,
+            &ExactLinkTransmitter::setOutboundVersion);
 
     QTimer::singleShot(500, this, SLOT(reloadSettings()));
 }
 
 void LinkManager::reloadSettings()
 {
+    if (m_shuttingDown) {
+        return;
+    }
     loadSettings();
     //Check to see if we have a single serial and single UDP connection, since they are the defaults
 
@@ -95,9 +177,59 @@ void LinkManager::reloadSettings()
     }
 }
 
+void LinkManager::syncActiveUasToTarget()
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    const VehicleTargetLease target =
+        m_vehicleTargetManager->acquireTarget();
+    if (!target.isValid()) {
+        return;
+    }
+    UASInterface *const uas = getUas(target.endpoint.systemId);
+    UASManager *const manager = UASManager::instance();
+    if (uas && manager->getActiveUAS() != uas) {
+        manager->setActiveUAS(uas);
+    }
+}
+
+void LinkManager::syncTargetToActiveUas(UASInterface *uas)
+{
+    if (m_shuttingDown || !uas) {
+        return;
+    }
+    const int systemId = uas->getUASID();
+    const VehicleTargetLease current =
+        m_vehicleTargetManager->acquireTarget();
+    if (current.isValid() && current.endpoint.systemId == systemId) {
+        return;
+    }
+
+    VehicleEndpoint selected;
+    for (const VehicleEndpoint &endpoint
+         : m_vehicleTargetManager->endpoints()) {
+        if (endpoint.systemId != systemId
+            || endpoint.componentId == MAV_COMP_ID_MISSIONPLANNER) {
+            continue;
+        }
+        if (!selected.isValid()
+            || (endpoint.componentId == MAV_COMP_ID_AUTOPILOT1
+                && selected.componentId != MAV_COMP_ID_AUTOPILOT1)) {
+            selected = endpoint;
+        }
+    }
+    if (selected.isValid()) {
+        m_vehicleTargetManager->selectTarget(
+            selected.linkId, selected.systemId, selected.componentId);
+    } else {
+        m_vehicleTargetManager->clearTarget();
+    }
+}
+
 void LinkManager::stopLogging()
 {
-    if (!m_mavlinkLoggingEnabled)
+    if (!m_mavlinkLoggingEnabled || !m_mavlinkProtocol)
     {
         return;
     }
@@ -106,12 +238,95 @@ void LinkManager::stopLogging()
 
 LinkManager::~LinkManager()
 {
-
+    shutdown();
 }
 
 void LinkManager::shutdown()
-{  
+{
+    if (m_shuttingDown) {
+        return;
+    }
+    m_shuttingDown = true;
+
+    // Persist configured connections before taking them out of the live map.
     saveSettings();
+
+    QList<QPointer<UASInterface>> knownVehicles;
+    for (const QPointer<UASInterface> &uas : m_uasMap) {
+        if (!uas) {
+            continue;
+        }
+        bool alreadyKnown = false;
+        for (const QPointer<UASInterface> &known : knownVehicles) {
+            if (known == uas) {
+                alreadyKnown = true;
+                break;
+            }
+        }
+        if (!alreadyKnown) {
+            knownVehicles.append(uas);
+        }
+    }
+
+    // Make every outbound lookup fail and detach ingress. Links remain live
+    // while UASManager quiesces DroneCAN and other vehicle-owned transports.
+    const QMap<int, LinkInterface *> links = m_connectionMap;
+    m_connectionMap.clear();
+    for (auto it = links.constBegin(); it != links.constEnd(); ++it) {
+        const int linkId = it.key();
+        LinkInterface *link = it.value();
+        m_vehicleTargetManager->removeLink(linkId);
+        m_vehicleCommandService->forgetLink(linkId);
+        m_parameterService->forgetLink(linkId);
+        m_exactLinkTransmitter->forgetLink(linkId);
+        if (m_mavlinkProtocol) {
+            m_mavlinkProtocol->forgetLink(linkId);
+            if (link) {
+                disconnect(link,
+                           SIGNAL(bytesReceived(LinkInterface*,QByteArray)),
+                           m_mavlinkProtocol.data(),
+                           SLOT(receiveBytes(LinkInterface*,QByteArray)));
+            }
+        }
+    }
+
+    // Ingress is detached, but direct exact-link writes still work here. Send
+    // transport stop commands first, then cooperatively join every worker.
+    UASManager *uasManager = UASManager::instance();
+    uasManager->quiesceTransports();
+    for (LinkInterface *link : links) {
+        if (!link) {
+            continue;
+        }
+        link->disconnect();
+        link->requestInterruption();
+        link->quit();
+        if (link->isRunning() && !link->wait(5000)) {
+            // Never terminate a QThread: it can leave locks and native socket
+            // state corrupted. Built-in links all observe disconnect or
+            // interruption; wait for a slow final iteration if necessary.
+            QLOG_ERROR() << "Link required an extended shutdown wait:"
+                         << link->getId();
+            link->wait();
+        }
+    }
+
+    // No communication worker can now access vehicle or protocol objects.
+    uasManager->shutdown();
+    for (const QPointer<UASInterface> &known : knownVehicles) {
+        if (known) {
+            delete known.data();
+        }
+    }
+    m_uasMap.clear();
+    qDeleteAll(m_uasObjectMap);
+    m_uasObjectMap.clear();
+
+    for (LinkInterface *link : links) {
+        delete link;
+    }
+
+    m_vehicleTargetManager->clear();
     m_mavlinkDecoder.reset();
     m_mavlinkProtocol.reset();
 }
@@ -297,7 +512,7 @@ bool LinkManager::loggingEnabled() const
 
 void LinkManager::startLogging()
 {
-    if (!m_mavlinkLoggingEnabled)
+    if (!m_mavlinkLoggingEnabled || !m_mavlinkProtocol)
     {
         return;
     }
@@ -312,6 +527,41 @@ MAVLinkProtocol* LinkManager::getProtocol() const
     return m_mavlinkProtocol.data();
 }
 
+VehicleTargetManager *LinkManager::vehicleTargetManager() const
+{
+    return m_vehicleTargetManager;
+}
+
+VehicleCommandService *LinkManager::vehicleCommandService() const
+{
+    return m_vehicleCommandService;
+}
+
+ParameterService *LinkManager::parameterService() const
+{
+    return m_parameterService;
+}
+
+QGCUASParamManager *LinkManager::parameterManager() const
+{
+    return m_parameterManager;
+}
+
+QObject *LinkManager::vehicleTargetManagerObject() const
+{
+    return m_vehicleTargetManager;
+}
+
+QObject *LinkManager::vehicleCommandServiceObject() const
+{
+    return m_vehicleCommandService;
+}
+
+QObject *LinkManager::parameterServiceObject() const
+{
+    return m_parameterService;
+}
+
 LinkInterface::LinkType LinkManager::getLinkType(int linkid)
 {
     if (!m_connectionMap.contains(linkid))
@@ -324,6 +574,10 @@ LinkInterface::LinkType LinkManager::getLinkType(int linkid)
 
 void LinkManager::addLink(LinkInterface *link)
 {
+    if (m_shuttingDown || !link) {
+        QLOG_WARN() << "Ignoring link added during terminal shutdown";
+        return;
+    }
     m_connectionMap.insert(link->getId(),link);
     emit newLink(link->getId());
 //    saveSettings();
@@ -343,14 +597,35 @@ void LinkManager::removeLink(LinkInterface *link)
 
 void LinkManager::removeLink(int linkId)
 {
-    if (m_connectionMap.contains(linkId))
-    {
-        if (m_connectionMap.value(linkId)->isConnected())
-        {
-            m_connectionMap.value(linkId)->disconnect();
-        }
-        delete m_connectionMap.value(linkId);
-        m_connectionMap.remove(linkId);
+    LinkInterface *link = m_connectionMap.value(linkId, nullptr);
+    if (!link) {
+        return;
+    }
+    // Fail exact-link lookups and detach ingress before the worker begins
+    // shutting down. Deleting a still-running QThread is undefined and was a
+    // second shutdown-crash path when a connection was removed at runtime.
+    m_connectionMap.remove(linkId);
+    m_vehicleTargetManager->removeLink(linkId);
+    m_vehicleCommandService->forgetLink(linkId);
+    m_parameterService->forgetLink(linkId);
+    m_exactLinkTransmitter->forgetLink(linkId);
+    if (m_mavlinkProtocol) {
+        m_mavlinkProtocol->forgetLink(linkId);
+        disconnect(link,
+                   SIGNAL(bytesReceived(LinkInterface*,QByteArray)),
+                   m_mavlinkProtocol.data(),
+                   SLOT(receiveBytes(LinkInterface*,QByteArray)));
+    }
+    link->disconnect();
+    link->requestInterruption();
+    link->quit();
+    if (link->isRunning() && !link->wait(5000)) {
+        QLOG_ERROR() << "Link required an extended removal wait:" << linkId;
+        link->wait();
+    }
+    delete link;
+    emit linkRemoved(linkId);
+    if (!m_shuttingDown) {
         saveSettings();
     }
 }
@@ -464,6 +739,26 @@ QStringList LinkManager::getCurrentPorts()
 
 void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
 {
+    if (m_shuttingDown) {
+        return;
+    }
+    if (link) {
+        m_vehicleCommandService->observeMessage(link->getId(), message);
+        m_parameterService->observeMessage(link->getId(), message);
+    }
+    if (link
+        && VehicleTargetManager::isVisibleDiscoveryMessage(message.msgid)) {
+        VehicleEndpoint endpoint;
+        endpoint.linkId = link->getId();
+        endpoint.systemId = message.sysid;
+        endpoint.componentId = message.compid;
+        endpoint.linkName = link->getShortName();
+        endpoint.componentName = componentNameFromDiscoveryMessage(message);
+        // Mission Planner makes the first visible MAVList entry current for a
+        // port. Globally we only do so while no explicit target exists.
+        m_vehicleTargetManager->observeEndpoint(
+            endpoint, message.compid != MAV_COMP_ID_MISSIONPLANNER);
+    }
     emit messageReceived(link,message);
 }
 
@@ -471,7 +766,7 @@ UASInterface* LinkManager::getUas(int id)
 {
     if (m_uasMap.contains(id))
     {
-        return m_uasMap.value(id);
+        return m_uasMap.value(id).data();
     }
     return nullptr;
 }
@@ -487,16 +782,23 @@ QList<int> LinkManager::getLinks() const
 }
 void LinkManager::addSimObject(uint8_t sysid,UASObject *obj)
 {
+    if (!obj) {
+        return;
+    }
+    delete m_uasObjectMap.take(sysid);
     m_uasObjectMap[sysid] = obj;
     obj->moveToThread(QApplication::instance()->thread());
 }
 void LinkManager::removeSimObject(uint8_t sysid)
 {
-    m_uasObjectMap.remove(sysid);
+    delete m_uasObjectMap.take(sysid);
 }
 
 UASInterface* LinkManager::createUAS(MAVLinkProtocol* mavlink, LinkInterface* link, int sysid, mavlink_heartbeat_t* heartbeat, QObject* parent)
 {
+    if (m_shuttingDown || !mavlink || !link || !heartbeat) {
+        return nullptr;
+    }
     QPointer<QObject> p (parent ? parent : mavlink );
 
     UASInterface* uas;
@@ -585,12 +887,22 @@ UASInterface* LinkManager::createUAS(MAVLinkProtocol* mavlink, LinkInterface* li
 
     UASObject *obj = new UASObject();
     connect(mavlink,SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),obj,SLOT(messageReceived(LinkInterface*,mavlink_message_t)));
+    delete m_uasObjectMap.take(sysid);
     m_uasObjectMap[sysid] = obj;
+    connect(uas, &QObject::destroyed, this,
+            [this, sysid, obj]() {
+        // A replacement with the same sysid owns a different UASObject.  An
+        // older vehicle's deferred destruction must not delete that object.
+        if (m_uasObjectMap.value(sysid, nullptr) == obj) {
+            delete m_uasObjectMap.take(sysid);
+        }
+    });
 
     m_uasMap.insert(sysid,uas);
 
     // Set the autopilot type
     uas->setAutopilotType(static_cast<int>(heartbeat->autopilot));
+    uas->setParamManager(m_parameterManager);
 
     // Make UAS aware that this link can be used to communicate with the actual robot
     uas->addLink(link);

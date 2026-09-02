@@ -33,18 +33,20 @@ This file is part of the QGROUNDCONTROL project
 #include "QGC.h"
 #include "CommConfigurationWindow.h"
 #include "GAudioOutput.h"
+#include "services/SpeechAnnouncer.h"
 #include "QGCToolWidget.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCSettingsWidget.h"
 #include "QGCTabbedInfoView.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCMapTool.h"
-#include "QGCMapWidget.h"
 #include "QGCStatusBar.h"
 #include "QGCWaypointListMulti.h"
 #include "ParameterInterface.h"
 #include "submainwindow.h"
 #include "UASControlWidget.h"
+#include "UAS.h"
+#include "QGCUASParamManager.h"
 #include "UASListWidget.h"
 #include "PrimaryFlightDisplayQML.h"
 #include "MissionElevationDisplay.h"
@@ -60,10 +62,17 @@ This file is part of the QGROUNDCONTROL project
 #include "FlightDataView.h"
 #include "flightdata/FlightDataViewModel.h"
 #include "flightdata/HudControl.h"
+#include "flightdata/ProximityWindow.h"
+#include "map/MapCacheView.h"
+#include "map/AbstractMapWidget.h"
 #include "FlightPlannerView.h"
 #include "flightplanner/FlightPlannerActionPanel.h"
+#include "flightplanner/FlightPlannerMeasurement.h"
+#include "flightplanner/MissionElevationProfile.h"
 #include "flightplanner/FlightPlannerViewModel.h"
+#include "flightplanner/FlightPlannerPrefetchController.h"
 #include "flightplanner/FlightPlannerWaypointPanel.h"
+#include "configuration/ElevationSourceService.h"
 #include "HelpView.h"
 #include "docking/DockableView.h"
 #include "MainWindowHeader.h"
@@ -72,7 +81,9 @@ This file is part of the QGROUNDCONTROL project
 #include "SetupView.h"
 #include "TerminalConsole.h"
 #include "AP2DataPlot2D.h"
+#include "LinkManager.h"
 #include "LinkManagerFactory.h"
+#include "comm/VehicleTargetManager.h"
 
 #ifdef QGC_OSG_ENABLED
 #include "Q3DWidgetFactory.h"
@@ -82,14 +93,23 @@ This file is part of the QGROUNDCONTROL project
 
 
 #include <QSettings>
+#include <QApplication>
 #include <QDockWidget>
 #include <QDialog>
+#include <QInputDialog>
 #include <QKeySequence>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QNetworkInterface>
 #include <QMessageBox>
 #include <QScreen>
+#include <QShortcut>
+#include <QStyle>
 #include <QVBoxLayout>
 
+#include <cmath>
+#include <memory>
 
 
 #include <QTimer>
@@ -101,6 +121,70 @@ This file is part of the QGROUNDCONTROL project
 
 namespace {
 MainWindow *s_mainWindowInstance = nullptr;
+
+QString canonicalPlannerLinearUnits(const QString &value)
+{
+    const QString candidate = value.trimmed();
+    if (candidate.compare(QStringLiteral("Meters"), Qt::CaseInsensitive)
+        == 0) {
+        return QStringLiteral("Meters");
+    }
+    if (candidate.compare(QStringLiteral("Feet"), Qt::CaseInsensitive)
+        == 0) {
+        return QStringLiteral("Feet");
+    }
+    return {};
+}
+
+// WinForms ToolStripMenuItem supports a command and a child drop-down on the
+// same row. QMenu normally turns such an action into a submenu-only item, so
+// preserve Mission Planner's split behavior: the row body triggers Insert Wp,
+// while its indicator (and ordinary hover) opens At Current Position.
+class MenuSplitActionFilter final : public QObject
+{
+public:
+    MenuSplitActionFilter(QMenu *menu, QAction *action)
+        : QObject(menu), m_menu(menu), m_action(action)
+    {
+        if (m_menu) m_menu->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched != m_menu || !m_action
+            || event->type() != QEvent::MouseButtonRelease) {
+            return QObject::eventFilter(watched, event);
+        }
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() != Qt::LeftButton)
+            return QObject::eventFilter(watched, event);
+
+        const QRect geometry = m_menu->actionGeometry(m_action);
+        if (!geometry.contains(mouseEvent->pos()))
+            return QObject::eventFilter(watched, event);
+        const int indicatorWidth = qMax(
+            22, m_menu->style()->pixelMetric(
+                    QStyle::PM_MenuButtonIndicator, nullptr, m_menu) + 10);
+        const bool indicatorHit = m_menu->layoutDirection() == Qt::RightToLeft
+            ? mouseEvent->pos().x() < geometry.left() + indicatorWidth
+            : mouseEvent->pos().x() > geometry.right() - indicatorWidth;
+        if (indicatorHit)
+            return QObject::eventFilter(watched, event);
+
+        const QPointer<QAction> action(m_action);
+        if (QMenu *submenu = m_action->menu()) submenu->close();
+        m_menu->close();
+        QTimer::singleShot(0, m_menu, [action]() {
+            if (action) action->trigger();
+        });
+        return true;
+    }
+
+private:
+    QPointer<QMenu> m_menu;
+    QPointer<QAction> m_action;
+};
 }
 
 LogWindowSingleton &LogWindowSingleton::instance()
@@ -309,6 +393,41 @@ MainWindow::MainWindow(QWidget *parent):
     connect(connectionOptionsAction, &QAction::triggered,
             this, &MainWindow::showConnectionOptions);
     m_mainWindowHeader->setConnectionOptionsAction(connectionOptionsAction);
+    auto *proximityAction = new QAction(tr("Proximity"), this);
+    proximityAction->setObjectName(QStringLiteral("actionProximity"));
+    const QList<QAction *> actionsAfterConnectionOptions =
+        ui.menuTools->actions();
+    ui.menuTools->insertAction(
+        actionsAfterConnectionOptions.size() > 1
+            ? actionsAfterConnectionOptions.at(1) : nullptr,
+        proximityAction);
+    connect(proximityAction, &QAction::triggered, this, [this]() {
+        UASManager *manager = UASManager::instance();
+        ProximityWindow *window = ProximityWindow::OpenWindow(this);
+        connect(manager,
+                QOverload<UASInterface *>::of(&UASManager::activeUASSet),
+                window, &ProximityWindow::setActiveUAS);
+        connect(manager, &UASManager::UASDeleted, window,
+                [window](UASInterface *uas) {
+            if (window->activeUAS() == uas) {
+                window->setActiveUAS(nullptr);
+            }
+        });
+        // Subscribe before sampling. A vehicle switch immediately before the
+        // snapshot is then represented either by the signal or by this value,
+        // never lost in the open-window interval.
+        window->setActiveUAS(manager->silentGetActiveUAS());
+    });
+    auto *mapCacheAction = new QAction(tr("Map Tile Cache"), this);
+    mapCacheAction->setObjectName(QStringLiteral("actionMapTileCache"));
+    mapCacheAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+M")));
+    const QList<QAction *> actionsAfterProximity = ui.menuTools->actions();
+    ui.menuTools->insertAction(
+        actionsAfterProximity.size() > 2
+            ? actionsAfterProximity.at(2) : nullptr,
+        mapCacheAction);
+    connect(mapCacheAction, &QAction::triggered, this,
+            [this]() { MapCacheView::OpenWindow(this); });
     connect(m_mainWindowHeader, &MainWindowHeader::fullScreenRequested,
             ui.actionFullscreen, &QAction::trigger);
     connect(m_mainWindowHeader, &MainWindowHeader::configureLinkRequested,
@@ -468,6 +587,12 @@ MainWindow::MainWindow(QWidget *parent):
 
 MainWindow::~MainWindow()
 {
+    // Logging remains active while child widgets are being destroyed. Detach
+    // the GUI sink first so destructor messages cannot append to a QTextEdit
+    // which is itself already in QObject teardown.
+    LogWindowSingleton::instance().removeDebugOutput();
+    debugOutput.clear();
+
     closeTerminalConsole();
 
     if (joystickWidget)
@@ -485,40 +610,9 @@ MainWindow::~MainWindow()
         joystick = NULL;
     }
 
-    // Get and delete all dockwidgets and contained
-    // widgets
-    QObjectList childList(this->children());
-
-    QObjectList::iterator i;
-    QDockWidget* dockWidget;
-    for (i = childList.begin(); i != childList.end(); ++i)
-    {
-        dockWidget = dynamic_cast<QDockWidget*>(*i);
-        if (dockWidget)
-        {
-            // Remove dock widget from main window
-            // removeDockWidget(dockWidget);
-            // delete dockWidget->widget();
-            QLOG_DEBUG() << "Delete DockWidget " << dockWidget;
-            delete dockWidget;
-            dockWidget = NULL;
-        }
-        else if (dynamic_cast<QWidget*>(*i)) // [ToDo] Stability
-        {
-            QWidget* widget = dynamic_cast<QWidget*>(*i);
-            QLOG_DEBUG() << "Delete Widget " << widget;
-            delete widget;
-            *i = NULL;
-        }
-    }
-    // Delete all UAS objects
-    for (int i=0;i<commsWidgetList.size();i++)
-    {
-        commsWidgetList[i]->deleteLater();
-    }
-
-    // Force the singleton to release the debug widget
-    LogWindowSingleton::instance().removeDebugOutput();
+    // All communication dialogs and embedded widgets have this window as
+    // their QObject parent. Let QObject destroy each child exactly once.
+    commsWidgetList.clear();
 }
 
 void MainWindow::disableTLogReplayBar()
@@ -668,9 +762,107 @@ void MainWindow::buildCommonWidgets()
                     showStatusMessage(tr("PLAN layout was reset: %1").arg(reason));
                 });
         plannerViewModel = new FlightPlannerViewModel(plannerView);
-        plannerMapTool = new QGCMapTool(plannerView);
+        ElevationSourceService *elevationService =
+            ElevationSourceService::instance();
+        plannerViewModel->setTerrainAltitudeProvider(
+            [elevationService](double latitude, double longitude,
+                               double *altitudeAmslMeters) {
+                return elevationService
+                    && elevationService->sampleAltitude(
+                        latitude, longitude, altitudeAmslMeters);
+            });
+        connect(elevationService,
+                &ElevationSourceService::srtmTileAvailable,
+                plannerViewModel,
+                [this](const QString &tileName) {
+            plannerViewModel->setStatus(
+                tr("Terrain tile %1 is ready; repeat the altitude-verified "
+                   "operation to apply it.").arg(tileName));
+        });
+        connect(elevationService,
+                &ElevationSourceService::srtmDownloadFailed,
+                plannerViewModel,
+                [this](const QString &tileName, const QString &error) {
+            plannerViewModel->setStatus(
+                tr("Terrain tile %1 could not be downloaded: %2")
+                    .arg(tileName, error));
+        });
+        plannerViewModel->setWpRadius(
+            settings.value(QStringLiteral("FlightPlanner/TXT_WPRad"),
+                           plannerViewModel->WpRadius()).toDouble());
+        plannerViewModel->setLoiterRadius(
+            settings.value(QStringLiteral("FlightPlanner/TXT_loiterrad"),
+                           plannerViewModel->LoiterRadius()).toDouble());
+        plannerViewModel->setDefaultAltitude(
+            settings.value(QStringLiteral("FlightPlanner/TXT_DefaultAlt"),
+                           plannerViewModel->DefaultAltitude()).toDouble());
+        plannerViewModel->setDefaultFrame(
+            settings.value(QStringLiteral("FlightPlanner/CMB_altmode"),
+                           plannerViewModel->DefaultFrame()).toString());
+        plannerViewModel->setAltWarn(
+            settings.value(QStringLiteral("FlightPlanner/TXT_altwarn"),
+                           plannerViewModel->AltWarn()).toDouble());
+        plannerViewModel->setSplineDefault(
+            settings.value(QStringLiteral("FlightPlanner/CHK_splinedefault"),
+                           plannerViewModel->SplineDefault()).toBool());
+        plannerViewModel->setVerifyHeight(
+            settings.value(QStringLiteral("FlightPlanner/CHK_verifyheight"),
+                           plannerViewModel->VerifyHeight()).toBool());
+        plannerViewModel->setAltUnits(
+            settings.value(QStringLiteral("altunits"),
+                           QStringLiteral("Meters")).toString());
+        plannerViewModel->setDistUnits(
+            settings.value(QStringLiteral("distunits"),
+                           QStringLiteral("Meters")).toString());
+        connect(plannerViewModel, &FlightPlannerViewModel::wpRadiusChanged,
+                this, [this](double value) {
+            settings.setValue(QStringLiteral("FlightPlanner/TXT_WPRad"), value);
+        });
+        connect(plannerViewModel, &FlightPlannerViewModel::loiterRadiusChanged,
+                this, [this](double value) {
+            settings.setValue(
+                QStringLiteral("FlightPlanner/TXT_loiterrad"), value);
+        });
+        connect(plannerViewModel,
+                &FlightPlannerViewModel::defaultAltitudeChanged,
+                this, [this](double value) {
+            settings.setValue(
+                QStringLiteral("FlightPlanner/TXT_DefaultAlt"), value);
+        });
+        connect(plannerViewModel, &FlightPlannerViewModel::defaultFrameChanged,
+                this, [this](const QString &value) {
+            settings.setValue(
+                QStringLiteral("FlightPlanner/CMB_altmode"), value);
+        });
+        connect(plannerViewModel, &FlightPlannerViewModel::altWarnChanged,
+                this, [this](double value) {
+            settings.setValue(
+                QStringLiteral("FlightPlanner/TXT_altwarn"), value);
+        });
+        connect(plannerViewModel, &FlightPlannerViewModel::splineDefaultChanged,
+                this, [this](bool enabled) {
+            settings.setValue(
+                QStringLiteral("FlightPlanner/CHK_splinedefault"), enabled);
+        });
+        connect(plannerViewModel, &FlightPlannerViewModel::verifyHeightChanged,
+                this, [this](bool enabled) {
+            settings.setValue(
+                QStringLiteral("FlightPlanner/CHK_verifyheight"), enabled);
+        });
+        connect(plannerViewModel, &FlightPlannerViewModel::altUnitsChanged,
+                this, [this](const QString &value) {
+            settings.setValue(QStringLiteral("altunits"), value);
+            emit plannerAltitudeUnitsChanged(value);
+        });
+        connect(plannerViewModel, &FlightPlannerViewModel::distUnitsChanged,
+                this, [this](const QString &value) {
+            settings.setValue(QStringLiteral("distunits"), value);
+            emit plannerDistanceUnitsChanged(value);
+        });
+        plannerMapTool = new QGCMapTool(
+            MapWidgetRole::FlightPlanner, plannerView);
         plannerMapTool->setObjectName(QStringLiteral("PlannerMap"));
-        plannerMapTool->mapWidget()->setMissionPlanningEnabled(true);
+        plannerMapTool->mapWidget()->SetMissionPlanningEnabled(true);
         plannerView->setMapWidget(plannerMapTool);
         addToCentralStackedWidget(plannerView, VIEW_MISSION, "Maps");
     }
@@ -738,7 +930,8 @@ void MainWindow::buildCommonWidgets()
     {
         simView = new SubMainWindow(this);
         simView->setObjectName("VIEW_SIMULATOR");
-        simView->setCentralWidget(new QGCMapTool(this));
+        simView->setCentralWidget(new QGCMapTool(
+            MapWidgetRole::Simulation, this));
         addToCentralStackedWidget(simView, VIEW_SIMULATION, tr("Simulation View"));
     }
 
@@ -770,22 +963,392 @@ void MainWindow::buildCommonWidgets()
                               tr("Waypoints"), plannerWaypointPanel);
     }
 
-    QGCMapWidget *plannerMap = plannerMapTool->mapWidget();
+    AbstractMapWidget *plannerMap = plannerMapTool->mapWidget();
+    plannerWaypointPanel->setZoomRange(
+        plannerMap->MinZoom(), plannerMap->MaxZoom());
+    plannerWaypointPanel->setZoomLevel(plannerMap->CurrentZoomLevel());
+    connect(plannerWaypointPanel,
+            &FlightPlannerWaypointPanel::zoomLevelRequested,
+            plannerMap, [plannerMap](int level) {
+        plannerMap->SetZoom(level);
+    });
+    connect(plannerMap, &AbstractMapWidget::ZoomChanged,
+            plannerWaypointPanel,
+            &FlightPlannerWaypointPanel::setZoomLevel);
+    auto *plannerPrefetchController = new FlightPlannerPrefetchController(
+        plannerMap, plannerViewModel, plannerView);
+
+    // Mission Planner-compatible map actions live above the concrete map
+    // backend. Each backend only reports the clicked geographic coordinate;
+    // the shared ViewModel owns validation, undo and mission mutation.
+    auto *plannerContextMenu = new QMenu(plannerView);
+    plannerContextMenu->setObjectName(QStringLiteral("contextMenuStrip1"));
+    plannerContextMenu->setProperty("plannerWaypointSequence", -1);
+    const auto addPlannerAction = [plannerContextMenu](
+            const QString &text, const char *objectName) {
+        QAction *action = plannerContextMenu->addAction(text);
+        action->setObjectName(QString::fromLatin1(objectName));
+        return action;
+    };
+    QAction *deleteWaypointAction = addPlannerAction(
+        tr("Delete WP"), "deleteWPToolStripMenuItem");
+    auto *insertWaypointMenu = plannerContextMenu->addMenu(tr("Insert Wp"));
+    insertWaypointMenu->setObjectName(
+        QStringLiteral("insertWpToolStripMenuItem"));
+    QAction *insertWaypointAction = insertWaypointMenu->menuAction();
+    insertWaypointAction->setObjectName(
+        QStringLiteral("insertWpToolStripMenuItem"));
+    QAction *currentPositionAction = insertWaypointMenu->addAction(
+        tr("At Current Position"));
+    currentPositionAction->setObjectName(
+        QStringLiteral("currentPositionToolStripMenuItem"));
+    new MenuSplitActionFilter(plannerContextMenu, insertWaypointAction);
+    QAction *insertSplineWaypointAction = addPlannerAction(
+        tr("Insert Spline WP"), "insertSplineWPToolStripMenuItem");
+    auto *loiterMenu = plannerContextMenu->addMenu(tr("Loiter"));
+    loiterMenu->setObjectName(QStringLiteral("loiterToolStripMenuItem"));
+    loiterMenu->menuAction()->setObjectName(
+        QStringLiteral("loiterToolStripMenuItem"));
+    QAction *loiterForeverAction = loiterMenu->addAction(tr("Forever"));
+    loiterForeverAction->setObjectName(
+        QStringLiteral("loiterForeverToolStripMenuItem"));
+    QAction *loiterTimeAction = loiterMenu->addAction(tr("Time"));
+    loiterTimeAction->setObjectName(
+        QStringLiteral("loitertimeToolStripMenuItem"));
+    QAction *loiterCirclesAction = loiterMenu->addAction(tr("Circles"));
+    loiterCirclesAction->setObjectName(
+        QStringLiteral("loitercirclesToolStripMenuItem"));
+    auto *jumpMenu = plannerContextMenu->addMenu(tr("Jump"));
+    jumpMenu->setObjectName(QStringLiteral("jumpToolStripMenuItem"));
+    jumpMenu->menuAction()->setObjectName(
+        QStringLiteral("jumpToolStripMenuItem"));
+    QAction *jumpStartAction = jumpMenu->addAction(tr("Start"));
+    jumpStartAction->setObjectName(
+        QStringLiteral("jumpstartToolStripMenuItem"));
+    QAction *jumpWaypointAction = jumpMenu->addAction(tr("WP #"));
+    jumpWaypointAction->setObjectName(
+        QStringLiteral("jumpwPToolStripMenuItem"));
+    QAction *rtlAction = addPlannerAction(
+        tr("RTL"), "rTLToolStripMenuItem");
+    QAction *landAction = addPlannerAction(
+        tr("Land"), "landToolStripMenuItem");
+    QAction *takeoffAction = addPlannerAction(
+        tr("Takeoff"), "takeoffToolStripMenuItem");
+    QAction *roiAction = addPlannerAction(
+        tr("DO_SET_ROI"), "setROIToolStripMenuItem");
+    QAction *clearMissionAction = addPlannerAction(
+        tr("Clear Mission"), "clearMissionToolStripMenuItem");
+    plannerContextMenu->addSeparator();
+    QAction *reverseWaypointsAction = addPlannerAction(
+        tr("Reverse WPs"), "reverseWPsToolStripMenuItem");
+    QAction *modifyAltitudeAction = addPlannerAction(
+        tr("Modify Alt"), "modifyAltToolStripMenuItem");
+    QAction *elevationGraphAction = addPlannerAction(
+        tr("Elevation Graph"), "elevationGraphToolStripMenuItem");
+    plannerContextMenu->addSeparator();
+    QAction *undoAction = addPlannerAction(
+        tr("Undo"), "undoToolStripMenuItem");
+    auto *mapToolMenu = plannerContextMenu->addMenu(tr("Map Tool"));
+    mapToolMenu->setObjectName(QStringLiteral("mapToolToolStripMenuItem"));
+    mapToolMenu->menuAction()->setObjectName(
+        QStringLiteral("mapToolToolStripMenuItem"));
+    QAction *measureAction = mapToolMenu->addAction(
+        tr("Measure Distance"));
+    measureAction->setObjectName(QStringLiteral("ContextMeasure"));
+    if (QAction *action =
+            plannerPrefetchController->PrefetchVisibleAreaAction()) {
+        mapToolMenu->addAction(action);
+    }
+    if (QAction *action =
+            plannerPrefetchController->PrefetchWaypointPathAction()) {
+        mapToolMenu->addAction(action);
+    }
+    mapToolMenu->menuAction()->setEnabled(!mapToolMenu->isEmpty());
+    QAction *setHomeAction = addPlannerAction(
+        tr("Set Home Here"), "setHomeHereToolStripMenuItem");
+    QAction *setFenceReturnAction = addPlannerAction(
+        tr("Set Return Location"), "setReturnLocationToolStripMenuItem");
+    setFenceReturnAction->setVisible(false);
+
+    const QList<QAction *> missionContextActions{
+        deleteWaypointAction, insertWaypointAction,
+        insertSplineWaypointAction, loiterMenu->menuAction(),
+        jumpMenu->menuAction(), rtlAction, landAction, takeoffAction,
+        roiAction, clearMissionAction, reverseWaypointsAction,
+        modifyAltitudeAction, elevationGraphAction,
+    };
+    const auto contextLatitude = [plannerContextMenu]() {
+        return plannerContextMenu->property("plannerLatitude").toDouble();
+    };
+    const auto contextLongitude = [plannerContextMenu]() {
+        return plannerContextMenu->property("plannerLongitude").toDouble();
+    };
+    const auto contextWaypointSequence = [plannerContextMenu]() {
+        return plannerContextMenu->property(
+            "plannerWaypointSequence").toInt();
+    };
+    connect(insertWaypointAction, &QAction::triggered, plannerView,
+            [this, plannerWaypointPanel,
+             contextLatitude, contextLongitude]() {
+        const int count = plannerViewModel->Waypoints()->storeRowCount(
+            FlightPlannerMissionModel::MissionStore::Mission);
+        const int selected = plannerWaypointPanel->selectedWaypoint();
+        const int suggested = selected >= 0 ? selected + 1 : count;
+        bool accepted = false;
+        const int index = QInputDialog::getInt(
+            plannerView, tr("Insert WP"), tr("Insert WP after wp#"),
+            suggested, 0, count, 1, &accepted);
+        if (!accepted) return;
+        plannerViewModel->InsertRegularWaypointAt(
+            index, contextLatitude(), contextLongitude(),
+            plannerViewModel->DefaultAltitude());
+    });
+    connect(insertSplineWaypointAction, &QAction::triggered, plannerView,
+            [this, plannerWaypointPanel,
+             contextLatitude, contextLongitude]() {
+        const int count = plannerViewModel->Waypoints()->storeRowCount(
+            FlightPlannerMissionModel::MissionStore::Mission);
+        const int selected = plannerWaypointPanel->selectedWaypoint();
+        const int suggested = selected >= 0 ? selected + 1 : count;
+        bool accepted = false;
+        const int index = QInputDialog::getInt(
+            plannerView, tr("Insert WP"), tr("Insert WP after wp#"),
+            suggested, 0, count, 1, &accepted);
+        if (!accepted) return;
+        plannerViewModel->InsertSplineWaypointAt(
+            index, contextLatitude(), contextLongitude(),
+            plannerViewModel->DefaultAltitude());
+    });
+    connect(currentPositionAction, &QAction::triggered, plannerViewModel,
+            &FlightPlannerViewModel::AddWaypointAtCurrentPosition);
+    connect(deleteWaypointAction, &QAction::triggered, plannerView,
+            [this, contextWaypointSequence]() {
+        const int sequence = contextWaypointSequence();
+        if (sequence >= 0) plannerViewModel->DeleteWaypoint(sequence);
+    });
+    connect(setHomeAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        plannerViewModel->SetHome(contextLatitude(), contextLongitude());
+    });
+    connect(setFenceReturnAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        plannerViewModel->SetFenceReturn(
+            contextLatitude(), contextLongitude());
+    });
+    connect(takeoffAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        plannerViewModel->AddTakeoff(
+            contextLatitude(), contextLongitude(),
+            plannerViewModel->DefaultAltitude());
+    });
+    connect(landAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        plannerViewModel->AddLand(contextLatitude(), contextLongitude());
+    });
+    connect(rtlAction, &QAction::triggered, plannerView,
+            [this]() { plannerViewModel->AddRtl(); });
+    connect(roiAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        plannerViewModel->AddRoi(contextLatitude(), contextLongitude());
+    });
+    connect(loiterForeverAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        plannerViewModel->AddLoiterForever(
+            contextLatitude(), contextLongitude());
+    });
+    connect(loiterTimeAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        bool accepted = false;
+        const double seconds = QInputDialog::getDouble(
+            plannerView, tr("Loiter Time"), tr("Loiter Time"),
+            5.0, 0.0, 86400.0, 2, &accepted);
+        if (accepted) {
+            plannerViewModel->AddLoiterTime(
+                contextLatitude(), contextLongitude(), seconds);
+        }
+    });
+    connect(loiterCirclesAction, &QAction::triggered, plannerView,
+            [this, contextLatitude, contextLongitude]() {
+        bool accepted = false;
+        const double turns = QInputDialog::getDouble(
+            plannerView, tr("Loiter Turns"), tr("Loiter Turns"),
+            3.0, 0.01, 100000.0, 2, &accepted);
+        if (accepted) {
+            plannerViewModel->AddLoiterTurns(
+                contextLatitude(), contextLongitude(), turns);
+        }
+    });
+    connect(jumpStartAction, &QAction::triggered, plannerView,
+            [this]() {
+        bool accepted = false;
+        const int repeats = QInputDialog::getInt(
+            plannerView, tr("Jump repeat"),
+            tr("Number of times to Repeat"), 5, -1, 32767, 1,
+            &accepted);
+        if (accepted) plannerViewModel->AddJump(1, repeats);
+    });
+    connect(jumpWaypointAction, &QAction::triggered, plannerView,
+            [this]() {
+        const int count = plannerViewModel->Waypoints()->storeRowCount(
+            FlightPlannerMissionModel::MissionStore::Mission);
+        bool accepted = false;
+        const int target = QInputDialog::getInt(
+            plannerView, tr("WP No"), tr("Jump to WP no?"),
+            1, 1, count + 1, 1, &accepted);
+        if (!accepted) return;
+        const int repeats = QInputDialog::getInt(
+            plannerView, tr("Jump repeat"),
+            tr("Number of times to Repeat"), 5, -1, 32767, 1,
+            &accepted);
+        if (accepted) plannerViewModel->AddJump(target, repeats);
+    });
+    connect(clearMissionAction, &QAction::triggered, plannerViewModel,
+            &FlightPlannerViewModel::ClearWaypoints);
+    connect(reverseWaypointsAction, &QAction::triggered, plannerView,
+            [this]() { plannerViewModel->ReverseWaypoints(); });
+    connect(modifyAltitudeAction, &QAction::triggered, plannerView,
+            [this]() {
+        bool accepted = false;
+        const QString expression = QInputDialog::getText(
+            plannerView, tr("Modify Alt"),
+            tr("Enter +value (%1) or *factor for all mission altitudes:")
+                .arg(plannerViewModel->AltUnit()),
+            QLineEdit::Normal, QStringLiteral("+0"), &accepted);
+        if (accepted) plannerViewModel->ModifyAllAlt(expression);
+    });
+    connect(elevationGraphAction, &QAction::triggered,
+            this, &MainWindow::showMissionElevation);
+    const auto measurement = std::make_shared<FlightPlannerMeasurement>();
+    connect(measureAction, &QAction::triggered, plannerView,
+            [this, plannerMap, measurement,
+             contextLatitude, contextLongitude]() {
+        FlightPlannerMeasurement::Result completed;
+        const FlightPlannerMeasurement::Step step = measurement->AddPoint(
+            contextLatitude(), contextLongitude(), &completed);
+        if (step == FlightPlannerMeasurement::Step::Rejected) return;
+
+        if (step == FlightPlannerMeasurement::Step::Started) {
+            const FlightPlannerMeasurement::Point start = measurement->Start();
+            plannerMap->SetPlannerMeasurement({
+                {start.latitude, start.longitude, 0.0},
+            });
+            QMessageBox::information(
+                plannerView, tr("Measure Dist"),
+                tr("You can now pan/zoom around.\n"
+                   "Click this option again to get the distance."));
+            return;
+        }
+
+        plannerMap->SetPlannerMeasurement({
+            {completed.start.latitude, completed.start.longitude, 0.0},
+            {completed.end.latitude, completed.end.longitude, 0.0},
+        });
+        const QString distance = FlightPlannerMeasurement::FormatDistance(
+            completed.distanceMeters,
+            plannerViewModel->DistanceMultiplier(),
+            plannerViewModel->DistanceUnit());
+        QMessageBox::information(
+            plannerView, tr("Measure Dist"),
+            tr("Distance: %1 AZ: %2")
+                .arg(distance)
+                .arg(completed.bearingDegrees, 0, 'f', 0));
+        plannerMap->SetPlannerMeasurement({});
+    });
+    connect(undoAction, &QAction::triggered, plannerView,
+            [this]() { plannerViewModel->Undo(); });
+    connect(plannerContextMenu, &QMenu::aboutToShow, plannerView,
+            [this, plannerContextMenu, missionContextActions, setHomeAction,
+             setFenceReturnAction,
+             deleteWaypointAction, reverseWaypointsAction,
+             elevationGraphAction, undoAction]() {
+        const bool editable = !plannerViewModel->TransferBusy();
+        const bool mission = plannerViewModel->MissionType()
+                == QStringLiteral("Mission");
+        const bool fence = plannerViewModel->MissionType()
+                == QStringLiteral("Fence");
+        for (QAction *action : missionContextActions) {
+            action->setVisible(mission);
+            action->setEnabled(editable);
+        }
+        setHomeAction->setEnabled(editable);
+        setFenceReturnAction->setVisible(fence);
+        setFenceReturnAction->setEnabled(editable && fence);
+        const int missionCount = plannerViewModel->Waypoints()->storeRowCount(
+            FlightPlannerMissionModel::MissionStore::Mission);
+        const int waypointSequence = plannerContextMenu->property(
+            "plannerWaypointSequence").toInt();
+        deleteWaypointAction->setEnabled(
+            editable && mission && waypointSequence >= 0
+            && waypointSequence < missionCount);
+        reverseWaypointsAction->setEnabled(editable && missionCount > 1);
+        int routePointCount = plannerViewModel->HomeValid() ? 1 : 0;
+        const QVector<WpRowData> missionRows =
+            plannerViewModel->Waypoints()->rows(
+                FlightPlannerMissionModel::MissionStore::Mission);
+        for (const WpRowData &row : missionRows) {
+            if (MissionElevationProfile::CommandIsRoutePoint(row.Command)
+                && WpRow::FrameHasGlobalLocation(row.Frame)
+                && (row.Lat != 0.0 || row.Lng != 0.0)) {
+                ++routePointCount;
+            }
+        }
+        elevationGraphAction->setEnabled(mission && routePointCount >= 2);
+        undoAction->setEnabled(editable && plannerViewModel->CanUndo());
+    });
+    connect(plannerMap, &AbstractMapWidget::PlannerContextMenuRequested,
+            plannerView,
+            [plannerContextMenu](double latitude, double longitude,
+                                 const QPoint &globalPosition,
+                                 int waypointSequence) {
+        plannerContextMenu->setProperty("plannerLatitude", latitude);
+        plannerContextMenu->setProperty("plannerLongitude", longitude);
+        plannerContextMenu->setProperty(
+            "plannerWaypointSequence", waypointSequence);
+        plannerContextMenu->popup(globalPosition);
+    });
+    auto *plannerUndoShortcut = new QShortcut(QKeySequence::Undo, plannerView);
+    plannerUndoShortcut->setObjectName(QStringLiteral("PlannerUndoShortcut"));
+    plannerUndoShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(plannerUndoShortcut, &QShortcut::activated, plannerView,
+            [this]() { plannerViewModel->Undo(); });
+
     const auto refreshPlannerMap = [this, plannerMap]() {
         if (!plannerViewModel || !plannerMap) return;
         FlightPlannerMissionModel *model = plannerViewModel->Waypoints();
         const auto store = model->missionStore();
-        plannerMap->setPlannerRows(model->rows(store), store);
+        plannerMap->SetPlannerRows(model->rows(store), store);
     };
     const auto refreshPlannerHome = [this, plannerMap]() {
         if (!plannerViewModel || !plannerMap) return;
         if (plannerViewModel->HomeValid()) {
-            plannerMap->setPlannerHome(plannerViewModel->HomeLat(),
+            plannerMap->SetPlannerHome(plannerViewModel->HomeLat(),
                                        plannerViewModel->HomeLng(),
                                        plannerViewModel->HomeAlt());
         } else {
-            plannerMap->clearPlannerHome();
+            plannerMap->ClearPlannerHome();
         }
+    };
+    const auto refreshPlannerNavigation = [this, plannerMap]() {
+        if (!plannerViewModel || !plannerMap) return;
+        plannerMap->SetPlannerNavigationParameters(
+            plannerViewModel->NavigationParameters());
+    };
+    const auto refreshPlannerAltitudePresentation = [this, plannerMap]() {
+        if (!plannerViewModel || !plannerMap) return;
+        plannerMap->SetPlannerAltitudePresentation(
+            plannerViewModel->AltitudeMultiplier(),
+            plannerViewModel->AltUnit());
+    };
+    const auto refreshPlannerPolygon = [this, plannerMap]() {
+        if (!plannerViewModel || !plannerMap) return;
+        QVector<MapCoordinate> points;
+        const QVector<SurveyGridCoordinate> &polygon =
+            plannerViewModel->DrawnPolygon()->DrawnPolygon();
+        points.reserve(polygon.size());
+        for (const SurveyGridCoordinate &point : polygon) {
+            points.append({point.latitude, point.longitude, point.altitude});
+        }
+        plannerMap->SetPlannerDrawnPolygon(points);
     };
     connect(plannerViewModel->Waypoints(),
             &FlightPlannerMissionModel::rowsChanged, plannerView,
@@ -803,30 +1366,47 @@ void MainWindow::buildCommonWidgets()
             plannerView, [refreshPlannerHome](double) { refreshPlannerHome(); });
     connect(plannerViewModel, &FlightPlannerViewModel::homeValidChanged,
             plannerView, [refreshPlannerHome](bool) { refreshPlannerHome(); });
-    connect(plannerMap, &QGCMapWidget::plannerCoordinateRequested,
+    connect(plannerViewModel,
+            &FlightPlannerViewModel::plannerNavigationChanged,
+            plannerView, refreshPlannerNavigation);
+    connect(plannerViewModel,
+            &FlightPlannerViewModel::altitudePresentationChanged,
+            plannerView, refreshPlannerAltitudePresentation);
+    connect(plannerViewModel->DrawnPolygon(),
+            &FlightPlannerPolygonModel::DrawnPolygonChanged,
+            plannerView, refreshPlannerPolygon);
+    connect(plannerMap, &AbstractMapWidget::PlannerCoordinateRequested,
             plannerViewModel,
-            qOverload<double, double>(&FlightPlannerViewModel::AddWaypointAt));
-    connect(plannerMap, &QGCMapWidget::plannerWaypointMoved,
+            [this](double latitude, double longitude) {
+                if (!plannerViewModel) return;
+                if (plannerViewModel->PolygonDrawMode()) {
+                    plannerViewModel->AddPolygonPoint(latitude, longitude);
+                } else {
+                    plannerViewModel->AddWaypointAt(latitude, longitude);
+                }
+            });
+    connect(plannerMap, &AbstractMapWidget::PlannerWaypointMoved,
             plannerViewModel,
             [this](int sequence, double latitude, double longitude) {
                 if (!plannerViewModel) return;
-                WpRow *row = plannerViewModel->Waypoints()->rowAt(sequence);
-                if (!row) return;
-                row->setLat(latitude);
-                row->setLng(longitude);
+                plannerViewModel->MoveWaypoint(
+                    sequence, latitude, longitude);
             }, Qt::QueuedConnection);
     connect(plannerWaypointPanel,
             &FlightPlannerWaypointPanel::selectedWaypointChanged,
-            plannerMap, &QGCMapWidget::setPlannerSelection);
+            plannerMap, &AbstractMapWidget::SetPlannerSelection);
+    refreshPlannerAltitudePresentation();
     refreshPlannerHome();
+    refreshPlannerNavigation();
+    refreshPlannerPolygon();
     refreshPlannerMap();
 
-    {   // Widget that shows the elevation changes over a mission.
-        QAction* tempAction = ui.menuTools->addAction(tr("Mission Elevation"));
-        tempAction->setCheckable(true);
-        connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
-        menuToDockNameMap[tempAction] = "MISSION_ELEVATION_DOCKWIDGET";
-    }
+    QAction *missionElevationAction =
+        ui.menuTools->addAction(tr("Mission Elevation"));
+    missionElevationAction->setObjectName(
+        QStringLiteral("missionElevationToolStripMenuItem"));
+    connect(missionElevationAction, &QAction::triggered,
+            this, &MainWindow::showMissionElevation);
 
     createDockWidget(simView,new QGCWaypointListMulti(this),tr("Mission Plan"),"WAYPOINT_LIST_DOCKWIDGET",VIEW_SIMULATION,Qt::BottomDockWidgetArea);
     createDockWidget(simView,new ParameterInterface(this),tr("Parameters"),"PARAMETER_INTERFACE_DOCKWIDGET",VIEW_SIMULATION,Qt::RightDockWidgetArea);
@@ -899,7 +1479,7 @@ void MainWindow::buildCommonWidgets()
 
     // Mission Planner 10 names and layout: HudHost/FdTabs form the 2* left
     // column and FdMap forms the 3* right column. Adding them in this order
-    // keeps that layout identical in KDDockWidgets and the Qt fallback.
+    // keeps that layout identical in the embedded Qt dock host.
     auto *pilotHudHost = new QWidget(this);
     auto *pilotHudLayout = new QVBoxLayout(pilotHudHost);
     pilotHudLayout->setObjectName(QStringLiteral("HudHostLayout"));
@@ -911,12 +1491,16 @@ void MainWindow::buildCommonWidgets()
     auto *flightDataViewModel = new FlightDataViewModel(pilotHud);
     flightDataViewModel->setObjectName(QStringLiteral("FlightDataViewModel"));
     flightDataViewModel->attachHud(pilotHud);
+    auto *speechAnnouncer = new SpeechAnnouncer(
+        flightDataViewModel, flightDataViewModel);
+    speechAnnouncer->setObjectName(QStringLiteral("SpeechAnnouncer"));
     if (pilotView->setHudWidget(pilotHudHost)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,
                               FlightDataView::hudPanelId(),
                               tr("HUD"), pilotHudHost);
     }
     auto *pilotMap = new QGCMapTool(this);
+    pilotMap->setFlightDataViewModel(flightDataViewModel);
     if (pilotView->setMapWidget(pilotMap)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,
                               FlightDataView::mapPanelId(),
@@ -938,6 +1522,15 @@ void MainWindow::buildCommonWidgets()
     }
 
     QGCTabbedInfoView *infoview = new QGCTabbedInfoView(this);
+    connect(infoview, &QGCTabbedInfoView::clearTrackRequested,
+            pilotMap, [pilotMap]() {
+        if (AbstractMapWidget *const map = pilotMap->mapWidget()) {
+            map->DeleteTrails();
+        }
+    });
+    connect(infoview, &QGCTabbedInfoView::joystickSetupRequested,
+            this, &MainWindow::configure);
+    infoview->setFlightDataViewModel(flightDataViewModel);
     infoview->addSource(mavlinkDecoder);
     if (pilotView->setInfoView(infoview)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,
@@ -1148,10 +1741,6 @@ void MainWindow::loadDockWidget(QString name)
     {
         createDockWidget(centerStack->currentWidget(),new QGCWaypointListMulti(this),tr("Mission Plan"),"WAYPOINT_LIST_DOCKWIDGET",currentView,Qt::BottomDockWidgetArea);
     }
-    else if (name == "MISSION_ELEVATION_DOCKWIDGET")
-    {
-        createDockWidget(centerStack->currentWidget(),new MissionElevationDisplay(this),tr("Mission Elevation"),"MISSION_ELEVATION_DOCKWIDGET",currentView,Qt::TopDockWidgetArea);
-    }
     else if (name == "VIBRATION_MONITOR_DOCKWIDGET")
     {
         createDockWidget(centerStack->currentWidget(),new VibrationMonitor(this),tr("Vibration Monitor"),"VIBRATION_MONITOR_DOCKWIDGET",currentView,Qt::RightDockWidgetArea);
@@ -1334,10 +1923,29 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;
+    if (logPlayer) {
+        logPlayer->shutdown();
+    }
+    // Top-level child dialogs are not closed by QWidget parent teardown until
+    // the MainWindow destructor runs. Queue this modeless plot first so its
+    // QCustomPlot-owned shared objects are released while the event loop and
+    // terrain services are still alive.
+    if (plannerElevationDialog) {
+        plannerElevationDialog->close();
+        plannerElevationDialog->deleteLater();
+        plannerElevationDialog = nullptr;
+    }
     storeSettings();
     //mavlink->storeSettings();
     UASManager::instance()->storeSettings();
     QMainWindow::closeEvent(event);
+    if (event->isAccepted()) {
+        // Closing the primary window is an explicit application-exit request.
+        // Do not rely solely on lastWindowClosed(): modeless connection and
+        // transport windows can outlive their native X11 window long enough to
+        // leave the event loop running (and links receiving data) invisibly.
+        QMetaObject::invokeMethod(qApp, "quit", Qt::QueuedConnection);
+    }
 }
 
 /**
@@ -1531,12 +2139,8 @@ void MainWindow::loadCustomWidgetsFromDefaults(const QString& systemType, const 
 void MainWindow::loadSettings()
 {
     QSettings settings;
-    const bool heartbeat = settings.contains(
-        QStringLiteral("CHK_GCSheartbeat"))
-        ? settings.value(QStringLiteral("CHK_GCSheartbeat")).toBool()
-        : settings.value(
-              QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED"), true)
-              .toBool();
+    const bool heartbeat = settings.value(
+        QStringLiteral("CHK_GCSheartbeat"), true).toBool();
     settings.beginGroup("QGC_MAINWINDOW");
     autoReconnect = settings.value("AUTO_RECONNECT",false).toBool();
     currentStyle = (QGC_MAINWINDOW_STYLE)settings.value("CURRENT_STYLE", QGC_MAINWINDOW_STYLE_OUTDOOR).toInt();
@@ -1558,7 +2162,6 @@ void MainWindow::storeSettings()
     settings.setValue("LOW_POWER_MODE", lowPowerMode);
     settings.setValue("AUTO_PROXY_MODE", autoProxyMode);
     settings.setValue("ADVANCED_MODE", isAdvancedMode);
-    settings.setValue("HEARTBEATS_ENABLED",m_heartbeatEnabled);
     settings.endGroup();
 
     if (!aboutToCloseFlag && isVisible())
@@ -1578,7 +2181,7 @@ void MainWindow::storeSettings()
 void MainWindow::configureWindowName()
 {
     QList<QHostAddress> hostAddresses = QNetworkInterface::allAddresses();
-    QString windowname = qApp->applicationName() + " " + qApp->applicationVersion();
+    QString windowname = qApp->applicationDisplayName() + " " + qApp->applicationVersion();
     bool prevAddr = false;
 
     windowname.append(" (" + QHostInfo::localHostName() + ": ");
@@ -1739,17 +2342,21 @@ void MainWindow::loadStyle(QGC_MAINWINDOW_STYLE style)
         if (style != currentStyle) {
             qApp->setStyleSheet("QMainWindow::separator { background: rgb(0, 0, 0); width: 5px; height: 5px;}");
             //qApp->setStyleSheet("");
-            showInfoMessage(tr("Please restart APM Planner"), tr("Please restart APM Planner to switch to fully native look and feel. Currently you have loaded Qt's plastique style."));
+            showInfoMessage(tr("Please restart APM Planner"), tr("Please restart APM Planner to switch to the fully native look and feel. The cross-platform Fusion base style remains active until restart."));
         }
     }
         break;
     case QGC_MAINWINDOW_STYLE_INDOOR:
-        qApp->setStyle("plastique");
+        qApp->setStyle(QStringLiteral("Fusion"));
         styleFileName = ":files/styles/style-indoor.css";
         reloadStylesheet();
         break;
     case QGC_MAINWINDOW_STYLE_OUTDOOR:
-        qApp->setStyle("plastique");
+        // Fusion is available on every supported Qt desktop platform. The
+        // Emerald stylesheet can therefore produce the same metrics and
+        // palette on Linux, Windows and macOS instead of inheriting native
+        // style differences.
+        qApp->setStyle(QStringLiteral("Fusion"));
         styleFileName = ":files/styles/style-outdoor.css";
         reloadStylesheet();
         break;
@@ -1975,6 +2582,11 @@ void MainWindow::connectCommonActions()
     // Connect internal actions
     connect(UASManager::instance(), SIGNAL(UASCreated(UASInterface*)), this, SLOT(UASCreated(UASInterface*)));
     connect(UASManager::instance(), SIGNAL(activeUASSet(UASInterface*)), this, SLOT(setActiveUAS(UASInterface*)));
+    connect(UASManager::instance(), SIGNAL(UASDeleted(UASInterface*)), this, SLOT(UASDeleted(UASInterface*)));
+    if (UASInterface *initialUas =
+            UASManager::instance()->silentGetActiveUAS()) {
+        bindPlannerVehicle(initialUas);
+    }
 
     // Unmanned System controls
     connect(ui.actionLiftoff, SIGNAL(triggered()), UASManager::instance(), SLOT(launchActiveUAS()));
@@ -2116,9 +2728,91 @@ void MainWindow::showSettings()
     settingsDialog->setWindowTitle(tr("APM Planner 3.0 Settings"));
     auto *layout = new QVBoxLayout(settingsDialog);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(new QGCSettingsWidget(settingsDialog));
+    auto *settingsWidget = new QGCSettingsWidget(settingsDialog);
+    layout->addWidget(settingsWidget);
     settingsDialog->resize(1014, 839);
     settingsDialog->show();
+}
+
+void MainWindow::showMissionElevation()
+{
+    if (plannerElevationDialog) {
+        plannerElevationDialog->show();
+        plannerElevationDialog->raise();
+        plannerElevationDialog->activateWindow();
+        return;
+    }
+    if (!plannerViewModel) {
+        showStatusMessage(tr("PLAN is not ready for an elevation graph."));
+        return;
+    }
+
+    auto *display = new MissionElevationDisplay(
+        plannerViewModel, ElevationSourceService::instance());
+    if (!display->HasUsableMission()) {
+        display->deleteLater();
+        showStatusMessage(tr(
+            "Need at least two route points (HOME + waypoint or two waypoints) for an elevation graph."));
+        return;
+    }
+
+    auto *dialog = new QDialog(this);
+    dialog->setObjectName(QStringLiteral("ElevationGraphWindow"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Elevation Graph — APM Planner"));
+    auto *layout = new QVBoxLayout(dialog);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(display);
+    dialog->resize(820, 420);
+    plannerElevationDialog = dialog;
+    connect(dialog, &QObject::destroyed, this, [this]() {
+        plannerElevationDialog = nullptr;
+    });
+    dialog->show();
+}
+
+QString MainWindow::plannerAltitudeUnits() const
+{
+    if (plannerViewModel) return plannerViewModel->AltUnits();
+    const QString configured = canonicalPlannerLinearUnits(
+        settings.value(QStringLiteral("altunits"),
+                       QStringLiteral("Meters")).toString());
+    return configured.isEmpty() ? QStringLiteral("Meters") : configured;
+}
+
+QString MainWindow::plannerDistanceUnits() const
+{
+    if (plannerViewModel) return plannerViewModel->DistUnits();
+    const QString configured = canonicalPlannerLinearUnits(
+        settings.value(QStringLiteral("distunits"),
+                       QStringLiteral("Meters")).toString());
+    return configured.isEmpty() ? QStringLiteral("Meters") : configured;
+}
+
+void MainWindow::setPlannerAltitudeUnits(const QString &units)
+{
+    const QString canonical = canonicalPlannerLinearUnits(units);
+    if (canonical.isEmpty()) return;
+    if (plannerViewModel) {
+        plannerViewModel->setAltUnits(canonical);
+        return;
+    }
+    if (plannerAltitudeUnits() == canonical) return;
+    settings.setValue(QStringLiteral("altunits"), canonical);
+    emit plannerAltitudeUnitsChanged(canonical);
+}
+
+void MainWindow::setPlannerDistanceUnits(const QString &units)
+{
+    const QString canonical = canonicalPlannerLinearUnits(units);
+    if (canonical.isEmpty()) return;
+    if (plannerViewModel) {
+        plannerViewModel->setDistUnits(canonical);
+        return;
+    }
+    if (plannerDistanceUnits() == canonical) return;
+    settings.setValue(QStringLiteral("distunits"), canonical);
+    emit plannerDistanceUnitsChanged(canonical);
 }
 
 
@@ -2228,9 +2922,150 @@ void MainWindow::commsWidgetDestroyed(QObject *obj)
     }
 }
 
+void MainWindow::bindPlannerVehicle(UASInterface *uas)
+{
+    if (!plannerViewModel)
+        return;
+
+    if (plannerParameterVehicle) {
+        disconnect(plannerParameterVehicle.data(), nullptr,
+                   plannerViewModel.data(), nullptr);
+    }
+    if (QGCUASParamManager *manager =
+            LinkManager::instance()->parameterManager()) {
+        disconnect(manager, nullptr, plannerViewModel.data(), nullptr);
+    }
+    plannerParameterVehicle = uas;
+    plannerViewModel->setVehicleParameterAccess({}, {});
+
+    UAS *vehicle = qobject_cast<UAS *>(uas);
+    plannerViewModel->setMissionTransferController(
+            vehicle ? vehicle->missionTransferController() : nullptr);
+    plannerViewModel->setVehicleType(uas ? uas->getSystemType() : -1);
+
+    if (!uas) {
+        plannerViewModel->setVehicleHomeProvider({});
+        plannerViewModel->setVehiclePositionProvider({});
+        return;
+    }
+
+    const QPointer<UASInterface> activeVehicle(uas);
+    const auto parameterComponent = [activeVehicle](
+            const QString &name, double *value) -> int {
+        if (!activeVehicle || !value) {
+            return -1;
+        }
+        LinkManager *const links = LinkManager::instance();
+        VehicleTargetManager *const targets = links->vehicleTargetManager();
+        QGCUASParamManager *const manager = links->parameterManager();
+        const VehicleTargetLease target = targets
+            ? targets->acquireTarget() : VehicleTargetLease{};
+        if (!manager || !target.isValid()
+            || target.endpoint.systemId != activeVehicle->getUASID()) {
+            return -1;
+        }
+        QList<int> components = manager->getComponentIds();
+        if (components.removeOne(1)) {
+            components.prepend(1);
+        }
+        for (int component : components) {
+            QVariant parameter;
+            if (!manager->getParameterValue(component, name, parameter)) {
+                continue;
+            }
+            bool ok = false;
+            const double converted = parameter.toDouble(&ok);
+            if (ok && std::isfinite(converted)) {
+                *value = converted;
+                return component;
+            }
+        }
+        return -1;
+    };
+    plannerViewModel->setVehicleParameterAccess(
+        [parameterComponent](const QString &name, double *value) {
+            return parameterComponent(name, value) >= 0;
+        },
+        [activeVehicle, parameterComponent](const QString &name,
+                                             double value) {
+            double previousValue = 0.0;
+            const int component = parameterComponent(name, &previousValue);
+            if (!activeVehicle || component < 0) {
+                return false;
+            }
+            QGCUASParamManager *const manager =
+                LinkManager::instance()->parameterManager();
+            if (!manager) {
+                return false;
+            }
+            return manager->writeParameters(
+                component,
+                QVariantList{QVariantMap{
+                    {QStringLiteral("name"), name},
+                    {QStringLiteral("value"), value}
+                }}) != 0;
+        });
+    QGCUASParamManager *const manager =
+        LinkManager::instance()->parameterManager();
+    VehicleTargetManager *const targets =
+        LinkManager::instance()->vehicleTargetManager();
+    if (manager) {
+        connect(manager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                plannerViewModel,
+                [this, activeVehicle, targets](
+                    int component, const QString &name,
+                    const QVariant &value) {
+            const VehicleTargetLease target = targets
+                ? targets->acquireTarget() : VehicleTargetLease{};
+            if (plannerViewModel && activeVehicle && target.isValid()
+                && target.endpoint.systemId == activeVehicle->getUASID()
+                && target.endpoint.componentId == component) {
+                plannerViewModel->UpdateVehicleParameter(name, value);
+            }
+        });
+    }
+    connect(uas, &UASInterface::parameterManagerChanged,
+            plannerViewModel, [this](QGCUASParamManager *) {
+        if (plannerViewModel) {
+            plannerViewModel->RefreshVehicleParameters();
+        }
+    });
+    plannerViewModel->setVehiclePositionProvider(
+            [activeVehicle](double *latitude, double *longitude,
+                            double *altitudeRelative) {
+        if (!activeVehicle || !latitude || !longitude || !altitudeRelative
+            || !activeVehicle->globalPositionKnown()) {
+            return false;
+        }
+        *latitude = activeVehicle->getLatitude();
+        *longitude = activeVehicle->getLongitude();
+        *altitudeRelative = activeVehicle->getAltitudeRelative();
+        return std::isfinite(*latitude)
+                && std::isfinite(*longitude)
+                && std::isfinite(*altitudeRelative);
+    });
+    plannerViewModel->setVehicleHomeProvider(
+            [activeVehicle](double *latitude, double *longitude,
+                            double *altitudeAsl) {
+        if (!activeVehicle || !latitude || !longitude || !altitudeAsl
+            || !activeVehicle->globalPositionKnown()) {
+            return false;
+        }
+        *latitude = activeVehicle->getLatitude();
+        *longitude = activeVehicle->getLongitude();
+        *altitudeAsl = activeVehicle->getAltitudeAMSL();
+        return std::isfinite(*latitude)
+                && std::isfinite(*longitude)
+                && std::isfinite(*altitudeAsl);
+    });
+}
+
 void MainWindow::setActiveUAS(UASInterface* uas)
 {
-    Q_UNUSED(uas);
+    bindPlannerVehicle(uas);
+
     // Enable and rename menu
     //    ui.menuUnmanned_System->setTitle(uas->getUASName());
     //    if (!ui.menuUnmanned_System->isEnabled()) ui.menuUnmanned_System->setEnabled(true);
@@ -2438,6 +3273,9 @@ void MainWindow::UASCreated(UASInterface* uas)
 void MainWindow::UASDeleted(UASInterface* uas)
 {
     Q_UNUSED(uas);
+    // activeUASSet is normally emitted first, but reinject the manager state
+    // here as a lifetime guard for removals performed by legacy link paths.
+    bindPlannerVehicle(UASManager::instance()->silentGetActiveUAS());
     if (UASManager::instance()->getUASList().count() == 0)
     {
         // Last system deleted
@@ -2807,8 +3645,6 @@ void MainWindow::enableHeartbeat(bool enabled)
 {
     QSettings settings;
     settings.setValue(QStringLiteral("CHK_GCSheartbeat"), enabled);
-    settings.setValue(
-        QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED"), enabled);
     settings.sync();
 
     if (m_heartbeatEnabled != enabled)
@@ -2831,7 +3667,6 @@ void MainWindow::setGroundStationSystemId(int systemId)
     QGC::setMavlinkID(static_cast<quint8>(systemId));
     QSettings settings;
     settings.setValue(QStringLiteral("gcsid"), systemId);
-    settings.setValue(QStringLiteral("GLOBAL_SETTINGS/MAVLINK_ID"), systemId);
     settings.sync();
 
     if (MAVLinkProtocol *protocol = LinkManager::instance()->getProtocol()) {
@@ -2848,13 +3683,86 @@ void MainWindow::showConnectionOptions()
     ConnectionOptionsWindow::OpenWindow(this);
 }
 
-void MainWindow::applyConnectionOptions(int baud, bool sendHeartbeat,
-                                        int gcsSystemId)
+void MainWindow::openAdditionalConnection(const QString &connection, int baud)
 {
-    setGroundStationSystemId(gcsSystemId);
-    enableHeartbeat(sendHeartbeat);
-    m_mainWindowHeader->setDefaultBaudRate(baud);
-    showStatusMessage(tr("Connection options saved."));
+    int linkId = -1;
+    if (connection == QStringLiteral("TCP")) {
+        bool accepted = false;
+        const QString addressText = QInputDialog::getText(
+            this, tr("TCP Connection"), tr("Remote IP address"),
+            QLineEdit::Normal, QStringLiteral("127.0.0.1"), &accepted);
+        if (!accepted) {
+            return;
+        }
+        QHostAddress address;
+        if (!address.setAddress(addressText.trimmed())) {
+            showCriticalMessage(tr("TCP Connection"),
+                                tr("Enter a valid IPv4 or IPv6 address."));
+            return;
+        }
+        const int port = QInputDialog::getInt(
+            this, tr("TCP Connection"), tr("Remote port"), 5760,
+            1, 65535, 1, &accepted);
+        if (!accepted) {
+            return;
+        }
+        linkId = LinkManagerFactory::addTcpConnection(
+            address, addressText.trimmed(), port, false);
+    } else if (connection == QStringLiteral("UDP")) {
+        bool accepted = false;
+        const int port = QInputDialog::getInt(
+            this, tr("UDP Connection"), tr("Local listen port"), 14550,
+            1, 65535, 1, &accepted);
+        if (!accepted) {
+            return;
+        }
+        linkId = LinkManagerFactory::addUdpConnection(
+            QHostAddress::Any, port);
+    } else if (connection == QStringLiteral("UDPCl")) {
+        bool accepted = false;
+        const QString addressText = QInputDialog::getText(
+            this, tr("UDP Client Connection"), tr("Remote IP address"),
+            QLineEdit::Normal, QStringLiteral("127.0.0.1"), &accepted);
+        if (!accepted) {
+            return;
+        }
+        QHostAddress address;
+        if (!address.setAddress(addressText.trimmed())) {
+            showCriticalMessage(tr("UDP Client Connection"),
+                                tr("Enter a valid IPv4 or IPv6 address."));
+            return;
+        }
+        const int port = QInputDialog::getInt(
+            this, tr("UDP Client Connection"), tr("Remote port"), 14550,
+            1, 65535, 1, &accepted);
+        if (!accepted) {
+            return;
+        }
+        linkId = LinkManagerFactory::addUdpClientConnection(address, port);
+    } else if (connection == QStringLiteral("WS")) {
+        showInfoMessage(
+            tr("WebSocket Connection"),
+            tr("WebSocket transport is not available in this build yet."));
+        return;
+    } else if (!connection.trimmed().isEmpty()) {
+        linkId = LinkManagerFactory::addSerialConnection(
+            connection.trimmed(), baud);
+    }
+
+    if (linkId < 0) {
+        showCriticalMessage(tr("Connections"),
+                            tr("The selected connection could not be created."));
+        return;
+    }
+    if (!LinkManager::instance()->getLinkConnected(linkId)
+        && !LinkManager::instance()->connectLink(linkId)) {
+        showCriticalMessage(
+            tr("Connections"),
+            tr("Could not open %1.").arg(connection));
+        return;
+    }
+    showStatusMessage(tr("Additional connection opened: %1")
+                          .arg(LinkManager::instance()->getLinkDetail(linkId)));
 }
 
 void MainWindow::showTerminalConsole()

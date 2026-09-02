@@ -1,16 +1,17 @@
 #include "ConfigView.h"
 
-#include "AdvParameterList.h"
 #include "ArduPlanePidConfig.h"
 #include "ArduRoverPidConfig.h"
 #include "BasicPidConfig.h"
 #include "CopterPidConfig.h"
 #include "ConfigPlannerAdvView.h"
 #include "ConfigFriendlyParamsView.h"
+#include "ConfigRawParams.h"
 #include "ConfigUserDefinedView.h"
 #include "FlightModeConfig.h"
 #include "GeoFenceConfig.h"
 #include "LinkInterface.h"
+#include "LinkManager.h"
 #include "OsdConfig.h"
 #include "QGCSettingsWidget.h"
 #include "QGCUASParamManager.h"
@@ -204,9 +205,16 @@ void ConfigView::buildPages()
     };
     m_backstage->addPage(userParameters);
 
-    m_backstage->addPage(makeBackstagePage<AdvParameterList>(
-        kFullParameterList, tr("Full Parameter List"), always,
-        false, false, true));
+    BackstagePage rawParameters;
+    rawParameters.id = kFullParameterList;
+    rawParameters.header = tr("Full Parameter List");
+    rawParameters.requiresConnection = false;
+    rawParameters.allowsPartialParameters = true;
+    rawParameters.visibleWhen = always;
+    rawParameters.factory = [this](QWidget *parent) {
+        return createRawParamsPage(parent);
+    };
+    m_backstage->addPage(rawParameters);
 
     BackstagePage planner;
     planner.id = kPlanner;
@@ -238,8 +246,10 @@ void ConfigView::activeUASSet(UASInterface *uas)
 {
     const bool targetChanged = m_uas != uas;
     if (!targetChanged && m_uas) {
-        if (m_parameterManager != m_uas->getParamManager()) {
-            parameterManagerChanged(m_uas->getParamManager());
+        QGCUASParamManager *const sharedManager =
+            LinkManager::instance()->parameterManager();
+        if (m_parameterManager != sharedManager) {
+            parameterManagerChanged(sharedManager);
         }
         syncConnectionState();
         return;
@@ -261,17 +271,11 @@ void ConfigView::activeUASSet(UASInterface *uas)
                 this, &ConfigView::vehicleConnected);
         connect(m_uas, &UASInterface::disconnected,
                 this, &ConfigView::vehicleDisconnected);
-        connect(m_uas,
-                QOverload<int, int, int, int, QString, QVariant>::of(
-                    &UASInterface::parameterChanged),
-                this, &ConfigView::parameterChanged);
-        connect(m_uas, &UASInterface::parameterManagerChanged,
-                this, &ConfigView::parameterManagerChanged);
         if (auto *apm = qobject_cast<ArduPilotMegaMAV *>(m_uas.data())) {
             connect(apm, &ArduPilotMegaMAV::versionDetected,
                     this, &ConfigView::firmwareVersionDetected);
         }
-        bindParameterManager(m_uas->getParamManager());
+        bindParameterManager(LinkManager::instance()->parameterManager());
         m_parametersReady = m_parameterManager
             && m_parameterManager->parameterListReady();
     }
@@ -312,31 +316,10 @@ void ConfigView::vehicleDisconnected()
     syncConnectionState();
 }
 
-void ConfigView::parameterChanged(int uas, int component, int parameterCount,
-                                  int parameterId, QString parameterName,
-                                  QVariant value)
-{
-    Q_UNUSED(parameterName)
-    Q_UNUSED(value)
-    if ((sender() && sender() != m_uas)
-        || !m_connected || !m_uas || uas != m_uas->getUASID()
-        || component != MAV_COMP_ID_PRIMARY || parameterCount <= 0
-        || parameterId < 0 || parameterId >= parameterCount
-        || parameterId == UINT16_MAX) {
-        return;
-    }
-    if (m_expectedParameterCounts.value(component) != parameterCount) {
-        m_receivedParameterIds[component].clear();
-        m_expectedParameterCounts[component] = parameterCount;
-    }
-    m_receivedParameterIds[component].insert(parameterId);
-    refreshLoadingOverlay();
-}
-
 void ConfigView::parameterListUpToDate(int component)
 {
-    if ((sender() && sender() != m_parameterManager)
-        || component != MAV_COMP_ID_PRIMARY) {
+    Q_UNUSED(component)
+    if (sender() && sender() != m_parameterManager) {
         return;
     }
     m_parametersReady = true;
@@ -354,8 +337,6 @@ void ConfigView::parameterListLoadStarted()
     m_parametersReady = false;
     m_parameterLoadFailure.clear();
     m_parameterLoadingCanceled = false;
-    m_receivedParameterIds.clear();
-    m_expectedParameterCounts.clear();
     refreshLoadingOverlay();
 }
 
@@ -399,15 +380,22 @@ void ConfigView::parameterListLoadCanceled()
 
 void ConfigView::parameterManagerChanged(QGCUASParamManager *manager)
 {
+    const qulonglong revision = ++m_parameterTargetRevision;
     bindParameterManager(manager);
     resetParameterProgress();
     refreshPageVisibility();
     resetVehiclePages(false);
+    // The raw page is intentionally available while disconnected, so it is
+    // not covered by requiresConnection. Recreate it when the application-
+    // owned facade changes to avoid retaining signal connections to an old
+    // service instance.
+    m_backstage->resetPage(kFullParameterList);
     restorePreferredPage();
 
     const QPointer<QGCUASParamManager> expectedManager(manager);
-    QTimer::singleShot(0, this, [this, expectedManager]() {
-        if (!expectedManager || m_parameterManager != expectedManager) {
+    QTimer::singleShot(0, this, [this, expectedManager, revision]() {
+        if (revision != m_parameterTargetRevision
+            || !expectedManager || m_parameterManager != expectedManager) {
             return;
         }
         m_parametersReady = expectedManager->parameterListReady();
@@ -501,6 +489,10 @@ void ConfigView::parameterMetadataUpdated(
 void ConfigView::refreshPageVisibility()
 {
     m_backstage->refreshVisibility();
+    if (auto *page = qobject_cast<ConfigRawParams *>(
+            m_backstage->page(kFullParameterList))) {
+        page->setConnected(m_connected);
+    }
     refreshLoadingOverlay();
 }
 
@@ -563,6 +555,9 @@ void ConfigView::bindParameterManager(QGCUASParamManager *manager)
             &QGCUASParamManager::parameterListUpToDate,
             this, &ConfigView::parameterListUpToDate);
     connect(m_parameterManager,
+            &QGCUASParamManager::parameterTargetChanged,
+            this, &ConfigView::parameterTargetChanged);
+    connect(m_parameterManager,
             &QGCUASParamManager::parameterListLoadStarted,
             this, &ConfigView::parameterListLoadStarted);
     connect(m_parameterManager,
@@ -574,6 +569,9 @@ void ConfigView::bindParameterManager(QGCUASParamManager *manager)
     connect(m_parameterManager,
             &QGCUASParamManager::parameterListLoadCanceled,
             this, &ConfigView::parameterListLoadCanceled);
+    connect(m_parameterManager,
+            &QGCUASParamManager::parameterListProgressChanged,
+            this, [this](int, int, int) { refreshLoadingOverlay(); });
 }
 
 void ConfigView::resetVehiclePages(bool targetChanged)
@@ -589,6 +587,38 @@ void ConfigView::resetVehiclePages(bool targetChanged)
     }
     m_backstage->setAutomaticSelectionEnabled(true);
     m_adjustingSelection = false;
+}
+
+void ConfigView::parameterTargetChanged()
+{
+    const QString currentPage = m_backstage->currentPageId();
+    if (!currentPage.isEmpty()) {
+        m_targetPageToRestore = currentPage;
+    }
+    const qulonglong revision = ++m_parameterTargetRevision;
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+    resetParameterProgress();
+    resetVehiclePages(true);
+    QTimer::singleShot(0, this, [this, expectedManager, revision]() {
+        if (revision != m_parameterTargetRevision
+            || !expectedManager || m_parameterManager != expectedManager) {
+            return;
+        }
+        if (expectedManager) {
+            m_parametersReady = expectedManager->parameterListReady();
+            if (m_connected && !m_parametersReady
+                && !expectedManager->parameterListInProgress()) {
+                expectedManager->requestParameterList();
+            }
+        }
+        refreshPageVisibility();
+        refreshLoadingOverlay();
+        const QString pageToRestore = m_targetPageToRestore;
+        m_targetPageToRestore.clear();
+        if (m_backstage->isPageVisible(pageToRestore)) {
+            m_backstage->setCurrentPage(pageToRestore);
+        }
+    });
 }
 
 void ConfigView::refreshFriendlyParameterPages()
@@ -624,6 +654,10 @@ void ConfigView::refreshFriendlyParameterPages()
             m_backstage->page(kUserParams))) {
         page->setCatalog(catalog, enforceMetadataRanges);
     }
+    if (auto *page = qobject_cast<ConfigRawParams *>(
+            m_backstage->page(kFullParameterList))) {
+        page->setCatalog(catalog, enforceMetadataRanges);
+    }
 }
 
 void ConfigView::resetParameterProgress()
@@ -632,8 +666,6 @@ void ConfigView::resetParameterProgress()
     m_parameterLoadFailure.clear();
     m_parameterLoadingCanceled = false;
     m_parameterRetryPending = false;
-    m_receivedParameterIds.clear();
-    m_expectedParameterCounts.clear();
 }
 
 void ConfigView::restorePreferredPage()
@@ -716,20 +748,11 @@ QWidget *ConfigView::createFriendlyParamsPage(bool advanced, QWidget *parent)
         }
         m_parameterManager->setParameter(componentId, name, value);
     });
-    if (m_uas) {
-        const int expectedUasId = m_uas->getUASID();
-        connect(m_uas,
-                QOverload<int, int, QString, QVariant>::of(
-                    &UASInterface::parameterChanged),
-                page, [page, expectedUasId](int uasId, int componentId,
-                                            const QString &name,
-                                            const QVariant &value) {
-            if (uasId == expectedUasId) {
-                page->parameterChanged(componentId, name, value);
-            }
-        });
-    }
     if (m_parameterManager) {
+        connect(m_parameterManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                page, &ConfigFriendlyParamsView::parameterChanged);
         connect(m_parameterManager,
                 &QGCUASParamManager::parameterListReadyChanged,
                 page, [this, page](bool ready) {
@@ -800,20 +823,11 @@ QWidget *ConfigView::createUserDefinedPage(QWidget *parent)
         }
         m_parameterManager->setParameter(componentId, name, value);
     });
-    if (m_uas) {
-        const int expectedUasId = m_uas->getUASID();
-        connect(m_uas,
-                QOverload<int, int, QString, QVariant>::of(
-                    &UASInterface::parameterChanged),
-                page, [page, expectedUasId](int uasId, int componentId,
-                                            const QString &name,
-                                            const QVariant &value) {
-            if (uasId == expectedUasId) {
-                page->parameterChanged(componentId, name, value);
-            }
-        });
-    }
     if (m_parameterManager) {
+        connect(m_parameterManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                page, &ConfigUserDefinedView::parameterChanged);
         connect(m_parameterManager,
                 &QGCUASParamManager::parameterListReadyChanged,
                 page, [this, page](bool ready) {
@@ -824,6 +838,103 @@ QWidget *ConfigView::createUserDefinedPage(QWidget *parent)
             }
         });
     }
+    return page;
+}
+
+QWidget *ConfigView::createRawParamsPage(QWidget *parent)
+{
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+    auto *page = new ConfigRawParams(
+        catalog, parent, enforceMetadataRanges);
+    page->setConnected(m_connected);
+    if (m_parameterManager && m_parameterManager->store()) {
+        const ParameterSnapshot snapshot =
+            m_parameterManager->store()->snapshot();
+        page->setParameterSnapshot(
+            snapshot.records(), snapshot.endpoint().componentId);
+
+        connect(m_parameterManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                page, &ConfigRawParams::parameterChanged);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterWriteAcknowledged,
+                page, &ConfigRawParams::parameterWriteAcknowledged);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterWriteFailed,
+                page, &ConfigRawParams::parameterWriteFailed);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterWriteCancelled,
+                page, &ConfigRawParams::parameterWriteCancelled);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterBatchProgress,
+                page, &ConfigRawParams::parameterBatchProgress);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterBatchCompleted,
+                page, &ConfigRawParams::parameterBatchCompleted);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterTargetChanged,
+                page, &ConfigRawParams::parameterTargetChanged);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, [this, page](bool ready) {
+            if (!ready || !m_parameterManager
+                || !m_parameterManager->store()) {
+                return;
+            }
+            const ParameterSnapshot refreshed =
+                m_parameterManager->store()->snapshot();
+            page->setParameterSnapshot(
+                refreshed.records(), refreshed.endpoint().componentId);
+        });
+    }
+    connect(page, &ConfigRawParams::refreshRequested,
+            page, [this](int componentId) {
+        if (!m_connected || !m_parameterManager) {
+            return;
+        }
+        if (m_uas && m_uas->isArmed()
+            && QMessageBox::question(
+                   this, tr("Refresh Params"),
+                   tr("The vehicle is armed. Refreshing the complete parameter "
+                      "list can consume telemetry bandwidth. Continue?"),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+        if (m_parameterManager->store()
+            && componentId
+                == m_parameterManager->store()->endpoint().componentId) {
+            retryParameterLoading();
+        }
+    });
+    connect(page, &ConfigRawParams::writeRequested,
+            page, [this, page](int componentId,
+                              const QVariantList &changes) {
+        if (!m_connected || !m_parameterManager) {
+            page->parameterWriteSubmissionFailed(tr("Not connected."));
+            return;
+        }
+        const QPointer<ConfigRawParams> guard(page);
+        const qulonglong batchId = m_parameterManager->writeParameters(
+            componentId, changes);
+        if (!guard) {
+            return;
+        }
+        if (batchId == 0) {
+            guard->parameterWriteSubmissionFailed(
+                tr("The parameter batch was rejected for the selected target."));
+            return;
+        }
+        guard->parameterBatchSubmitted(batchId, changes.size());
+    });
     return page;
 }
 
@@ -900,14 +1011,6 @@ void ConfigView::refreshLoadingOverlay()
     if (m_parameterManager) {
         expectedTotal = m_parameterManager->parameterListReportedCount();
         receivedTotal = m_parameterManager->parameterListReceivedCount();
-    } else {
-        for (auto iterator = m_expectedParameterCounts.constBegin();
-             iterator != m_expectedParameterCounts.constEnd(); ++iterator) {
-            expectedTotal += iterator.value();
-            receivedTotal += qMin(
-                iterator.value(),
-                m_receivedParameterIds.value(iterator.key()).size());
-        }
     }
     m_backstage->setParameterLoadingState(
         loading, receivedTotal, expectedTotal,

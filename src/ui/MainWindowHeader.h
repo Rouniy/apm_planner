@@ -67,7 +67,9 @@ private slots:
     void refreshLinks();
     void updateCurrentLink();
     void applyBaudRate();
-    void rebuildVehicleList();
+    void rebuildTargetList();
+    void syncCurrentTarget();
+    void selectTarget(int index);
     void activeVehicleChanged(UASInterface *uas);
 
 private:
@@ -82,7 +84,7 @@ private:
     QToolButton *m_toolsButton = nullptr;
     QComboBox *m_portCombo = nullptr;
     QSpinBox *m_baudSpin = nullptr;
-    QComboBox *m_vehicleCombo = nullptr;
+    QComboBox *m_targetCombo = nullptr;
     QCheckBox *m_autoConnectCheckBox = nullptr;
     QPushButton *m_connectButton = nullptr;
     QLabel *m_connectionStatus = nullptr;

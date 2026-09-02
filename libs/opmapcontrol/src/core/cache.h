@@ -35,25 +35,20 @@ namespace core {
     {
     public:
         static Cache* Instance();
+        explicit Cache(const QString &sharedCacheRoot);
 
 
         PureImageCache ImageCache;
-        QString CacheLocation();
-        void setCacheLocation(const QString& value);
         void CacheGeocoder(const QString &urlEnd,const QString &content);
         QString GetGeocoderFromCache(const QString &urlEnd);
         void CachePlacemark(const QString &urlEnd,const QString &content);
         QString GetPlacemarkFromCache(const QString &urlEnd);
-        void CacheRoute(const QString &urlEnd,const QString &content);
-        QString GetRouteFromCache(const QString &urlEnd);
 
     private:
         Cache();
         Cache(Cache const&){}
         Cache& operator=(Cache const&){ return *this; }
         static Cache* m_pInstance;
-        QString cache;
-        QString routeCache;
         QString geoCache;
         QString placemarkCache;
     };

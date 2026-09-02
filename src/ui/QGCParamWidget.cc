@@ -32,6 +32,8 @@ This file is part of the QGROUNDCONTROL project
 #include "UASInterface.h"
 #include "MainWindow.h"
 #include "QGC.h"
+#include "LinkManager.h"
+#include "comm/VehicleCommandService.h"
 
 #include <cmath>
 #include <float.h>
@@ -65,14 +67,23 @@ bool parameterValuesEqual(const QVariant &left, const QVariant &right)
  * @param parent Parent widget
  */
 QGCParamWidget::QGCParamWidget(UASInterface* uas, QWidget *parent) :
-    QGCUASParamManager(uas, parent),
+    QWidget(parent),
+    mav(uas),
+    m_parameterManager(LinkManager::instance()->parameterManager()),
     components(new QMap<int, QTreeWidgetItem*>())
 {
     // Load settings
     loadSettings();
 
     // Load default values and tooltips
-    loadParameterInfoCSV(uas->getAutopilotTypeName(), uas->getSystemTypeName());
+    if (uas) {
+        loadParameterInfoCSV(
+            uas->getAutopilotTypeName(), uas->getSystemTypeName());
+    }
+    if (m_parameterManager) {
+        m_parameterManager->setParamMetadata(
+            paramMin, paramMax, paramDefault, paramToolTips);
+    }
 
     // Create tree widget
     tree = new QTreeWidget(this);
@@ -153,21 +164,150 @@ QGCParamWidget::QGCParamWidget(UASInterface* uas, QWidget *parent) :
     tree->setExpandsOnDoubleClick(true);
 
     // Connect signals/slots
-    connect(this, SIGNAL(parameterChanged(int,QString,QVariant)), mav, SLOT(setParameter(int,QString,QVariant)));
+    if (m_parameterManager) {
+        connect(this, &QGCParamWidget::parameterChanged,
+                m_parameterManager, &QGCUASParamManager::setParameter);
+    }
     connect(tree, SIGNAL(itemChanged(QTreeWidgetItem*,int)), this, SLOT(parameterItemChanged(QTreeWidgetItem*,int)));
 
-    // New parameters from UAS
-    connect(uas, SIGNAL(parameterChanged(int,int,int,int,QString,QVariant)), this, SLOT(addParameter(int,int,int,int,QString,QVariant)));
+    // The application-owned exact-target facade is the only parameter source.
+    // Full refresh values are replayed only after the staged store commits.
+    if (m_parameterManager) {
+        connect(m_parameterManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                this,
+                [this](int component, const QString &name,
+                       const QVariant &value) {
+            addParameter(mav ? mav->getUASID() : 0,
+                         component, name, value);
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterSnapshotAboutToChange,
+                this, &QGCParamWidget::clear);
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterWriteAcknowledged,
+                this,
+                [this](int component, const QString &name,
+                       const QVariant &value, int type) {
+            Q_UNUSED(component)
+            Q_UNUSED(name)
+            Q_UNUSED(value)
+            Q_UNUSED(type)
+            statusLabel->setText(tr("SUCCESS: WROTE PARAMETER"));
+            QPalette palette = statusLabel->palette();
+            palette.setColor(backgroundRole(), QGC::colorGreen);
+            statusLabel->setPalette(palette);
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterWriteFailed,
+                this,
+                [this](qulonglong transactionId, qulonglong batchId,
+                       int component, const QString &name,
+                       int reason, const QString &message) {
+            Q_UNUSED(transactionId)
+            Q_UNUSED(batchId)
+            Q_UNUSED(component)
+            Q_UNUSED(reason)
+            statusLabel->setText(
+                tr("FAILURE: %1: %2").arg(name, message));
+            QPalette palette = statusLabel->palette();
+            palette.setColor(backgroundRole(), QGC::colorRed);
+            statusLabel->setPalette(palette);
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterWriteCancelled,
+                this,
+                [this](qulonglong transactionId, qulonglong batchId,
+                       int component, const QString &name) {
+            Q_UNUSED(transactionId)
+            Q_UNUSED(batchId)
+            Q_UNUSED(component)
+            statusLabel->setText(
+                tr("CANCELLED: %1 (vehicle target changed)").arg(name));
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListLoadStarted,
+                this, [this]() {
+            transmissionListMode = true;
+            m_parameterListReceivedCount = 0;
+            m_parameterListReportedCount = 0;
+            setParameterListReady(false);
+            statusLabel->setText(tr("Requested param list.. waiting"));
+            emit parameterListLoadStarted();
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListUpToDate,
+                this, [this](int component) {
+            transmissionListMode = false;
+            m_parameterListReceivedCount =
+                m_parameterManager->parameterListReceivedCount();
+            m_parameterListReportedCount =
+                m_parameterManager->parameterListReportedCount();
+            setParameterListReady(true);
+            statusLabel->setText(tr("All received."));
+            emit parameterListUpToDate(component);
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListLoadFailed,
+                this, [this](const QString &reason) {
+            transmissionListMode = false;
+            setParameterListReady(
+                m_parameterManager->parameterListReady());
+            statusLabel->setText(reason);
+            emit parameterListLoadFailed(reason);
+        });
+        connect(m_parameterManager,
+                &QGCUASParamManager::parameterListLoadCanceled,
+                this, [this]() {
+            transmissionListMode = false;
+            setParameterListReady(
+                m_parameterManager->parameterListReady());
+            statusLabel->setText(tr("Parameter loading stopped."));
+            emit parameterListLoadCanceled();
+        });
+    }
 
     // Connect retransmission guard
-    connect(this, SIGNAL(requestParameter(int,QString)), uas, SLOT(requestParameter(int,QString)));
-    connect(this, SIGNAL(requestParameter(int,int)), uas, SLOT(requestParameter(int,int)));
     connect(&retransmissionTimer, SIGNAL(timeout()), this, SLOT(retransmissionGuardTick()));
     initialParamTimer = new QTimer(this);
     connect(initialParamTimer,SIGNAL(timeout()),this,SLOT(initialParamCheckTick()));
 
-    // Get parameters
-    if (uas) requestParameterList();
+    // A dock is a view, not the owner of a transfer. Reuse the committed
+    // snapshot and wait for an explicit refresh or the shared setup workflow.
+    if (m_parameterManager) {
+        const QList<int> componentIds = m_parameterManager->getComponentIds();
+        for (int component : componentIds) {
+            const QList<QString> names =
+                m_parameterManager->getParameterNames(component);
+            for (const QString &name : names) {
+                addParameter(mav ? mav->getUASID() : 0,
+                             component, name,
+                             m_parameterManager->getParameterValue(
+                                 component, name));
+            }
+        }
+        setParameterListReady(m_parameterManager->parameterListReady());
+    }
+}
+
+QGCParamWidget::~QGCParamWidget()
+{
+    qDeleteAll(paramGroups);
+    qDeleteAll(parameters);
+    qDeleteAll(changedValues);
+    qDeleteAll(transmissionMissingPackets);
+    qDeleteAll(transmissionMissingWriteAckPackets);
+    delete components;
+}
+
+void QGCParamWidget::setParameterListReady(bool ready)
+{
+    if (m_parameterListReady == ready) {
+        return;
+    }
+    m_parameterListReady = ready;
+    emit parameterListReadyChanged(ready);
 }
 
 QString QGCParamWidget::summaryInfoFromFile(const QString &filename)
@@ -523,7 +663,27 @@ void QGCParamWidget::loadParameterInfoCSV(const QString& autopilot, const QStrin
  */
 UASInterface* QGCParamWidget::getUAS()
 {
-    return mav;
+    return mav.data();
+}
+
+void QGCParamWidget::setUAS(UASInterface *uas)
+{
+    if (mav == uas) {
+        return;
+    }
+    mav = uas;
+    paramMin.clear();
+    paramMax.clear();
+    paramDefault.clear();
+    paramToolTips.clear();
+    if (mav) {
+        loadParameterInfoCSV(
+            mav->getAutopilotTypeName(), mav->getSystemTypeName());
+    }
+    if (m_parameterManager) {
+        m_parameterManager->setParamMetadata(
+            paramMin, paramMax, paramDefault, paramToolTips);
+    }
 }
 
 /**
@@ -901,69 +1061,18 @@ void QGCParamWidget::addParameter(int uas, int component, QString parameterName,
  */
 void QGCParamWidget::requestParameterList()
 {
-    if (!mav) return;
-    // FIXME This call does not belong here
-    // Once the comm handling is moved to a new
-    // Param manager class the settings can be directly
-    // loaded from MAVLink protocol
-    loadSettings();
-    // End of FIXME
-
-    // Refresh the autopilot list without discarding cached peripheral
-    // parameters. PARAM_REQUEST_LIST below targets the primary component;
-    // clearing every component here made camera/gimbal caches disappear.
-    const int primaryComponent = MAV_COMP_ID_PRIMARY;
-    if (components->contains(primaryComponent)) {
-        delete components->take(primaryComponent);
+    if (!m_parameterManager) {
+        statusLabel->setText(tr("No exact vehicle target selected."));
+        return;
     }
-    if (paramGroups.contains(primaryComponent)) {
-        delete paramGroups.take(primaryComponent);
-    }
-    if (parameters.contains(primaryComponent)) {
-        parameters.value(primaryComponent)->clear();
-    }
-    if (changedValues.contains(primaryComponent)) {
-        changedValues.value(primaryComponent)->clear();
-    }
-    received.clear();
-    m_parameterListReceivedCount = 0;
-    m_parameterListReportedCount = 0;
-    // Clear transmission state
-    transmissionListMode = true;
-    emit parameterListLoadStarted();
-    setParameterListReady(false);
-    transmissionListSizeKnown.clear();
-    foreach (int key, transmissionMissingPackets.keys())
-    {
-        transmissionMissingPackets.value(key)->clear();
-    }
-    transmissionActive = true;
-
-    // Set status text
-    statusLabel->setText(tr("Requested param list.. waiting"));
-
-    mav->requestParameters();
-    initialParamTimer->start(10000); //Give it 10 seconds to start getting parameters
+    m_parameterManager->requestParameterList();
 }
 
 void QGCParamWidget::cancelParameterList()
 {
-    initialParamTimer->stop();
-    transmissionListMode = false;
-    transmissionListSizeKnown.clear();
-    foreach (int key, transmissionMissingPackets.keys()) {
-        transmissionMissingPackets.value(key)->clear();
+    if (m_parameterManager) {
+        m_parameterManager->cancelParameterList();
     }
-    bool hasPendingWrites = false;
-    foreach (int key, transmissionMissingWriteAckPackets.keys()) {
-        hasPendingWrites = hasPendingWrites
-            || !transmissionMissingWriteAckPackets.value(key)->isEmpty();
-    }
-    transmissionActive = hasPendingWrites;
-    setRetransmissionGuardEnabled(hasPendingWrites);
-    setParameterListReady(false);
-    statusLabel->setText(tr("Parameter loading stopped."));
-    emit parameterListLoadCanceled();
 }
 
 void QGCParamWidget::parameterItemChanged(QTreeWidgetItem* current, int column)
@@ -1090,15 +1199,8 @@ void QGCParamWidget::retransmissionGuardTick()
                 transmissionMissingPackets.value(component)->clear();
             }
 
-            // Empty write retransmission list
-            int missingWriteCount = 0;
-            QList<int> writeKeys = transmissionMissingWriteAckPackets.keys();
-            foreach (int component, writeKeys) {
-                missingWriteCount += transmissionMissingWriteAckPackets.value(component)->count();
-                transmissionMissingWriteAckPackets.value(component)->clear();
-            }
-            const QString reason = tr("TIMEOUT! MISSING: %1 read, %2 write.")
-                .arg(missingReadCount).arg(missingWriteCount);
+            const QString reason = tr("TIMEOUT! MISSING: %1 read.")
+                .arg(missingReadCount);
             statusLabel->setText(reason);
             QLOG_WARN() << reason;
             if (parameterListTimedOut) {
@@ -1131,50 +1233,6 @@ void QGCParamWidget::retransmissionGuardTick()
                 }
             }
         }
-
-        // Re-request at maximum retransmissionBurstRequestSize parameters at once
-        // to prevent write-request link flooding
-        // Empty write retransmission list
-        QList<int> writeKeys = transmissionMissingWriteAckPackets.keys();
-        foreach (int component, writeKeys) {
-            int count = 0;
-            QMap <QString, QVariant>* missingParams = transmissionMissingWriteAckPackets.value(component);
-            foreach (QString key, missingParams->keys()) {
-                if (count < retransmissionBurstRequestSize) {
-                    // Re-request write operation
-                    QVariant value = missingParams->value(key);
-                    switch (static_cast<QMetaType::Type>(parameters.value(component)->value(key).type()))
-                    {
-                    case QMetaType::Int:
-                    {
-                        QVariant fixedValue(value.toInt());
-                        emit parameterChanged(component, key, fixedValue);
-                    }
-                        break;
-                    case QMetaType::UInt:
-                    {
-                        QVariant fixedValue(value.toUInt());
-                        emit parameterChanged(component, key, fixedValue);
-                    }
-                        break;
-                    case QMetaType::Double:
-                    case QMetaType::Float:
-                    {
-                        QVariant fixedValue(value.toFloat());
-                        emit parameterChanged(component, key, fixedValue);
-                    }
-                        break;
-                    default:
-                        //qCritical() << "ABORTED PARAM RETRANSMISSION, NO VALID QVARIANT TYPE";
-                        return;
-                    }
-                    statusLabel->setText(tr("Requested rewrite of: %1: %2").arg(key).arg(missingParams->value(key).toDouble()));
-                    count++;
-                } else {
-                    break;
-                }
-            }
-        }
     } else {
         //QLOG_DEBUG() << __FILE__ << __LINE__ << "STOPPING RETRANSMISSION GUARD GRACEFULLY";
         setRetransmissionGuardEnabled(false);
@@ -1187,7 +1245,9 @@ void QGCParamWidget::retransmissionGuardTick()
  */
 void QGCParamWidget::requestParameterUpdate(int component, const QString& parameter)
 {
-    if (mav) mav->requestParameter(component, parameter);
+    if (m_parameterManager) {
+        m_parameterManager->requestParameterUpdate(component, parameter);
+    }
 }
 
 /**
@@ -1219,14 +1279,7 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
         return;
     }
 
-    const QMap<QString, QVariant> *pendingWrites =
-        transmissionMissingWriteAckPackets.value(component, nullptr);
-    const bool replacesPendingWrite = pendingWrites
-        && pendingWrites->contains(parameterName)
-        && !parameterValuesEqual(
-            pendingWrites->value(parameterName), value);
-    if (parameterValuesEqual(parameterList->value(parameterName), value)
-        && !replacesPendingWrite)
+    if (parameterValuesEqual(parameterList->value(parameterName), value))
     {
         statusLabel->setText(tr("REJ. %1 > max").arg(value.toDouble()));
         QLOG_INFO() << "setParameter: Value for" << parameterName << "did not change." << value.toDouble()
@@ -1279,34 +1332,7 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
         return;
     }
 
-    // Wait for parameter to be written back
-    // mark it therefore as missing
-    if (!transmissionMissingWriteAckPackets.contains(component))
-    {
-        transmissionMissingWriteAckPackets.insert(component, new QMap<QString, QVariant>());
-    }
-
-    // Insert it in missing write ACK list
-    transmissionMissingWriteAckPackets.value(component)->insert(
-        parameterName, sentValue);
-
-    // Set timeouts
-    if (transmissionActive)
-    {
-        transmissionTimeout += rewriteTimeout;
-    }
-    else
-    {
-        quint64 newTransmissionTimeout = QGC::groundTimeMilliseconds() + rewriteTimeout;
-        if (newTransmissionTimeout > transmissionTimeout)
-        {
-            transmissionTimeout = newTransmissionTimeout;
-        }
-        transmissionActive = true;
-    }
-
-    // Enable guard / reset timeouts
-    setRetransmissionGuardEnabled(true);
+    Q_UNUSED(sentValue)
 }
 
 /**
@@ -1314,18 +1340,26 @@ void QGCParamWidget::setParameter(int component, QString parameterName, QVariant
  */
 void QGCParamWidget::setParameters()
 {
-    // Iterate through all components, through all parameters and emit them
     int parametersSent = 0;
-    QMap<int, QMap<QString, QVariant>*>::iterator i;
-    for (i = changedValues.begin(); i != changedValues.end(); ++i) {
-        // Iterate through the parameters of the component
-        int compid = i.key();
-        QMap<QString, QVariant>* comp = i.value();
-        {
-            QMap<QString, QVariant>::iterator j;
-            for (j = comp->begin(); j != comp->end(); ++j) {
-                setParameter(compid, j.key(), j.value());
-                parametersSent++;
+    if (m_parameterManager) {
+        for (auto component = changedValues.cbegin();
+             component != changedValues.cend(); ++component) {
+            QVariantList changes;
+            const QMap<QString, QVariant> *values = component.value();
+            if (!values) {
+                continue;
+            }
+            for (auto parameter = values->cbegin();
+                 parameter != values->cend(); ++parameter) {
+                changes.append(QVariantMap{
+                    {QStringLiteral("name"), parameter.key()},
+                    {QStringLiteral("value"), parameter.value()}
+                });
+            }
+            if (!changes.isEmpty()
+                && m_parameterManager->writeParameters(
+                       component.key(), changes) != 0) {
+                parametersSent += changes.size();
             }
         }
     }
@@ -1335,21 +1369,6 @@ void QGCParamWidget::setParameters()
         statusLabel->setText(tr("No transmission: No changed values."));
     } else {
         statusLabel->setText(tr("Transmitting %1 parameters.").arg(parametersSent));
-        // Set timeouts
-        if (transmissionActive)
-        {
-            transmissionTimeout += parametersSent*rewriteTimeout;
-        }
-        else
-        {
-            transmissionActive = true;
-            quint64 newTransmissionTimeout = QGC::groundTimeMilliseconds() + parametersSent*rewriteTimeout;
-            if (newTransmissionTimeout > transmissionTimeout) {
-                transmissionTimeout = newTransmissionTimeout;
-            }
-        }
-        // Enable guard
-        setRetransmissionGuardEnabled(true);
     }
 }
 
@@ -1383,15 +1402,33 @@ void QGCParamWidget::writeParameters()
     }
     else
     {
-        if (!mav) return;
-        mav->writeParametersToStorage();
+        VehicleCommandService *const commands =
+            LinkManager::instance()->vehicleCommandService();
+        if (!commands
+            || commands->sendCurrentCommandLong(
+                   MAV_CMD_PREFLIGHT_STORAGE, 0,
+                   1.0F, 0.0F, 0.0F, 0.0F,
+                   0.0F, 0.0F, 0.0F)
+                != int(VehicleCommandService::SendResult::Sent)) {
+            statusLabel->setText(
+                tr("Unable to commit parameters on the selected link."));
+        }
     }
 }
 
 void QGCParamWidget::readParameters()
 {
-    if (!mav) return;
-    mav->readParametersFromStorage();
+    VehicleCommandService *const commands =
+        LinkManager::instance()->vehicleCommandService();
+    if (!commands
+        || commands->sendCurrentCommandLong(
+               MAV_CMD_PREFLIGHT_STORAGE, 0,
+               0.0F, 0.0F, 0.0F, 0.0F,
+               0.0F, 0.0F, 0.0F)
+            != int(VehicleCommandService::SendResult::Sent)) {
+        statusLabel->setText(
+            tr("Unable to read parameters on the selected link."));
+    }
 }
 
 /**
@@ -1399,15 +1436,32 @@ void QGCParamWidget::readParameters()
  */
 void QGCParamWidget::clear()
 {
+    const bool blocked = tree->blockSignals(true);
     tree->clear();
+    tree->blockSignals(blocked);
     components->clear();
+    qDeleteAll(paramGroups);
+    paramGroups.clear();
+    qDeleteAll(parameters);
+    parameters.clear();
+    qDeleteAll(changedValues);
+    changedValues.clear();
+    qDeleteAll(transmissionMissingPackets);
+    transmissionMissingPackets.clear();
+    qDeleteAll(transmissionMissingWriteAckPackets);
+    transmissionMissingWriteAckPackets.clear();
+    received.clear();
+    transmissionListSizeKnown.clear();
+    transmissionListMode = false;
+    transmissionActive = false;
+    transmissionTimeout = 0;
+    setRetransmissionGuardEnabled(false);
+    setParameterListReady(false);
 }
 void QGCParamWidget::initialParamCheckTick()
 {
-    if (!mav)
-    {
-        return;
+    if (m_parameterManager) {
+        QLOG_DEBUG() << "QGCParamWidget: retrying through exact parameter service";
+        m_parameterManager->requestParameterList();
     }
-    QLOG_DEBUG() << "QGCParamWidget: No parameters, re-requesting from MAV";
-    mav->requestParameters();
 }

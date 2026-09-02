@@ -39,7 +39,7 @@ QVariant FlightPlannerMissionModel::data(const QModelIndex &index, int role) con
     case P4Column: return row->P4();
     case LatColumn: return row->Lat();
     case LngColumn: return row->Lng();
-    case AltColumn: return row->AltDisplay();
+    case AltColumn: return row->Alt() * m_altitudeMultiplier;
     case FrameColumn:
         return role == Qt::EditRole
             ? QVariant::fromValue(row->Frame()) : row->FrameName();
@@ -107,7 +107,17 @@ bool FlightPlannerMissionModel::setData(const QModelIndex &index,
         row->setLng(longitude);
         return true;
     }
-    case AltColumn: return setDouble(&WpRow::setAltDisplay);
+    case AltColumn: {
+        bool ok = false;
+        const double displayAltitude = value.toDouble(&ok);
+        if (!ok || !std::isfinite(displayAltitude)
+            || !std::isfinite(m_altitudeMultiplier)
+            || m_altitudeMultiplier <= 0.0) {
+            return false;
+        }
+        row->setAlt(displayAltitude / m_altitudeMultiplier);
+        return true;
+    }
     case FrameColumn:
         if (value.userType() == QMetaType::QString) {
             const QString frame = value.toString().trimmed();
@@ -154,6 +164,12 @@ QVariant FlightPlannerMissionModel::headerData(int section,
         QStringLiteral("Zone"), QStringLiteral("Easting"),
         QStringLiteral("Northing"), QStringLiteral("MGRS"),
     };
+    if (section == AltColumn) {
+        return tr("Alt (%1)").arg(m_altitudeUnit);
+    }
+    if (section == DistColumn) {
+        return tr("Dist (%1)").arg(m_distanceUnit);
+    }
     return section >= 0 && section < headers.size()
         ? headers.at(section) : QVariant();
 }
@@ -199,6 +215,63 @@ QString FlightPlannerMissionModel::MissionType() const
     return storeName(m_activeStore);
 }
 
+QString FlightPlannerMissionModel::AltUnit() const
+{
+    return m_altitudeUnit;
+}
+
+double FlightPlannerMissionModel::AltitudeMultiplier() const
+{
+    return m_altitudeMultiplier;
+}
+
+QString FlightPlannerMissionModel::DistanceUnit() const
+{
+    return m_distanceUnit;
+}
+
+double FlightPlannerMissionModel::DistanceMultiplier() const
+{
+    return m_distanceMultiplier;
+}
+
+void FlightPlannerMissionModel::setAltitudePresentation(
+        double multiplier, const QString &unit)
+{
+    const QString normalizedUnit = unit.trimmed();
+    if (!std::isfinite(multiplier) || multiplier <= 0.0
+        || normalizedUnit.isEmpty()
+        || (m_altitudeMultiplier == multiplier
+            && m_altitudeUnit == normalizedUnit)) {
+        return;
+    }
+    m_altitudeMultiplier = multiplier;
+    m_altitudeUnit = normalizedUnit;
+    emit headerDataChanged(Qt::Horizontal, AltColumn, AltColumn);
+    if (rowCount() > 0) {
+        emit dataChanged(index(0, AltColumn),
+                         index(rowCount() - 1, AltColumn),
+                         {Qt::DisplayRole, Qt::EditRole});
+    }
+    emit altitudePresentationChanged();
+}
+
+void FlightPlannerMissionModel::setDistancePresentation(
+        double multiplier, const QString &unit)
+{
+    const QString normalizedUnit = unit.trimmed();
+    if (!std::isfinite(multiplier) || multiplier <= 0.0
+        || normalizedUnit.isEmpty()
+        || (m_distanceMultiplier == multiplier
+            && m_distanceUnit == normalizedUnit)) {
+        return;
+    }
+    m_distanceMultiplier = multiplier;
+    m_distanceUnit = normalizedUnit;
+    emit headerDataChanged(Qt::Horizontal, DistColumn, DistColumn);
+    emit distancePresentationChanged();
+}
+
 FlightPlannerMissionModel::MissionStore
 FlightPlannerMissionModel::missionStore() const
 {
@@ -226,6 +299,28 @@ QVector<WpRowData> FlightPlannerMissionModel::rows(MissionStore type) const
 int FlightPlannerMissionModel::storeRowCount(MissionStore type) const
 {
     return static_cast<int>(store(type).size());
+}
+
+bool FlightPlannerMissionModel::setRouteMetrics(
+        int row, const QString &gradient, const QString &angle,
+        const QString &distance, const QString &azimuth)
+{
+    WpRow *item = rowAt(row);
+    if (!item) return false;
+    if (item->Grad() == gradient && item->Angle() == angle
+        && item->Dist() == distance && item->Az() == azimuth) {
+        return true;
+    }
+
+    const bool wasMutating = m_mutating;
+    m_mutating = true;
+    item->setGrad(gradient);
+    item->setAngle(angle);
+    item->setDist(distance);
+    item->setAz(azimuth);
+    m_mutating = wasMutating;
+    emit dataChanged(index(row, GradColumn), index(row, AzColumn));
+    return true;
 }
 
 QString FlightPlannerMissionModel::storeName(MissionStore type)

@@ -261,7 +261,7 @@ void AirspeedConfig::sensorSelectComboBoxChanged(int index)
 }
 void AirspeedConfig::pinSelectComboBoxChanged(int index)
 {
-    if (index < 0)
+    if (index < 0 || !m_parameterManager)
     {
         return;
     }
@@ -278,11 +278,13 @@ void AirspeedConfig::pinSelectComboBoxChanged(int index)
         disconnect(ui.pinSpinBox,SIGNAL(valueChanged(int)),this,SLOT(pinSpinBoxValueChanged(int)));
         ui.pinSpinBox->setValue(pinnumber);
         connect(ui.pinSpinBox,SIGNAL(valueChanged(int)),this,SLOT(pinSpinBoxValueChanged(int)));
-        m_uas->setParameter(1,"ARSPD_PIN",pinnumber);
+        m_parameterManager->setParameter(1,"ARSPD_PIN",pinnumber);
 
     }
 }
 void AirspeedConfig::pinSpinBoxValueChanged(int value)
 {
-    m_uas->setParameter(1,"ARSPD_PIN",value);
+    if (m_parameterManager) {
+        m_parameterManager->setParameter(1,"ARSPD_PIN",value);
+    }
 }

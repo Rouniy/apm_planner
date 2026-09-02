@@ -28,6 +28,7 @@ public:
     void setMavlinkDecoder(MAVLinkDecoder *decoder);
     void setMavlinkInspector(QGCMAVLinkInspector *inspector);
     ~QGCMAVLinkLogPlayer();
+    void shutdown();
     bool isPlayingLogFile()
     {
         return m_isPlaying;

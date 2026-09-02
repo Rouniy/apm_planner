@@ -30,10 +30,12 @@ This file is part of the APM_PLANNER project
 #define LOGANALYSISMAP_HPP
 
 #include <QObject>
+#include <QPointer>
 #include <QWidget>
 
 #include "LogdataStorage.h"
-#include "gpsitem.h"
+
+class AbstractMapWidget;
 
 namespace Ui {
     class LogAnalysisMap;
@@ -57,7 +59,7 @@ public:
      * @brief LogAnalysis - DTOR
      *
      */
-    ~LogAnalysisMap();
+    ~LogAnalysisMap() override;
 
     /**
      * @brief setDataStorage is used to give the pointer of the datastorage to the map
@@ -97,7 +99,7 @@ private:
     LogdataStorage::dataType     m_attType;            ///< Datatype of the ATT message used by the datamodel
     QString                      m_headingName;        ///< Datamodel name to fetch heading from data storage
 
-    mapcontrol::GPSItem         *mp_trailCursor {nullptr};  ///< Pointer to the UAV icon (mapwidget is owner)
+    QPointer<AbstractMapWidget>  m_mapBackend;
 
     QVector<double>              m_xValues;            ///< X-axis values of the gps data
     QVector<double>              m_latValues;          ///< latitude data
@@ -160,4 +162,3 @@ private slots:
 };
 
 #endif // LOGANALYSIS_HPP
-

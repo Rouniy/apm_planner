@@ -3,11 +3,11 @@ project(APMPlanner3 VERSION 3.0.0 LANGUAGES CXX)
 
 include(CTest)
 include(GNUInstallDirs)
+find_package(Threads REQUIRED)
 
 set(APM_PLANNER_TARGET apmplanner3)
 set(APM_INSTALL_RESOURCE_SUBDIR "${CMAKE_INSTALL_DATADIR}/APMPlanner3")
 set(APM_INSTALL_RESOURCE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/APMPlanner3")
-set(APM_LEGACY_INSTALL_RESOURCE_DIR "${CMAKE_INSTALL_FULL_DATADIR}/APMPlanner2")
 option(APM_ENABLE_SOURCE_DATA_FALLBACK
     "Allow an uninstalled developer build to load resources from the source tree" ON)
 
@@ -35,6 +35,10 @@ else()
 endif()
 
 find_package(QT NAMES ${_apm_qt_names} REQUIRED COMPONENTS Core)
+if(QT_VERSION_MAJOR EQUAL 5 AND QT_VERSION VERSION_LESS 5.10)
+    message(FATAL_ERROR
+        "APM Planner requires Qt 5.10 or newer (found ${QT_VERSION})")
+endif()
 set(APM_QT_PACKAGE Qt${QT_VERSION_MAJOR})
 set(_apm_qt_required_components
     Core Gui Widgets Network Svg Xml Sql SerialPort Quick PrintSupport Qml QuickWidgets
@@ -118,6 +122,7 @@ file(STRINGS "${_apm_mav_command_header}" _apm_mav_command_lines
     REGEX "^[ \t]*MAV_CMD_[A-Z0-9_]+=[0-9]+,")
 set(_apm_mav_command_entries "")
 set(_apm_mav_command_count 0)
+set(_apm_has_do_return_path_start FALSE)
 foreach(_apm_mav_command_line IN LISTS _apm_mav_command_lines)
     string(REGEX MATCH "MAV_CMD_([A-Z0-9_]+)=([0-9]+),"
         _apm_mav_command_match "${_apm_mav_command_line}")
@@ -125,12 +130,25 @@ foreach(_apm_mav_command_line IN LISTS _apm_mav_command_lines)
     if(_apm_mav_command_symbol STREQUAL "ENUM_END")
         break()
     endif()
+    if(_apm_mav_command_symbol STREQUAL "DO_RETURN_PATH_START")
+        set(_apm_has_do_return_path_start TRUE)
+    endif()
     string(REGEX REPLACE "^NAV_" "" _apm_mav_command_name
         "${_apm_mav_command_symbol}")
     string(APPEND _apm_mav_command_entries
         "    {MAV_CMD_${_apm_mav_command_symbol}, \"${_apm_mav_command_name}\"},\n")
     math(EXPR _apm_mav_command_count "${_apm_mav_command_count} + 1")
 endforeach()
+# Mission Planner's current dialect defines this WIP location-bearing command,
+# while the older generated C dialect vendored by this port does not. Keep the
+# planner catalog complete without inventing a C enum symbol that is absent
+# from the protocol headers. The guard prevents a duplicate after a future
+# dialect update.
+if(NOT _apm_has_do_return_path_start)
+    string(APPEND _apm_mav_command_entries
+        "    {188, \"DO_RETURN_PATH_START\"},\n")
+    math(EXPR _apm_mav_command_count "${_apm_mav_command_count} + 1")
+endif()
 if(_apm_mav_command_count LESS 100)
     message(FATAL_ERROR
         "Only ${_apm_mav_command_count} MAV_CMD entries were read from ${_apm_mav_command_header}")
@@ -146,12 +164,6 @@ add_subdirectory(libs/opmapcontrol EXCLUDE_FROM_ALL)
 
 # External: quazip (can be via add_subdirectory or find_package if installed)
 add_subdirectory(libs/thirdParty/quazip EXCLUDE_FROM_ALL)
-
-option(APM_ENABLE_KDDOCKWIDGETS
-    "Build the vendored KDDockWidgets QtWidgets docking engine" ON)
-if(APM_ENABLE_KDDOCKWIDGETS)
-    add_subdirectory(libs/kddockwidgets)
-endif()
 
 option(APM_USE_QML_PFD
     "Use the legacy Qt Quick primary flight display instead of the QtWidgets display" OFF)
@@ -178,6 +190,14 @@ set(SOURCES
     qgroundcontrol.qrc
     src/AppPaths.cpp
     src/AppPaths.h
+    src/qml/ApmQmlApi.cpp
+    src/qml/ApmQmlApi.h
+    src/qml/QmlPluginContext.cpp
+    src/qml/QmlPluginContext.h
+    src/qml/QmlPluginManager.cpp
+    src/qml/QmlPluginManager.h
+    src/qml/QmlPluginManifest.cpp
+    src/qml/QmlPluginManifest.h
     src/core/parameters/ParameterMetaDataUpdater.cpp
     src/core/parameters/ParameterMetaDataUpdater.h
     src/GAudioOutput.cc
@@ -193,12 +213,30 @@ set(SOURCES
     src/QGCGeo.h
     src/Settings.cpp
     src/Settings.h
+    src/services/SpeechAnnouncer.cpp
+    src/services/SpeechAnnouncer.h
     src/Waypoint.cc
     src/Waypoint.h
     src/audio/QtAudioOutput.cpp
     src/audio/QtAudioOutput.h
     src/comm/AbsPositionOverview.cc
     src/comm/AbsPositionOverview.h
+    src/comm/DroneCanForwardingBroker.cpp
+    src/comm/DroneCanForwardingBroker.h
+    src/comm/DroneCanFrameCodec.cpp
+    src/comm/DroneCanFrameCodec.h
+    src/comm/DroneCanGetNodeInfoClient.cpp
+    src/comm/DroneCanGetNodeInfoClient.h
+    src/comm/DroneCanGetSetClient.cpp
+    src/comm/DroneCanGetSetClient.h
+    src/comm/DroneCanMavlinkTransport.cpp
+    src/comm/DroneCanMavlinkTransport.h
+    src/comm/ExactLinkTransmitter.cpp
+    src/comm/ExactLinkTransmitter.h
+    src/comm/GpsCorrectionSource.cpp
+    src/comm/GpsCorrectionSource.h
+    src/comm/GpsRtcmPacketizer.cpp
+    src/comm/GpsRtcmPacketizer.h
     src/comm/LinkInterface.cpp
     src/comm/LinkInterface.h
     src/comm/LinkManager.cc
@@ -207,6 +245,16 @@ set(SOURCES
     src/comm/LinkManagerFactory.h
     src/comm/MAVLinkDecoder.cc
     src/comm/MAVLinkDecoder.h
+    src/comm/MAVLinkFrameParser.cpp
+    src/comm/MAVLinkFrameParser.h
+    src/comm/ParameterService.cpp
+    src/comm/ParameterService.h
+    src/comm/VehicleCommandService.cpp
+    src/comm/VehicleCommandService.h
+    src/comm/VehicleEndpoint.cpp
+    src/comm/VehicleEndpoint.h
+    src/comm/VehicleTargetManager.cpp
+    src/comm/VehicleTargetManager.h
     src/comm/MAVLinkProtocol.cc
     src/comm/MAVLinkProtocol.h
     src/comm/MAVLinkSimulationLink.cc
@@ -217,8 +265,16 @@ set(SOURCES
     src/comm/MAVLinkSimulationWaypointPlanner.h
     src/comm/MAVLinkSwarmSimulationLink.cc
     src/comm/MAVLinkSwarmSimulationLink.h
+    src/comm/MissionItemProtocol.h
+    src/comm/MissionProtocolCoordinator.cc
+    src/comm/MissionProtocolCoordinator.h
+    src/comm/MissionTransferController.cc
+    src/comm/MissionTransferController.h
     src/comm/MissionOverview.cc
     src/comm/MissionOverview.h
+    src/comm/MissionTransferService.cc
+    src/comm/MissionTransferService.h
+    src/comm/MissionTransferTransport.h
     src/comm/ProtocolInterface.h
     src/comm/QGCFlightGearLink.cc
     src/comm/QGCFlightGearLink.h
@@ -228,6 +284,8 @@ set(SOURCES
     src/comm/QGCMAVLink.h
     src/comm/RelPositionOverview.cc
     src/comm/RelPositionOverview.h
+    src/comm/Rtcm3Parser.cpp
+    src/comm/Rtcm3Parser.h
     src/comm/SerialLinkInterface.h
     src/comm/TCPLink.cc
     src/comm/TCPLink.h
@@ -270,6 +328,10 @@ set(SOURCES
     src/uas/LogDownloadDialog.ui
     src/uas/PxQuadMAV.cc
     src/uas/PxQuadMAV.h
+    src/uas/Proximity.cpp
+    src/uas/Proximity.h
+    src/uas/ServoOutputDecoder.cpp
+    src/uas/ServoOutputDecoder.h
     src/uas/QGCMAVLinkUASFactory.cc
     src/uas/QGCMAVLinkUASFactory.h
     src/uas/QGCUASParamManager.cc
@@ -279,6 +341,8 @@ set(SOURCES
     src/uas/UAS.cc
     src/uas/UAS.h
     src/uas/UASInterface.h
+    src/uas/UASMissionTransferTransport.cpp
+    src/uas/UASMissionTransferTransport.h
     src/uas/UASManager.cc
     src/uas/UASManager.h
     src/uas/UASParameter.cpp
@@ -324,18 +388,62 @@ set(SOURCES
     src/ui/FlightDataView.h
     src/ui/flightdata/FlightDataViewModel.cpp
     src/ui/flightdata/FlightDataViewModel.h
+    src/ui/flightdata/FlightDataMapOverlay.cpp
+    src/ui/flightdata/FlightDataMapOverlay.h
+    src/ui/flightdata/FlightDataMissionProgress.cpp
+    src/ui/flightdata/FlightDataMissionProgress.h
     src/ui/flightdata/HudControl.cpp
     src/ui/flightdata/HudControl.h
+    src/ui/flightdata/PreflightChecklistModel.cpp
+    src/ui/flightdata/PreflightChecklistModel.h
+    src/ui/flightdata/PreflightChecklistWidget.cpp
+    src/ui/flightdata/PreflightChecklistWidget.h
+    src/ui/flightdata/ProximityRadarControl.cpp
+    src/ui/flightdata/ProximityRadarControl.h
+    src/ui/flightdata/ProximityWindow.cpp
+    src/ui/flightdata/ProximityWindow.h
+    src/ui/flightdata/SimpleActionsWidget.cpp
+    src/ui/flightdata/SimpleActionsWidget.h
     src/ui/flightplanner/FlightPlannerMissionModel.cpp
     src/ui/flightplanner/FlightPlannerMissionModel.h
+    src/ui/flightplanner/FlightPlannerMissionCodec.cpp
+    src/ui/flightplanner/FlightPlannerMissionCodec.h
+    src/ui/flightplanner/FenceRallyFileCodec.cpp
+    src/ui/flightplanner/FenceRallyFileCodec.h
+    src/ui/flightplanner/FenceRallyModel.cpp
+    src/ui/flightplanner/FenceRallyModel.h
+    src/ui/flightplanner/FenceRallyController.cpp
+    src/ui/flightplanner/FenceRallyController.h
+    src/ui/flightplanner/QgcPlanFileCodec.cpp
+    src/ui/flightplanner/QgcPlanFileCodec.h
+    src/ui/flightplanner/FlightPlannerNavigation.cpp
+    src/ui/flightplanner/FlightPlannerNavigation.h
+    src/ui/flightplanner/FlightPlannerRouteMetrics.cpp
+    src/ui/flightplanner/FlightPlannerRouteMetrics.h
+    src/ui/flightplanner/FlightPlannerMeasurement.cpp
+    src/ui/flightplanner/FlightPlannerMeasurement.h
+    src/ui/flightplanner/MissionElevationProfile.cpp
+    src/ui/flightplanner/MissionElevationProfile.h
+    src/ui/flightplanner/FlightPlannerPolygonModel.cpp
+    src/ui/flightplanner/FlightPlannerPolygonModel.h
+    src/ui/flightplanner/SurveyGridGenerator.cpp
+    src/ui/flightplanner/SurveyGridGenerator.h
+    src/ui/flightplanner/SurveyGridDialog.cpp
+    src/ui/flightplanner/SurveyGridDialog.h
+    src/ui/flightplanner/SurveyMissionBuilder.cpp
+    src/ui/flightplanner/SurveyMissionBuilder.h
     src/ui/flightplanner/FlightPlannerActionPanel.cpp
     src/ui/flightplanner/FlightPlannerActionPanel.h
     src/ui/flightplanner/FlightPlannerViewModel.cpp
     src/ui/flightplanner/FlightPlannerViewModel.h
+    src/ui/flightplanner/FlightPlannerPrefetchController.cpp
+    src/ui/flightplanner/FlightPlannerPrefetchController.h
     src/ui/flightplanner/FlightPlannerWaypointPanel.cpp
     src/ui/flightplanner/FlightPlannerWaypointPanel.h
     src/ui/flightplanner/WpRow.cpp
     src/ui/flightplanner/WpRow.h
+    src/ui/map/PlannerMeasurementOverlay.cpp
+    src/ui/map/PlannerMeasurementOverlay.h
     src/ui/FlightPlannerView.cpp
     src/ui/FlightPlannerView.h
     src/ui/HelpView.cpp
@@ -344,8 +452,6 @@ set(SOURCES
     src/ui/docking/DockableView.h
     src/ui/EKFMonitor.cpp
     src/ui/EKFMonitor.h
-    src/ui/GoogleElevationData.cpp
-    src/ui/GoogleElevationData.h
     src/ui/GraphTreeWidgetItem.cc
     src/ui/GraphTreeWidgetItem.h
     src/ui/HDDisplay.cc
@@ -420,9 +526,6 @@ set(SOURCES
     src/ui/QGCMainWindowAPConfigurator.h
     src/ui/QGCParamWidget.cc
     src/ui/QGCParamWidget.h
-    src/ui/QGCPluginHost.cc
-    src/ui/QGCPluginHost.h
-    src/ui/QGCPluginHost.ui
     src/ui/QGCRGBDView.cc
     src/ui/QGCRGBDView.h
     src/ui/QGCSensorSettingsWidget.cc
@@ -528,11 +631,51 @@ set(SOURCES
     src/ui/configuration/ConfigFriendlyParamsView.h
     src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
     src/ui/configuration/ConfigFriendlyParamsViewModel.h
+    src/ui/configuration/ConfigRawParams.cpp
+    src/ui/configuration/ConfigRawParams.h
     src/ui/configuration/ParamField.h
     src/ui/configuration/ConfigUserDefinedView.cpp
     src/ui/configuration/ConfigUserDefinedView.h
     src/ui/configuration/ConfigUserDefinedViewModel.cpp
     src/ui/configuration/ConfigUserDefinedViewModel.h
+    src/ui/configuration/ConfigESCCalibrationView.cpp
+    src/ui/configuration/ConfigESCCalibrationView.h
+    src/ui/configuration/ConfigESCCalibrationViewModel.cpp
+    src/ui/configuration/ConfigESCCalibrationViewModel.h
+    src/ui/configuration/ConfigHWBTSerialService.cpp
+    src/ui/configuration/ConfigHWBTSerialService.h
+    src/ui/configuration/ConfigHWBTView.cpp
+    src/ui/configuration/ConfigHWBTView.h
+    src/ui/configuration/ConfigHWBTViewModel.cpp
+    src/ui/configuration/ConfigHWBTViewModel.h
+    src/ui/configuration/ConfigMotorTestView.cpp
+    src/ui/configuration/ConfigMotorTestView.h
+    src/ui/configuration/ConfigMotorTestViewModel.cpp
+    src/ui/configuration/ConfigMotorTestViewModel.h
+    src/ui/configuration/ConfigParachuteView.cpp
+    src/ui/configuration/ConfigParachuteView.h
+    src/ui/configuration/ConfigParachuteViewModel.cpp
+    src/ui/configuration/ConfigParachuteViewModel.h
+    src/ui/configuration/ConfigGpsInjectView.cpp
+    src/ui/configuration/ConfigGpsInjectView.h
+    src/ui/configuration/ConfigGpsInjectViewModel.cpp
+    src/ui/configuration/ConfigGpsInjectViewModel.h
+    src/ui/configuration/ConfigDroneCanView.cpp
+    src/ui/configuration/ConfigDroneCanView.h
+    src/ui/configuration/ConfigDroneCanViewModel.cpp
+    src/ui/configuration/ConfigDroneCanViewModel.h
+    src/ui/configuration/ConfigHWCANView.cpp
+    src/ui/configuration/ConfigHWCANView.h
+    src/ui/configuration/ConfigHWCANViewModel.cpp
+    src/ui/configuration/ConfigHWCANViewModel.h
+    src/ui/configuration/ConfigGPSOrderView.cpp
+    src/ui/configuration/ConfigGPSOrderView.h
+    src/ui/configuration/ConfigGPSOrderViewModel.cpp
+    src/ui/configuration/ConfigGPSOrderViewModel.h
+    src/ui/configuration/ConfigRadioOutputView.cpp
+    src/ui/configuration/ConfigRadioOutputView.h
+    src/ui/configuration/ConfigRadioOutputViewModel.cpp
+    src/ui/configuration/ConfigRadioOutputViewModel.h
     src/ui/configuration/ConfigSerialView.cpp
     src/ui/configuration/ConfigSerialView.h
     src/ui/configuration/ConfigSerialViewModel.cpp
@@ -551,6 +694,8 @@ set(SOURCES
     src/ui/configuration/ConfigElevationSourcesViewModel.h
     src/ui/configuration/ElevationSourceService.cpp
     src/ui/configuration/ElevationSourceService.h
+    src/ui/configuration/SrtmElevationSource.cpp
+    src/ui/configuration/SrtmElevationSource.h
     src/ui/configuration/ConfigParamLoadingView.cpp
     src/ui/configuration/ConfigParamLoadingView.h
     src/ui/configuration/ConfigParamLoadingViewModel.cpp
@@ -570,6 +715,12 @@ set(SOURCES
     src/ui/configuration/BatteryMonitorConfig.cc
     src/ui/configuration/BatteryMonitorConfig.h
     src/ui/configuration/BatteryMonitorConfig.ui
+    src/ui/configuration/BatteryMonitorInstanceModel.cpp
+    src/ui/configuration/BatteryMonitorInstanceModel.h
+    src/ui/configuration/ConfigBatteryMonitoring2View.cpp
+    src/ui/configuration/ConfigBatteryMonitoring2View.h
+    src/ui/configuration/ConfigBatteryMonitoring2ViewModel.cpp
+    src/ui/configuration/ConfigBatteryMonitoring2ViewModel.h
     src/ui/configuration/CameraGimbalConfig.cc
     src/ui/configuration/CameraGimbalConfig.h
     src/ui/configuration/CameraGimbalConfig.ui
@@ -680,6 +831,19 @@ set(SOURCES
     src/ui/map/QGCMapToolBar.cc
     src/ui/map/QGCMapToolBar.h
     src/ui/map/QGCMapToolBar.ui
+    src/ui/map/AbstractMapWidget.h
+    src/ui/map/CompiledMapBackends.cpp
+    src/ui/map/CompiledMapBackends.h
+    src/ui/map/MapCacheManager.cpp
+    src/ui/map/MapCacheManager.h
+    src/ui/map/MapCacheView.cpp
+    src/ui/map/MapCacheView.h
+    src/ui/map/MapPrefetchService.cpp
+    src/ui/map/MapPrefetchService.h
+    src/ui/map/MapWidgetFactory.cpp
+    src/ui/map/MapWidgetFactory.h
+    src/ui/map/OPMapBackendWidget.cpp
+    src/ui/map/OPMapBackendWidget.h
     src/ui/map/MapTileSourceFactory.cpp
     src/ui/map/MapTileSourceFactory.h
     src/ui/map/NativeGdalMapService.cpp
@@ -776,9 +940,6 @@ set(SOURCES
     src/ui/qcustomplot.h
     src/ui/submainwindow.cpp
     src/ui/submainwindow.h
-    src/ui/uas/APMShortcutModesDialog.cpp
-    src/ui/uas/APMShortcutModesDialog.h
-    src/ui/uas/APMShortcutModesDialog.ui
     src/ui/uas/PreFlightCalibrationDialog.cpp
     src/ui/uas/PreFlightCalibrationDialog.h
     src/ui/uas/PreFlightCalibrationDialog.ui
@@ -788,6 +949,8 @@ set(SOURCES
     src/ui/uas/QGCUnconnectedInfoWidget.cc
     src/ui/uas/QGCUnconnectedInfoWidget.h
     src/ui/uas/QGCUnconnectedInfoWidget.ui
+    src/ui/uas/UASActionsLayout.h
+    src/ui/uas/UASActionCatalog.h
     src/ui/uas/UASActionsWidget.cpp
     src/ui/uas/UASActionsWidget.h
     src/ui/uas/UASActionsWidget.ui
@@ -952,6 +1115,7 @@ target_include_directories(${APM_PLANNER_TARGET} PRIVATE
 
 # Link Qt and additional libs
 target_link_libraries(${APM_PLANNER_TARGET}
+    Threads::Threads
     Qt::Widgets
     Qt::Network
     Qt::Svg
@@ -972,17 +1136,6 @@ target_link_libraries(${APM_PLANNER_TARGET}
     ${APM_SDL2_TARGET}
 )
 
-if(APM_ENABLE_KDDOCKWIDGETS)
-    target_sources(${APM_PLANNER_TARGET} PRIVATE
-        src/ui/docking/DockHost.cpp
-        src/ui/docking/DockHost.h
-    )
-    target_link_libraries(${APM_PLANNER_TARGET} KDAB::kddockwidgets)
-    target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
-        APM_HAS_KDDOCKWIDGETS=1
-    )
-endif()
-
 # Definitions
 target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
     DISABLE_3DMOUSE
@@ -991,7 +1144,6 @@ target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
     QGC_USE_${MAVLINK_CONF}_MESSAGES
     NOMINMAX
     APM_INSTALL_DATA_DIR="${APM_INSTALL_RESOURCE_DIR}"
-    APM_LEGACY_INSTALL_DATA_DIR="${APM_LEGACY_INSTALL_RESOURCE_DIR}"
 )
 
 if(APM_ENABLE_SOURCE_DATA_FALLBACK)
@@ -1027,11 +1179,17 @@ if(APPLE)
 
     add_custom_command(TARGET ${APM_PLANNER_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/data"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/../Resources/APMPlanner3/data"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/files"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/../Resources/APMPlanner3/files"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/qml"
-            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/qml"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/../Resources/APMPlanner3/qml"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/sik_uploader"
-            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/sik_uploader"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/../Resources/APMPlanner3/sik_uploader"
     )
 
     # Ensure .icns is included in the app bundle for debug builds
@@ -1059,6 +1217,12 @@ if(APPLE)
 elseif(WIN32)
     add_custom_command(TARGET ${APM_PLANNER_TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/data"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/data"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/files"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/files"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/qml"
             "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/qml"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -1068,6 +1232,12 @@ elseif(WIN32)
     )
 else() # Linux
     add_custom_command(TARGET ${APM_PLANNER_TARGET} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/data"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/data"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/files"
+            "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/files"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/qml"
             "$<TARGET_FILE_DIR:${APM_PLANNER_TARGET}>/qml"
@@ -1098,6 +1268,141 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(applicationidentity_tests
+        tests/test_applicationidentity.cpp
+    )
+    target_include_directories(applicationidentity_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(applicationidentity_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME applicationidentity_tests
+        COMMAND applicationidentity_tests)
+
+    add_executable(dronecanforwardingbroker_tests
+        tests/test_dronecanforwardingbroker.cpp
+        src/comm/DroneCanForwardingBroker.cpp
+        src/comm/DroneCanForwardingBroker.h
+    )
+    target_include_directories(dronecanforwardingbroker_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(dronecanforwardingbroker_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME dronecanforwardingbroker_tests
+        COMMAND dronecanforwardingbroker_tests)
+
+    add_executable(dronecangetnodeinfo_tests
+        tests/test_dronecangetnodeinfo.cpp
+        src/comm/DroneCanGetNodeInfoClient.cpp
+        src/comm/DroneCanGetNodeInfoClient.h
+    )
+    target_include_directories(dronecangetnodeinfo_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(dronecangetnodeinfo_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME dronecangetnodeinfo_tests
+        COMMAND dronecangetnodeinfo_tests)
+
+    add_executable(dronecangetset_tests
+        tests/test_dronecangetset.cpp
+        src/comm/DroneCanGetSetClient.cpp
+        src/comm/DroneCanGetSetClient.h
+    )
+    target_include_directories(dronecangetset_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(dronecangetset_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME dronecangetset_tests
+        COMMAND dronecangetset_tests)
+
+    add_executable(gpscorrectioncore_tests
+        tests/test_gpscorrectioncore.cpp
+        src/comm/GpsCorrectionSource.cpp
+        src/comm/GpsCorrectionSource.h
+        src/comm/GpsRtcmPacketizer.cpp
+        src/comm/GpsRtcmPacketizer.h
+        src/comm/Rtcm3Parser.cpp
+        src/comm/Rtcm3Parser.h
+    )
+    target_include_directories(gpscorrectioncore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(gpscorrectioncore_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME gpscorrectioncore_tests
+        COMMAND gpscorrectioncore_tests)
+
+    add_executable(missionprotocolcoordinator_tests
+        tests/test_missionprotocolcoordinator.cpp
+        src/comm/MissionProtocolCoordinator.cc
+        src/comm/MissionProtocolCoordinator.h
+    )
+    target_include_directories(missionprotocolcoordinator_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(missionprotocolcoordinator_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME missionprotocolcoordinator_tests
+        COMMAND missionprotocolcoordinator_tests)
+
+    add_executable(missiontransferservice_tests
+        tests/test_missiontransferservice.cpp
+        src/comm/MissionTransferService.cc
+        src/comm/MissionTransferService.h
+    )
+    target_include_directories(missiontransferservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(missiontransferservice_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME missiontransferservice_tests
+        COMMAND missiontransferservice_tests)
+
+    add_executable(missiontransfercontroller_tests
+        tests/test_missiontransfercontroller.cpp
+        src/comm/MissionProtocolCoordinator.cc
+        src/comm/MissionProtocolCoordinator.h
+        src/comm/MissionTransferController.cc
+        src/comm/MissionTransferController.h
+        src/comm/MissionTransferService.cc
+        src/comm/MissionTransferService.h
+        src/comm/MissionTransferTransport.h
+    )
+    target_include_directories(missiontransfercontroller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(missiontransfercontroller_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME missiontransfercontroller_tests
+        COMMAND missiontransfercontroller_tests)
+
     add_executable(tilecache_tests
         tests/test_tilecache.cpp
     )
@@ -1112,10 +1417,124 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
+    add_executable(mapcachemanager_tests
+        tests/test_mapcachemanager.cpp
+        src/ui/map/MapCacheManager.cpp
+        src/ui/map/MapCacheManager.h
+    )
+    target_include_directories(mapcachemanager_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/map
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(mapcachemanager_tests PRIVATE
+        opmapcontrol
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::Test
+    )
+    add_test(NAME mapcachemanager_tests COMMAND mapcachemanager_tests)
+    set_tests_properties(mapcachemanager_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(mapprefetchservice_tests
+        tests/test_mapprefetchservice.cpp
+        src/ui/map/MapPrefetchService.cpp
+        src/ui/map/MapPrefetchService.h
+    )
+    target_include_directories(mapprefetchservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/map
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(mapprefetchservice_tests PRIVATE
+        opmapcontrol
+        Threads::Threads
+        Qt::Core
+        Qt::Network
+        Qt::Test
+    )
+    add_test(NAME mapprefetchservice_tests COMMAND mapprefetchservice_tests)
+    set_tests_properties(mapprefetchservice_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(mapwidgetfactory_tests
+        tests/test_mapwidgetfactory.cpp
+        src/ui/map/AbstractMapWidget.h
+        src/ui/map/MapWidgetFactory.cpp
+        src/ui/map/MapWidgetFactory.h
+    )
+    target_include_directories(mapwidgetfactory_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/map
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(mapwidgetfactory_tests PRIVATE
+        opmapcontrol
+        Qt::Core
+        Qt::Network
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME mapwidgetfactory_tests COMMAND mapwidgetfactory_tests)
+    set_tests_properties(mapwidgetfactory_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(mapcacheview_tests
+        tests/test_mapcacheview.cpp
+        src/ui/configuration/ElevationSourceService.cpp
+        src/ui/configuration/ElevationSourceService.h
+        src/ui/configuration/SrtmElevationSource.cpp
+        src/ui/configuration/SrtmElevationSource.h
+        src/ui/map/MapCacheManager.cpp
+        src/ui/map/MapCacheManager.h
+        src/ui/map/MapCacheView.cpp
+        src/ui/map/MapCacheView.h
+        src/ui/map/MapTileSourceFactory.cpp
+        src/ui/map/MapTileSourceFactory.h
+    )
+    target_include_directories(mapcacheview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/map
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(mapcacheview_tests PRIVATE
+        opmapcontrol
+        quazip
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME mapcacheview_tests COMMAND mapcacheview_tests)
+    set_tests_properties(mapcacheview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(opmapwidget_tests
+        tests/test_opmapwidget.cpp
+    )
+    target_link_libraries(opmapwidget_tests PRIVATE
+        opmapcontrol
+        Qt::Core
+        Qt::Network
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME opmapwidget_tests COMMAND opmapwidget_tests)
+    set_tests_properties(opmapwidget_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
     add_executable(maptilesourcefactory_tests
         tests/test_maptilesourcefactory.cpp
         src/ui/configuration/ElevationSourceService.cpp
         src/ui/configuration/ElevationSourceService.h
+        src/ui/configuration/SrtmElevationSource.cpp
+        src/ui/configuration/SrtmElevationSource.h
         src/ui/map/MapTileSourceFactory.cpp
         src/ui/map/MapTileSourceFactory.h
         src/ui/map/NativeGdalMapService.cpp
@@ -1128,6 +1547,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(maptilesourcefactory_tests PRIVATE
         opmapcontrol
+        quazip
         Qt::Core
         Qt::Gui
         Qt::Network
@@ -1138,18 +1558,6 @@ if(BUILD_TESTING)
     set_tests_properties(maptilesourcefactory_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
-
-    add_executable(appsettings_migration_tests
-        tests/test_appsettingsmigration.cpp
-    )
-    target_include_directories(appsettings_migration_tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
-    )
-    target_link_libraries(appsettings_migration_tests PRIVATE
-        Qt::Core
-        Qt::Test
-    )
-    add_test(NAME appsettings_migration_tests COMMAND appsettings_migration_tests)
 
     add_executable(parameter_core_tests
         tests/test_parametercore.cpp
@@ -1206,6 +1614,26 @@ if(BUILD_TESTING)
     )
     add_test(NAME friendlyparams_tests COMMAND friendlyparams_tests)
     set_tests_properties(friendlyparams_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configrawparams_tests
+        tests/test_configrawparams.cpp
+        src/ui/configuration/ConfigRawParams.cpp
+        src/ui/configuration/ConfigRawParams.h
+    )
+    target_include_directories(configrawparams_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configrawparams_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configrawparams_tests COMMAND configrawparams_tests)
+    set_tests_properties(configrawparams_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
@@ -1267,19 +1695,44 @@ if(BUILD_TESTING)
         src/ui/configuration/ConfigElevationSourcesViewModel.h
         src/ui/configuration/ElevationSourceService.cpp
         src/ui/configuration/ElevationSourceService.h
+        src/ui/configuration/SrtmElevationSource.cpp
+        src/ui/configuration/SrtmElevationSource.h
     )
     target_include_directories(configelevationsourcesview_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
     )
     target_link_libraries(configelevationsourcesview_tests PRIVATE
+        quazip
         Qt::Core
+        Qt::Network
         Qt::Test
         Qt::Widgets
     )
     add_test(NAME configelevationsourcesview_tests
         COMMAND configelevationsourcesview_tests)
     set_tests_properties(configelevationsourcesview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(srtmelevationsource_tests
+        tests/test_srtmelevationsource.cpp
+        src/ui/configuration/SrtmElevationSource.cpp
+        src/ui/configuration/SrtmElevationSource.h
+    )
+    target_include_directories(srtmelevationsource_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(srtmelevationsource_tests PRIVATE
+        quazip
+        Qt::Core
+        Qt::Network
+        Qt::Test
+    )
+    add_test(NAME srtmelevationsource_tests
+        COMMAND srtmelevationsource_tests)
+    set_tests_properties(srtmelevationsource_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
@@ -1306,6 +1759,226 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
+    add_executable(configradiooutputview_tests
+        tests/test_configradiooutputview.cpp
+        src/ui/configuration/ConfigRadioOutputView.cpp
+        src/ui/configuration/ConfigRadioOutputView.h
+        src/ui/configuration/ConfigRadioOutputViewModel.cpp
+        src/ui/configuration/ConfigRadioOutputViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configradiooutputview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configradiooutputview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configradiooutputview_tests
+        COMMAND configradiooutputview_tests)
+    set_tests_properties(configradiooutputview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configesccalibrationview_tests
+        tests/test_configesccalibrationview.cpp
+        src/ui/configuration/ConfigESCCalibrationView.cpp
+        src/ui/configuration/ConfigESCCalibrationView.h
+        src/ui/configuration/ConfigESCCalibrationViewModel.cpp
+        src/ui/configuration/ConfigESCCalibrationViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configesccalibrationview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configesccalibrationview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configesccalibrationview_tests
+        COMMAND configesccalibrationview_tests)
+    set_tests_properties(configesccalibrationview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configmotortestview_tests
+        tests/test_configmotortestview.cpp
+        src/ui/configuration/ConfigMotorTestView.cpp
+        src/ui/configuration/ConfigMotorTestView.h
+        src/ui/configuration/ConfigMotorTestViewModel.cpp
+        src/ui/configuration/ConfigMotorTestViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configmotortestview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configmotortestview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configmotortestview_tests
+        COMMAND configmotortestview_tests)
+    set_tests_properties(configmotortestview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configparachuteview_tests
+        tests/test_configparachuteview.cpp
+        src/ui/configuration/ConfigParachuteView.cpp
+        src/ui/configuration/ConfigParachuteView.h
+        src/ui/configuration/ConfigParachuteViewModel.cpp
+        src/ui/configuration/ConfigParachuteViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configparachuteview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configparachuteview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configparachuteview_tests
+        COMMAND configparachuteview_tests)
+    set_tests_properties(configparachuteview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configgpsinjectview_tests
+        tests/test_configgpsinjectviewmodel.cpp
+        src/ui/configuration/ConfigGpsInjectView.cpp
+        src/ui/configuration/ConfigGpsInjectView.h
+        src/ui/configuration/ConfigGpsInjectViewModel.cpp
+        src/ui/configuration/ConfigGpsInjectViewModel.h
+        src/comm/GpsCorrectionSource.cpp
+        src/comm/GpsCorrectionSource.h
+        src/comm/Rtcm3Parser.cpp
+        src/comm/Rtcm3Parser.h
+    )
+    target_include_directories(configgpsinjectview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configgpsinjectview_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configgpsinjectview_tests
+        COMMAND configgpsinjectview_tests)
+    set_tests_properties(configgpsinjectview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(confighwcanview_tests
+        tests/test_confighwcanview.cpp
+        src/ui/configuration/ConfigHWCANView.cpp
+        src/ui/configuration/ConfigHWCANView.h
+        src/ui/configuration/ConfigHWCANViewModel.cpp
+        src/ui/configuration/ConfigHWCANViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(confighwcanview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(confighwcanview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME confighwcanview_tests
+        COMMAND confighwcanview_tests)
+    set_tests_properties(confighwcanview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configdronecanview_tests
+        tests/test_configdronecanview.cpp
+        src/comm/DroneCanFrameCodec.cpp
+        src/comm/DroneCanFrameCodec.h
+        src/comm/DroneCanGetSetClient.cpp
+        src/comm/DroneCanGetSetClient.h
+        src/ui/configuration/ConfigDroneCanView.cpp
+        src/ui/configuration/ConfigDroneCanView.h
+        src/ui/configuration/ConfigDroneCanViewModel.cpp
+        src/ui/configuration/ConfigDroneCanViewModel.h
+    )
+    target_include_directories(configdronecanview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configdronecanview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configdronecanview_tests
+        COMMAND configdronecanview_tests)
+    set_tests_properties(configdronecanview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configgpsorderview_tests
+        tests/test_configgpsorderview.cpp
+        src/ui/configuration/ConfigGPSOrderView.cpp
+        src/ui/configuration/ConfigGPSOrderView.h
+        src/ui/configuration/ConfigGPSOrderViewModel.cpp
+        src/ui/configuration/ConfigGPSOrderViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configgpsorderview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configgpsorderview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configgpsorderview_tests
+        COMMAND configgpsorderview_tests)
+    set_tests_properties(configgpsorderview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(confighwbtview_tests
+        tests/test_confighwbtview.cpp
+        src/ui/configuration/ConfigHWBTView.cpp
+        src/ui/configuration/ConfigHWBTView.h
+        src/ui/configuration/ConfigHWBTViewModel.cpp
+        src/ui/configuration/ConfigHWBTViewModel.h
+    )
+    target_include_directories(confighwbtview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(confighwbtview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME confighwbtview_tests
+        COMMAND confighwbtview_tests)
+    set_tests_properties(confighwbtview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
     add_executable(configinitialparamsview_tests
         tests/test_configinitialparamsview.cpp
         src/ui/configuration/ConfigInitialParamsView.cpp
@@ -1329,6 +2002,33 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
+    add_executable(batterymonitor_tests
+        tests/test_batterymonitor.cpp
+        src/core/parameters/ParameterMetaData.cpp
+        src/core/parameters/ParameterMetaData.h
+        src/ui/configuration/BatteryMonitorInstanceModel.cpp
+        src/ui/configuration/BatteryMonitorInstanceModel.h
+        src/ui/configuration/ConfigBatteryMonitoring2View.cpp
+        src/ui/configuration/ConfigBatteryMonitoring2View.h
+        src/ui/configuration/ConfigBatteryMonitoring2ViewModel.cpp
+        src/ui/configuration/ConfigBatteryMonitoring2ViewModel.h
+    )
+    target_include_directories(batterymonitor_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(batterymonitor_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME batterymonitor_tests COMMAND batterymonitor_tests)
+    set_tests_properties(batterymonitor_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
     add_executable(mavlink_component_tracker_tests
         tests/test_mavlinkcomponenttracker.cpp
         src/uas/MAVLinkComponentTracker.h
@@ -1341,6 +2041,114 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME mavlink_component_tracker_tests COMMAND mavlink_component_tracker_tests)
+
+    add_executable(mavlink_frame_parser_tests
+        tests/test_mavlinkframeparser.cpp
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+    )
+    target_include_directories(mavlink_frame_parser_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(mavlink_frame_parser_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME mavlink_frame_parser_tests
+             COMMAND mavlink_frame_parser_tests)
+
+    add_executable(exact_link_transmitter_tests
+        tests/test_exactlinktransmitter.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+    )
+    target_include_directories(exact_link_transmitter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(exact_link_transmitter_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME exact_link_transmitter_tests
+             COMMAND exact_link_transmitter_tests)
+
+    add_executable(vehicle_target_manager_tests
+        tests/test_vehicletargetmanager.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(vehicle_target_manager_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(vehicle_target_manager_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME vehicle_target_manager_tests
+             COMMAND vehicle_target_manager_tests)
+
+    add_executable(vehicle_command_service_tests
+        tests/test_vehiclecommandservice.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(vehicle_command_service_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(vehicle_command_service_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME vehicle_command_service_tests
+             COMMAND vehicle_command_service_tests)
+
+    add_executable(parameter_service_tests
+        tests/test_parameterservice.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/ParameterService.cpp
+        src/comm/ParameterService.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/uas/QGCUASParamManager.cc
+        src/uas/QGCUASParamManager.h
+    )
+    target_include_directories(parameter_service_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(parameter_service_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME parameter_service_tests
+             COMMAND parameter_service_tests)
 
     add_executable(backstageview_tests
         tests/test_backstageview.cpp
@@ -1376,6 +2184,7 @@ if(BUILD_TESTING)
     target_link_libraries(connectionoptions_tests PRIVATE
         Qt::Core
         Qt::Widgets
+        Qt::SerialPort
         Qt::Test
     )
     add_test(NAME connectionoptions_tests COMMAND connectionoptions_tests)
@@ -1453,6 +2262,52 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
+    add_executable(proximityradar_tests
+        tests/test_proximityradar.cpp
+        src/uas/Proximity.cpp
+        src/uas/Proximity.h
+        src/ui/flightdata/ProximityRadarControl.cpp
+        src/ui/flightdata/ProximityRadarControl.h
+        src/ui/flightdata/ProximityWindow.cpp
+        src/ui/flightdata/ProximityWindow.h
+    )
+    target_include_directories(proximityradar_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/uas
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/flightdata
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(proximityradar_tests PRIVATE
+        Threads::Threads
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME proximityradar_tests COMMAND proximityradar_tests)
+    set_tests_properties(proximityradar_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(servooutputdecoder_tests
+        tests/test_servooutputdecoder.cpp
+        src/uas/ServoOutputDecoder.cpp
+        src/uas/ServoOutputDecoder.h
+    )
+    target_include_directories(servooutputdecoder_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(servooutputdecoder_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME servooutputdecoder_tests
+        COMMAND servooutputdecoder_tests)
+
     add_executable(flightplannermissionmodel_tests
         tests/test_flightplannermissionmodel.cpp
         src/ui/flightplanner/FlightPlannerMissionModel.cpp
@@ -1474,10 +2329,296 @@ if(BUILD_TESTING)
     add_test(NAME flightplannermissionmodel_tests
              COMMAND flightplannermissionmodel_tests)
 
-    add_executable(flightplannerviewmodel_tests
-        tests/test_flightplannerviewmodel.cpp
+    add_executable(flightplannermissioncodec_tests
+        tests/test_flightplannermissioncodec.cpp
+        src/ui/flightplanner/FlightPlannerMissionCodec.cpp
+        src/ui/flightplanner/FlightPlannerMissionCodec.h
         src/ui/flightplanner/FlightPlannerMissionModel.cpp
         src/ui/flightplanner/FlightPlannerMissionModel.h
+        src/ui/flightplanner/WpRow.cpp
+        src/ui/flightplanner/WpRow.h
+    )
+    target_include_directories(flightplannermissioncodec_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(flightplannermissioncodec_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightplannermissioncodec_tests
+             COMMAND flightplannermissioncodec_tests)
+
+    add_executable(flightplannernavigation_tests
+        tests/test_flightplannernavigation.cpp
+        src/ui/flightplanner/FlightPlannerNavigation.cpp
+        src/ui/flightplanner/FlightPlannerNavigation.h
+    )
+    target_include_directories(flightplannernavigation_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(flightplannernavigation_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightplannernavigation_tests
+             COMMAND flightplannernavigation_tests)
+
+    add_executable(flightplannerroutemetrics_tests
+        tests/test_flightplannerroutemetrics.cpp
+        src/ui/flightplanner/FlightPlannerRouteMetrics.cpp
+        src/ui/flightplanner/FlightPlannerRouteMetrics.h
+    )
+    target_include_directories(flightplannerroutemetrics_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(flightplannerroutemetrics_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightplannerroutemetrics_tests
+             COMMAND flightplannerroutemetrics_tests)
+
+    add_executable(flightplannermeasurement_tests
+        tests/test_flightplannermeasurement.cpp
+        src/ui/flightplanner/FlightPlannerMeasurement.cpp
+        src/ui/flightplanner/FlightPlannerMeasurement.h
+        src/ui/map/PlannerMeasurementOverlay.cpp
+        src/ui/map/PlannerMeasurementOverlay.h
+    )
+    target_include_directories(flightplannermeasurement_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(flightplannermeasurement_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME flightplannermeasurement_tests
+             COMMAND flightplannermeasurement_tests)
+    set_tests_properties(flightplannermeasurement_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(missionelevationprofile_tests
+        tests/test_missionelevationprofile.cpp
+        src/ui/flightplanner/MissionElevationProfile.cpp
+        src/ui/flightplanner/MissionElevationProfile.h
+        src/ui/flightplanner/WpRow.cpp
+        src/ui/flightplanner/WpRow.h
+    )
+    target_include_directories(missionelevationprofile_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(missionelevationprofile_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME missionelevationprofile_tests
+             COMMAND missionelevationprofile_tests)
+
+    add_executable(surveygridgenerator_tests
+        tests/test_surveygridgenerator.cpp
+        src/ui/flightplanner/SurveyGridGenerator.cpp
+        src/ui/flightplanner/SurveyGridGenerator.h
+    )
+    target_include_directories(surveygridgenerator_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(surveygridgenerator_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME surveygridgenerator_tests
+             COMMAND surveygridgenerator_tests)
+
+    add_executable(surveymissionbuilder_tests
+        tests/test_surveymissionbuilder.cpp
+        src/ui/flightplanner/SurveyGridGenerator.cpp
+        src/ui/flightplanner/SurveyGridGenerator.h
+        src/ui/flightplanner/SurveyMissionBuilder.cpp
+        src/ui/flightplanner/SurveyMissionBuilder.h
+    )
+    target_include_directories(surveymissionbuilder_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(surveymissionbuilder_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME surveymissionbuilder_tests
+             COMMAND surveymissionbuilder_tests)
+
+    add_executable(surveygriddialog_tests
+        tests/test_surveygriddialog.cpp
+        src/ui/flightplanner/SurveyGridDialog.cpp
+        src/ui/flightplanner/SurveyGridDialog.h
+        src/ui/flightplanner/SurveyGridGenerator.cpp
+        src/ui/flightplanner/SurveyGridGenerator.h
+        src/ui/flightplanner/SurveyMissionBuilder.cpp
+        src/ui/flightplanner/SurveyMissionBuilder.h
+    )
+    target_include_directories(surveygriddialog_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(surveygriddialog_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME surveygriddialog_tests COMMAND surveygriddialog_tests)
+    set_tests_properties(surveygriddialog_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(fencerallyfilecodec_tests
+        tests/test_fencerallyfilecodec.cpp
+        src/ui/flightplanner/FenceRallyFileCodec.cpp
+        src/ui/flightplanner/FenceRallyFileCodec.h
+        src/ui/flightplanner/FenceRallyModel.cpp
+        src/ui/flightplanner/FenceRallyModel.h
+    )
+    target_include_directories(fencerallyfilecodec_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(fencerallyfilecodec_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME fencerallyfilecodec_tests
+             COMMAND fencerallyfilecodec_tests)
+
+    add_executable(qgcplanfilecodec_tests
+        tests/test_qgcplanfilecodec.cpp
+        src/ui/flightplanner/FenceRallyModel.cpp
+        src/ui/flightplanner/FenceRallyModel.h
+        src/ui/flightplanner/QgcPlanFileCodec.cpp
+        src/ui/flightplanner/QgcPlanFileCodec.h
+    )
+    target_include_directories(qgcplanfilecodec_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(qgcplanfilecodec_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME qgcplanfilecodec_tests COMMAND qgcplanfilecodec_tests)
+
+    add_executable(flightplannerpolygonmodel_tests
+        tests/test_flightplannerpolygonmodel.cpp
+        src/ui/flightplanner/FlightPlannerPolygonModel.cpp
+        src/ui/flightplanner/FlightPlannerPolygonModel.h
+        src/ui/flightplanner/WpRow.cpp
+        src/ui/flightplanner/WpRow.h
+    )
+    target_include_directories(flightplannerpolygonmodel_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(flightplannerpolygonmodel_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightplannerpolygonmodel_tests
+             COMMAND flightplannerpolygonmodel_tests)
+
+    add_executable(fencerallycontroller_tests
+        tests/test_fencerallycontroller.cpp
+        src/comm/MissionProtocolCoordinator.cc
+        src/comm/MissionProtocolCoordinator.h
+        src/comm/MissionTransferController.cc
+        src/comm/MissionTransferController.h
+        src/comm/MissionTransferService.cc
+        src/comm/MissionTransferService.h
+        src/comm/MissionTransferTransport.h
+        src/ui/flightplanner/FenceRallyController.cpp
+        src/ui/flightplanner/FenceRallyController.h
+        src/ui/flightplanner/FenceRallyFileCodec.cpp
+        src/ui/flightplanner/FenceRallyFileCodec.h
+        src/ui/flightplanner/FenceRallyModel.cpp
+        src/ui/flightplanner/FenceRallyModel.h
+        src/ui/flightplanner/FlightPlannerMissionCodec.cpp
+        src/ui/flightplanner/FlightPlannerMissionCodec.h
+        src/ui/flightplanner/FlightPlannerMissionModel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.h
+        src/ui/flightplanner/FlightPlannerNavigation.cpp
+        src/ui/flightplanner/FlightPlannerNavigation.h
+        src/ui/flightplanner/FlightPlannerRouteMetrics.cpp
+        src/ui/flightplanner/FlightPlannerRouteMetrics.h
+        src/ui/flightplanner/MissionElevationProfile.cpp
+        src/ui/flightplanner/MissionElevationProfile.h
+        src/ui/flightplanner/FlightPlannerPolygonModel.cpp
+        src/ui/flightplanner/FlightPlannerPolygonModel.h
+        src/ui/flightplanner/QgcPlanFileCodec.cpp
+        src/ui/flightplanner/QgcPlanFileCodec.h
+        src/ui/flightplanner/FlightPlannerViewModel.cpp
+        src/ui/flightplanner/FlightPlannerViewModel.h
+        src/ui/flightplanner/WpRow.cpp
+        src/ui/flightplanner/WpRow.h
+    )
+    target_include_directories(fencerallycontroller_tests PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(fencerallycontroller_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME fencerallycontroller_tests
+             COMMAND fencerallycontroller_tests)
+
+    add_executable(flightplannerviewmodel_tests
+        tests/test_flightplannerviewmodel.cpp
+        src/comm/MissionProtocolCoordinator.cc
+        src/comm/MissionProtocolCoordinator.h
+        src/comm/MissionTransferController.cc
+        src/comm/MissionTransferController.h
+        src/comm/MissionTransferService.cc
+        src/comm/MissionTransferService.h
+        src/comm/MissionTransferTransport.h
+        src/ui/flightplanner/FlightPlannerMissionCodec.cpp
+        src/ui/flightplanner/FlightPlannerMissionCodec.h
+        src/ui/flightplanner/FlightPlannerMissionModel.cpp
+        src/ui/flightplanner/FlightPlannerMissionModel.h
+        src/ui/flightplanner/FenceRallyModel.cpp
+        src/ui/flightplanner/FenceRallyModel.h
+        src/ui/flightplanner/FlightPlannerNavigation.cpp
+        src/ui/flightplanner/FlightPlannerNavigation.h
+        src/ui/flightplanner/FlightPlannerRouteMetrics.cpp
+        src/ui/flightplanner/FlightPlannerRouteMetrics.h
+        src/ui/flightplanner/MissionElevationProfile.cpp
+        src/ui/flightplanner/MissionElevationProfile.h
+        src/ui/flightplanner/FlightPlannerPolygonModel.cpp
+        src/ui/flightplanner/FlightPlannerPolygonModel.h
+        src/ui/flightplanner/QgcPlanFileCodec.cpp
+        src/ui/flightplanner/QgcPlanFileCodec.h
         src/ui/flightplanner/FlightPlannerViewModel.cpp
         src/ui/flightplanner/FlightPlannerViewModel.h
         src/ui/flightplanner/WpRow.cpp
@@ -1499,8 +2640,29 @@ if(BUILD_TESTING)
 
     add_executable(flightplannerwaypointpanel_tests
         tests/test_flightplannerwaypointpanel.cpp
+        src/comm/MissionProtocolCoordinator.cc
+        src/comm/MissionProtocolCoordinator.h
+        src/comm/MissionTransferController.cc
+        src/comm/MissionTransferController.h
+        src/comm/MissionTransferService.cc
+        src/comm/MissionTransferService.h
+        src/comm/MissionTransferTransport.h
+        src/ui/flightplanner/FlightPlannerMissionCodec.cpp
+        src/ui/flightplanner/FlightPlannerMissionCodec.h
         src/ui/flightplanner/FlightPlannerMissionModel.cpp
         src/ui/flightplanner/FlightPlannerMissionModel.h
+        src/ui/flightplanner/FenceRallyModel.cpp
+        src/ui/flightplanner/FenceRallyModel.h
+        src/ui/flightplanner/FlightPlannerNavigation.cpp
+        src/ui/flightplanner/FlightPlannerNavigation.h
+        src/ui/flightplanner/FlightPlannerRouteMetrics.cpp
+        src/ui/flightplanner/FlightPlannerRouteMetrics.h
+        src/ui/flightplanner/MissionElevationProfile.cpp
+        src/ui/flightplanner/MissionElevationProfile.h
+        src/ui/flightplanner/FlightPlannerPolygonModel.cpp
+        src/ui/flightplanner/FlightPlannerPolygonModel.h
+        src/ui/flightplanner/QgcPlanFileCodec.cpp
+        src/ui/flightplanner/QgcPlanFileCodec.h
         src/ui/flightplanner/FlightPlannerViewModel.cpp
         src/ui/flightplanner/FlightPlannerViewModel.h
         src/ui/flightplanner/FlightPlannerWaypointPanel.cpp
@@ -1526,37 +2688,127 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
-    if(APM_ENABLE_KDDOCKWIDGETS)
-        add_executable(kddockwidgets_vendor_tests
-            tests/test_kddockwidgets_vendor.cpp
-        )
-        target_link_libraries(kddockwidgets_vendor_tests PRIVATE
-            KDAB::kddockwidgets
-            Qt::Test
-        )
-        add_test(NAME kddockwidgets_vendor_tests COMMAND kddockwidgets_vendor_tests)
-        set_tests_properties(kddockwidgets_vendor_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-        )
+    add_executable(dockableview_tests
+        tests/test_dockableview.cpp
+        src/ui/docking/DockableView.cpp
+        src/ui/docking/DockableView.h
+    )
+    target_include_directories(dockableview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(dockableview_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME dockableview_tests COMMAND dockableview_tests)
+    set_tests_properties(dockableview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
-        add_executable(dockhost_tests
-            tests/test_dockhost.cpp
-            src/ui/docking/DockHost.cpp
-            src/ui/docking/DockHost.h
-        )
-        target_include_directories(dockhost_tests PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/src
-        )
-        target_link_libraries(dockhost_tests PRIVATE
-            KDAB::kddockwidgets
-            Qt::Test
-        )
-        add_test(NAME dockhost_tests COMMAND dockhost_tests)
-        set_tests_properties(dockhost_tests PROPERTIES
-            ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-        )
+    add_executable(qmlpluginmanifest_tests
+        tests/test_qmlpluginmanifest.cpp
+        src/qml/QmlPluginManifest.cpp
+        src/qml/QmlPluginManifest.h
+    )
+    target_include_directories(qmlpluginmanifest_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(qmlpluginmanifest_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME qmlpluginmanifest_tests COMMAND qmlpluginmanifest_tests)
 
-    endif()
+    add_executable(qmlpluginmanager_tests
+        tests/test_qmlpluginmanager.cpp
+        src/AppPaths.cpp
+        src/AppPaths.h
+        src/qml/ApmQmlApi.cpp
+        src/qml/ApmQmlApi.h
+        src/qml/QmlPluginContext.cpp
+        src/qml/QmlPluginContext.h
+        src/qml/QmlPluginManager.cpp
+        src/qml/QmlPluginManager.h
+        src/qml/QmlPluginManifest.cpp
+        src/qml/QmlPluginManifest.h
+    )
+    target_include_directories(qmlpluginmanager_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/uas
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(qmlpluginmanager_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Qml
+        Qt::Quick
+        Qt::QuickWidgets
+        Qt::Test
+    )
+    add_test(NAME qmlpluginmanager_tests COMMAND qmlpluginmanager_tests)
+    set_tests_properties(qmlpluginmanager_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+    )
+
+    add_executable(flightdatamissionprogress_tests
+        tests/test_flightdatamissionprogress.cpp
+        src/ui/flightdata/FlightDataMissionProgress.cpp
+        src/ui/flightdata/FlightDataMissionProgress.h
+    )
+    target_include_directories(flightdatamissionprogress_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(flightdatamissionprogress_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightdatamissionprogress_tests
+        COMMAND flightdatamissionprogress_tests)
+
+    add_executable(flightdatamapoverlay_tests
+        tests/test_flightdatamapoverlay.cpp
+        src/ui/flightdata/FlightDataMapOverlay.cpp
+        src/ui/flightdata/FlightDataMapOverlay.h
+        src/ui/map/AbstractMapWidget.h
+    )
+    target_include_directories(flightdatamapoverlay_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(flightdatamapoverlay_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME flightdatamapoverlay_tests COMMAND flightdatamapoverlay_tests)
+    set_tests_properties(flightdatamapoverlay_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(preflightchecklist_tests
+        tests/test_preflightchecklist.cpp
+        src/ui/flightdata/PreflightChecklistModel.cpp
+        src/ui/flightdata/PreflightChecklistModel.h
+        src/ui/flightdata/PreflightChecklistWidget.cpp
+        src/ui/flightdata/PreflightChecklistWidget.h
+        src/ui/flightdata/SimpleActionsWidget.cpp
+        src/ui/flightdata/SimpleActionsWidget.h
+    )
+    target_include_directories(preflightchecklist_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(preflightchecklist_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME preflightchecklist_tests COMMAND preflightchecklist_tests)
+    set_tests_properties(preflightchecklist_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(flightviews_tests
         tests/test_flightviews.cpp
@@ -1570,24 +2822,51 @@ if(BUILD_TESTING)
     target_include_directories(flightviews_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
-    if(APM_ENABLE_KDDOCKWIDGETS)
-        target_sources(flightviews_tests PRIVATE
-            src/ui/docking/DockHost.cpp
-            src/ui/docking/DockHost.h
-        )
-        target_compile_definitions(flightviews_tests PRIVATE
-            APM_HAS_KDDOCKWIDGETS=1
-        )
-        target_link_libraries(flightviews_tests PRIVATE
-            KDAB::kddockwidgets
-        )
-    endif()
     target_link_libraries(flightviews_tests PRIVATE
         Qt::Widgets
         Qt::Test
     )
     add_test(NAME flightviews_tests COMMAND flightviews_tests)
     set_tests_properties(flightviews_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(uasactionswidget_tests
+        tests/test_uasactionswidget.cpp
+        src/ui/uas/UASActionCatalog.h
+        src/ui/uas/UASActionsLayout.h
+        src/ui/uas/UASActionsWidget.ui
+    )
+    target_include_directories(uasactionswidget_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    set_property(TARGET uasactionswidget_tests PROPERTY AUTOUIC_SEARCH_PATHS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/uas"
+    )
+    target_link_libraries(uasactionswidget_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME uasactionswidget_tests COMMAND uasactionswidget_tests)
+    set_tests_properties(uasactionswidget_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(missionplannerstyle_tests
+        tests/test_missionplannerstyle.cpp
+    )
+    target_compile_definitions(missionplannerstyle_tests PRIVATE
+        APM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    target_link_libraries(missionplannerstyle_tests PRIVATE
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME missionplannerstyle_tests COMMAND missionplannerstyle_tests)
+    set_tests_properties(missionplannerstyle_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()

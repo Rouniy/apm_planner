@@ -236,12 +236,6 @@ void SerialConnection::loadSettings()
     if (settings.contains("SERIALLINK_COMM_PORT"))
     {
         m_portName = settings.value("SERIALLINK_COMM_PORT").toString();
-        m_baud = settings.value("SERIALLINK_COMM_BAUD", defaultBaud).toInt();
-        if (m_baud <= 0 || m_baud > 12500000)
-        {
-            //Bad baud rate.
-            m_baud = defaultBaud;
-        }
         //m_parity = settings.value("SERIALLINK_COMM_PARITY").toInt();
         //m_stopBits = settings.value("SERIALLINK_COMM_STOPBITS").toInt();
         //m_dataBits = settings.value("SERIALLINK_COMM_DATABITS").toInt();
@@ -255,10 +249,10 @@ void SerialConnection::loadSettings()
                 m_portBaudMap[portbaud.split(":")[0]] = portbaud.split(":")[1].toInt();
             }
         }
-        if (m_portBaudMap.size() == 0)
-        {
-            m_portBaudMap[m_portName] = m_baud;
-        }
+        m_baud = m_portBaudMap.value(m_portName, defaultBaud);
+        if (m_baud <= 0 || m_baud > 12500000)
+            m_baud = defaultBaud;
+        m_portBaudMap[m_portName] = m_baud;
     }
     else
     {
@@ -270,11 +264,12 @@ void SerialConnection::writeSettings()
 {
     QSettings settings;
     settings.setValue("SERIALLINK_COMM_PORT", getPortName());
-    settings.setValue("SERIALLINK_COMM_BAUD", getBaudRate());
+    settings.setValue(QStringLiteral("baudrate"), getBaudRate());
     settings.setValue("SERIALLINK_COMM_PARITY", getParityType());
     settings.setValue("SERIALLINK_COMM_STOPBITS", getStopBits());
     settings.setValue("SERIALLINK_COMM_DATABITS", getDataBits());
     settings.setValue("SERIALLINK_COMM_FLOW_CONTROL", getFlowType());
+    m_portBaudMap[m_portName] = m_baud;
     QString portbaudmap = "";
     for (QMap<QString,int>::const_iterator i=m_portBaudMap.constBegin();i!=m_portBaudMap.constEnd();i++)
     {

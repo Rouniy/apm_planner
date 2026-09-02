@@ -450,12 +450,12 @@ void AutoUpdateCheck::loadSettings()
     settings.beginGroup(QStringLiteral("AUTO_UPDATE"));
     m_isAutoUpdateEnabled = settings.value(
         QStringLiteral("ENABLED"), true).toBool();
-    const QString legacySkip = settings.value(
-        QStringLiteral("SKIP_VERSION"), QStringLiteral("0.0.0")).toString();
     m_stableSkipVersion = settings.value(
-        QStringLiteral("SKIP_VERSION_STABLE"), legacySkip).toString();
+        QStringLiteral("SKIP_VERSION_STABLE"),
+        QStringLiteral("0.0.0")).toString();
     m_betaSkipVersion = settings.value(
-        QStringLiteral("SKIP_VERSION_BETA"), legacySkip).toString();
+        QStringLiteral("SKIP_VERSION_BETA"),
+        QStringLiteral("0.0.0")).toString();
     m_releaseChannel = releaseChannelFromString(settings.value(
         QStringLiteral("RELEASE_TYPE"), QStringLiteral(APM_STRINGIFY(APP_TYPE)))
                                                     .toString());
@@ -467,9 +467,6 @@ void AutoUpdateCheck::writeSettings()
     QSettings settings;
     settings.beginGroup(QStringLiteral("AUTO_UPDATE"));
     settings.setValue(QStringLiteral("ENABLED"), m_isAutoUpdateEnabled);
-    // Keep the old key during the 3.0 migration while storing channel-specific
-    // choices for Mission Planner-compatible stable/beta behavior.
-    settings.setValue(QStringLiteral("SKIP_VERSION"), m_stableSkipVersion);
     settings.setValue(QStringLiteral("SKIP_VERSION_STABLE"),
                       m_stableSkipVersion);
     settings.setValue(QStringLiteral("SKIP_VERSION_BETA"),

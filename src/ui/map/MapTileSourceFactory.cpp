@@ -66,6 +66,17 @@ bool MapTileSourceFactory::IsKnownMapType(core::MapType::Types type)
         || !core::MapType::StrByType(type).isEmpty();
 }
 
+QList<core::MapType::Types> MapTileSourceFactory::CacheableMapTypes()
+{
+    return {
+        core::MapType::GoogleSatellite,
+        core::MapType::GoogleHybrid,
+        core::MapType::BingSatellite,
+        core::MapType::OpenStreetMap,
+        core::MapType::ArcGIS_Satellite
+    };
+}
+
 QString MapTileSourceFactory::SettingsName(core::MapType::Types type)
 {
     switch (type) {
@@ -145,28 +156,17 @@ void MapTileSourceFactory::RefreshMapType()
     }
 }
 
+void MapTileSourceFactory::InvalidateMapType(core::MapType::Types type)
+{
+    core::OPMaps::Instance()->RemoveTilesOfTypeFromMemoryCache(type);
+    if (m_currentMapType == type) {
+        emit MapRefreshRequested();
+    }
+}
+
 void MapTileSourceFactory::loadSettings()
 {
     if (!m_settings->contains(QString::fromLatin1(SettingsKey))) {
-        const QVariant legacy = m_settings->value(
-            QString::fromLatin1(LegacySettingsKey));
-        if (legacy.isValid()) {
-            const core::MapType::Types oldType =
-                static_cast<core::MapType::Types>(legacy.toInt());
-            if (IsKnownMapType(oldType)) {
-                m_currentMapType = NormalizeMapType(
-                    oldType,
-                    oldType != core::MapType::GDALCustom
-                        || IsGdalConfigured(),
-                    &m_lastStatus);
-                saveCurrentMapType();
-            } else {
-                saveCurrentMapType();
-            }
-            m_settings->remove(QString::fromLatin1(LegacySettingsKey));
-            m_settings->sync();
-            return;
-        }
         saveCurrentMapType();
         return;
     }

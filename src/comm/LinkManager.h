@@ -46,11 +46,17 @@ This file is part of the APM_PLANNER project
 #include "MAVLinkDecoder.h"
 #include "MAVLinkProtocol.h"
 #include <QMap>
+#include <QPointer>
 #include <QStringList>
 
 #include "UASInterface.h"
 #include "UAS.h"
 #include "UASObject.h"
+class VehicleTargetManager;
+class VehicleCommandService;
+class ExactLinkTransmitter;
+class ParameterService;
+class QGCUASParamManager;
 class LinkManager : public QObject
 {
     Q_OBJECT
@@ -60,6 +66,7 @@ public:
     ~LinkManager();
 
     void shutdown();    // Called when appplication exits
+    bool isShuttingDown() const { return m_shuttingDown; }
 
     void disableTimeouts(int index);
     void enableTimeouts(int index);
@@ -67,6 +74,13 @@ public:
     void enableAllTimeouts();
 
     MAVLinkProtocol* getProtocol() const;
+    VehicleTargetManager *vehicleTargetManager() const;
+    VehicleCommandService *vehicleCommandService() const;
+    ParameterService *parameterService() const;
+    QGCUASParamManager *parameterManager() const;
+    Q_INVOKABLE QObject *vehicleTargetManagerObject() const;
+    Q_INVOKABLE QObject *vehicleCommandServiceObject() const;
+    Q_INVOKABLE QObject *parameterServiceObject() const;
     bool connectLink(int index);
     void disconnectLink(int index);
 
@@ -105,6 +119,7 @@ public:
 signals:
     //void newLink(LinkInterface* link);
     void newLink(int linkid);
+    void linkRemoved(int linkid);
     void protocolStatusMessage(QString title,QString text);
     void linkChanged(int linkid);
 
@@ -130,15 +145,23 @@ private slots:
 private:
     void loadSettings();
     void saveSettings();
+    void syncActiveUasToTarget();
+    void syncTargetToActiveUas(UASInterface *uas);
 
 private:
     QMap<int,LinkInterface*> m_connectionMap;
-    QMap<int,UASInterface*> m_uasMap;
+    QMap<int,QPointer<UASInterface>> m_uasMap;
     QMap<QString,int> m_portToBaudMap;
-    QScopedPointer<MAVLinkDecoder, QScopedPointerDeleteLater> m_mavlinkDecoder;
-    QScopedPointer<MAVLinkProtocol, QScopedPointerDeleteLater> m_mavlinkProtocol;
+    QScopedPointer<MAVLinkDecoder> m_mavlinkDecoder;
+    QScopedPointer<MAVLinkProtocol> m_mavlinkProtocol;
+    VehicleTargetManager *m_vehicleTargetManager = nullptr;
+    ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;
+    VehicleCommandService *m_vehicleCommandService = nullptr;
+    ParameterService *m_parameterService = nullptr;
+    QGCUASParamManager *m_parameterManager = nullptr;
     QString m_logSubDir;
     bool m_mavlinkLoggingEnabled;
+    bool m_shuttingDown = false;
 };
 
 #endif // LINKMANAGER_H

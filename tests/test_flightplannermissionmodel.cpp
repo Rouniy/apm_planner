@@ -17,6 +17,7 @@ private slots:
     void storesRemainIndependentAndPreserveIdentity();
     void structuralEditsRenumberRows();
     void tableContractMatchesWaypointGrid();
+    void altitudePresentationKeepsCanonicalMeters();
     void mapCommandMetadataMatchesMissionSemantics();
 };
 
@@ -35,7 +36,16 @@ void FlightPlannerMissionModelTest::wpRowMatchesMissionPlannerContract()
     QVERIFY(WpRow::CommandList().size() > 100);
     QVERIFY(WpRow::CommandList().contains(QStringLiteral("DO_CHANGE_SPEED")));
     QVERIFY(WpRow::CommandList().contains(
+        QStringLiteral("DO_RETURN_PATH_START")));
+    QVERIFY(WpRow::CommandList().contains(
         QStringLiteral("FENCE_CIRCLE_EXCLUSION")));
+
+    quint16 returnPathStart = 0;
+    QVERIFY(WpRow::commandForName(
+        QStringLiteral("DO_RETURN_PATH_START"), &returnPathStart));
+    QCOMPARE(returnPathStart, quint16(188));
+    QCOMPARE(WpRow::CommandNameFor(188),
+             QStringLiteral("DO_RETURN_PATH_START"));
 
     QSignalSpy sequenceChanged(&row, &WpRow::seqChanged);
     QSignalSpy displayChanged(&row, &WpRow::displayNumberChanged);
@@ -259,6 +269,63 @@ void FlightPlannerMissionModelTest::tableContractMatchesWaypointGrid()
         FlightPlannerMissionModel::FrameColumn), QStringLiteral("Moon")));
 }
 
+void FlightPlannerMissionModelTest::altitudePresentationKeepsCanonicalMeters()
+{
+    qRegisterMetaType<Qt::Orientation>("Qt::Orientation");
+    FlightPlannerMissionModel model;
+    WpRowData row;
+    row.Alt = 30.48;
+    row.P3 = 17.0;
+    model.appendRow(row);
+    const QModelIndex altitude = model.index(
+        0, FlightPlannerMissionModel::AltColumn);
+    QCOMPARE(model.AltUnit(), QStringLiteral("m"));
+    QCOMPARE(model.AltitudeMultiplier(), 1.0);
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::AltColumn,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("Alt (m)"));
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::DistColumn,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("Dist (m)"));
+    QCOMPARE(model.data(altitude).toDouble(), 30.48);
+
+    QSignalSpy presentationChanged(
+        &model, &FlightPlannerMissionModel::altitudePresentationChanged);
+    QSignalSpy dataChanged(&model, &QAbstractItemModel::dataChanged);
+    QSignalSpy headerChanged(&model, &QAbstractItemModel::headerDataChanged);
+    model.setAltitudePresentation(3.280839895013123,
+                                  QStringLiteral("ft"));
+    QCOMPARE(presentationChanged.count(), 1);
+    QCOMPARE(dataChanged.count(), 1);
+    QCOMPARE(headerChanged.count(), 1);
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::AltColumn,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("Alt (ft)"));
+    QVERIFY(std::abs(model.data(altitude).toDouble() - 100.0) < 1e-9);
+
+    QVERIFY(model.setData(altitude, 200.0));
+    QVERIFY(std::abs(model.rowAt(0)->Alt() - 60.96) < 1e-9);
+    QCOMPARE(model.rows(FlightPlannerMissionModel::MissionStore::Mission)
+                 .at(0).Alt,
+             model.rowAt(0)->Alt());
+    QCOMPARE(model.rowAt(0)->P3(), 17.0);
+
+    model.setAltitudePresentation(0.0, QStringLiteral("invalid"));
+    QCOMPARE(presentationChanged.count(), 1);
+    QCOMPARE(model.AltUnit(), QStringLiteral("ft"));
+
+    QSignalSpy distancePresentationChanged(
+        &model, &FlightPlannerMissionModel::distancePresentationChanged);
+    model.setDistancePresentation(3.280839895013123,
+                                  QStringLiteral("ft"));
+    QCOMPARE(distancePresentationChanged.count(), 1);
+    QCOMPARE(model.DistanceUnit(), QStringLiteral("ft"));
+    QCOMPARE(model.DistanceMultiplier(), 3.280839895013123);
+    QCOMPARE(model.headerData(FlightPlannerMissionModel::DistColumn,
+                              Qt::Horizontal).toString(),
+             QStringLiteral("Dist (ft)"));
+}
+
 void FlightPlannerMissionModelTest::mapCommandMetadataMatchesMissionSemantics()
 {
     QVERIFY(WpRow::CommandHasLocation(MAV_CMD_NAV_WAYPOINT));
@@ -269,6 +336,7 @@ void FlightPlannerMissionModelTest::mapCommandMetadataMatchesMissionSemantics()
     QVERIFY(WpRow::CommandHasLocation(
         MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION));
     QVERIFY(WpRow::CommandHasLocation(MAV_CMD_NAV_RALLY_POINT));
+    QVERIFY(WpRow::CommandHasLocation(188));
     QVERIFY(WpRow::FrameHasGlobalLocation(MAV_FRAME_GLOBAL));
     QVERIFY(WpRow::FrameHasGlobalLocation(MAV_FRAME_GLOBAL_RELATIVE_ALT));
     QVERIFY(!WpRow::FrameHasGlobalLocation(MAV_FRAME_LOCAL_NED));

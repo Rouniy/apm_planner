@@ -73,9 +73,6 @@ void RangeFinderConfig::activeUASSet(UASInterface *uas)
         disconnect(m_uas, SIGNAL(rangeFinderUpdate(UASInterface*,double,double)),
                    this, SLOT(rangeFinderUpdate(UASInterface*,double,double)));
 
-        disconnect(m_uas,SIGNAL(parameterChanged(int,int,QString,QVariant)),
-                   this,SLOT(parameterChanged(int,int,QString,QVariant)));
-
         disconnect(ui.functionComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(sendParameterUpdates()));
         disconnect(ui.gainSlider, SIGNAL(valueChanged(int)), this, SLOT(gainSliderChanged(int)));
         disconnect(ui.gainSlider, SIGNAL(sliderReleased()), this, SLOT(sendParameterUpdates()));
@@ -88,13 +85,10 @@ void RangeFinderConfig::activeUASSet(UASInterface *uas)
         disconnect(ui.settleTimeEdit, SIGNAL(editingFinished()), this, SLOT(sendParameterUpdates()));
         disconnect(ui.stopPinEdit, SIGNAL(editingFinished()), this, SLOT(sendParameterUpdates()));
     }
-    m_uas = uas;
+    AP2ConfigWidget::activeUASSet(uas);
     if(m_uas){
         connect(m_uas, SIGNAL(rangeFinderUpdate(UASInterface*,double,double)),
                 this, SLOT(rangeFinderUpdate(UASInterface*,double,double)));
-
-        connect(m_uas,SIGNAL(parameterChanged(int,int,QString,QVariant)),
-                   this,SLOT(parameterChanged(int,int,QString,QVariant)));
 
         connect(ui.typeComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(rangeFinderTypeChanged(int)));
         connect(ui.functionComboBox, SIGNAL(currentIndexChanged(int)), this, SLOT(sendParameterUpdates()));

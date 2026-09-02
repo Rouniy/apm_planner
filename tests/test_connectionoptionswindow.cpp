@@ -1,15 +1,10 @@
 #include "ui/ConnectionOptionsViewModel.h"
 #include "ui/ConnectionOptionsWindow.h"
 
-#include <QCheckBox>
 #include <QComboBox>
-#include <QLabel>
-#include <QPushButton>
 #include <QPointer>
-#include <QSettings>
+#include <QPushButton>
 #include <QSignalSpy>
-#include <QSpinBox>
-#include <QTemporaryDir>
 #include <QtTest>
 
 class ConnectionOptionsWindowTest final : public QObject
@@ -17,250 +12,155 @@ class ConnectionOptionsWindowTest final : public QObject
     Q_OBJECT
 
 private slots:
-    void defaultsAndCanonicalPrecedence();
-    void legacyFallbacksAreMigratable();
-    void applyPersistsAndDefendsSystemId();
+    void catalogMatchesReferenceAndDeduplicatesPorts();
+    void viewModelTracksTransportAndBaud();
     void windowMatchesReferenceContract();
-    void saveDoesNotCloseAndCloseDoesNotSave();
-    void openWindowBridgesApplyToRuntimeOwner();
+    void connectEmitsRequestAndKeepsWindowOpen();
+    void openWindowBridgesRequestToRuntimeOwner();
 };
 
 class RuntimeOwner final : public QWidget
 {
     Q_OBJECT
 public slots:
-    void applyConnectionOptions(int newBaud, bool newHeartbeat,
-                                int newSystemId)
+    void openAdditionalConnection(const QString &newConnection, int newBaud)
     {
+        connection = newConnection;
         baud = newBaud;
-        heartbeat = newHeartbeat;
-        systemId = newSystemId;
-        ++applyCount;
+        ++requestCount;
     }
 
 public:
+    QString connection;
     int baud = 0;
-    bool heartbeat = false;
-    int systemId = 0;
-    int applyCount = 0;
+    int requestCount = 0;
 };
 
-void ConnectionOptionsWindowTest::defaultsAndCanonicalPrecedence()
+void ConnectionOptionsWindowTest::catalogMatchesReferenceAndDeduplicatesPorts()
 {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
-                       QSettings::IniFormat);
-
-    ConnectionOptionsViewModel defaults(&settings);
-    QCOMPARE(defaults.Bauds(),
-             QList<int>({9600, 19200, 38400, 57600, 115200, 230400,
-                         460800, 921600}));
-    QCOMPARE(defaults.SelectedBaud(), 115200);
-    QCOMPARE(defaults.GcsSysid(), 255);
-    QVERIFY(defaults.SendGcsHeartbeat());
-
-    settings.setValue(QStringLiteral("baudrate"), 230400);
-    settings.setValue(QStringLiteral("CHK_GCSheartbeat"), false);
-    settings.setValue(QStringLiteral("gcsid"), 42);
-    settings.setValue(QStringLiteral("GCS_sysid"), 43);
-    settings.setValue(QStringLiteral("GLOBAL_SETTINGS/MAVLINK_ID"), 44);
-    settings.sync();
-
-    ConnectionOptionsViewModel canonical(&settings);
-    QCOMPARE(canonical.SelectedBaud(), 230400);
-    QCOMPARE(canonical.GcsSysid(), 42);
-    QVERIFY(!canonical.SendGcsHeartbeat());
-
-    settings.setValue(QStringLiteral("gcsid"), 0);
-    settings.setValue(QStringLiteral("baudrate"), 0);
-    settings.sync();
-    ConnectionOptionsViewModel invalidCanonical(&settings);
-    QCOMPARE(invalidCanonical.GcsSysid(), 255);
-    QCOMPARE(invalidCanonical.SelectedBaud(), 115200);
+    const QStringList connections =
+        ConnectionOptionsViewModel::availableConnections(
+            {QStringLiteral("ttyUSB0"), QStringLiteral(" COM9 "),
+             QStringLiteral("ttyUSB0"), QString()});
+    QCOMPARE(connections,
+             QStringList({QStringLiteral("ttyUSB0"), QStringLiteral("COM9"),
+                          QStringLiteral("TCP"), QStringLiteral("UDP"),
+                          QStringLiteral("UDPCl"), QStringLiteral("WS")}));
+    QCOMPARE(ConnectionOptionsViewModel::availableBaudRates(),
+             QList<int>({1200, 2400, 4800, 9600, 19200, 28800, 38400,
+                         57600, 111100, 115200, 230400, 460800, 500000,
+                         625000, 921600, 1000000, 1500000}));
 }
 
-void ConnectionOptionsWindowTest::legacyFallbacksAreMigratable()
+void ConnectionOptionsWindowTest::viewModelTracksTransportAndBaud()
 {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
-                       QSettings::IniFormat);
-    settings.setValue(QStringLiteral("SERIALLINK_COMM_BAUD"), 57600);
-    settings.setValue(
-        QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED"), false);
-    settings.setValue(QStringLiteral("GCS_sysid"), 17);
-    settings.sync();
+    ConnectionOptionsViewModel model({QStringLiteral("ttyACM0")});
+    QCOMPARE(model.SelectedConnection(), QStringLiteral("ttyACM0"));
+    QCOMPARE(model.SelectedBaud(), 115200);
+    QVERIFY(model.BaudEnabled());
 
-    ConnectionOptionsViewModel model(&settings);
-    QCOMPARE(model.SelectedBaud(), 57600);
-    QCOMPARE(model.GcsSysid(), 17);
-    QVERIFY(!model.SendGcsHeartbeat());
+    QSignalSpy baudEnabledChanged(
+        &model, &ConnectionOptionsViewModel::BaudEnabledChanged);
+    model.setSelectedConnection(QStringLiteral("TCP"));
+    QVERIFY(!model.BaudEnabled());
+    QCOMPARE(baudEnabledChanged.count(), 1);
 
-    settings.remove(QStringLiteral("GCS_sysid"));
-    settings.setValue(QStringLiteral("GLOBAL_SETTINGS/MAVLINK_ID"), 31);
-    settings.sync();
-    ConnectionOptionsViewModel apmLegacy(&settings);
-    QCOMPARE(apmLegacy.GcsSysid(), 31);
-}
+    model.setSelectedConnection(QStringLiteral("UDPCl"));
+    QCOMPARE(baudEnabledChanged.count(), 1);
+    model.setSelectedConnection(QStringLiteral("ttyACM0"));
+    QVERIFY(model.BaudEnabled());
+    QCOMPARE(baudEnabledChanged.count(), 2);
 
-void ConnectionOptionsWindowTest::applyPersistsAndDefendsSystemId()
-{
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
-                       QSettings::IniFormat);
-    ConnectionOptionsViewModel model(&settings);
-    model.setSelectedBaud(460800);
-    model.setSendGcsHeartbeat(false);
-    model.setGcsSysid(0);
-    QSignalSpy applied(&model,
-                       &ConnectionOptionsViewModel::settingsApplied);
-
-    QVERIFY(model.Apply());
-    QCOMPARE(model.GcsSysid(), 255);
-    QCOMPARE(model.Status(), QStringLiteral("Saved."));
-    QCOMPARE(applied.count(), 1);
-    QCOMPARE(applied.takeFirst(),
-             QVariantList({460800, false, 255}));
-
-    settings.sync();
-    QCOMPARE(settings.value(QStringLiteral("baudrate")).toInt(), 460800);
-    QVERIFY(!settings.value(
-        QStringLiteral("CHK_GCSheartbeat")).toBool());
-    QCOMPARE(settings.value(QStringLiteral("gcsid")).toInt(), 255);
-    QCOMPARE(settings.value(
-        QStringLiteral("GLOBAL_SETTINGS/MAVLINK_ID")).toInt(), 255);
-    QVERIFY(!settings.value(
-        QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED")).toBool());
+    model.setSelectedBaud(921600);
+    QCOMPARE(model.SelectedBaud(), 921600);
+    model.setSelectedBaud(12345);
+    QCOMPARE(model.SelectedBaud(), 921600);
 }
 
 void ConnectionOptionsWindowTest::windowMatchesReferenceContract()
 {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
-                       QSettings::IniFormat);
-    ConnectionOptionsWindow window(&settings);
+    ConnectionOptionsWindow window(
+        {QStringLiteral("ttyUSB0"), QStringLiteral("ttyACM0")});
 
-    QCOMPARE(window.objectName(), QStringLiteral("ConnectionOptionsWindow"));
-    QCOMPARE(window.windowTitle(), QStringLiteral("Connection Options"));
-    QCOMPARE(window.size(), QSize(340, 230));
-    QCOMPARE(window.minimumSize(), QSize(340, 230));
-    QCOMPARE(window.maximumSize(), QSize(340, 230));
+    QCOMPARE(window.objectName(), QStringLiteral("ConnectionOptions"));
+    QCOMPARE(window.windowTitle(), QStringLiteral("Connections"));
+    QCOMPARE(window.size(), QSize(228, 75));
+    QCOMPARE(window.minimumSize(), QSize(228, 75));
+    QCOMPARE(window.maximumSize(), QSize(228, 75));
     QVERIFY(!window.isModal());
 
+    auto *connection = window.findChild<QComboBox *>(
+        QStringLiteral("CMB_serialport"));
     auto *baud = window.findChild<QComboBox *>(
-        QStringLiteral("SelectedBaud"));
-    auto *systemId = window.findChild<QSpinBox *>(
-        QStringLiteral("GcsSysid"));
-    auto *heartbeat = window.findChild<QCheckBox *>(
-        QStringLiteral("SendGcsHeartbeat"));
-    auto *baudLabel = window.findChild<QLabel *>(
-        QStringLiteral("DefaultBaudRateLabel"));
-    auto *systemIdLabel = window.findChild<QLabel *>(
-        QStringLiteral("GcsSystemIdLabel"));
-    auto *status = window.findChild<QLabel *>(QStringLiteral("Status"));
-    auto *save = window.findChild<QPushButton *>(
-        QStringLiteral("ApplyCommand"));
-    auto *close = window.findChild<QPushButton *>(QStringLiteral("OnClose"));
+        QStringLiteral("CMB_baudrate"));
+    auto *connectButton = window.findChild<QPushButton *>(
+        QStringLiteral("BUT_connect"));
+    QVERIFY(connection);
     QVERIFY(baud);
-    QVERIFY(systemId);
-    QVERIFY(heartbeat);
-    QVERIFY(baudLabel);
-    QVERIFY(systemIdLabel);
-    QVERIFY(status);
-    QVERIFY(save);
-    QVERIFY(close);
-    QCOMPARE(baud->count(), 8);
-    QCOMPARE(baud->itemData(0).toInt(), 9600);
-    QCOMPARE(baud->itemData(7).toInt(), 921600);
-    QCOMPARE(baud->sizePolicy().horizontalPolicy(), QSizePolicy::Expanding);
-    QCOMPARE(baudLabel->text(), QStringLiteral("Default baud rate"));
-    QCOMPARE(systemIdLabel->text(), QStringLiteral("GCS system id"));
-    QCOMPARE(systemId->minimum(), 1);
-    QCOMPARE(systemId->maximum(), 255);
-    QCOMPARE(systemId->singleStep(), 1);
-    QCOMPARE(heartbeat->text(), QStringLiteral("Send GCS heartbeat"));
-    QCOMPARE(save->text(), QStringLiteral("Save"));
-    QCOMPARE(close->text(), QStringLiteral("Close"));
-    QVERIFY(save->minimumWidth() >= 80);
-    QVERIFY(close->minimumWidth() >= 80);
+    QVERIFY(connectButton);
+    QCOMPARE(connection->geometry(), QRect(13, 13, 121, 21));
+    QCOMPARE(baud->geometry(), QRect(13, 40, 121, 21));
+    QCOMPARE(connectButton->geometry(), QRect(140, 13, 75, 23));
+    QCOMPARE(connectButton->text(), QStringLiteral("Connect"));
+    QCOMPARE(connection->count(), 6);
+    QCOMPARE(connection->itemText(0), QStringLiteral("ttyUSB0"));
+    QCOMPARE(connection->itemText(2), QStringLiteral("TCP"));
+    QCOMPARE(connection->itemText(5), QStringLiteral("WS"));
+    QCOMPARE(baud->count(), 17);
+    QCOMPARE(baud->itemData(0).toInt(), 1200);
+    QCOMPARE(baud->itemData(16).toInt(), 1500000);
+    QCOMPARE(baud->currentData().toInt(), 115200);
+    QVERIFY(baud->isEnabled());
+
+    connection->setCurrentText(QStringLiteral("UDP"));
+    QVERIFY(!baud->isEnabled());
+    connection->setCurrentText(QStringLiteral("ttyACM0"));
+    QVERIFY(baud->isEnabled());
 }
 
-void ConnectionOptionsWindowTest::saveDoesNotCloseAndCloseDoesNotSave()
+void ConnectionOptionsWindowTest::connectEmitsRequestAndKeepsWindowOpen()
 {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
-                       QSettings::IniFormat);
-    settings.setValue(QStringLiteral("baudrate"), 115200);
-    settings.sync();
-
-    ConnectionOptionsWindow window(&settings);
+    ConnectionOptionsWindow window({QStringLiteral("ttyUSB0")});
+    auto *connection = window.findChild<QComboBox *>(
+        QStringLiteral("CMB_serialport"));
     auto *baud = window.findChild<QComboBox *>(
-        QStringLiteral("SelectedBaud"));
-    auto *systemId = window.findChild<QSpinBox *>(
-        QStringLiteral("GcsSysid"));
-    auto *save = window.findChild<QPushButton *>(
-        QStringLiteral("ApplyCommand"));
-    auto *close = window.findChild<QPushButton *>(QStringLiteral("OnClose"));
+        QStringLiteral("CMB_baudrate"));
+    auto *connectButton = window.findChild<QPushButton *>(
+        QStringLiteral("BUT_connect"));
+    QVERIFY(connection);
     QVERIFY(baud);
-    QVERIFY(systemId);
-    QVERIFY(save);
-    QVERIFY(close);
+    QVERIFY(connectButton);
 
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
-    baud->setCurrentIndex(baud->findData(230400));
-    systemId->setValue(77);
-    QSignalSpy applied(&window, &ConnectionOptionsWindow::settingsApplied);
-    QTest::mouseClick(save, Qt::LeftButton);
+    connection->setCurrentText(QStringLiteral("ttyUSB0"));
+    baud->setCurrentIndex(baud->findData(460800));
+    QSignalSpy requested(&window, &ConnectionOptionsWindow::connectRequested);
+    QTest::mouseClick(connectButton, Qt::LeftButton);
+    QCOMPARE(requested.count(), 1);
+    QCOMPARE(requested.takeFirst(),
+             QVariantList({QStringLiteral("ttyUSB0"), 460800}));
     QVERIFY(window.isVisible());
-    QCOMPARE(applied.count(), 1);
-    settings.sync();
-    QCOMPARE(settings.value(QStringLiteral("baudrate")).toInt(), 230400);
-    QCOMPARE(settings.value(QStringLiteral("gcsid")).toInt(), 77);
-
-    baud->setCurrentIndex(baud->findData(921600));
-    QTest::mouseClick(close, Qt::LeftButton);
-    QTRY_VERIFY(!window.isVisible());
-    settings.sync();
-    QCOMPARE(settings.value(QStringLiteral("baudrate")).toInt(), 230400);
 }
 
-void ConnectionOptionsWindowTest::openWindowBridgesApplyToRuntimeOwner()
+void ConnectionOptionsWindowTest::openWindowBridgesRequestToRuntimeOwner()
 {
-    QTemporaryDir directory;
-    QVERIFY(directory.isValid());
-    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
-                       QSettings::IniFormat);
     RuntimeOwner owner;
     QPointer<ConnectionOptionsWindow> window(
-        ConnectionOptionsWindow::OpenWindow(&owner, &settings));
+        ConnectionOptionsWindow::OpenWindow(&owner));
     QVERIFY(window);
+    auto *connection = window->findChild<QComboBox *>(
+        QStringLiteral("CMB_serialport"));
+    auto *connectButton = window->findChild<QPushButton *>(
+        QStringLiteral("BUT_connect"));
+    QVERIFY(connection);
+    QVERIFY(connectButton);
 
-    auto *baud = window->findChild<QComboBox *>(
-        QStringLiteral("SelectedBaud"));
-    auto *systemId = window->findChild<QSpinBox *>(
-        QStringLiteral("GcsSysid"));
-    auto *heartbeat = window->findChild<QCheckBox *>(
-        QStringLiteral("SendGcsHeartbeat"));
-    auto *save = window->findChild<QPushButton *>(
-        QStringLiteral("ApplyCommand"));
-    QVERIFY(baud);
-    QVERIFY(systemId);
-    QVERIFY(heartbeat);
-    QVERIFY(save);
-
-    baud->setCurrentIndex(baud->findData(921600));
-    systemId->setValue(88);
-    heartbeat->setChecked(true);
-    QTest::mouseClick(save, Qt::LeftButton);
-    QCOMPARE(owner.applyCount, 1);
-    QCOMPARE(owner.baud, 921600);
-    QVERIFY(owner.heartbeat);
-    QCOMPARE(owner.systemId, 88);
+    connection->setCurrentText(QStringLiteral("TCP"));
+    QTest::mouseClick(connectButton, Qt::LeftButton);
+    QCOMPARE(owner.requestCount, 1);
+    QCOMPARE(owner.connection, QStringLiteral("TCP"));
+    QCOMPARE(owner.baud, 115200);
 
     window->close();
     QTRY_VERIFY(window.isNull());

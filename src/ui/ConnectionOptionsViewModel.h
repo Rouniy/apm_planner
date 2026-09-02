@@ -1,59 +1,51 @@
 #ifndef CONNECTIONOPTIONSVIEWMODEL_H
 #define CONNECTIONOPTIONSVIEWMODEL_H
 
-#include <QObject>
 #include <QList>
-#include <QString>
-
-class QSettings;
+#include <QObject>
+#include <QStringList>
 
 class ConnectionOptionsViewModel final : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QStringList Connections READ Connections CONSTANT)
     Q_PROPERTY(QList<int> Bauds READ Bauds CONSTANT)
+    Q_PROPERTY(QString SelectedConnection READ SelectedConnection
+               WRITE setSelectedConnection NOTIFY SelectedConnectionChanged)
     Q_PROPERTY(int SelectedBaud READ SelectedBaud WRITE setSelectedBaud
                NOTIFY SelectedBaudChanged)
-    Q_PROPERTY(int GcsSysid READ GcsSysid WRITE setGcsSysid
-               NOTIFY GcsSysidChanged)
-    Q_PROPERTY(bool SendGcsHeartbeat READ SendGcsHeartbeat
-               WRITE setSendGcsHeartbeat NOTIFY SendGcsHeartbeatChanged)
-    Q_PROPERTY(QString Status READ Status NOTIFY StatusChanged)
+    Q_PROPERTY(bool BaudEnabled READ BaudEnabled NOTIFY BaudEnabledChanged)
 
 public:
     explicit ConnectionOptionsViewModel(QObject *parent = nullptr);
-    explicit ConnectionOptionsViewModel(QSettings *settings,
+    explicit ConnectionOptionsViewModel(const QStringList &serialPorts,
                                         QObject *parent = nullptr);
 
     static QList<int> availableBaudRates();
+    static QStringList availableConnections(const QStringList &serialPorts);
+    static bool isNetworkConnection(const QString &connection);
 
+    QStringList Connections() const;
     QList<int> Bauds() const;
+    QString SelectedConnection() const;
     int SelectedBaud() const;
-    int GcsSysid() const;
-    bool SendGcsHeartbeat() const;
-    QString Status() const;
+    bool BaudEnabled() const;
 
 public slots:
+    void setSelectedConnection(const QString &connection);
     void setSelectedBaud(int baud);
-    void setGcsSysid(int systemId);
-    void setSendGcsHeartbeat(bool enabled);
-    bool Apply();
+    bool Connect();
 
 signals:
+    void SelectedConnectionChanged(const QString &connection);
     void SelectedBaudChanged(int baud);
-    void GcsSysidChanged(int systemId);
-    void SendGcsHeartbeatChanged(bool enabled);
-    void StatusChanged(const QString &status);
-    void settingsApplied(int baud, bool sendHeartbeat, int gcsSystemId);
+    void BaudEnabledChanged(bool enabled);
+    void connectRequested(const QString &connection, int baud);
 
 private:
-    void load();
-    void setStatus(const QString &status);
-
-    QSettings *m_settings = nullptr;
+    QStringList m_connections;
+    QString m_selectedConnection;
     int m_selectedBaud = 115200;
-    int m_gcsSysid = 255;
-    bool m_sendGcsHeartbeat = true;
-    QString m_status;
 };
 
 #endif

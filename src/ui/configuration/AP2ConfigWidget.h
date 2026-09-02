@@ -31,8 +31,10 @@ This file is part of the APM_PLANNER project
 #define AP2CONFIGWIDGET_H
 
 #include <QWidget>
+#include <QPointer>
 #include "UASManager.h"
 #include "UASInterface.h"
+class QGCUASParamManager;
 class AP2ConfigWidget : public QWidget
 {
     Q_OBJECT
@@ -41,6 +43,7 @@ public:
 
 protected:
     UASInterface *m_uas{nullptr};
+    QPointer<QGCUASParamManager> m_parameterManager;
     bool showNullMAVErrorMessageBox();
     void initConnections();
     void replayCachedParameters();

@@ -59,15 +59,9 @@ QString locateResourceRoot()
     appendCandidate(candidates,
                     QDir(applicationDir).absoluteFilePath(
                         QStringLiteral("../share/APMPlanner3")));
-    appendCandidate(candidates,
-                    QDir(applicationDir).absoluteFilePath(
-                        QStringLiteral("../share/APMPlanner2")));
 
 #ifdef APM_INSTALL_DATA_DIR
     appendCandidate(candidates, QString::fromUtf8(APM_INSTALL_DATA_DIR));
-#endif
-#ifdef APM_LEGACY_INSTALL_DATA_DIR
-    appendCandidate(candidates, QString::fromUtf8(APM_LEGACY_INSTALL_DATA_DIR));
 #endif
 #ifdef APM_DEVELOPMENT_DATA_DIR
     appendCandidate(candidates, QString::fromUtf8(APM_DEVELOPMENT_DATA_DIR));
@@ -105,12 +99,6 @@ QString resourcePath(const QString &relativePath)
     return QDir(resourceRoot()).absoluteFilePath(cleanRelativePath);
 }
 
-QString legacyUserDataDirectory()
-{
-    const QString home = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    return QDir(home).absoluteFilePath(QStringLiteral("apmplanner2"));
-}
-
 QString writableDataDirectory()
 {
     const QString overridePath = qEnvironmentVariable("APM_PLANNER_HOME");
@@ -118,18 +106,15 @@ QString writableDataDirectory()
         return cleanedAbsolutePath(overridePath);
     }
 
-    // Do not strand logs, missions and parameters from an older installation.
-    const QString legacyPath = legacyUserDataDirectory();
-    if (QDir(legacyPath).exists()) {
-        return legacyPath;
-    }
-
     // Logs and downloaded vehicle data are machine-local; on Windows this
     // intentionally selects LocalAppData instead of the roaming profile.
     QString standardPath = QStandardPaths::writableLocation(
                 QStandardPaths::AppLocalDataLocation);
     if (standardPath.isEmpty()) {
-        standardPath = legacyPath;
+        const QString home = QStandardPaths::writableLocation(
+                    QStandardPaths::HomeLocation);
+        standardPath = QDir(home).absoluteFilePath(
+                    QStringLiteral("apmplanner3"));
     }
     return cleanedAbsolutePath(standardPath);
 }

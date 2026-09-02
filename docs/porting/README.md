@@ -2,7 +2,11 @@
 
 `MISSION_PLANNER_SCREEN_PARITY.tsv` is the acceptance ledger for the Qt/CMake
 reimplementation. It is based on the current reference tree at
-`/home/alex/src/MP/MissionPlanner`, not on an older WinForms release.
+`/home/alex/SRC/MP/MissionPlanner`. The separately cloned original WinForms
+tree at `/home/alex/SRC/MP/Oroginal/MissionPlanner` is the authoritative
+behavioral reference whenever the current Mission Planner 10 port is
+incomplete or ambiguous; fixes found during comparison may also be applied to
+our port.
 
 Statuses have strict meanings:
 
@@ -22,3 +26,11 @@ render captured at the reference window's minimum size and at the normal 1280x80
 The map backend is deliberately represented by several rows rather than treated as the product.
 SETUP, CONFIG, parameter editors, component-specific settings, DATA, PLAN, SIMULATION, HELP and
 TOOLS are all required parts of the same acceptance gate.
+
+The exact WinForms behavior can be checked directly in
+`/home/alex/SRC/MP/Oroginal/MissionPlanner`. For example, PLAN's `Insert Wp`
+is one parent item with both a direct click and the `At Current Position`
+child; the Qt implementation deliberately preserves those object names and
+split semantics. Safe rejection of an unknown/non-finite vehicle position is
+the documented Qt deviation from the original ability to create a `0/0`
+waypoint.

@@ -3,6 +3,7 @@
 #include "ui/configuration/ConfigElevationSourcesView.h"
 #include "ui/configuration/ConfigElevationSourcesViewModel.h"
 #include "ui/configuration/ElevationSourceService.h"
+#include "ui/configuration/SrtmElevationSource.h"
 #include "ui/BackstageView.h"
 
 #include <QAbstractItemView>
@@ -331,6 +332,8 @@ void ConfigElevationSourcesViewTest::init()
     QSettings settings;
     settings.setFallbacksEnabled(false);
     settings.clear();
+    settings.setValue(QString::fromLatin1(
+        SrtmElevationSource::AutoDownloadSettingsKey), false);
     settings.sync();
 }
 

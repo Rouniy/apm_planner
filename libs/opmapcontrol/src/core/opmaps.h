@@ -65,8 +65,6 @@ namespace core {
         ~OPMaps();
 
         static OPMaps* Instance();
-        bool ImportFromGMDB(const QString &file);
-        bool ExportToGMDB(const QString &file);
         /// <summary>
         /// timeout for map connections
         /// </summary>

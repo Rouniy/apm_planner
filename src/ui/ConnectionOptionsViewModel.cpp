@@ -1,41 +1,72 @@
 #include "ConnectionOptionsViewModel.h"
 
-#include <QSettings>
+#include <QSerialPortInfo>
+#include <QSet>
 
 namespace {
-constexpr int kDefaultBaud = 115200;
-constexpr int kDefaultGcsSystemId = 255;
-
-int validSystemIdOrDefault(int systemId)
-{
-    return systemId >= 1 && systemId <= 255
-        ? systemId
-        : kDefaultGcsSystemId;
-}
-
-int validBaudOrDefault(int baud)
-{
-    return ConnectionOptionsViewModel::availableBaudRates().contains(baud)
-        ? baud
-        : kDefaultBaud;
-}
+const QStringList kNetworkConnections = {
+    QStringLiteral("TCP"),
+    QStringLiteral("UDP"),
+    QStringLiteral("UDPCl"),
+    QStringLiteral("WS")
+};
 }
 
 ConnectionOptionsViewModel::ConnectionOptionsViewModel(QObject *parent)
-    : ConnectionOptionsViewModel(static_cast<QSettings *>(nullptr), parent)
+    : ConnectionOptionsViewModel([] {
+          QStringList ports;
+          const auto available = QSerialPortInfo::availablePorts();
+          ports.reserve(available.size());
+          for (const QSerialPortInfo &port : available) {
+              ports.append(port.portName());
+          }
+          return ports;
+      }(), parent)
 {}
 
-ConnectionOptionsViewModel::ConnectionOptionsViewModel(QSettings *settings,
-                                                       QObject *parent)
+ConnectionOptionsViewModel::ConnectionOptionsViewModel(
+    const QStringList &serialPorts, QObject *parent)
     : QObject(parent),
-      m_settings(settings ? settings : new QSettings(this))
+      m_connections(availableConnections(serialPorts))
 {
-    load();
+    if (!m_connections.isEmpty()) {
+        m_selectedConnection = m_connections.first();
+    }
 }
 
 QList<int> ConnectionOptionsViewModel::availableBaudRates()
 {
-    return {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600};
+    // MissionPlanner/Controls/ConnectionOptions.resx, in display order.
+    return {1200, 2400, 4800, 9600, 19200, 28800, 38400, 57600,
+            111100, 115200, 230400, 460800, 500000, 625000,
+            921600, 1000000, 1500000};
+}
+
+QStringList ConnectionOptionsViewModel::availableConnections(
+    const QStringList &serialPorts)
+{
+    QStringList result;
+    QSet<QString> seen;
+    for (const QString &candidate : serialPorts) {
+        const QString port = candidate.trimmed();
+        if (!port.isEmpty() && !seen.contains(port)) {
+            result.append(port);
+            seen.insert(port);
+        }
+    }
+    result.append(kNetworkConnections);
+    return result;
+}
+
+bool ConnectionOptionsViewModel::isNetworkConnection(
+    const QString &connection)
+{
+    return kNetworkConnections.contains(connection);
+}
+
+QStringList ConnectionOptionsViewModel::Connections() const
+{
+    return m_connections;
 }
 
 QList<int> ConnectionOptionsViewModel::Bauds() const
@@ -43,122 +74,51 @@ QList<int> ConnectionOptionsViewModel::Bauds() const
     return availableBaudRates();
 }
 
+QString ConnectionOptionsViewModel::SelectedConnection() const
+{
+    return m_selectedConnection;
+}
+
 int ConnectionOptionsViewModel::SelectedBaud() const
 {
     return m_selectedBaud;
 }
 
-int ConnectionOptionsViewModel::GcsSysid() const
+bool ConnectionOptionsViewModel::BaudEnabled() const
 {
-    return m_gcsSysid;
+    return !m_selectedConnection.isEmpty()
+        && !isNetworkConnection(m_selectedConnection);
 }
 
-bool ConnectionOptionsViewModel::SendGcsHeartbeat() const
+void ConnectionOptionsViewModel::setSelectedConnection(
+    const QString &connection)
 {
-    return m_sendGcsHeartbeat;
-}
-
-QString ConnectionOptionsViewModel::Status() const
-{
-    return m_status;
+    if (!m_connections.contains(connection)
+        || m_selectedConnection == connection) {
+        return;
+    }
+    const bool oldBaudEnabled = BaudEnabled();
+    m_selectedConnection = connection;
+    emit SelectedConnectionChanged(connection);
+    if (oldBaudEnabled != BaudEnabled()) {
+        emit BaudEnabledChanged(BaudEnabled());
+    }
 }
 
 void ConnectionOptionsViewModel::setSelectedBaud(int baud)
 {
-    if (m_selectedBaud == baud) {
+    if (!availableBaudRates().contains(baud) || m_selectedBaud == baud) {
         return;
     }
     m_selectedBaud = baud;
     emit SelectedBaudChanged(baud);
 }
 
-void ConnectionOptionsViewModel::setGcsSysid(int systemId)
+bool ConnectionOptionsViewModel::Connect()
 {
-    if (m_gcsSysid == systemId) {
-        return;
-    }
-    m_gcsSysid = systemId;
-    emit GcsSysidChanged(systemId);
-}
-
-void ConnectionOptionsViewModel::setSendGcsHeartbeat(bool enabled)
-{
-    if (m_sendGcsHeartbeat == enabled) {
-        return;
-    }
-    m_sendGcsHeartbeat = enabled;
-    emit SendGcsHeartbeatChanged(enabled);
-}
-
-bool ConnectionOptionsViewModel::Apply()
-{
-    const int baud = validBaudOrDefault(m_selectedBaud);
-    if (baud != m_selectedBaud) {
-        setSelectedBaud(baud);
-    }
-    const int systemId = validSystemIdOrDefault(m_gcsSysid);
-    if (systemId != m_gcsSysid) {
-        setGcsSysid(systemId);
-    }
-
-    // Mission Planner canonical keys.
-    m_settings->setValue(QStringLiteral("baudrate"), baud);
-    m_settings->setValue(QStringLiteral("CHK_GCSheartbeat"),
-                         m_sendGcsHeartbeat);
-    m_settings->setValue(QStringLiteral("gcsid"), systemId);
-
-    // Keep the APM Planner 2 settings surfaces converged during the 3.0 port.
-    m_settings->setValue(QStringLiteral("GLOBAL_SETTINGS/MAVLINK_ID"),
-                         systemId);
-    m_settings->setValue(
-        QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED"),
-        m_sendGcsHeartbeat);
-    m_settings->sync();
-
-    if (m_settings->status() != QSettings::NoError) {
-        setStatus(tr("Save failed."));
+    if (m_selectedConnection.isEmpty()) {
         return false;
     }
-
-    setStatus(tr("Saved."));
-    emit settingsApplied(baud, m_sendGcsHeartbeat, systemId);
+    emit connectRequested(m_selectedConnection, m_selectedBaud);
     return true;
-}
-
-void ConnectionOptionsViewModel::load()
-{
-    m_settings->sync();
-
-    m_selectedBaud = m_settings->contains(QStringLiteral("baudrate"))
-        ? m_settings->value(QStringLiteral("baudrate")).toInt()
-        : m_settings->value(QStringLiteral("SERIALLINK_COMM_BAUD"),
-                            kDefaultBaud).toInt();
-    m_selectedBaud = validBaudOrDefault(m_selectedBaud);
-
-    m_sendGcsHeartbeat =
-        m_settings->contains(QStringLiteral("CHK_GCSheartbeat"))
-        ? m_settings->value(QStringLiteral("CHK_GCSheartbeat")).toBool()
-        : m_settings->value(
-              QStringLiteral("QGC_MAINWINDOW/HEARTBEATS_ENABLED"), true)
-              .toBool();
-
-    if (m_settings->contains(QStringLiteral("gcsid"))) {
-        m_gcsSysid = m_settings->value(QStringLiteral("gcsid")).toInt();
-    } else if (m_settings->contains(QStringLiteral("GCS_sysid"))) {
-        m_gcsSysid = m_settings->value(QStringLiteral("GCS_sysid")).toInt();
-    } else {
-        m_gcsSysid = m_settings->value(
-            QStringLiteral("GLOBAL_SETTINGS/MAVLINK_ID"),
-            kDefaultGcsSystemId).toInt();
-    }
-    m_gcsSysid = validSystemIdOrDefault(m_gcsSysid);
-}
-
-void ConnectionOptionsViewModel::setStatus(const QString &status)
-{
-    if (m_status == status) {
-        return;
-    }
-    m_status = status;
-    emit StatusChanged(status);
 }

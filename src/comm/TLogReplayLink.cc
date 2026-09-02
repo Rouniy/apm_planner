@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QDateTime>
 #include <QFile>
+#include <QMetaObject>
 
 TLogReplayLink::TLogReplayLink(QObject *parent) :
     LinkInterface(),
@@ -15,10 +16,21 @@ TLogReplayLink::TLogReplayLink(QObject *parent) :
     m_threadRun(false),
     m_speedVar(50),
     m_posVar(0),
+    m_pause(false),
     m_mavlinkDecoder(new MAVLinkDecoder()),
+    m_ownsMavlinkDecoder(true),
     m_mavlinkInspector(NULL)
 {
     Q_UNUSED(parent);
+}
+
+TLogReplayLink::~TLogReplayLink()
+{
+    disconnect();
+    if (m_ownsMavlinkDecoder) {
+        delete m_mavlinkDecoder;
+    }
+    m_mavlinkDecoder = nullptr;
 }
 int TLogReplayLink::getId() const
 {
@@ -58,7 +70,12 @@ bool TLogReplayLink::connect()
 }
 bool TLogReplayLink::disconnect()
 {
-    return false;
+    stop();
+    requestInterruption();
+    if (QThread::currentThread() != this) {
+        wait();
+    }
+    return true;
 }
 qint64 TLogReplayLink::bytesAvailable()
 {
@@ -101,7 +118,19 @@ bool TLogReplayLink::isPaused()
 }
 void TLogReplayLink::setMavlinkDecoder(MAVLinkDecoder *decoder)
 {
-    m_mavlinkDecoder = decoder;
+    if (decoder == m_mavlinkDecoder) {
+        return;
+    }
+    if (m_ownsMavlinkDecoder) {
+        delete m_mavlinkDecoder;
+    }
+    if (decoder) {
+        m_mavlinkDecoder = decoder;
+        m_ownsMavlinkDecoder = false;
+    } else {
+        m_mavlinkDecoder = new MAVLinkDecoder();
+        m_ownsMavlinkDecoder = true;
+    }
 }
 void TLogReplayLink::setMavlinkInspector(QGCMAVLinkInspector *inspector)
 {
@@ -119,8 +148,12 @@ void TLogReplayLink::run()
     file.open(QIODevice::ReadOnly);
     int bytesize = 0;
     qint64 msecs = QDateTime::currentMSecsSinceEpoch();
-    MainWindow::instance()->toolBar().disableConnectWidget(true);
-    MainWindow::instance()->toolBar().overrideDisableConnectWidget(true);
+    QMetaObject::invokeMethod(LinkManager::instance(), []() {
+        if (!LinkManager::instance()->isShuttingDown()) {
+            MainWindow::instance()->toolBar().disableConnectWidget(true);
+            MainWindow::instance()->toolBar().overrideDisableConnectWidget(true);
+        }
+    }, Qt::QueuedConnection);
     int privSpeedVar = 100;
     mavlink_message_t message;
     mavlink_status_t status;
@@ -131,7 +164,9 @@ void TLogReplayLink::run()
     qint64 lastPcTime = 0;
     bool nexttime = false;
     qint64 privatepos = 0;
-    while (!file.atEnd() && m_threadRun)
+    UASInterface *replayUas = nullptr;
+    int replaySystemId = -1;
+    while (!file.atEnd() && m_threadRun && !isInterruptionRequested())
     {
         if (QDateTime::currentMSecsSinceEpoch() - msecs > 1000)
         {
@@ -238,6 +273,8 @@ void TLogReplayLink::run()
                             ArduPilotMegaMAV* mav = new ArduPilotMegaMAV(0, message.sysid);
                             mav->setSystemType((int)heartbeat.type);
                             uas = mav;
+                            replayUas = mav;
+                            replaySystemId = message.sysid;
                             // Make UAS aware that this link can be used to communicate with the actual robot
                             uas->addLink(this);
                             UASObject *obj = new UASObject();
@@ -260,17 +297,15 @@ void TLogReplayLink::run()
                                 msleep(100);
                                 if (!m_threadRun)
                                 {
-                                    //Break out
-                                    MainWindow::instance()->toolBar().overrideDisableConnectWidget(false);
-                                    MainWindow::instance()->toolBar().disableConnectWidget(false);
-                                    emit disconnected(this);
-                                    emit disconnected();
-                                    emit connected(false);
-                                    UASManager::instance()->removeUAS(UASManager::instance()->getActiveUAS());
-                                    return;
+                                    // Stop promptly. Common cleanup below is
+                                    // queued back to the UI thread.
+                                    break;
                                 }
                             }
-                            msleep(realdelay - repeat);
+                            if (!m_threadRun || isInterruptionRequested()) {
+                                break;
+                            }
+                            msleep(realdelay - repeat * 100);
                             //msleep(delay / ((double)privSpeedVar / 100.0));
                         }
                         else
@@ -278,7 +313,9 @@ void TLogReplayLink::run()
                             msleep(1);
                         }
                         uas->receiveMessage(this,message);
-                        LinkManager::instance()->getUasObject(message.sysid)->messageReceived(this,message);
+                        if (UASObject *object = LinkManager::instance()->getUasObject(message.sysid)) {
+                            object->messageReceived(this,message);
+                        }
                         m_mavlinkDecoder->receiveMessage(this,message);
                         if (m_mavlinkInspector)
                         {
@@ -293,7 +330,7 @@ void TLogReplayLink::run()
 
             }
         }
-        while (m_pause)
+        while (m_pause && m_threadRun && !isInterruptionRequested())
         {
             msleep(100);
         }
@@ -303,17 +340,25 @@ void TLogReplayLink::run()
         m_toBeDeleted = true;
     }
     LinkManager *lm = LinkManager::instance();
-    if (lm){
-        LinkManager::instance()->removeSimObject(UASManager::instance()->getActiveUAS()->getSystemId());
-    } else {
-        QLOG_ERROR() << "TLogReplayLink: failed to get Linkmanager instance";
-    }
-    MainWindow::instance()->toolBar().overrideDisableConnectWidget(false);
-    MainWindow::instance()->toolBar().disableConnectWidget(false);
+    QMetaObject::invokeMethod(lm, [lm, replayUas, replaySystemId]() {
+        UASManager *uasManager = UASManager::instance();
+        if (lm->isShuttingDown() || uasManager->isShuttingDown()) {
+            return;
+        }
+        if (replaySystemId >= 0) {
+            lm->removeSimObject(static_cast<uint8_t>(replaySystemId));
+        }
+        // Treat the captured pointer only as an identity token until the UI
+        // thread confirms that UASManager still owns the replay vehicle.
+        if (replayUas && uasManager->getUASList().contains(replayUas)) {
+            uasManager->removeUAS(replayUas);
+        }
+        MainWindow::instance()->toolBar().overrideDisableConnectWidget(false);
+        MainWindow::instance()->toolBar().disableConnectWidget(false);
+    }, Qt::QueuedConnection);
     emit disconnected(this);
     emit disconnected();
     emit connected(false);
-    UASManager::instance()->removeUAS(UASManager::instance()->getActiveUAS());
 }
 
 void TLogReplayLink::setLog(QString logfile)
@@ -328,5 +373,5 @@ void TLogReplayLink::stop()
 
 bool TLogReplayLink::toBeDeleted()
 {
-    return m_toBeDeleted;
+    return m_toBeDeleted.load();
 }

@@ -8,15 +8,101 @@
 #include "GAudioOutput.h"
 #include "ArduPilotMegaMAV.h"
 #include "UASManager.h"
+#include "map/CompiledMapBackends.h"
+#include "map/MapWidgetFactory.h"
 
+#include <QComboBox>
 #include <QFileDialog>
 #include <QDialog>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QLabel>
+#include <QSignalBlocker>
 
 QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
     QWidget(parent),
     ui(new Ui::QGCSettingsWidget)
 {
     ui->setupUi(this);
+
+    RegisterCompiledMapBackends();
+    auto *mapGroup = new QGroupBox(tr("Aircraft Icon / Map"), ui->general);
+    mapGroup->setObjectName(QStringLiteral("MapSettingsGroup"));
+    auto *mapLayout = new QFormLayout(mapGroup);
+    m_mapWidgetBackendComboBox = new QComboBox(mapGroup);
+    m_mapWidgetBackendComboBox->setObjectName(
+        QStringLiteral("MapWidgetBackendComboBox"));
+    mapLayout->addRow(tr("Map Widget"), m_mapWidgetBackendComboBox);
+    auto *mapNote = new QLabel(
+        tr("Map widgets use the same provider and tile cache. "
+           "Changes take effect after restart."), mapGroup);
+    mapNote->setObjectName(QStringLiteral("MapWidgetBackendNote"));
+    mapNote->setWordWrap(true);
+    mapLayout->addRow(mapNote);
+    m_mapWidgetBackendStatus = new QLabel(mapGroup);
+    m_mapWidgetBackendStatus->setObjectName(
+        QStringLiteral("MapWidgetBackendStatus"));
+    m_mapWidgetBackendStatus->setWordWrap(true);
+    mapLayout->addRow(m_mapWidgetBackendStatus);
+    ui->gridLayout_3->removeItem(ui->verticalSpacer_2);
+    ui->gridLayout_3->removeItem(ui->verticalSpacer);
+    delete ui->verticalSpacer_2;
+    delete ui->verticalSpacer;
+    ui->verticalSpacer_2 = nullptr;
+    ui->verticalSpacer = nullptr;
+    ui->gridLayout_3->addWidget(mapGroup, 4, 0, 1, 3);
+
+    auto *unitsGroup = new QGroupBox(tr("Units"), ui->general);
+    unitsGroup->setObjectName(QStringLiteral("PlannerUnitsGroup"));
+    auto *unitsLayout = new QFormLayout(unitsGroup);
+    m_altitudeUnitsComboBox = new QComboBox(unitsGroup);
+    m_altitudeUnitsComboBox->setObjectName(QStringLiteral("CMB_altunits"));
+    m_altitudeUnitsComboBox->addItem(tr("Meters"),
+                                     QStringLiteral("Meters"));
+    m_altitudeUnitsComboBox->addItem(tr("Feet"), QStringLiteral("Feet"));
+    const QString configuredAltitudeUnits = QSettings().value(
+        QStringLiteral("altunits"), QStringLiteral("Meters")).toString();
+    int altitudeUnitsIndex = m_altitudeUnitsComboBox->findData(
+        configuredAltitudeUnits);
+    if (altitudeUnitsIndex < 0) altitudeUnitsIndex = 0;
+    m_altitudeUnitsComboBox->setCurrentIndex(altitudeUnitsIndex);
+    unitsLayout->addRow(tr("Alt Units"), m_altitudeUnitsComboBox);
+    m_distanceUnitsComboBox = new QComboBox(unitsGroup);
+    m_distanceUnitsComboBox->setObjectName(QStringLiteral("CMB_distunits"));
+    m_distanceUnitsComboBox->addItem(tr("Meters"),
+                                     QStringLiteral("Meters"));
+    m_distanceUnitsComboBox->addItem(tr("Feet"), QStringLiteral("Feet"));
+    const QString configuredDistanceUnits = QSettings().value(
+        QStringLiteral("distunits"), QStringLiteral("Meters")).toString();
+    int distanceUnitsIndex = m_distanceUnitsComboBox->findData(
+        configuredDistanceUnits);
+    if (distanceUnitsIndex < 0) distanceUnitsIndex = 0;
+    m_distanceUnitsComboBox->setCurrentIndex(distanceUnitsIndex);
+    unitsLayout->addRow(tr("Dist Units"), m_distanceUnitsComboBox);
+    ui->gridLayout_3->addWidget(unitsGroup, 5, 0, 1, 3);
+    ui->gridLayout_3->setRowStretch(6, 1);
+
+    populateMapWidgetBackends();
+    connect(m_mapWidgetBackendComboBox,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &QGCSettingsWidget::mapWidgetBackendChanged);
+    connect(m_altitudeUnitsComboBox,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &QGCSettingsWidget::altitudeUnitsIndexChanged);
+    connect(m_distanceUnitsComboBox,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &QGCSettingsWidget::distanceUnitsIndexChanged);
+    connect(MapWidgetFactory::instance(),
+            &MapWidgetFactory::AvailableBackendsChanged,
+            this, &QGCSettingsWidget::populateMapWidgetBackends);
+    connect(MapWidgetFactory::instance(),
+            &MapWidgetFactory::BackendChanged,
+            this, [this](const QString &) {
+                populateMapWidgetBackends();
+            });
+    connect(MapWidgetFactory::instance(),
+            &MapWidgetFactory::StatusMessage,
+            m_mapWidgetBackendStatus, &QLabel::setText);
 
     // Add all protocols
     /*QList<ProtocolInterface*> protocols = LinkManager::instance()->getProtocols();
@@ -28,6 +114,84 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
         }
     }*/
 
+}
+
+void QGCSettingsWidget::altitudeUnitsIndexChanged(int index)
+{
+    if (!m_altitudeUnitsComboBox || index < 0) return;
+    const QString units = m_altitudeUnitsComboBox->itemData(index).toString();
+    if (units != QStringLiteral("Meters")
+        && units != QStringLiteral("Feet")) {
+        return;
+    }
+    QSettings().setValue(QStringLiteral("altunits"), units);
+    emit altitudeUnitsChanged(units);
+    MainWindow::instance()->setPlannerAltitudeUnits(units);
+}
+
+void QGCSettingsWidget::distanceUnitsIndexChanged(int index)
+{
+    if (!m_distanceUnitsComboBox || index < 0) return;
+    const QString units = m_distanceUnitsComboBox->itemData(index).toString();
+    if (units != QStringLiteral("Meters")
+        && units != QStringLiteral("Feet")) {
+        return;
+    }
+    QSettings().setValue(QStringLiteral("distunits"), units);
+    emit distanceUnitsChanged(units);
+    MainWindow::instance()->setPlannerDistanceUnits(units);
+}
+
+void QGCSettingsWidget::populateMapWidgetBackends()
+{
+    if (!m_mapWidgetBackendComboBox) {
+        return;
+    }
+    const QSignalBlocker blocker(m_mapWidgetBackendComboBox);
+    m_mapWidgetBackendComboBox->clear();
+    MapWidgetFactory *factory = MapWidgetFactory::instance();
+    for (const MapWidgetBackendInfo &backend
+         : factory->AvailableBackends()) {
+        m_mapWidgetBackendComboBox->addItem(
+            backend.displayName, backend.id);
+    }
+    int current = m_mapWidgetBackendComboBox->findData(
+        factory->RequestedBackend());
+    if (current < 0) {
+        current = m_mapWidgetBackendComboBox->findData(
+            factory->CurrentBackend());
+    }
+    if (current >= 0) {
+        m_mapWidgetBackendComboBox->setCurrentIndex(current);
+    }
+    m_mapWidgetBackendComboBox->setEnabled(
+        m_mapWidgetBackendComboBox->count() > 1);
+    m_mapWidgetBackendComboBox->setToolTip(
+        m_mapWidgetBackendComboBox->count() > 1
+            ? tr("Select the map renderer used by DATA, PLAN and SIMULATION.")
+            : tr("Only one map renderer is compiled into this build."));
+    if (!factory->LastStatus().isEmpty()) {
+        m_mapWidgetBackendStatus->setText(factory->LastStatus());
+    } else {
+        m_mapWidgetBackendStatus->clear();
+    }
+}
+
+void QGCSettingsWidget::mapWidgetBackendChanged(int index)
+{
+    if (index < 0 || !m_mapWidgetBackendComboBox) {
+        return;
+    }
+    MapWidgetFactory *factory = MapWidgetFactory::instance();
+    const QString backendId =
+        m_mapWidgetBackendComboBox->itemData(index).toString();
+    if (!factory->SetBackend(backendId)) {
+        populateMapWidgetBackends();
+        return;
+    }
+    m_mapWidgetBackendStatus->setText(
+        tr("Map widget backend will change to %1 after restart.")
+            .arg(m_mapWidgetBackendComboBox->itemText(index)));
 }
 
 void QGCSettingsWidget::showEvent(QShowEvent *evt)

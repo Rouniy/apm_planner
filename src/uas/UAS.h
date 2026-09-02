@@ -34,6 +34,10 @@ This file is part of the QGROUNDCONTROL project
 #include "UASInterface.h"
 #include "QGCHilLink.h"
 #include "MAVLinkComponentTracker.h"
+#include "comm/MissionProtocolCoordinator.h"
+#include "comm/MissionTransferController.h"
+#include "UASMissionTransferTransport.h"
+#include "Proximity.h"
 
 #include <MAVLinkProtocol.h>
 
@@ -75,6 +79,7 @@ public:
 
     /** @brief Get the unique system id */
     int getUASID() const;
+    Proximity *getProximity() override { return &m_proximity; }
     /** @brief Get the airframe */
     int getAirframe() const
     {
@@ -82,11 +87,23 @@ public:
     }
     /** @brief Get the components */
     QMap<int, QString> getComponents();
+    quint8 primaryComponentId() const { return m_primaryComponentId; }
+    quint8 gcsSystemId() const { return static_cast<quint8>(systemId); }
+    quint8 gcsComponentId() const { return static_cast<quint8>(componentId); }
+    MissionProtocolCoordinator *missionProtocolCoordinator()
+    {
+        return &m_missionProtocolCoordinator;
+    }
+    MissionTransferController *missionTransferController()
+    {
+        return &m_missionTransferController;
+    }
 
     /** @brief The time interval the robot is switched on */
     quint64 getUptime() const;
     /** @brief Get the status flag for the communication */
     int getCommunicationStatus() const;
+    bool isConnected() const override;
     /** @brief Add one measurement and get low-passed voltage */
     double filterVoltage(double value) const;
     /** @brief Get the links associated with this robot */
@@ -526,7 +543,13 @@ protected: //COMMENTS FOR TEST UNIT
     double airSpeed;             ///< Airspeed
     double groundSpeed;          ///< Groundspeed
     double bearingToWaypoint;    ///< Bearing to next waypoint
+    quint8 m_primaryComponentId = MAV_COMP_ID_AUTOPILOT1;
+    quint8 m_gpsRtcmSequenceId = 0;
+    Proximity m_proximity;
+    MissionProtocolCoordinator m_missionProtocolCoordinator;
     UASWaypointManager waypointManager;
+    UASMissionTransferTransport m_missionTransferTransport;
+    MissionTransferController m_missionTransferController;
 
     /// ATTITUDE
     bool attitudeKnown;             ///< True if attitude was received, false else
@@ -799,6 +822,13 @@ public slots:
     void executeCommand(MAV_CMD command);
     /** @brief Executes a command with 7 params */
     void executeCommand(MAV_CMD command, int confirmation, float param1, float param2, float param3, float param4, float param5, float param6, float param7, int component);
+    /** @brief Executes a command with 7 params on one pinned link. */
+    bool executeCommandOnLink(
+        LinkInterface *link, MAV_CMD command, int confirmation,
+        float param1, float param2, float param3, float param4,
+        float param5, float param6, float param7, int component) override;
+    bool sendMessageOnLink(LinkInterface *link,
+                           const mavlink_message_t &message) override;
     /** @brief Executes a command ack, with success boolean **/
     void executeCommandAck(int num, bool success);
     /** @brief Set the current battery type and voltages */
@@ -852,6 +882,7 @@ public slots:
      * @param satellites
      */
     void sendHilGps(quint64 time_us, double lat, double lon, double alt, int fix_type, float eph, float epv, float vel, float vn, float ve, float vd,  float cog, int satellites);
+    bool injectGpsData(const QByteArray &data) override;
 
 
     /** @brief Places the UAV in Hardware-in-the-Loop simulation status **/
@@ -953,10 +984,14 @@ public slots:
     void readParametersFromStorage();
 
     /** @brief Get the names of all parameters */
-    QList<QString> getParameterNames(int component);
+    QList<QString> getParameterNames(int component) override;
 
     /** @brief Get the ids of all components */
-    QList<int> getComponentIds();
+    QList<int> getComponentIds() override;
+
+    /** @brief Get one value from the local parameter cache without I/O */
+    QVariant getParameterValue(
+        int component, const QString &parameter) const override;
 
     void enableAllDataTransmission(int rate);
     void enableRawSensorDataTransmission(int rate);

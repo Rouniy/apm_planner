@@ -33,7 +33,7 @@
     <number>0</number>
    </property>
    <item row="0" column="0">
-    <widget class="mapcontrol::OPMapWidget" name="map" native="true"/>
+    <widget class="QWidget" name="mapHost" native="true"/>
    </item>
    <item row="0" column="1" rowspan="2">
     <widget class="QSlider" name="zoomSlider">
@@ -56,14 +56,6 @@
    </item>
   </layout>
  </widget>
- <customwidgets>
-  <customwidget>
-   <class>mapcontrol::OPMapWidget</class>
-   <extends>QWidget</extends>
-   <header>opmapwidget.h</header>
-   <container>1</container>
-  </customwidget>
- </customwidgets>
  <resources/>
  <connections/>
 </ui>

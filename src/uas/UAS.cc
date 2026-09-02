@@ -11,6 +11,8 @@
 
 #include "logging.h"
 #include "UAS.h"
+#include "comm/GpsRtcmPacketizer.h"
+#include "ServoOutputDecoder.h"
 #include "LinkInterface.h"
 #include "UASManager.h"
 #include "QGC.h"
@@ -67,6 +69,8 @@ UAS::UAS(MAVLinkProtocol* protocol, int id) : UASInterface(),
     status(-1),
     // shortModeText not initialized
     // shortStateText not initialized
+    systemId(QGC::MavlinkID()),
+    componentId(QGC::defaultComponentId),
 
     // actuatorValues not initialized
     // actuatorNames not initialized
@@ -133,7 +137,12 @@ UAS::UAS(MAVLinkProtocol* protocol, int id) : UASInterface(),
 
     airSpeed(std::numeric_limits<double>::quiet_NaN()),
     groundSpeed(std::numeric_limits<double>::quiet_NaN()),
-    waypointManager(this),
+    m_proximity(static_cast<quint8>(id)),
+    m_missionProtocolCoordinator(),
+    waypointManager(this, &m_missionProtocolCoordinator),
+    m_missionTransferTransport(this),
+    m_missionTransferController(
+            &m_missionProtocolCoordinator, &m_missionTransferTransport),
 
     attitudeKnown(false),
     attitudeStamped(false),
@@ -173,8 +182,9 @@ UAS::UAS(MAVLinkProtocol* protocol, int id) : UASInterface(),
     emit disarmed();
     emit armingChanged(false);
 
-    systemId = QGC::MavlinkID();
-    componentId = QGC::defaultComponentId;
+    connect(this, &UASInterface::mavlinkMessageRecieved,
+            &m_missionTransferTransport,
+            &UASMissionTransferTransport::observeMessage);
 
     m_heartbeatsEnabled = MainWindow::instance()->heartbeatEnabled(); //Default to sending heartbeats
     QTimer *heartbeattimer = new QTimer(this);
@@ -343,6 +353,12 @@ QString UAS::statusGPS() const
 void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
 {
     if (!link) return;
+    // MAVLinkProtocol broadcasts every decoded packet to every UAS object.
+    // Reject foreign systems before associating their link/components with
+    // this vehicle. A polluted link list is especially dangerous for
+    // link-pinned mission transactions.
+    if (message.sysid != uasId) return;
+    m_proximity.observeMessage(message, getYaw());
     if (!links->contains(link))
     {
         addLink(link);
@@ -386,7 +402,8 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
     // Only accept messages from this system (condition 1)
     // and only then if a) attitudeStamped is disabled OR b) attitudeStamped is enabled
     // and we already got one attitude packet
-    if (message.sysid == uasId && (!attitudeStamped || (attitudeStamped && (lastAttitude != 0)) || message.msgid == MAVLINK_MSG_ID_ATTITUDE))
+    if (!attitudeStamped || lastAttitude != 0
+        || message.msgid == MAVLINK_MSG_ID_ATTITUDE)
     {
         QString uasState;
         QString stateDescription;
@@ -408,9 +425,15 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
                 break;
             }
             lastHeartbeat = QGC::groundTimeUsecs();
-            emit heartbeat(this);
             mavlink_heartbeat_t state;
             mavlink_msg_heartbeat_decode(&message, &state);
+            if (state.autopilot != MAV_AUTOPILOT_INVALID) {
+                m_primaryComponentId = message.compid;
+            }
+            // Publish the heartbeat only after the primary component has been
+            // updated. Mission clients may start synchronously from this
+            // signal and must snapshot the current remote component.
+            emit heartbeat(this);
 
             // Send the base_mode and system_status values to the plotter. This uses the ground time
             // so the Ground Time checkbox must be ticked for these values to display
@@ -521,6 +544,12 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             currentVoltage = state.voltage_battery/1000.0;
             lpVoltage = filterVoltage(currentVoltage);
             tickLowpassVoltage = tickLowpassVoltage*0.8 + 0.2*currentVoltage;
+            const QSettings batterySpeechSettings;
+            const bool missionPlannerBatterySpeech =
+                batterySpeechSettings.value(
+                    QStringLiteral("speechenable"), false).toBool()
+                && batterySpeechSettings.value(
+                    QStringLiteral("speechbatteryenabled"), false).toBool();
 
             // We don't want to tick above the threshold
             if (tickLowpassVoltage > tickVoltage)
@@ -528,7 +557,8 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
                 lastTickVoltageValue = tickLowpassVoltage;
             }
 
-            if ((startVoltage > 0.0) && (tickLowpassVoltage < tickVoltage) && (fabs(lastTickVoltageValue - tickLowpassVoltage) > 0.1)
+            if (!missionPlannerBatterySpeech
+                    && (startVoltage > 0.0) && (tickLowpassVoltage < tickVoltage) && (fabs(lastTickVoltageValue - tickLowpassVoltage) > 0.1)
                     /* warn if lower than treshold */
                     && (lpVoltage < tickVoltage)
                     /* warn only if we have at least the voltage of an empty LiPo cell, else we're sampling something wrong */
@@ -564,7 +594,14 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             }
 
             // LOW BATTERY ALARM
-            if (lpVoltage < warnVoltage && (currentVoltage - 0.2) < warnVoltage && (currentVoltage > 3.3))
+            if (missionPlannerBatterySpeech)
+            {
+                // The MP SpeechAnnouncer owns the phrase and 30-second
+                // cadence. Stop the legacy QGC emergency loop so it cannot
+                // suppress the configured announcement.
+                stopLowBattAlarm();
+            }
+            else if (lpVoltage < warnVoltage && (currentVoltage - 0.2) < warnVoltage && (currentVoltage > 3.3))
             {
                 // An audio alarm. Does not generate any signals.
                 startLowBattAlarm();
@@ -1001,6 +1038,10 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
         {
             mavlink_command_ack_t ack;
             mavlink_msg_command_ack_decode(&message, &ack);
+            emit commandAckReceived(
+                uasId, message.compid, ack.command, ack.result,
+                ack.progress, ack.result_param2,
+                ack.target_system, ack.target_component);
             switch (ack.result)
             {
             case MAV_RESULT_ACCEPTED:
@@ -1035,7 +1076,11 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
         {
             mavlink_mission_count_t wpc;
             mavlink_msg_mission_count_decode(&message, &wpc);
-            waypointManager.handleWaypointCount(message.sysid, message.compid, wpc.count);
+            if (!m_missionProtocolCoordinator.owner()
+                || m_missionProtocolCoordinator.owner() == &waypointManager) {
+                waypointManager.handleWaypointCount(
+                    message.sysid, message.compid, &wpc);
+            }
         }
             break;
 
@@ -1046,7 +1091,10 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             mavlink_mission_item_int_t wp;
             // using mavlink_msg_mission_item_int_decode to decode mavlink_mission_item_int_t type message
             mavlink_msg_mission_item_int_decode(&message, &wp);
-            waypointManager.handleWaypoint(message.sysid, message.compid, &wp);
+            if (!m_missionProtocolCoordinator.owner()
+                || m_missionProtocolCoordinator.owner() == &waypointManager) {
+                waypointManager.handleWaypoint(message.sysid, message.compid, &wp);
+            }
         }
             break;
 
@@ -1064,7 +1112,11 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
         {
             mavlink_mission_ack_t wpa;
             mavlink_msg_mission_ack_decode(&message, &wpa);
-            waypointManager.handleWaypointAck(message.sysid, message.compid, &wpa);
+            if (!m_missionProtocolCoordinator.owner()
+                || m_missionProtocolCoordinator.owner() == &waypointManager) {
+                waypointManager.handleWaypointAck(
+                    message.sysid, message.compid, &wpa);
+            }
         }
             break;
 
@@ -1072,7 +1124,11 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
         {
             mavlink_mission_request_int_t wpr;
             mavlink_msg_mission_request_int_decode(&message, &wpr);
-            waypointManager.handleWaypointRequest(message.sysid, message.compid, &wpr);
+            if (!m_missionProtocolCoordinator.owner()
+                || m_missionProtocolCoordinator.owner() == &waypointManager) {
+                waypointManager.handleWaypointRequest(
+                    message.sysid, message.compid, &wpr);
+            }
         }
             break;
 
@@ -1080,7 +1136,11 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
         {
             mavlink_mission_request_t wpr;
             mavlink_msg_mission_request_decode(&message, &wpr);
-            waypointManager.handleWaypointRequest(message.sysid, message.compid, &wpr);
+            if (!m_missionProtocolCoordinator.owner()
+                || m_missionProtocolCoordinator.owner() == &waypointManager) {
+                waypointManager.handleWaypointRequest(
+                    message.sysid, message.compid, &wpr);
+            }
         }
             break;
 
@@ -1128,6 +1188,17 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
         {
             mavlink_servo_output_raw_t raw;
             mavlink_msg_servo_output_raw_decode(&message, &raw);
+
+            // Mission Planner treats port 0 as SERVO1..SERVO16 and port 1
+            // as SERVO17..SERVO32. Preserve every decoded value, including
+            // zero-valued absent extension fields, so the Qt current state
+            // follows CurrentState.cs exactly.
+            const QVector<ServoOutputSample> servoOutputs =
+                ServoOutputDecoder::Decode(raw);
+            for (const ServoOutputSample &sample : servoOutputs)
+            {
+                emit servoOutputChanged(sample.Number, sample.Pwm);
+            }
 
             if (hilEnabled && raw.port == 0)
             {
@@ -1945,19 +2016,24 @@ quint64 UAS::getUnixTime(quint64 time)
 */
 QList<QString> UAS::getParameterNames(int component)
 {
-    if (parameters.contains(component))
-    {
-        return parameters.value(component)->keys();
-    }
-    else
-    {
-        return QList<QString>();
-    }
+    const QMap<QString, QVariant> *const componentParameters =
+        parameters.value(component, nullptr);
+    return componentParameters
+        ? componentParameters->keys() : QList<QString>();
 }
 
 QList<int> UAS::getComponentIds()
 {
     return parameters.keys();
+}
+
+QVariant UAS::getParameterValue(
+    int component, const QString &parameter) const
+{
+    const QMap<QString, QVariant> *const componentParameters =
+        parameters.value(component, nullptr);
+    return componentParameters
+        ? componentParameters->value(parameter, QVariant()) : QVariant();
 }
 
 void UAS::setMode(int mode)
@@ -2061,6 +2137,45 @@ void UAS::sendMessage(mavlink_message_t message)
         //    links->removeAt(links->indexOf(link));
         //}
     }
+}
+
+bool UAS::injectGpsData(const QByteArray &data)
+{
+    LinkInterface *correctionLink = nullptr;
+    for (LinkInterface *link : *links) {
+        if (link && link->isConnected()) {
+            correctionLink = link;
+            break;
+        }
+    }
+    if (!correctionLink) {
+        QLOG_WARN() << "NO CONNECTED LINK AVAILABLE FOR GPS CORRECTIONS";
+        return false;
+    }
+
+    const GpsRtcmPacketizer::Result packetized =
+        GpsRtcmPacketizer::pack(data, m_gpsRtcmSequenceId);
+    m_gpsRtcmSequenceId = packetized.nextSequenceId;
+    if (packetized.packets.isEmpty()) {
+        return false;
+    }
+
+    for (const GpsRtcmPacket &packet : packetized.packets) {
+        mavlink_gps_rtcm_data_t payload{};
+        payload.flags = packet.flags;
+        payload.len = static_cast<quint8>(packet.data.size());
+        if (!packet.data.isEmpty()) {
+            std::memcpy(payload.data, packet.data.constData(),
+                        static_cast<size_t>(packet.data.size()));
+        }
+
+        mavlink_message_t message;
+        mavlink_msg_gps_rtcm_data_encode(
+            static_cast<quint8>(systemId),
+            static_cast<quint8>(componentId), &message, &payload);
+        sendMessage(correctionLink, message);
+    }
+    return true;
 }
 
 /**
@@ -2308,6 +2423,19 @@ quint64 UAS::getUptime() const
 int UAS::getCommunicationStatus() const
 {
     return commStatus;
+}
+
+bool UAS::isConnected() const
+{
+    if (!links) {
+        return false;
+    }
+    for (LinkInterface *link : *links) {
+        if (link && link->isConnected()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void UAS::requestParameters()
@@ -3001,6 +3129,43 @@ void UAS::executeCommand(MAV_CMD command, int confirmation, float param1, float 
     cmd.target_component = component;
     mavlink_msg_command_long_encode(systemId, componentId, &msg, &cmd);
     sendMessage(msg);
+}
+
+bool UAS::executeCommandOnLink(
+    LinkInterface *link, MAV_CMD command, int confirmation,
+    float param1, float param2, float param3, float param4,
+    float param5, float param6, float param7, int component)
+{
+    if (!link || !link->isConnected()) {
+        return false;
+    }
+
+    mavlink_message_t msg;
+    mavlink_command_long_t cmd;
+    cmd.command = static_cast<uint16_t>(command);
+    cmd.confirmation = confirmation;
+    cmd.param1 = param1;
+    cmd.param2 = param2;
+    cmd.param3 = param3;
+    cmd.param4 = param4;
+    cmd.param5 = param5;
+    cmd.param6 = param6;
+    cmd.param7 = param7;
+    cmd.target_system = uasId;
+    cmd.target_component = component;
+    mavlink_msg_command_long_encode(systemId, componentId, &msg, &cmd);
+    sendMessage(link, msg);
+    return link->isConnected();
+}
+
+bool UAS::sendMessageOnLink(LinkInterface *link,
+                            const mavlink_message_t &message)
+{
+    if (!link || !link->isConnected()) {
+        return false;
+    }
+    sendMessage(link, message);
+    return link->isConnected();
 }
 
 /**

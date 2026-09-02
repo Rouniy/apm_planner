@@ -35,6 +35,7 @@ This file is part of the QGROUNDCONTROL project
 #include <QObject>
 #include <QList>
 #include <QTimer>
+#include "comm/MissionProtocolCoordinator.h"
 #include "Waypoint.h"
 #include "QGCMAVLink.h"
 class UAS;
@@ -70,14 +71,16 @@ private:
     }; ///< The possible states for the waypoint protocol
 
 public:
-    UASWaypointManager(UAS* uas=NULL);   ///< Standard constructor
+    explicit UASWaypointManager(
+            UAS *uas = nullptr,
+            MissionProtocolCoordinator *protocolCoordinator = nullptr);
     ~UASWaypointManager();
     bool guidedModeSupported();
 
     void goToWaypoint(Waypoint *wp);
     /** @name Received message handlers */
     /*@{*/
-    void handleWaypointCount(quint8 systemId, quint8 compId, quint16 count);                           ///< Handles received waypoint count messages
+    void handleWaypointCount(quint8 systemId, quint8 compId, const mavlink_mission_count_t *count);   ///< Handles received waypoint count messages
     void handleWaypoint(quint8 systemId, quint8 compId, mavlink_mission_item_int_t *wp);               ///< Handles received waypoint int messages
     void handleWaypointAck(quint8 systemId, quint8 compId, mavlink_mission_ack_t *wpa);                ///< Handles received waypoint ack messages
     void handleWaypointRequest(quint8 systemId, quint8 compId, mavlink_mission_request_t *wpr);        ///< Handles received waypoint float request messages
@@ -128,6 +131,10 @@ public:
     double getDefaultRelAltitude();
 
 private:
+    bool acquireProtocolLease();
+    void releaseProtocolLease();
+    bool canUseMissionProtocol() const;
+
     void convertMavlinkMissionItem(mavlink_mission_item_int_t *from, mavlink_mission_item_t *to);
     void handleWaypointRequest(quint8 systemId, quint8 compId, quint16 wpRequestId, MissionItemEncoding wpEncoding); ///< Handles received waypoint request messages (int and float)
 
@@ -180,6 +187,8 @@ signals:
 
 private:
     UAS* uas;                                       ///< Reference to the corresponding UAS
+    MissionProtocolCoordinator *m_protocolCoordinator = nullptr;
+    MissionProtocolCoordinator::LeaseToken m_protocolLease;
     quint32 current_retries;                        ///< The current number of retries left
     quint16 current_wp_id;                          ///< The last used waypoint ID in the current protocol transaction
     quint16 current_count;                          ///< The number of waypoints in the current protocol transaction

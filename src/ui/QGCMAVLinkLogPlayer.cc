@@ -118,16 +118,17 @@ void QGCMAVLinkLogPlayer::positionSliderPressed()
 QGCMAVLinkLogPlayer::~QGCMAVLinkLogPlayer()
 {
     storeSettings();
-    if (m_logLink)
-    {
-        if (m_logLink->isRunning())
-        {
-            m_logLink->stop();
-            m_logLink->wait(1000);
-            delete m_logLink;
-        }
-    }
+    shutdown();
+    delete m_logLink;
+    m_logLink = nullptr;
     delete ui;
+}
+
+void QGCMAVLinkLogPlayer::shutdown()
+{
+    if (m_logLink) {
+        m_logLink->disconnect();
+    }
 }
 void QGCMAVLinkLogPlayer::storeSettings()
 {
@@ -141,22 +142,20 @@ void QGCMAVLinkLogPlayer::loadLogButtonClicked()
     {
         if (m_logLink)
         {
-            //Stop the mavlink, schedule for deletion
-            if (m_logLink->isRunning())
-            {
-                m_logLink->stop();
-            }
-            else
-            {
-                m_logLink->deleteLater();
-                m_logLink = 0;
-                m_logLoaded = false;
-                ui->speedButton75->setEnabled(false);
-                ui->speedButton100->setEnabled(false);
-                ui->speedButton150->setEnabled(false);
-                ui->speedButton200->setEnabled(false);
-                ui->speedButton500->setEnabled(false);
-            }
+            // Stop and join before releasing the replay link.  Leaving the
+            // object alive after stop made a second click operate on a dead
+            // worker and leaked its private MAVLink decoder.
+            TLogReplayLink *link = m_logLink;
+            m_logLink = nullptr;
+            link->disconnect();
+            delete link;
+            m_logLoaded = false;
+            ui->speedButton75->setEnabled(false);
+            ui->speedButton100->setEnabled(false);
+            ui->speedButton150->setEnabled(false);
+            ui->speedButton200->setEnabled(false);
+            ui->speedButton500->setEnabled(false);
+            ui->speedButton1000->setEnabled(false);
         }
         else
         {
@@ -243,7 +242,7 @@ void QGCMAVLinkLogPlayer::playButtonClicked()
 void QGCMAVLinkLogPlayer::logLinkTerminated()
 {
     m_isPlaying = false;
-    if (m_logLink->toBeDeleted())
+    if (m_logLink && m_logLink->toBeDeleted())
     {
         //Log loop has terminated with the intention of unloading the sim link
         m_logLink->deleteLater();

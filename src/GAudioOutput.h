@@ -20,6 +20,7 @@ public:
     } QGVoice;
 
     bool isMuted() const;
+    bool isSpeechReady() const;
 
 public slots:
     bool say(QString text, int severity = 1);

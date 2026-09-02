@@ -35,7 +35,9 @@ This file is part of the QGROUNDCONTROL project
 #include <QTreeWidgetItem>
 #include <QMap>
 #include <QLabel>
+#include <QPointer>
 #include <QTimer>
+#include <QVector>
 
 #include "QGCUASParamManager.h"
 #include "UASInterface.h"
@@ -43,14 +45,22 @@ This file is part of the QGROUNDCONTROL project
 /**
  * @brief Widget to read/set onboard parameters
  */
-class QGCParamWidget : public QGCUASParamManager
+class QGCParamWidget : public QWidget
 {
     Q_OBJECT
 public:
+    using ParamFileType = QGCUASParamManager::ParamFileType;
+    static constexpr ParamFileType TabSeperatedValues =
+        QGCUASParamManager::TabSeperatedValues;
+    static constexpr ParamFileType CommaSeperatedValues =
+        QGCUASParamManager::CommaSeperatedValues;
 
     QGCParamWidget(UASInterface* uas, QWidget *parent = 0);
+    ~QGCParamWidget() override;
     /** @brief Get the UAS of this widget */
     UASInterface* getUAS();
+    /** @brief Update display metadata for the globally selected target. */
+    void setUAS(UASInterface *uas);
 
     bool isParamMinKnown(const QString& param) { return paramMin.contains(param); }
     bool isParamMaxKnown(const QString& param) { return paramMax.contains(param); }
@@ -67,7 +77,12 @@ public:
 
 signals:
     /** @brief A parameter was changed in the widget, NOT onboard */
-    //void parameterChanged(int component, QString parametername, float value); // defined in QGCUASParamManager already
+    void parameterChanged(int component, QString parameterName, QVariant value);
+    void parameterListUpToDate(int component);
+    void parameterListLoadStarted();
+    void parameterListReadyChanged(bool ready);
+    void parameterListLoadFailed(const QString &reason);
+    void parameterListLoadCanceled();
     /** @brief Request a single parameter */
     void requestParameter(int component, int parameter);
     /** @brief Request a single parameter by name */
@@ -107,6 +122,27 @@ public slots:
     void retransmissionGuardTick();
 
 protected:
+    void setParameterListReady(bool ready);
+
+    QPointer<UASInterface> mav;
+    QGCUASParamManager *m_parameterManager = nullptr;
+    QMap<int, QMap<QString, QVariant>* > changedValues;
+    QMap<int, QMap<QString, QVariant>* > parameters;
+    QVector<bool> received;
+    QMap<int, QList<int>* > transmissionMissingPackets;
+    QMap<int, QMap<QString, QVariant>* > transmissionMissingWriteAckPackets;
+    bool transmissionListMode = false;
+    bool m_parameterListReady = false;
+    int m_parameterListReceivedCount = 0;
+    int m_parameterListReportedCount = 0;
+    QMap<int, bool> transmissionListSizeKnown;
+    bool transmissionActive = false;
+    quint64 transmissionTimeout = 0;
+    QTimer retransmissionTimer;
+    int retransmissionTimeout = 350;
+    int rewriteTimeout = 500;
+    int retransmissionBurstRequestSize = 5;
+
     QTreeWidget* tree;   ///< The parameter tree
     QLabel* statusLabel; ///< Parameter transmission label
     QTimer *initialParamTimer;

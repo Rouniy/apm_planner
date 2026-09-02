@@ -25,7 +25,40 @@
 * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 */
 #include "cache.h"
-#include <QSettings>
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSaveFile>
+
+namespace {
+
+QString readUtf8File(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QString();
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
+bool writeUtf8File(const QString &path, const QString &content)
+{
+    const QFileInfo info(path);
+    if (!QDir().mkpath(info.absolutePath())) {
+        return false;
+    }
+
+    QSaveFile file(path);
+    const QByteArray bytes = content.toUtf8();
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        file.cancelWriting();
+        return false;
+    }
+    return file.commit();
+}
+
+} // namespace
 
 namespace core {
     Cache* Cache::m_pInstance=0;
@@ -37,23 +70,24 @@ namespace core {
         return m_pInstance;
     }
 
-    void Cache::setCacheLocation(const QString& value)
-    {
-        cache=value;
-        routeCache = cache + "RouteCache/";
-        geoCache = cache + "GeocoderCache/";
-        placemarkCache = cache + "PlacemarkCache/";
-        ImageCache.setGtileCache(value);
-    }
-
-    QString Cache::CacheLocation()
-    {
-        return cache;
-    }
-
     Cache::Cache()
+        : Cache(QString())
     {
+    }
 
+    Cache::Cache(const QString &sharedCacheRoot)
+        : ImageCache(sharedCacheRoot)
+    {
+        // Keep all persistent map data below the cross-backend shared root.
+        // The retired setCacheLocation() API used to initialise these paths;
+        // leaving them empty would make geocoder responses relative to the
+        // process working directory.
+        const QDir metadataRoot(QDir(ImageCache.sharedCacheRootPath())
+                                    .filePath(QStringLiteral("metadata")));
+        geoCache = metadataRoot.filePath(QStringLiteral("geocoder"))
+            + QDir::separator();
+        placemarkCache = metadataRoot.filePath(QStringLiteral("placemark"))
+            + QDir::separator();
     }
 
     QString Cache::GetGeocoderFromCache(const QString &urlEnd)
@@ -61,25 +95,11 @@ namespace core {
 #ifdef DEBUG_GetGeocoderFromCache
         qDebug()<<"Entered GetGeocoderFromCache";
 #endif
-        QString ret;
         QString filename=geoCache+QString(urlEnd)+".geo";
 #ifdef DEBUG_GetGeocoderFromCache
         qDebug()<<"GetGeocoderFromCache: Does file exist?:"<<filename;
 #endif
-        QFileInfo File(filename);
-        if (File .exists())
-        {
-#ifdef DEBUG_GetGeocoderFromCache
-            qDebug()<<"GetGeocoderFromCache:File exists!!";
-#endif
-            QFile file(filename);
-            if (file.open(QIODevice::ReadOnly))
-            {
-                QTextStream stream(&file);
-                stream.setCodec("UTF-8");
-                stream>>ret;
-            }
-        }
+        const QString ret = readUtf8File(filename);
 #ifdef DEBUG_GetGeocoderFromCache
         qDebug()<<"GetGeocoderFromCache:Returning:"<<ret;
 #endif
@@ -92,37 +112,11 @@ namespace core {
 #ifdef DEBUG_CACHE
         qDebug()<<"CacheGeocoder: Filename:"<<filename;
 #endif //DEBUG_CACHE
-        QFileInfo File(filename);;
-        QDir dir=File.absoluteDir();
-        QString path=dir.absolutePath();
 #ifdef DEBUG_CACHE
-        qDebug()<<"CacheGeocoder: Path:"<<path;
-#endif //DEBUG_CACHE
-        if(!dir.exists())
-        {
-#ifdef DEBUG_CACHE
-            qDebug()<<"CacheGeocoder: Cache path doesn't exist, try to create";
-#endif //DEBUG_CACHE
-            if(!dir.mkpath(path))
-            {
-#ifdef DEBUG_CACHE
-                qDebug()<<"GetGeocoderFromCache: Could not create path";
-#endif //DEBUG_CACHE
-            }
-        }
-#ifdef DEBUG_CACHE
+        qDebug()<<"CacheGeocoder: Path:"<<QFileInfo(filename).absolutePath();
         qDebug()<<"CacheGeocoder: OpenFile:"<<filename;
 #endif //DEBUG_CACHE
-        QFile file(filename);
-        if (file.open(QIODevice::WriteOnly))
-        {
-#ifdef DEBUG_CACHE
-            qDebug()<<"CacheGeocoder: File Opened!!!:"<<filename;
-#endif //DEBUG_CACHE
-            QTextStream stream(&file);
-            stream.setCodec("UTF-8");
-            stream<<content;
-        }
+        writeUtf8File(filename, content);
     }
 
     QString Cache::GetPlacemarkFromCache(const QString &urlEnd)
@@ -130,25 +124,11 @@ namespace core {
 #ifdef DEBUG_CACHE
         qDebug()<<"Entered GetPlacemarkFromCache";
 #endif //DEBUG_CACHE
-        QString ret;
         QString filename=placemarkCache+QString(urlEnd)+".plc";
 #ifdef DEBUG_CACHE
         qDebug()<<"GetPlacemarkFromCache: Does file exist?:"<<filename;
 #endif //DEBUG_CACHE
-        QFileInfo File(filename);
-        if (File .exists())
-        {
-#ifdef DEBUG_CACHE
-            qDebug()<<"GetPlacemarkFromCache:File exists!!";
-#endif //DEBUG_CACHE
-            QFile file(filename);
-            if (file.open(QIODevice::ReadOnly))
-            {
-                QTextStream stream(&file);
-                stream.setCodec("UTF-8");
-                stream>>ret;
-            }
-        }
+        const QString ret = readUtf8File(filename);
 #ifdef DEBUG_CACHE
         qDebug()<<"GetPlacemarkFromCache:Returning:"<<ret;
 #endif //DEBUG_CACHE
@@ -160,36 +140,10 @@ namespace core {
 #ifdef DEBUG_CACHE
         qDebug()<<"CachePlacemark: Filename:"<<filename;
 #endif //DEBUG_CACHE
-        QFileInfo File(filename);;
-        QDir dir=File.absoluteDir();
-        QString path=dir.absolutePath();
 #ifdef DEBUG_CACHE
-        qDebug()<<"CachePlacemark: Path:"<<path;
-#endif //DEBUG_CACHE
-        if(!dir.exists())
-        {
-#ifdef DEBUG_CACHE
-            qDebug()<<"CachePlacemark: Cache path doesn't exist, try to create";
-#endif //DEBUG_CACHE
-            if(!dir.mkpath(path))
-            {
-#ifdef DEBUG_CACHE
-                qDebug()<<"CachePlacemark: Could not create path";
-#endif //DEBUG_CACHE
-            }
-        }
-#ifdef DEBUG_CACHE
+        qDebug()<<"CachePlacemark: Path:"<<QFileInfo(filename).absolutePath();
         qDebug()<<"CachePlacemark: OpenFile:"<<filename;
 #endif //DEBUG_CACHE
-        QFile file(filename);
-        if (file.open(QIODevice::WriteOnly))
-        {
-#ifdef DEBUG_CACHE
-            qDebug()<<"CachePlacemark: File Opened!!!:"<<filename;
-#endif //DEBUG_CACHE
-            QTextStream stream(&file);
-            stream.setCodec("UTF-8");
-            stream<<content;
-        }
+        writeUtf8File(filename, content);
     }
 }

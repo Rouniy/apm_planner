@@ -131,9 +131,12 @@ class ParameterCoreTest final : public QObject
 private slots:
     void duplicatePacketsDoNotFakeCompletion();
     void sameNameFromTwoComponentsDoesNotCollide();
-    void newlyDiscoveredComponentReopensCompleteness();
-    void targetChangeInvalidatesSnapshots();
-    void cancellationKeepsPartialSnapshot();
+    void exactEndpointsWithSameMavIdsDoNotCollide();
+    void targetSwitchKeepsEndpointSnapshots();
+    void switchingDoesNotMixInFlightRefreshes();
+    void cancellationPreservesCommittedSnapshot();
+    void failureAndPartialFinishPreserveCommittedSnapshot();
+    void sentinelIndexAndCountDoNotCorruptProgress();
     void codecPreservesBytewiseTypes();
     void integerAndFloatEqualityAreTypeAware();
     void pdefMetadataSelectsVehicleAndLibraries();
@@ -156,76 +159,216 @@ void ParameterCoreTest::duplicatePacketsDoNotFakeCompletion()
     store.beginLoad();
 
     QVERIFY(store.ingest(1, 2, 0, QStringLiteral("A"), 1, ParameterType::Int32));
-    QVERIFY(store.ingest(1, 2, 0, QStringLiteral("A"), 1, ParameterType::Int32));
+    QVERIFY(store.ingest(1, 2, 0, QStringLiteral("COLLISION"), 99,
+                         ParameterType::Int32));
     QCOMPARE(store.progress().received, 1);
     QCOMPARE(store.progress().reported, 2);
     QCOMPARE(store.state(), ParameterLoadState::Loading);
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("A")));
 
     QVERIFY(store.ingest(1, 2, 1, QStringLiteral("B"), 2, ParameterType::Int32));
     QCOMPARE(store.progress().received, 2);
     QCOMPARE(store.state(), ParameterLoadState::Complete);
     QVERIFY(store.specializedPagesReady());
+    QCOMPARE(store.snapshot().value(1, QStringLiteral("A")).value.toInt(), 1);
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("COLLISION")));
 }
 
 void ParameterCoreTest::sameNameFromTwoComponentsDoesNotCollide()
 {
     ParameterStore store;
-    store.selectTarget(7, 1, 1);
-    store.beginLoad();
-    QVERIFY(store.ingest(1, 1, 0, QStringLiteral("VERSION"), 10, ParameterType::Int32));
-    QVERIFY(store.ingest(154, 1, 0, QStringLiteral("VERSION"), 20, ParameterType::Int32));
+    const VehicleEndpoint autopilot{7, 1, 1, QString(), QString()};
+    const VehicleEndpoint gimbal{7, 1, 154, QString(), QString()};
 
-    const ParameterSnapshot snapshot = store.snapshot();
-    QCOMPARE(snapshot.records().size(), 2);
-    QCOMPARE(snapshot.value(1, QStringLiteral("VERSION")).value.toInt(), 10);
-    QCOMPARE(snapshot.value(154, QStringLiteral("VERSION")).value.toInt(), 20);
+    store.beginLoad(autopilot);
+    QVERIFY(store.ingest(autopilot, 1, 0, QStringLiteral("VERSION"), 10,
+                         ParameterType::Int32));
+    store.beginLoad(gimbal);
+    QVERIFY(store.ingest(gimbal, 1, 0, QStringLiteral("VERSION"), 20,
+                         ParameterType::Int32));
+
+    const ParameterSnapshot autopilotSnapshot = store.snapshot(autopilot);
+    const ParameterSnapshot gimbalSnapshot = store.snapshot(gimbal);
+    QCOMPARE(autopilotSnapshot.records().size(), 1);
+    QCOMPARE(gimbalSnapshot.records().size(), 1);
+    QCOMPARE(autopilotSnapshot.value(1, QStringLiteral("VERSION")).value.toInt(),
+             10);
+    QCOMPARE(gimbalSnapshot.value(154, QStringLiteral("VERSION")).value.toInt(),
+             20);
 }
 
-void ParameterCoreTest::newlyDiscoveredComponentReopensCompleteness()
+void ParameterCoreTest::exactEndpointsWithSameMavIdsDoNotCollide()
 {
     ParameterStore store;
-    store.selectTarget(7, 1, 1);
-    store.beginLoad();
-    QVERIFY(store.ingest(1, 1, 0, QStringLiteral("A"), 1, ParameterType::Int32));
-    QCOMPARE(store.state(), ParameterLoadState::Complete);
+    const VehicleEndpoint radio{7, 42, 1, QStringLiteral("Radio"),
+                                QStringLiteral("Autopilot")};
+    const VehicleEndpoint simulator{8, 42, 1, QStringLiteral("Simulator"),
+                                    QStringLiteral("Autopilot")};
 
-    QVERIFY(store.ingest(154, 2, 0, QStringLiteral("B"), 2, ParameterType::Int32));
-    QCOMPARE(store.progress().received, 2);
-    QCOMPARE(store.progress().reported, 3);
-    QCOMPARE(store.state(), ParameterLoadState::Loading);
-    QVERIFY(!store.specializedPagesReady());
+    store.beginLoad(radio);
+    QVERIFY(store.ingest(radio, 1, 0, QStringLiteral("SYSID_THISMAV"), 42,
+                         ParameterType::Int32));
+    store.beginLoad(simulator);
+    QVERIFY(store.ingest(simulator, 1, 0, QStringLiteral("SYSID_THISMAV"), 84,
+                         ParameterType::Int32));
 
-    QVERIFY(store.ingest(154, 2, 1, QStringLiteral("C"), 3, ParameterType::Int32));
-    QCOMPARE(store.state(), ParameterLoadState::Complete);
+    QCOMPARE(store.snapshot(radio)
+                 .value(1, QStringLiteral("SYSID_THISMAV")).value.toInt(), 42);
+    QCOMPARE(store.snapshot(simulator)
+                 .value(1, QStringLiteral("SYSID_THISMAV")).value.toInt(), 84);
+    QCOMPARE(store.cachedEndpoints().size(), 2);
 }
 
-void ParameterCoreTest::targetChangeInvalidatesSnapshots()
+void ParameterCoreTest::targetSwitchKeepsEndpointSnapshots()
 {
     ParameterStore store;
-    store.selectTarget(7, 1, 1);
+    const VehicleEndpoint first{7, 1, 1, QString(), QString()};
+    const VehicleEndpoint second{7, 2, 1, QString(), QString()};
+    store.selectEndpoint(first);
     store.beginLoad();
     QVERIFY(store.ingest(1, 1, 0, QStringLiteral("OLD"), 10, ParameterType::Int32));
-    const ParameterSnapshot oldSnapshot = store.snapshot();
+    const ParameterSnapshot firstVisit = store.snapshot();
 
-    store.selectTarget(7, 2, 1);
-    const ParameterSnapshot current = store.snapshot();
-    QVERIFY(oldSnapshot.contains(1, QStringLiteral("OLD")));
-    QVERIFY(!current.contains(1, QStringLiteral("OLD")));
-    QVERIFY(current.target().revision > oldSnapshot.target().revision);
+    store.selectEndpoint(second);
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("OLD")));
+    store.beginLoad();
+    QVERIFY(store.ingest(1, 1, 0, QStringLiteral("NEW"), 20, ParameterType::Int32));
+
+    store.selectEndpoint(first);
+    const ParameterSnapshot secondVisit = store.snapshot();
+    QVERIFY(secondVisit.contains(1, QStringLiteral("OLD")));
+    QVERIFY(!secondVisit.contains(1, QStringLiteral("NEW")));
+    QVERIFY(secondVisit.target().revision > firstVisit.target().revision);
+    QCOMPARE(store.state(), ParameterLoadState::Complete);
+    QVERIFY(store.specializedPagesReady());
 }
 
-void ParameterCoreTest::cancellationKeepsPartialSnapshot()
+void ParameterCoreTest::switchingDoesNotMixInFlightRefreshes()
+{
+    ParameterStore store;
+    const VehicleEndpoint first{21, 33, 1, QString(), QString()};
+    const VehicleEndpoint second{22, 33, 1, QString(), QString()};
+
+    store.selectEndpoint(first);
+    store.beginLoad();
+    QVERIFY(store.ingest(first, 2, 0, QStringLiteral("FIRST_A"), 1,
+                         ParameterType::Int32));
+
+    store.selectEndpoint(second);
+    store.beginLoad();
+    QVERIFY(store.ingest(second, 1, 0, QStringLiteral("SECOND"), 2,
+                         ParameterType::Int32));
+    QCOMPARE(store.state(), ParameterLoadState::Complete);
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("SECOND")));
+
+    // The first endpoint's response can finish after selection has moved.
+    QVERIFY(store.ingest(first, 2, 1, QStringLiteral("FIRST_B"), 3,
+                         ParameterType::Int32));
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("FIRST_A")));
+
+    store.selectEndpoint(first);
+    QCOMPARE(store.state(), ParameterLoadState::Complete);
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("FIRST_A")));
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("FIRST_B")));
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("SECOND")));
+}
+
+void ParameterCoreTest::cancellationPreservesCommittedSnapshot()
 {
     ParameterStore store;
     store.selectTarget(7, 1, 1);
     store.beginLoad();
-    QVERIFY(store.ingest(1, 3, 0, QStringLiteral("A"), 1, ParameterType::Int32));
+    QVERIFY(store.ingest(1, 1, 0, QStringLiteral("COMMITTED"), 1,
+                         ParameterType::Int32));
+
+    store.beginLoad();
+    QVERIFY(store.ingest(1, 3, 0, QStringLiteral("STAGED"), 2,
+                         ParameterType::Int32));
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("STAGED")));
     store.cancelLoad();
 
     QCOMPARE(store.state(), ParameterLoadState::Cancelled);
     QCOMPARE(store.progress().received, 1);
+    QCOMPARE(store.progress().reported, 1);
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("COMMITTED")));
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("STAGED")));
+    QVERIFY(store.snapshot().isComplete());
+    QVERIFY(store.specializedPagesReady());
+}
+
+void ParameterCoreTest::failureAndPartialFinishPreserveCommittedSnapshot()
+{
+    ParameterStore store;
+    const VehicleEndpoint endpoint{9, 55, 1, QString(), QString()};
+    store.selectEndpoint(endpoint);
+    store.beginLoad();
+    QVERIFY(store.ingest(endpoint, 1, 0, QStringLiteral("BASE"), 7,
+                         ParameterType::Int32));
+
+    store.beginLoad();
+    QVERIFY(store.ingest(endpoint, 2, 0, QStringLiteral("FAILED"), 8,
+                         ParameterType::Int32));
+    store.failLoad();
+    QCOMPARE(store.state(), ParameterLoadState::Failed);
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("BASE")));
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("FAILED")));
+    QVERIFY(store.specializedPagesReady());
+
+    store.beginLoad();
+    QVERIFY(store.ingest(endpoint, 2, 0, QStringLiteral("PARTIAL"), 9,
+                         ParameterType::Int32));
+    store.finishLoad();
+    QCOMPARE(store.state(), ParameterLoadState::Partial);
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("BASE")));
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("PARTIAL")));
+    QVERIFY(store.specializedPagesReady());
+}
+
+void ParameterCoreTest::sentinelIndexAndCountDoNotCorruptProgress()
+{
+    ParameterStore store;
+    const VehicleEndpoint endpoint{11, 70, 1, QString(), QString()};
+    store.selectEndpoint(endpoint);
+    store.beginLoad();
+
+    QVERIFY(store.ingest(endpoint, 65535, 65535,
+                         QStringLiteral("_HASH_CHECK"), 100,
+                         ParameterType::UInt32));
+    QCOMPARE(store.progress().received, 0);
+    QCOMPARE(store.progress().reported, 0);
+    QCOMPARE(store.state(), ParameterLoadState::Loading);
+
+    QVERIFY(store.ingest(endpoint, 2, 0, QStringLiteral("A"), 1,
+                         ParameterType::Int32));
+    QCOMPARE(store.progress().received, 1);
+    QCOMPARE(store.progress().reported, 2);
+
+    // An ordinary duplicate index is an already-received slot, not a new
+    // parameter and not additional progress.
+    QVERIFY(store.ingest(endpoint, 2, 0, QStringLiteral("COLLISION"), 99,
+                         ParameterType::Int32));
+    QCOMPARE(store.progress().received, 1);
+
+    // A sentinel count carries no replacement total. The known total of two
+    // remains authoritative and index one completes the staged transaction.
+    QVERIFY(store.ingest(endpoint, 65535, 1, QStringLiteral("B"), 2,
+                         ParameterType::Int32));
+    QCOMPARE(store.progress().received, 2);
+    QCOMPARE(store.progress().reported, 2);
+    QCOMPARE(store.state(), ParameterLoadState::Complete);
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("_HASH_CHECK")));
     QVERIFY(store.snapshot().contains(1, QStringLiteral("A")));
-    QVERIFY(!store.specializedPagesReady());
+    QVERIFY(store.snapshot().contains(1, QStringLiteral("B")));
+    QVERIFY(!store.snapshot().contains(1, QStringLiteral("COLLISION")));
+    QCOMPARE(store.snapshot().value(1, QStringLiteral("B")).reportedCount,
+             65535);
+
+    // Outside a list refresh the same PARAM_VALUE index is a normal live
+    // update (and commonly the acknowledgement for PARAM_SET).
+    QVERIFY(store.ingest(endpoint, 2, 0, QStringLiteral("A"), 5,
+                         ParameterType::Int32));
+    QCOMPARE(store.progress().received, 2);
+    QCOMPARE(store.snapshot().value(1, QStringLiteral("A")).value.toInt(), 5);
 }
 
 void ParameterCoreTest::codecPreservesBytewiseTypes()

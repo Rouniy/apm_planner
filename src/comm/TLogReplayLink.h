@@ -4,6 +4,7 @@
 #include "LinkInterface.h"
 #include "MAVLinkDecoder.h"
 #include "QGCMAVLinkInspector.h"
+#include <atomic>
 #include <QMutex>
 
 class TLogReplayLink : public LinkInterface
@@ -11,6 +12,7 @@ class TLogReplayLink : public LinkInterface
     Q_OBJECT
 public:
     explicit TLogReplayLink(QObject *parent = 0);
+    ~TLogReplayLink() override;
     void setMavlinkDecoder(MAVLinkDecoder *decoder);
     void setMavlinkInspector(QGCMAVLinkInspector *inspector);
     void play();
@@ -55,13 +57,14 @@ private slots:
     void readBytes();
 private:
     QString m_logFile;
-    bool m_toBeDeleted;
-    bool m_threadRun;
+    std::atomic_bool m_toBeDeleted;
+    std::atomic_bool m_threadRun;
     QMutex m_variableAccessMutex;
     int m_speedVar;
     qint64 m_posVar;
-    bool m_pause;
+    std::atomic_bool m_pause;
     MAVLinkDecoder *m_mavlinkDecoder;
+    bool m_ownsMavlinkDecoder;
     QGCMAVLinkInspector *m_mavlinkInspector;
 };
 

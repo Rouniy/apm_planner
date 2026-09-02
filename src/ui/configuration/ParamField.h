@@ -40,6 +40,7 @@ struct ParamField
     QString label;
     QString units;
     QString description;
+    QString status;
     QVariant value;
     QList<ParamOption> options;
     QList<BitOption> bitOptions;

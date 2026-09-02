@@ -3,13 +3,85 @@
 
 #include <QApplication>
 #include <QAction>
+#include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
+#include <QPainter>
+#include <QPalette>
+#include <QSplitter>
 #include <QStackedWidget>
-#if !defined(APM_HAS_KDDOCKWIDGETS)
 #include <QDockWidget>
 #include <QMainWindow>
-#endif
 #include <QtTest/QTest>
+
+namespace {
+QLabel *makePaintedPanel(const QString &text, const QColor &color)
+{
+    auto *panel = new QLabel(text);
+    panel->setAutoFillBackground(true);
+    QPalette palette = panel->palette();
+    palette.setColor(QPalette::Window, color);
+    palette.setColor(QPalette::WindowText, Qt::white);
+    panel->setPalette(palette);
+    panel->setAlignment(Qt::AlignCenter);
+    return panel;
+}
+
+QImage renderWidget(QWidget *widget)
+{
+    QImage image(widget->size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::white);
+    QPainter painter(&image);
+    widget->render(&painter);
+    return image;
+}
+
+int matchingPixelCount(const QImage &image, const QColor &color)
+{
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor pixel = QColor::fromRgba(line[x]);
+            if (qAbs(pixel.red() - color.red()) <= 2
+                && qAbs(pixel.green() - color.green()) <= 2
+                && qAbs(pixel.blue() - color.blue()) <= 2) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+void verifyPaintedSurface(QWidget *widget, const QList<QColor> &colors)
+{
+    const QImage image = renderWidget(widget);
+    QVERIFY(!image.isNull());
+    QCOMPARE(image.size(), widget->size());
+    const int pixels = image.width() * image.height();
+    QVERIFY(pixels > 0);
+    for (const QColor &color : colors) {
+        QVERIFY2(matchingPixelCount(image, color) > pixels / 100,
+                 qPrintable(QStringLiteral("Panel color %1 was not painted")
+                                .arg(color.name())));
+    }
+}
+
+QByteArray withEveryPanelHidden(const QByteArray &layout)
+{
+    QJsonObject envelope = QJsonDocument::fromJson(layout).object();
+    QJsonArray states = envelope.value(QStringLiteral("panelStates")).toArray();
+    for (int index = 0; index < states.size(); ++index) {
+        QJsonObject state = states.at(index).toObject();
+        state.insert(QStringLiteral("open"), false);
+        states.replace(index, state);
+    }
+    envelope.insert(QStringLiteral("panelStates"), states);
+    return QJsonDocument(envelope).toJson(QJsonDocument::Compact);
+}
+}
 
 class FlightViewsTest final : public QObject
 {
@@ -27,9 +99,12 @@ void FlightViewsTest::flightDataUsesStableMissionPlannerNames()
     FlightDataView view;
     QCOMPARE(view.objectName(), QStringLiteral("FlightDataView"));
 
-    QVERIFY(view.setHudWidget(new QLabel(QStringLiteral("hud"))));
-    QVERIFY(view.setMapWidget(new QLabel(QStringLiteral("map"))));
-    QVERIFY(view.setInfoView(new QLabel(QStringLiteral("info"))));
+    auto *hud = new QLabel(QStringLiteral("hud"));
+    auto *map = new QLabel(QStringLiteral("map"));
+    auto *info = new QLabel(QStringLiteral("info"));
+    QVERIFY(view.setHudWidget(hud));
+    QVERIFY(view.setMapWidget(map));
+    QVERIFY(view.setInfoView(info));
     auto *duplicate = new QLabel(QStringLiteral("duplicate"));
     QVERIFY(!view.setMapWidget(duplicate));
     delete duplicate;
@@ -39,9 +114,41 @@ void FlightViewsTest::flightDataUsesStableMissionPlannerNames()
                           FlightDataView::mapPanelId(),
                           FlightDataView::infoPanelId()}));
     QVERIFY(view.panelToggleAction(FlightDataView::infoPanelId()));
+    QVERIFY(!view.setPanelVisible(FlightDataView::mapPanelId(), false));
     const QByteArray layout = view.saveLayout();
     QVERIFY(!layout.isEmpty());
     QVERIFY(view.restoreLayout(layout));
+    QJsonObject envelope = QJsonDocument::fromJson(layout).object();
+    QCOMPARE(envelope.value(QStringLiteral("schema")).toString(),
+             QStringLiteral("apmplanner-fixed-panel-layout"));
+    QCOMPARE(envelope.value(QStringLiteral("version")).toInt(), 2);
+
+    // Floating QDockWidget/KDDockWidgets layouts are intentionally obsolete.
+    // They are rejected into the complete fixed MP10 surface.
+    envelope.insert(QStringLiteral("schema"),
+                    QStringLiteral("apmplanner-qt-dock-layout"));
+    envelope.insert(QStringLiteral("version"), 1);
+    QVERIFY(!view.restoreLayout(
+        QJsonDocument(envelope).toJson(QJsonDocument::Compact)));
+    QVERIFY(view.isPanelDocked(FlightDataView::mapPanelId()));
+
+    QVERIFY(!view.restoreLayout(withEveryPanelHidden(layout)));
+    for (const QString &panelId : view.panelIds()) {
+        QVERIFY(view.isPanelOpen(panelId));
+    }
+    QVERIFY(view.isPanelDocked(FlightDataView::mapPanelId()));
+    QVERIFY(view.findChildren<QDockWidget *>().isEmpty());
+    QVERIFY(view.findChildren<QMainWindow *>().isEmpty());
+    auto *mainSplitter = view.findChild<QSplitter *>(
+        QStringLiteral("MainFlightSplitter"));
+    auto *verticalSplitter = view.findChild<QSplitter *>(
+        QStringLiteral("VerticalDockSplitter"));
+    QVERIFY(mainSplitter);
+    QVERIFY(verticalSplitter);
+    QCOMPARE(mainSplitter->handleWidth(), 6);
+    QCOMPARE(verticalSplitter->handleWidth(), 4);
+    QCOMPARE(hud->minimumWidth(), 240);
+    QCOMPARE(map->minimumWidth(), 240);
 }
 
 void FlightViewsTest::flightPlannerUsesStableMissionPlannerNames()
@@ -67,36 +174,37 @@ void FlightViewsTest::flightPlannerUsesStableMissionPlannerNames()
     QVERIFY(!layout.isEmpty());
     QVERIFY(view.restoreLayout(layout));
 
-    // Old versions allowed every dock to be closed and persisted a completely
-    // white page. A restored all-closed layout must reopen the full surface.
-#if defined(APM_HAS_KDDOCKWIDGETS)
-    for (const QString &panelId : view.panelIds()) {
-        view.panelToggleAction(panelId)->setChecked(false);
-    }
-#else
-    for (QWidget *content : {static_cast<QWidget *>(map),
-                             static_cast<QWidget *>(waypoints),
-                             static_cast<QWidget *>(actions)}) {
-        auto *dock = qobject_cast<QDockWidget *>(content->parentWidget());
-        QVERIFY(dock);
-        dock->hide();
-    }
-#endif
-    const QByteArray allClosedLayout = view.saveLayout();
-    QVERIFY(!allClosedLayout.isEmpty());
-    QVERIFY(view.restoreLayout(allClosedLayout));
+    QVERIFY(!view.restoreLayout(withEveryPanelHidden(layout)));
     for (const QString &panelId : view.panelIds()) {
         QVERIFY(view.isPanelOpen(panelId));
     }
+    QVERIFY(view.isPanelDocked(FlightPlannerView::mapPanelId()));
+    QVERIFY(view.findChildren<QDockWidget *>().isEmpty());
+    QVERIFY(view.findChildren<QMainWindow *>().isEmpty());
+    auto *horizontalSplitter = view.findChild<QSplitter *>(
+        QStringLiteral("HorizontalDockSplitter"));
+    auto *verticalSplitter = view.findChild<QSplitter *>(
+        QStringLiteral("VerticalDockSplitter"));
+    QVERIFY(horizontalSplitter);
+    QVERIFY(verticalSplitter);
+    QCOMPARE(horizontalSplitter->handleWidth(), 4);
+    QCOMPARE(verticalSplitter->handleWidth(), 4);
+    QCOMPARE(actions->minimumWidth(), 168);
+    QCOMPARE(actions->maximumWidth(), 168);
+    QCOMPARE(waypoints->minimumHeight(), 210);
+    QCOMPARE(waypoints->maximumHeight(), 210);
 }
 
 void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
 {
+    const QColor hudColor(25, 80, 150);
+    const QColor dataMapColor(25, 145, 80);
+    const QColor infoColor(145, 55, 125);
     FlightDataView dataView;
     dataView.resize(1280, 800);
-    auto *dataMap = new QLabel(QStringLiteral("map"));
-    auto *hud = new QLabel(QStringLiteral("hud"));
-    auto *info = new QLabel(QStringLiteral("info"));
+    auto *dataMap = makePaintedPanel(QStringLiteral("map"), dataMapColor);
+    auto *hud = makePaintedPanel(QStringLiteral("hud"), hudColor);
+    auto *info = makePaintedPanel(QStringLiteral("info"), infoColor);
     QVERIFY(dataView.setHudWidget(hud));
     QVERIFY(dataView.setMapWidget(dataMap));
     QVERIFY(dataView.setInfoView(info));
@@ -110,12 +218,24 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
         QVERIFY2(panel->isVisibleTo(&dataView), panel->objectName().toUtf8());
         QVERIFY2(panel->width() > 0 && panel->height() > 0,
                  panel->objectName().toUtf8());
-#if !defined(APM_HAS_KDDOCKWIDGETS)
-        auto *dock = qobject_cast<QDockWidget *>(panel->parentWidget());
-        QVERIFY(dock);
-        QVERIFY(!dock->isFloating());
-#endif
     }
+
+    auto *dataMainSplitter = dataView.findChild<QSplitter *>(
+        QStringLiteral("MainFlightSplitter"));
+    auto *dataVerticalSplitter = dataView.findChild<QSplitter *>(
+        QStringLiteral("VerticalDockSplitter"));
+    QVERIFY(dataMainSplitter);
+    QVERIFY(dataVerticalSplitter);
+    const QList<int> dataColumnSizes = dataMainSplitter->sizes();
+    const QList<int> dataRowSizes = dataVerticalSplitter->sizes();
+    QCOMPARE(dataColumnSizes.size(), 2);
+    QCOMPARE(dataRowSizes.size(), 2);
+    QVERIFY2(qAbs(dataColumnSizes.at(0) * 3
+                  - dataColumnSizes.at(1) * 2) < 40,
+             qPrintable(QStringLiteral("DATA column sizes are %1:%2")
+                            .arg(dataColumnSizes.at(0))
+                            .arg(dataColumnSizes.at(1))));
+    QVERIFY(qAbs(dataRowSizes.at(0) - dataRowSizes.at(1)) < 20);
 
     const QPoint hudCenter = hud->mapTo(&dataView, hud->rect().center());
     const QPoint infoCenter = info->mapTo(&dataView, info->rect().center());
@@ -123,11 +243,16 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
     QVERIFY(hudCenter.x() < mapCenter.x());
     QVERIFY(infoCenter.x() < mapCenter.x());
     QVERIFY(hudCenter.y() < infoCenter.y());
+    verifyPaintedSurface(&dataView, {hudColor, dataMapColor, infoColor});
+
+    const QColor plannerMapColor(120, 75, 20);
+    const QColor waypointColor(40, 115, 145);
+    const QColor actionColor(125, 30, 45);
     FlightPlannerView plannerView;
     plannerView.resize(1280, 800);
-    auto *plannerMap = new QLabel(QStringLiteral("map"));
-    auto *waypoints = new QLabel(QStringLiteral("waypoints"));
-    auto *actions = new QLabel(QStringLiteral("actions"));
+    auto *plannerMap = makePaintedPanel(QStringLiteral("map"), plannerMapColor);
+    auto *waypoints = makePaintedPanel(QStringLiteral("waypoints"), waypointColor);
+    auto *actions = makePaintedPanel(QStringLiteral("actions"), actionColor);
     QVERIFY(plannerView.setMapWidget(plannerMap));
     QVERIFY(plannerView.setWaypointPanel(waypoints));
     QVERIFY(plannerView.setActionPanel(actions));
@@ -141,43 +266,42 @@ void FlightViewsTest::flightViewsRenderEveryDefaultPanel()
         QVERIFY2(panel->isVisibleTo(&plannerView), panel->objectName().toUtf8());
         QVERIFY2(panel->width() > 0 && panel->height() > 0,
                  panel->objectName().toUtf8());
-#if !defined(APM_HAS_KDDOCKWIDGETS)
-        auto *dock = qobject_cast<QDockWidget *>(panel->parentWidget());
-        QVERIFY(dock);
-        QVERIFY(!dock->isFloating());
-#endif
     }
+    QCOMPARE(actions->width(), 168);
+    QCOMPARE(waypoints->height(), 210);
+    verifyPaintedSurface(&plannerView,
+                         {plannerMapColor, waypointColor, actionColor});
 
-#if !defined(APM_HAS_KDDOCKWIDGETS)
-    auto *dataHost = dataView.findChild<QMainWindow *>(
-        QStringLiteral("FlightDataViewFallbackDockHost"));
-    auto *plannerHost = plannerView.findChild<QMainWindow *>(
-        QStringLiteral("FlightPlannerViewFallbackDockHost"));
-    QVERIFY(dataHost);
-    QVERIFY(plannerHost);
-    QVERIFY(!dataHost->isWindow());
-    QVERIFY(!plannerHost->isWindow());
-#endif
+    QVERIFY(dataView.findChildren<QDockWidget *>().isEmpty());
+    QVERIFY(plannerView.findChildren<QDockWidget *>().isEmpty());
+    QVERIFY(dataView.findChildren<QMainWindow *>().isEmpty());
+    QVERIFY(plannerView.findChildren<QMainWindow *>().isEmpty());
 }
 
 void FlightViewsTest::flightViewsRemainVisibleAfterStackSwitch()
 {
+    const QColor hudColor(25, 80, 150);
+    const QColor dataMapColor(25, 145, 80);
+    const QColor infoColor(145, 55, 125);
+    const QColor plannerMapColor(120, 75, 20);
+    const QColor waypointColor(40, 115, 145);
+    const QColor actionColor(125, 30, 45);
     QStackedWidget stack;
     stack.resize(1280, 800);
 
     auto *dataView = new FlightDataView;
-    auto *hud = new QLabel(QStringLiteral("hud"));
-    auto *dataMap = new QLabel(QStringLiteral("map"));
-    auto *info = new QLabel(QStringLiteral("info"));
+    auto *hud = makePaintedPanel(QStringLiteral("hud"), hudColor);
+    auto *dataMap = makePaintedPanel(QStringLiteral("map"), dataMapColor);
+    auto *info = makePaintedPanel(QStringLiteral("info"), infoColor);
     QVERIFY(dataView->setHudWidget(hud));
     QVERIFY(dataView->setMapWidget(dataMap));
     QVERIFY(dataView->setInfoView(info));
     stack.addWidget(dataView);
 
     auto *plannerView = new FlightPlannerView;
-    auto *plannerMap = new QLabel(QStringLiteral("map"));
-    auto *waypoints = new QLabel(QStringLiteral("waypoints"));
-    auto *actions = new QLabel(QStringLiteral("actions"));
+    auto *plannerMap = makePaintedPanel(QStringLiteral("map"), plannerMapColor);
+    auto *waypoints = makePaintedPanel(QStringLiteral("waypoints"), waypointColor);
+    auto *actions = makePaintedPanel(QStringLiteral("actions"), actionColor);
     QVERIFY(plannerView->setMapWidget(plannerMap));
     QVERIFY(plannerView->setWaypointPanel(waypoints));
     QVERIFY(plannerView->setActionPanel(actions));
@@ -199,12 +323,16 @@ void FlightViewsTest::flightViewsRemainVisibleAfterStackSwitch()
     };
 
     verifySurface(dataView, {hud, dataMap, info});
+    verifyPaintedSurface(&stack, {hudColor, dataMapColor, infoColor});
     stack.setCurrentWidget(plannerView);
     QCoreApplication::processEvents();
     verifySurface(plannerView, {plannerMap, waypoints, actions});
+    verifyPaintedSurface(&stack,
+                         {plannerMapColor, waypointColor, actionColor});
     stack.setCurrentWidget(dataView);
     QCoreApplication::processEvents();
     verifySurface(dataView, {hud, dataMap, info});
+    verifyPaintedSurface(&stack, {hudColor, dataMapColor, infoColor});
 }
 
 QTEST_MAIN(FlightViewsTest)

@@ -39,11 +39,16 @@ This file is part of the QGROUNDCONTROL project
 
 ParameterInterface::ParameterInterface(QWidget *parent) :
     QWidget(parent),
-    paramWidgets(new QMap<int, QGCParamWidget*>()),
     curr(-1),
     m_ui(new Ui::parameterWidget)
 {
     m_ui->setupUi(this);
+    // ParameterStore is keyed by the globally selected exact endpoint. Keep
+    // one raw-parameter view instead of manufacturing one misleading copy per
+    // legacy UAS object.
+    m_paramWidget = new QGCParamWidget(nullptr, this);
+    m_ui->stackedWidget->addWidget(m_paramWidget);
+    m_ui->stackedWidget->setCurrentWidget(m_paramWidget);
 
     // Get current MAV list
     QList<UASInterface*> systems = UASManager::instance()->getUASList();
@@ -66,8 +71,15 @@ ParameterInterface::~ParameterInterface()
 
 void ParameterInterface::selectUAS(int index)
 {
-    m_ui->stackedWidget->setCurrentIndex(index);
-    m_ui->sensorSettings->setCurrentIndex(index);
+    if (index < 0 || index >= m_uasByIndex.size()) {
+        return;
+    }
+    if (index < m_ui->sensorSettings->count()) {
+        m_ui->sensorSettings->setCurrentIndex(index);
+    }
+    if (m_paramWidget) {
+        m_paramWidget->setUAS(m_uasByIndex.at(index).data());
+    }
     curr = index;
 }
 
@@ -77,10 +89,10 @@ void ParameterInterface::selectUAS(int index)
  */
 void ParameterInterface::addUAS(UASInterface* uas)
 {
-    QGCParamWidget* param = new QGCParamWidget(uas, this);
-    paramWidgets->insert(uas->getUASID(), param);
-    m_ui->stackedWidget->addWidget(param);
-
+    if (!uas || m_uasByIndex.contains(uas)) {
+        return;
+    }
+    m_uasByIndex.append(uas);
 
     QGCSensorSettingsWidget* sensor = new QGCSensorSettingsWidget(uas, this);
     m_ui->sensorSettings->addWidget(sensor);
@@ -89,7 +101,7 @@ void ParameterInterface::addUAS(UASInterface* uas)
     if (curr == -1) {
         // Clear
         m_ui->sensorSettings->setCurrentWidget(sensor);
-        m_ui->stackedWidget->setCurrentWidget(param);
+        m_paramWidget->setUAS(uas);
         curr = 0;
     }
 }

@@ -339,20 +339,8 @@ void ApmSoftwareConfig::activeUASSet(UASInterface *uas)
 
     uasConnected();
 
-#ifdef Q_OS_WIN
-    QString appDataDir = QString(getenv("USERPROFILE")).replace("\\","/");
-#else
-    QString appDataDir = getenv("HOME");
-#endif
-    QDir autopilotdir(QGC::appDataDirectory());
-    if(autopilotdir.cd(s_xmlSubFolder))
-    {
-        m_apmPdefFilename = autopilotdir.filePath(vehicle_pdef_filename);
-    }
-    else
-    {
-        m_apmPdefFilename = QDir(appDataDir + "/apmplanner2").filePath("apm.pdef.xml"); // Fall back
-    }
+    m_apmPdefFilename = QDir(QGC::appDataDirectory()).filePath(
+        QDir(s_xmlSubFolder).filePath(vehicle_pdef_filename));
 
     QFile xmlfile(m_apmPdefFilename);
     if (!xmlfile.exists() || !xmlfile.open(QIODevice::ReadOnly))

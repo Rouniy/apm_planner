@@ -116,7 +116,8 @@ BackstageView::BackstageView(QWidget *parent)
     setObjectName(QStringLiteral("BackstageView"));
     setAttribute(Qt::WA_StyledBackground, true);
     setStyleSheet(QStringLiteral(
-        "BackstageView { background: #1a201d; color: white; font-family: sans-serif; }"
+        "BackstageView { background: #1a201d; color: white;"
+        " font-family: 'Bitstream Vera Sans'; }"
         "QScrollArea#backstageNavigation,"
         "QScrollArea#backstageNavigation QWidget#qt_scrollarea_viewport,"
         "QWidget#backstageNavigationContent { background: #0d1210; border: 0; }"

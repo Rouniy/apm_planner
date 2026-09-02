@@ -328,7 +328,7 @@ void CompassConfig::setCompass3DRGPS()
 void CompassConfig::liveCalibrationClicked()
 {
     QLOG_DEBUG() << "live Calibration Started";
-    if (!m_uas) {
+    if (!m_uas || !m_parameterManager) {
         showNullMAVErrorMessageBox();
         return;
     }
@@ -339,17 +339,17 @@ void CompassConfig::liveCalibrationClicked()
                                 "\nNOTE: Not supported in Ardupilot 4.0+"));
 
     // Initialiase to zero
-    m_uas->setParameter( 1,"COMPASS_OFS_X", 0.0);
-    m_uas->setParameter(1,"COMPASS_OFS_Y", 0.0);
-    m_uas->setParameter(1,"COMPASS_OFS_Z", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS_X", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS_Y", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS_Z", 0.0);
 
-    m_uas->setParameter(1,"COMPASS_OFS2_X", 0.0);
-    m_uas->setParameter(1,"COMPASS_OFS2_Y", 0.0);
-    m_uas->setParameter(1,"COMPASS_OFS2_Z", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS2_X", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS2_Y", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS2_Z", 0.0);
 
-    m_uas->setParameter(1,"COMPASS_OFS3_X", 0.0);
-    m_uas->setParameter(1,"COMPASS_OFS3_Y", 0.0);
-    m_uas->setParameter(1,"COMPASS_OFS3_Z", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS3_X", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS3_Y", 0.0);
+    m_parameterManager->setParameter(1,"COMPASS_OFS3_Z", 0.0);
 
     QTimer::singleShot(1000,this,SLOT(startDataCollection()));
 }

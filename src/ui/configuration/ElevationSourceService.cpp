@@ -1,4 +1,5 @@
 #include "ElevationSourceService.h"
+#include "SrtmElevationSource.h"
 
 #include <QCoreApplication>
 #include <QBuffer>
@@ -1130,6 +1131,7 @@ public:
     ElevationSourcesScanResult lastResult;
     std::vector<std::shared_ptr<GdalDataset>> elevationDatasets;
     std::vector<std::shared_ptr<GdalDataset>> rasterDatasets;
+    std::unique_ptr<SrtmElevationSource> srtm;
     mutable QMutex stateMutex;
     QString startupError;
     quint64 generation = 0;
@@ -1144,6 +1146,11 @@ ElevationSourceService::ElevationSourceService(QObject *parent)
 {
     qRegisterMetaType<ElevationSourcesScanProgress>();
     qRegisterMetaType<ElevationSourcesScanResult>();
+    d->srtm.reset(new SrtmElevationSource(this));
+    connect(d->srtm.get(), &SrtmElevationSource::TileAvailable,
+            this, &ElevationSourceService::srtmTileAvailable);
+    connect(d->srtm.get(), &SrtmElevationSource::DownloadFailed,
+            this, &ElevationSourceService::srtmDownloadFailed);
 }
 
 ElevationSourceService::~ElevationSourceService()
@@ -1452,7 +1459,25 @@ bool ElevationSourceService::sampleAltitude(double latitude,
             return true;
         }
     }
-    return false;
+    return d->srtm && d->srtm->SampleAltitude(
+        latitude, longitude, altitude);
+}
+
+QString ElevationSourceService::srtmCacheDirectory() const
+{
+    return d->srtm ? d->srtm->CacheDirectory() : QString();
+}
+
+bool ElevationSourceService::srtmAutoDownloadEnabled() const
+{
+    return d->srtm && d->srtm->AutoDownloadEnabled();
+}
+
+void ElevationSourceService::setSrtmAutoDownloadEnabled(bool enabled)
+{
+    if (d->srtm) {
+        d->srtm->SetAutoDownloadEnabled(enabled);
+    }
 }
 
 QByteArray ElevationSourceService::renderRasterTile(
@@ -1628,6 +1653,9 @@ void ElevationSourceService::shutdown()
         return;
     }
     d->shuttingDown = true;
+    if (d->srtm) {
+        d->srtm->Shutdown();
+    }
     ++d->generation;
     if (d->cancellation) {
         d->cancellation->store(true);

@@ -52,7 +52,6 @@ TCPLink::TCPLink(const QHostAddress &hostAddress, const QString &hostName, quint
 TCPLink::~TCPLink()
 {
     disconnect();
-	deleteLater();
 }
 
 void TCPLink::run()

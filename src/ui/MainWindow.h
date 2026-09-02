@@ -145,6 +145,12 @@ private:
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+    Q_PROPERTY(QString plannerAltitudeUnits READ plannerAltitudeUnits
+               WRITE setPlannerAltitudeUnits
+               NOTIFY plannerAltitudeUnitsChanged)
+    Q_PROPERTY(QString plannerDistanceUnits READ plannerDistanceUnits
+               WRITE setPlannerDistanceUnits
+               NOTIFY plannerDistanceUnitsChanged)
 
 public:
     static MainWindow* instance();
@@ -168,8 +174,11 @@ public:
     bool lowPowerModeEnabled();
     /** @brief Get Auto Prox mode setting */
     bool autoProxyModeEnabled();
+    QString plannerAltitudeUnits() const;
+    QString plannerDistanceUnits() const;
 
     QList<QAction*> listLinkMenuActions(void);
+    QMenu *toolsMenu() const { return ui.menuTools; }
 
 public slots:
     void loadTlogMenuClicked();
@@ -186,8 +195,16 @@ public slots:
 
     /** @brief Show the application settings */
     void showSettings();
-    /** @brief Show Mission Planner-compatible connection defaults. */
+    /** @brief Show the current PLAN mission elevation profile. */
+    void showMissionElevation();
+    /** @brief Apply Mission Planner altitude display units to PLAN live. */
+    void setPlannerAltitudeUnits(const QString &units);
+    /** @brief Apply Mission Planner distance display units to PLAN live. */
+    void setPlannerDistanceUnits(const QString &units);
+    /** @brief Show Mission Planner's additional-connections window. */
     void showConnectionOptions();
+    /** @brief Create one additional connection selected by ConnectionOptions. */
+    void openAdditionalConnection(const QString &connection, int baud);
     /** @brief Show the application About box */
     void showAbout();
     /** @brief Add a communication link */
@@ -212,8 +229,6 @@ public slots:
     void saveScreen();
     void enableHeartbeat(bool enabled);
     void setGroundStationSystemId(int systemId);
-    void applyConnectionOptions(int baud, bool sendHeartbeat,
-                                int gcsSystemId);
 
     /** @brief Sets advanced mode, allowing for editing of tool widget locations */
     void setAdvancedMode(bool mode);
@@ -319,6 +334,8 @@ signals:
     void x11EventOccured(XEvent *event);
 #endif //MOUSE_ENABLED_LINUX
     void autoProxyChanged(bool);
+    void plannerAltitudeUnitsChanged(const QString &units);
+    void plannerDistanceUnitsChanged(const QString &units);
 
 public:
     QGCMAVLinkLogPlayer* getLogPlayer()
@@ -402,6 +419,7 @@ protected:
     void buildCommonWidgets();
     void connectCommonWidgets();
     void connectCommonActions();
+	void bindPlannerVehicle(UASInterface *uas);
 	void connectSenseSoarActions();
 
     void loadSettings();
@@ -420,6 +438,8 @@ protected:
     // Center widgets
     QPointer<FlightPlannerView> plannerView;
     QPointer<FlightPlannerViewModel> plannerViewModel;
+    QPointer<QDialog> plannerElevationDialog;
+    QPointer<UASInterface> plannerParameterVehicle;
     QPointer<QGCMapTool> plannerMapTool;
     QPointer<FlightDataView> pilotView;
     QPointer<HelpView> helpView;

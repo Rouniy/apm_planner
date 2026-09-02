@@ -318,15 +318,6 @@ namespace core {
         return ret;
     }
 
-    bool OPMaps::ExportToGMDB(const QString &file)
-    {
-        return Cache::Instance()->ImageCache.ExportMapDataToDB(Cache::Instance()->ImageCache.GtileCache()+QDir::separator()+"Data.qmdb",file);
-    }
-    bool OPMaps::ImportFromGMDB(const QString &file)
-    {
-        return Cache::Instance()->ImageCache.ExportMapDataToDB(file,Cache::Instance()->ImageCache.GtileCache()+QDir::separator()+"Data.qmdb");
-    }
-
     diagnostics OPMaps::GetDiagnostics()
     {
         diagnostics i;

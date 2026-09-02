@@ -33,7 +33,7 @@
     <number>0</number>
    </property>
    <item row="0" column="0">
-    <widget class="QGCMapWidget" name="map" native="true">
+    <widget class="QWidget" name="mapHost" native="true">
      <widget class="QLabel" name="longitudeLabel">
       <property name="geometry">
        <rect>
@@ -191,12 +191,6 @@
    <class>QGCMapToolBar</class>
    <extends>QWidget</extends>
    <header>QGCMapToolBar.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
-   <class>QGCMapWidget</class>
-   <extends>QWidget</extends>
-   <header>QGCMapWidget.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

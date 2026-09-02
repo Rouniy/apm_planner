@@ -21,6 +21,7 @@ This file is part of the APM_PLANNER project
 ======================================================================*/
 
 #include "BatteryMonitorConfig.h"
+#include "QGCUASParamManager.h"
 #include <QMessageBox>
 #include <QPushButton>
 #include "logging.h"
@@ -68,6 +69,9 @@ inline float BatteryPreset::ampsPerVolt()
 }
 
 BatteryMonitorConfig::BatteryMonitorConfig(QWidget *parent) : AP2ConfigWidget(parent),
+    m_instanceModel(QStringLiteral("BATT"), 0),
+    m_voltDividerParam(m_instanceModel.VoltMultiplierParameter()),
+    m_ampPerVoltParam(m_instanceModel.AmpPerVoltParameter()),
     m_maxVoltOut(3.3)
 {
     ui.setupUi(this);
@@ -174,9 +178,12 @@ void BatteryMonitorConfig::setNewParameters(QObject *object)
                                          preset->batteryMonitor(), preset->voltagePin(), preset->voltageDivider(),
                                          preset->currentPin(), preset->ampsPerVolt());
 
-        m_uas->getParamManager()->setParameter(1,"BATT_MONITOR",preset->batteryMonitor());
-        m_uas->getParamManager()->setParameter(1,"BATT_VOLT_PIN",preset->voltagePin());
-        m_uas->getParamManager()->setParameter(1,"BATT_CURR_PIN",preset->currentPin());
+        m_uas->getParamManager()->setParameter(
+            1, m_instanceModel.MonitorParameter(), preset->batteryMonitor());
+        m_uas->getParamManager()->setParameter(
+            1, m_instanceModel.VoltPinParameter(), preset->voltagePin());
+        m_uas->getParamManager()->setParameter(
+            1, m_instanceModel.CurrPinParameter(), preset->currentPin());
 
         m_uas->getParamManager()->setParameter(1,m_voltDividerParam,preset->voltageDivider());
         m_uas->getParamManager()->setParameter(1,m_ampPerVoltParam,preset->ampsPerVolt());
@@ -199,7 +206,15 @@ void BatteryMonitorConfig::measuredVoltsSet()
     }
     float calced = ui.calcVoltsLineEdit->text().toFloat(&ok);
     float divider = ui.calcDividerLineEdit->text().toFloat(&ok);
-    float newval = (measured * divider)/ calced;
+    double calibrated = 0.0;
+    if (!BatteryMonitorInstanceModel::CalibratedScale(
+            measured, calced, divider, &calibrated)) {
+        QMessageBox::information(
+            this, tr("Error"),
+            tr("Live voltage is zero or the calibration values are invalid."));
+        return;
+    }
+    const float newval = static_cast<float>(calibrated);
     disconnect(ui.calcDividerLineEdit,SIGNAL(editingFinished()),this,SLOT(calcDividerSet()));
     ui.calcDividerLineEdit->setText(QString::number(newval,'f',6));
     m_uas->getParamManager()->setParameter(1,m_voltDividerParam,newval);
@@ -229,7 +244,15 @@ void BatteryMonitorConfig::measuredCurrentSet()
     }
     float calced = ui.batteryCurrentLineEdit->text().toFloat(&ok);
     float divider = ui.ampsPerVoltsLineEdit->text().toFloat(&ok);
-    float newval = (measured * divider)/ calced;
+    double calibrated = 0.0;
+    if (!BatteryMonitorInstanceModel::CalibratedScale(
+            measured, calced, divider, &calibrated)) {
+        QMessageBox::information(
+            this, tr("Error"),
+            tr("Live current is zero or the calibration values are invalid."));
+        return;
+    }
+    const float newval = static_cast<float>(calibrated);
     ui.ampsPerVoltsLineEdit->setText(QString::number(newval,'f',6));
     m_uas->getParamManager()->setParameter(1,m_ampPerVoltParam,newval);
     ui.measuredCurrentLineEdit_2->setText(ui.measuredCurrentLineEdit->text());
@@ -246,10 +269,23 @@ void BatteryMonitorConfig::activeUASSet(UASInterface *uas)
     {
         disconnect(m_uas,SIGNAL(batteryChanged(UASInterface*,double,double,double,int)),this,SLOT(batteryChanged(UASInterface*,double,double,double,int)));
     }
+    m_instanceModel.Reset();
+    m_voltDividerParam = m_instanceModel.VoltMultiplierParameter();
+    m_ampPerVoltParam = m_instanceModel.AmpPerVoltParameter();
     AP2ConfigWidget::activeUASSet(uas);
     if (!uas)
     {
         return;
+    }
+    if (QGCUASParamManager *manager = uas->getParamManager()) {
+        const int component = MAV_COMP_ID_PRIMARY;
+        const QList<QString> names = manager->getParameterNames(component);
+        for (const QString &name : names) {
+            m_instanceModel.parameterChanged(
+                component, name,
+                manager->getParameterValue(component, name));
+        }
+        m_ampPerVoltParam = m_instanceModel.AmpPerVoltParameter();
     }
     connect(uas,SIGNAL(batteryChanged(UASInterface*,double,double,double,int)),this,SLOT(batteryChanged(UASInterface*,double,double,double,int)));
 
@@ -305,7 +341,8 @@ void BatteryMonitorConfig::batteryCapacitySet()
         QMessageBox::information(0,"Error","Invalid number entered for amps per volts. Please try again");
         return;
     }
-    m_uas->getParamManager()->setParameter(1,"BATT_CAPACITY",newval);
+    m_uas->getParamManager()->setParameter(
+        1, m_instanceModel.CapacityParameter(), newval);
 }
 
 float BatteryMonitorConfig::calculatemVPerAmp(float maxvoltsout,float maxamps)
@@ -381,17 +418,9 @@ void BatteryMonitorConfig::checkSensorType()
 void BatteryMonitorConfig::parameterChanged(int uas, int component, QString parameterName, QVariant value)
 {
     Q_UNUSED(uas);
-    Q_UNUSED(component);
+    m_instanceModel.parameterChanged(component, parameterName, value);
 
-    if (parameterName == "VOLT_DIVIDER")
-    {
-        QLOG_DEBUG() << "Received VOLT_DIVIDER parameter";
-        m_voltDividerParam = parameterName;
-        ui.calcDividerLineEdit->setText(QString::number(value.toFloat(),'f',6));
-        m_savedVoltDivider = value.toFloat();
-        checkSensorType();
-    }
-    else if (parameterName == "BATT_VOLT_MULT")
+    if (parameterName == m_instanceModel.VoltMultiplierParameter())
     {
         QLOG_DEBUG() << "Received BATT_VOLT_MULT parameter";
         m_voltDividerParam = parameterName;
@@ -399,39 +428,32 @@ void BatteryMonitorConfig::parameterChanged(int uas, int component, QString para
         m_savedVoltDivider = value.toFloat();
         checkSensorType();
     }
-    else if (parameterName == "AMP_PER_VOLT")
+    else if (m_instanceModel.IsAmpPerVoltParameter(parameterName)
+             && parameterName == m_instanceModel.AmpPerVoltParameter())
     {
-        QLOG_DEBUG() << "Received AMP_PER_VOLT parameter";
-        m_ampPerVoltParam = parameterName;
-        ui.ampsPerVoltsLineEdit->setText(QString::number(value.toFloat(),'f',4));
-        m_savedAmpsPerVolts = value.toFloat();
-        checkSensorType();
-    }
-    else if (parameterName == "BATT_AMP_PERVOLT")
-    {
-        QLOG_DEBUG() << "Received BATT_AMP_PERVOLT parameter";
+        QLOG_DEBUG() << "Received" << parameterName << "parameter";
         m_ampPerVoltParam = parameterName;
         ui.ampsPerVoltsLineEdit->setText(QString::number(value.toFloat(),'f',4));
         m_savedAmpsPerVolts = value.toFloat();
         checkSensorType();
 
     }
-    else if (parameterName == "BATT_MONITOR")
+    else if (parameterName == m_instanceModel.MonitorParameter())
     {
         QLOG_DEBUG() << "Received BATT_MONITOR combobox";
     }
-    else if (parameterName == "BATT_CAPACITY")
+    else if (parameterName == m_instanceModel.CapacityParameter())
     {
         QLOG_DEBUG() << "Received BATT_CAPACITY" << QString::number(value.toFloat());
         ui.battCapacityLineEdit->setText(QString::number(value.toFloat()));
     }
-    else if (parameterName == "BATT_VOLT_PIN")
+    else if (parameterName == m_instanceModel.VoltPinParameter())
     {
         int ivalue = value.toInt();
         QLOG_DEBUG() << "Received BATT_VOLT_PIN combo index to:" << ivalue;
         ui.voltPinLineEdit->setText(QString::number(ivalue));
     }
-    else if (parameterName == "BATT_CURR_PIN")
+    else if (parameterName == m_instanceModel.CurrPinParameter())
     {
         QLOG_DEBUG() << "Received paramter BATT_CURR_PIN";
         //Unused at the moment, everything is off BATT_VOLT_PIN

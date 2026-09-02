@@ -26,16 +26,17 @@ ParameterMetaDataCatalog catalogFixture()
         <param name="ArduCopter:MODE" humanName="Mode" user="Advanced">
           <values><value code="0.6">Strict</value><value code="1">All</value></values>
         </param>
-        <param name="ArduCopter:MASK" humanName="Mask">
+        <param name="ArduCopter:MASK" humanName="Mask" user="Standard">
           <values><value code="0">None</value><value code="1">First</value></values>
           <field name="Bitmask">0:First,2:Third</field>
         </param>
-        <param name="ArduCopter:LOCKED" humanName="Locked">
+        <param name="ArduCopter:LOCKED" humanName="Locked" user="Standard">
           <field name="ReadOnly">true</field>
         </param>
         <param name="ArduCopter:COUNT" humanName="Count" user="Standard">
           <field name="Range">0 1000</field><field name="Increment">1</field>
         </param>
+        <param name="ArduCopter:UNSPEC" humanName="Unspecified" />
         <param name="ArduCopter:HIDDEN" user="Standard" />
       </parameters></vehicles></paramfile>)xml");
     QBuffer buffer(&xml);
@@ -64,6 +65,7 @@ private slots:
     void initTestCase();
     void init();
     void modelUsesMissionPlannerFiltersAndComponents();
+    void ignoresRetiredNameOnlyFavorites();
     void viewClassifiesEditorsAndPreservesOutOfRangeValue();
     void writesUseSelectedComponentAndTypedValues();
     void nonExactMetadataWarnsButDoesNotBlockRange();
@@ -106,7 +108,7 @@ void ConfigFriendlyParamsViewTest::modelUsesMissionPlannerFiltersAndComponents()
     standard.setFavorite(1, QStringLiteral("MASK"), true);
     QCOMPARE(standard.visibleFields().first().name, QStringLiteral("MASK"));
     QVERIFY(QSettings().value(QStringLiteral("fav_params_std"))
-                .toStringList().contains(QStringLiteral("MASK")));
+                .toStringList().contains(QStringLiteral("1:MASK")));
 
     ConfigFriendlyParamsViewModel restoredStandard(false);
     restoredStandard.setCatalog(catalogFixture());
@@ -126,10 +128,28 @@ void ConfigFriendlyParamsViewTest::modelUsesMissionPlannerFiltersAndComponents()
     advanced.setCatalog(catalogFixture());
     advanced.setParameterSnapshot({
         {1, QStringLiteral("GAIN"), 0.5},
-        {1, QStringLiteral("MODE"), 1.0}
+        {1, QStringLiteral("MODE"), 1.0},
+        {1, QStringLiteral("UNSPEC"), 2.0}
     });
-    QCOMPARE(advanced.fields().size(), 1);
+    QCOMPARE(advanced.fields().size(), 2);
     QCOMPARE(advanced.fields().first().name, QStringLiteral("MODE"));
+    QCOMPARE(advanced.fields().last().name, QStringLiteral("UNSPEC"));
+}
+
+void ConfigFriendlyParamsViewTest::ignoresRetiredNameOnlyFavorites()
+{
+    QSettings().setValue(QStringLiteral("fav_params_std"),
+                         QStringList{QStringLiteral("MASK")});
+
+    ConfigFriendlyParamsViewModel standard(false);
+    standard.setCatalog(catalogFixture());
+    standard.setParameterSnapshot({
+        {1, QStringLiteral("GAIN"), 0.5},
+        {1, QStringLiteral("MASK"), 0},
+    });
+
+    QCOMPARE(standard.visibleFields().first().name, QStringLiteral("GAIN"));
+    QVERIFY(!standard.fields().at(1).favorite);
 }
 
 void ConfigFriendlyParamsViewTest::viewClassifiesEditorsAndPreservesOutOfRangeValue()

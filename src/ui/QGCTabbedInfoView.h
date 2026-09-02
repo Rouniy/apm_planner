@@ -8,7 +8,13 @@
 #include "UASQuickView.h"
 #include "UASRawStatusView.h"
 
+#include <QPointer>
 #include <QWidget>
+
+class FlightDataViewModel;
+class PreflightChecklistModel;
+class PreflightChecklistWidget;
+class SimpleActionsWidget;
 
 class QGCTabbedInfoView : public QWidget
 {
@@ -18,13 +24,27 @@ public:
     explicit QGCTabbedInfoView(QWidget *parent = 0);
     ~QGCTabbedInfoView();
     void addSource(MAVLinkDecoder *decoder);
+    void setFlightDataViewModel(FlightDataViewModel *viewModel);
+    PreflightChecklistModel *preflightChecklistModel() const;
+    SimpleActionsWidget *simpleActionsWidget() const;
+
+signals:
+    void clearTrackRequested();
+    void joystickSetupRequested();
+
 private:
-    MAVLinkDecoder *m_decoder;
+    void syncPreflightTelemetry();
+
+    MAVLinkDecoder *m_decoder = nullptr;
     Ui::QGCTabbedInfoView ui;
     QGCMessageView *messageView;
     UASActionsWidget *actionsWidget;
     UASQuickView *quickView;
     UASRawStatusView *rawView;
+    PreflightChecklistModel *m_preflightModel = nullptr;
+    PreflightChecklistWidget *m_preflightWidget = nullptr;
+    SimpleActionsWidget *m_simpleActionsWidget = nullptr;
+    QPointer<FlightDataViewModel> m_flightDataViewModel;
 };
 
 #endif // QGCTABBEDINFOVIEW_H

@@ -48,6 +48,8 @@ This file is part of the PIXHAWK project
 
 #endif
 class NativeGdalMapService;
+class QmlPluginManager;
+class Settings;
 /**
  * @brief The main application and management class.
  *
@@ -80,9 +82,14 @@ protected:
     void startUASManager();
 
 private:
-    MainWindow* mainWindow;
+    void shutdownCore();
+
+    MainWindow* mainWindow = nullptr;
     QGCMouseWheelEventFilter *m_mouseWheelFilter;
+    std::unique_ptr<Settings> m_qmlSettings;
+    std::unique_ptr<QmlPluginManager> m_qmlPluginManager;
     std::unique_ptr<NativeGdalMapService> m_nativeGdalMapService;
+    bool m_coreShutDown = false;
 };
 
 #endif /* _CORE_H_ */

@@ -2,9 +2,13 @@
 #define QGCMAPTOOL_H
 
 class UASInterface;
-class QGCMapWidget;
+class AbstractMapWidget;
+class FlightDataMapOverlay;
+class FlightDataViewModel;
+enum class MapWidgetRole;
 #include <QWidget>
 #include <QMenu>
+#include <QPointer>
 #include <QTimer>
 
 namespace Ui {
@@ -17,8 +21,10 @@ class QGCMapTool : public QWidget
 
 public:
     explicit QGCMapTool(QWidget *parent = 0);
+    explicit QGCMapTool(MapWidgetRole role, QWidget *parent = nullptr);
     ~QGCMapTool();
-    QGCMapWidget *mapWidget() const;
+    AbstractMapWidget *mapWidget() const;
+    void setFlightDataViewModel(FlightDataViewModel *viewModel);
 
 public slots:
     void setMapZoom(int zoom);
@@ -38,11 +44,16 @@ private slots:
 private:
     void showEvent(QShowEvent* event);
     void hideEvent(QHideEvent* event);
+    void updateFlightDataOverlay();
 
 private:
     Ui::QGCMapTool *ui;
 
-    UASInterface* m_uasInterface;
+    MapWidgetRole m_role;
+    QPointer<UASInterface> m_uasInterface;
+    QPointer<AbstractMapWidget> m_mapBackend;
+    QPointer<FlightDataViewModel> m_flightDataViewModel;
+    QPointer<FlightDataMapOverlay> m_flightDataOverlay;
 };
 
 #endif // QGCMAPTOOL_H

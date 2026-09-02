@@ -1,5 +1,6 @@
 #include "WpRow.h"
 
+#include "comm/MissionItemProtocol.h"
 #include "QGCMAVLink.h"
 
 #include <QRegularExpression>
@@ -363,9 +364,15 @@ QString WpRow::FrameName() const
 {
     switch (m_data.Frame) {
     case MAV_FRAME_GLOBAL:
+    case MAV_FRAME_GLOBAL_INT:
         return QStringLiteral("Absolute");
     case MAV_FRAME_GLOBAL_TERRAIN_ALT:
+    case MAV_FRAME_GLOBAL_TERRAIN_ALT_INT:
         return QStringLiteral("Terrain");
+    case MAV_FRAME_LOCAL_NED:
+        return QStringLiteral("Local NED");
+    case MAV_FRAME_LOCAL_ENU:
+        return QStringLiteral("Local ENU");
     default:
         return QStringLiteral("Relative");
     }
@@ -420,18 +427,7 @@ bool WpRow::commandForName(const QString &name, quint16 *command)
 
 bool WpRow::CommandHasLocation(quint16 command)
 {
-    // MAVLink's generated C enum does not retain the hasLocation metadata.
-    // Keep the map-facing subset explicit and covered by tests. The values
-    // follow the common/ArduPilot MAVLink dialect used to build this binary.
-    static constexpr std::array<quint16, 43> commands{{
-        16, 17, 18, 19, 21, 22, 23, 24, 25, 31,
-        80, 81, 82, 84, 85, 94, 179, 188, 189, 192,
-        195, 201, 4001, 4501, 5000, 5001, 5002, 5003, 5004, 5100,
-        30001, 31000, 31001, 31002, 31003, 31004, 31005, 31006,
-        31007, 31008, 31009, 42006, 43003,
-    }};
-    return std::find(commands.cbegin(), commands.cend(), command)
-        != commands.cend();
+    return MissionItemProtocol::commandHasLocation(command);
 }
 
 bool WpRow::CommandIsFlightPath(quint16 command)
@@ -446,12 +442,7 @@ bool WpRow::CommandIsFlightPath(quint16 command)
 
 bool WpRow::FrameHasGlobalLocation(quint8 frame)
 {
-    return frame == MAV_FRAME_GLOBAL
-        || frame == MAV_FRAME_GLOBAL_RELATIVE_ALT
-        || frame == MAV_FRAME_GLOBAL_INT
-        || frame == MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
-        || frame == MAV_FRAME_GLOBAL_TERRAIN_ALT
-        || frame == MAV_FRAME_GLOBAL_TERRAIN_ALT_INT;
+    return MissionItemProtocol::frameHasGlobalLocation(frame);
 }
 
 QStringList WpRow::FrameList()

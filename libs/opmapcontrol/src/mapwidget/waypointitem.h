@@ -132,6 +132,8 @@ public:
     * @param value altitude in meters above mean sea level (MSL)
     */
     void SetAltitude(double const& value);
+    /** @brief Set display-only altitude conversion for the tooltip. */
+    void SetAltitudePresentation(double multiplier, const QString &unit);
     /**
     * @brief Sets the WayPoint Heading
     *
@@ -162,6 +164,8 @@ protected:
     QString description;
     bool shownumber;
     double altitude;
+    double altitudeMultiplier = 1.0;
+    QString altitudeUnit = QStringLiteral("m");
     float heading;
     int number;
 

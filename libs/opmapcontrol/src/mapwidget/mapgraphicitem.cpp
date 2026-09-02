@@ -26,6 +26,7 @@
 */
 #include "graphicsitem.h"
 #include "mapgraphicitem.h"
+#include "pureimage.h"
 #include <QGraphicsScene>
 #include <QGraphicsSceneMouseEvent>
 
@@ -71,7 +72,9 @@ namespace mapcontrol
 
         core->OnMapSizeChanged(maprect.width(),maprect.height());
         core->SetCurrentRegion(internals::Rectangle(0, 0, maprect.width(), maprect.height()));
-        if(isVisible())
+        // Before StartSystem(), only record the final viewport geometry.
+        // Starting performs the initial load once with those dimensions.
+        if(isVisible() && core->isStarted())
         {
             core->GoToCurrentPosition();
         }

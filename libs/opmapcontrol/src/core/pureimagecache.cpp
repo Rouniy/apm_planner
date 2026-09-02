@@ -31,16 +31,11 @@
 #include <QLockFile>
 #include <QReadLocker>
 #include <QSaveFile>
-#include <QSettings>
-#include <QUuid>
 #include <QVector>
 #include <QWriteLocker>
 
 #include <algorithm>
-//#define DEBUG_PUREIMAGECACHE
 namespace core {
-    qlonglong PureImageCache::ConnCounter=0;
-
     namespace {
     const QString kGoogleSatelliteCache = QStringLiteral("googlesatellitemap-a52b97e5747b7cd4");
     const QString kGoogleHybridCache = QStringLiteral("googlehybridmap-cd9494fe865f0e67");
@@ -178,7 +173,8 @@ namespace core {
     bool PureImageCache::writeSharedTile(const QByteArray &tile,
                                           MapType::Types type,
                                           const Point &pos,
-                                          int zoom) const
+                                          int zoom,
+                                          bool replaceExisting) const
     {
         QWriteLocker cacheLocker(&m_sharedCacheLock);
         if (tile.isEmpty()) {
@@ -187,7 +183,7 @@ namespace core {
 
         const QString path = sharedTilePath(m_sharedCacheRoot, type, pos, zoom);
         const QFileInfo existing(path);
-        if (existing.isFile() && existing.size() > 0) {
+        if (!replaceExisting && existing.isFile() && existing.size() > 0) {
             return true;
         }
         if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
@@ -200,6 +196,14 @@ namespace core {
             return false;
         }
         return file.commit();
+    }
+
+    bool PureImageCache::replaceSharedTile(const QByteArray &tile,
+                                            MapType::Types type,
+                                            const Point &pos,
+                                            int zoom)
+    {
+        return writeSharedTile(tile, type, pos, zoom, true);
     }
 
     QByteArray PureImageCache::readSharedTile(MapType::Types type,
@@ -295,315 +299,19 @@ namespace core {
         return removed;
     }
 
-    void PureImageCache::setGtileCache(const QString &value)
-    {
-        lock.lockForWrite();
-        gtilecache=QDir::cleanPath(value);
-        if (value.trimmed().isEmpty()) {
-            gtilecache.clear();
-            lock.unlock();
-            return;
-        }
-        if(!QDir().mkpath(gtilecache))
-        {
-#ifdef DEBUG_PUREIMAGECACHE
-            qDebug()<<"Unable to create legacy cache directory" << gtilecache;
-#endif //DEBUG_PUREIMAGECACHE
-        }
-        {
-            QString db=QDir(gtilecache).filePath(QStringLiteral("Data.qmdb"));
-            if(!QFileInfo(db).exists())
-            {
-#ifdef DEBUG_PUREIMAGECACHE
-                qDebug()<<"Try to create EmptyDB";
-#endif //DEBUG_PUREIMAGECACHE
-                CreateEmptyDB(db);
-            }
-        }
-        lock.unlock();
-    }
-    QString PureImageCache::GtileCache()
-    {
-        return gtilecache;
-    }
-
-
-    bool PureImageCache::CreateEmptyDB(const QString &file)
-    {
-#ifdef DEBUG_PUREIMAGECACHE
-        qDebug()<<"Create database at!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!:"<<file;
-#endif //DEBUG_PUREIMAGECACHE
-        QFileInfo File(file);
-        QDir dir=File.absoluteDir();
-        QString path=dir.absolutePath();
-        if(File.exists())
-            QFile::remove(file);
-        if(!dir.exists())
-        {
-#ifdef DEBUG_PUREIMAGECACHE
-            qDebug()<<"CreateEmptyDB: Cache path doesn't exist, try to create";
-#endif //DEBUG_PUREIMAGECACHE
-            if(!dir.mkpath(path))
-            {
-#ifdef DEBUG_PUREIMAGECACHE
-                qDebug()<<"CreateEmptyDB: Could not create path";
-#endif //DEBUG_PUREIMAGECACHE
-                return false;
-            }
-        }
-        const QString connectionName = QStringLiteral("CreateConn_%1").arg(
-            QUuid::createUuid().toString(QUuid::WithoutBraces));
-        bool success = false;
-        {
-            QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"),
-                                                         connectionName);
-            db.setDatabaseName(file);
-            if (!db.open())
-            {
-#ifdef DEBUG_PUREIMAGECACHE
-                qDebug()<<"CreateEmptyDB: Unable to create database";
-#endif //DEBUG_PUREIMAGECACHE
-            }
-            else
-            {
-                const QStringList statements = {
-                    QStringLiteral("CREATE TABLE IF NOT EXISTS Tiles (id INTEGER NOT NULL PRIMARY KEY, X INTEGER NOT NULL, Y INTEGER NOT NULL, Zoom INTEGER NOT NULL, Type INTEGER NOT NULL,Date TEXT)"),
-                    QStringLiteral("CREATE TABLE IF NOT EXISTS TilesData (id INTEGER NOT NULL PRIMARY KEY CONSTRAINT fk_Tiles_id REFERENCES Tiles(id) ON DELETE CASCADE, Tile BLOB NULL)"),
-                    QStringLiteral(
-                "CREATE TRIGGER fki_TilesData_id_Tiles_id "
-                "BEFORE INSERT ON [TilesData] "
-                "FOR EACH ROW BEGIN "
-                "SELECT RAISE(ROLLBACK, 'insert on table TilesData violates foreign key constraint fki_TilesData_id_Tiles_id') "
-                "WHERE (SELECT id FROM Tiles WHERE id = NEW.id) IS NULL; "
-                "END"),
-                    QStringLiteral(
-                "CREATE TRIGGER fku_TilesData_id_Tiles_id "
-                "BEFORE UPDATE ON [TilesData] "
-                "FOR EACH ROW BEGIN "
-                "SELECT RAISE(ROLLBACK, 'update on table TilesData violates foreign key constraint fku_TilesData_id_Tiles_id') "
-                "WHERE (SELECT id FROM Tiles WHERE id = NEW.id) IS NULL; "
-                "END"),
-                    QStringLiteral(
-                "CREATE TRIGGER fkdc_TilesData_id_Tiles_id "
-                "BEFORE DELETE ON Tiles "
-                "FOR EACH ROW BEGIN "
-                "DELETE FROM TilesData WHERE TilesData.id = OLD.id; "
-                "END")
-                };
-                QSqlQuery query(db);
-                success = true;
-                for (const QString &statement : statements) {
-                    if (!query.exec(statement)) {
-#ifdef DEBUG_PUREIMAGECACHE
-                        qDebug()<<"CreateEmptyDB: "<<query.lastError().driverText();
-#endif //DEBUG_PUREIMAGECACHE
-                        success = false;
-                        break;
-                    }
-                }
-                query.finish();
-                db.close();
-            }
-        }
-        QSqlDatabase::removeDatabase(connectionName);
-        return success;
-    }
     bool PureImageCache::PutImageToCache(const QByteArray &tile, const MapType::Types &type,const Point &pos,const int &zoom)
     {
-        const bool sharedCacheWritten = writeSharedTile(tile, type, pos, zoom);
-        bool legacyCacheWritten = false;
-        if(gtilecache.isEmpty() || gtilecache.isNull())
-            return sharedCacheWritten;
-        lock.lockForRead();
-#ifdef DEBUG_PUREIMAGECACHE
-        qDebug()<<"PutImageToCache Start:";//<<pos;
-#endif //DEBUG_PUREIMAGECACHE
-        Mcounter.lock();
-        qlonglong id=++ConnCounter;
-        Mcounter.unlock();
-        {
-            QSqlDatabase cn;
-            cn = QSqlDatabase::addDatabase("QSQLITE",QString::number(id));
-            QString db=QDir(gtilecache).filePath(QStringLiteral("Data.qmdb"));
-            cn.setDatabaseName(db);
-            cn.setConnectOptions("QSQLITE_ENABLE_SHARED_CACHE");
-            if(cn.open())
-            {
-                bool tileRowWritten = false;
-                {
-                    QSqlQuery query(cn);
-                    query.prepare("INSERT INTO Tiles(X, Y, Zoom, Type,Date) VALUES(?, ?, ?, ?,?)");
-                    query.addBindValue(pos.X());
-                    query.addBindValue(pos.Y());
-                    query.addBindValue(zoom);
-
-                    query.addBindValue((int)type);
-                    query.addBindValue(QDateTime::currentDateTime().toString());
-                    tileRowWritten = query.exec();
-                }
-                if (tileRowWritten) {
-                    QSqlQuery query(cn);
-                    query.prepare("INSERT INTO TilesData(id, Tile) VALUES((SELECT last_insert_rowid()), ?)");
-                    query.addBindValue(tile);
-                    legacyCacheWritten = query.exec();
-                }
-                cn.close();
-            }
-        }
-        QSqlDatabase::removeDatabase(QString::number(id));
-        lock.unlock();
-        return sharedCacheWritten || legacyCacheWritten;
+        return writeSharedTile(tile, type, pos, zoom);
     }
+
     QByteArray PureImageCache::GetImageFromCache(MapType::Types type, Point pos, int zoom)
     {
-        QByteArray ar = readSharedTile(type, pos, zoom);
-        if (!ar.isEmpty())
-            return ar;
-
-        lock.lockForRead();
-        if(gtilecache.isEmpty()|gtilecache.isNull())
-        {
-            lock.unlock();
-            return ar;
-        }
-        QString dir=gtilecache;
-        Mcounter.lock();
-        qlonglong id=++ConnCounter;
-        Mcounter.unlock();
-#ifdef DEBUG_PUREIMAGECACHE
-        qDebug()<<"Cache dir="<<dir<<" Try to GET:"<<pos.X()+","+pos.Y();
-#endif //DEBUG_PUREIMAGECACHE
-
-            QString db=QDir(dir).filePath(QStringLiteral("Data.qmdb"));
-			{
-				QSqlDatabase cn;
-			
-				cn = QSqlDatabase::addDatabase("QSQLITE",QString::number(id));
-
-	            cn.setDatabaseName(db);
-		        cn.setConnectOptions("QSQLITE_ENABLE_SHARED_CACHE");
-			    if(cn.open())
-				{
-					QSqlQuery query(cn);
-					query.prepare(QStringLiteral(
-                        "SELECT Tile FROM TilesData WHERE id = "
-                        "(SELECT id FROM Tiles WHERE X=? AND Y=? AND Zoom=? AND Type=? "
-                        "ORDER BY id DESC LIMIT 1)"));
-                    query.addBindValue(pos.X());
-                    query.addBindValue(pos.Y());
-                    query.addBindValue(zoom);
-                    query.addBindValue(static_cast<int>(type));
-                    query.exec();
-					query.next();
-					if(query.isValid())
-					{
-						ar=query.value(0).toByteArray();
-					}
-					cn.close();
-				}
-			}
-			QSqlDatabase::removeDatabase(QString::number(id));
-        lock.unlock();
-        if (!ar.isEmpty())
-            writeSharedTile(ar, type, pos, zoom);
-        return ar;
+        return readSharedTile(type, pos, zoom);
     }
+
     void PureImageCache::deleteOlderTiles(int const& days)
     {
         deleteSharedTilesOlderThan(days);
-        if(gtilecache.isEmpty()|gtilecache.isNull())
-            return;
-        QList<long> add;
-        bool ret=true;
-        QString dir=gtilecache;
-        {
-            QString db=QDir(dir).filePath(QStringLiteral("Data.qmdb"));
-            ret=QFileInfo(db).exists();
-            if(ret)
-            {
-                QSqlDatabase cn;
-                Mcounter.lock();
-                qlonglong id=++ConnCounter;
-                Mcounter.unlock();
-                cn = QSqlDatabase::addDatabase("QSQLITE",QString::number(id));
-                cn.setDatabaseName(db);
-                cn.setConnectOptions("QSQLITE_ENABLE_SHARED_CACHE");
-                if(cn.open())
-                {
-                    {
-                        QSqlQuery query(cn);
-                        query.exec(QString("SELECT id, X, Y, Zoom, Type, Date FROM Tiles"));
-                        while(query.next())
-                        {
-                            if(QDateTime::fromString(query.value(5).toString()).daysTo(QDateTime::currentDateTime())>days)
-                                add.append(query.value(0).toLongLong());
-                        }
-                        foreach(long i,add)
-                        {
-                            query.exec(QString("DELETE FROM Tiles WHERE id = %1;").arg(i));
-                        }
-                    }
-
-                    cn.close();
-                }
-                QSqlDatabase::removeDatabase(QString::number(id));
-            }
-        }
-    }
-    // PureImageCache::ExportMapDataToDB("C:/Users/Xapo/Documents/mapcontrol/debug/mapscache/data.qmdb","C:/Users/Xapo/Documents/mapcontrol/debug/mapscache/data2.qmdb");
-    bool PureImageCache::ExportMapDataToDB(QString sourceFile, QString destFile)
-    {
-        bool ret=true;
-        QList<long> add;
-        if(!QFileInfo(destFile).exists())
-        {
-#ifdef DEBUG_PUREIMAGECACHE
-            qDebug()<<"Try to create EmptyDB";
-#endif //DEBUG_PUREIMAGECACHE
-            ret=CreateEmptyDB(destFile);
-        }
-        if(!ret) return false;
-        QSqlDatabase ca = QSqlDatabase::addDatabase("QSQLITE","ca");
-        ca.setDatabaseName(sourceFile);
-
-        if(ca.open())
-        {
-            QSqlDatabase cb = QSqlDatabase::addDatabase("QSQLITE","cb");
-            cb.setDatabaseName(destFile);
-            if(cb.open())
-            {
-                QSqlQuery queryb(cb);
-                queryb.exec(QString("ATTACH DATABASE \"%1\" AS Source").arg(sourceFile));
-                QSqlQuery querya(ca);
-                querya.exec("SELECT id, X, Y, Zoom, Type, Date FROM Tiles");
-                while(querya.next())
-                {
-                    long id=querya.value(0).toLongLong();
-                    queryb.exec(QString("SELECT id FROM Tiles WHERE X=%1 AND Y=%2 AND Zoom=%3 AND Type=%4;").arg(querya.value(1).toLongLong()).arg(querya.value(2).toLongLong()).arg(querya.value(3).toLongLong()).arg(querya.value(4).toLongLong()));
-                    if(!queryb.next())
-                    {
-                        add.append(id);
-                    }
-
-                }
-                long f;
-                foreach(f,add)
-                {
-                    queryb.exec(QString("INSERT INTO Tiles(X, Y, Zoom, Type, Date) SELECT X, Y, Zoom, Type, Date FROM Source.Tiles WHERE id=%1").arg(f));
-                    queryb.exec(QString("INSERT INTO TilesData(id, Tile) Values((SELECT last_insert_rowid()), (SELECT Tile FROM Source.TilesData WHERE id=%1))").arg(f));
-                }
-                add.clear();
-                ca.close();
-                cb.close();
-
-            }
-            else return false;
-        }
-        else return false;
-        QSqlDatabase::removeDatabase("ca");
-        QSqlDatabase::removeDatabase("cb");
-        return true;
-
     }
 
 }

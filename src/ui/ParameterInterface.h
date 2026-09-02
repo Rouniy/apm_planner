@@ -33,6 +33,8 @@ This file is part of the QGROUNDCONTROL project
 #define PARAMETERINTERFACE_H
 
 #include <QtWidgets/QWidget>
+#include <QList>
+#include <QPointer>
 
 #include "ui_ParameterInterface.h"
 #include "UASInterface.h"
@@ -61,7 +63,8 @@ public slots:
 
 protected:
     virtual void changeEvent(QEvent *e);
-    QMap<int, QGCParamWidget*>* paramWidgets;
+    QGCParamWidget *m_paramWidget = nullptr;
+    QList<QPointer<UASInterface>> m_uasByIndex;
     int curr;
 
 private:

@@ -61,6 +61,8 @@ namespace mapcontrol
         map=new MapGraphicItem(core,config);
         mscene.addItem(map);
         this->setScene(&mscene);
+        connect(&mscene, &QGraphicsScene::sceneRectChanged,
+                map, &MapGraphicItem::resize, Qt::UniqueConnection);
         this->adjustSize();
         connect(map,SIGNAL(zoomChanged(double,double,double)),this,SIGNAL(zoomChanged(double,double,double)));
         connect(map->core,SIGNAL(OnCurrentPositionChanged(internals::PointLatLng)),this,SIGNAL(OnCurrentPositionChanged(internals::PointLatLng)));
@@ -249,9 +251,12 @@ namespace mapcontrol
     }
     void OPMapWidget::showEvent(QShowEvent *event)
     {
-        connect(&mscene,SIGNAL(sceneRectChanged(QRectF)),map,SLOT(resize(QRectF)));
-        map->start();
         QGraphicsView::showEvent(event);
+        // The first resize event can arrive before the widget is shown. The
+        // connection is permanent, and this explicit synchronization also
+        // covers embedders that establish their final dock geometry on show.
+        map->resize(mscene.sceneRect());
+        map->start();
     }
     OPMapWidget::~OPMapWidget()
     {

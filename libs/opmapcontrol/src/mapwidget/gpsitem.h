@@ -143,7 +143,7 @@ namespace mapcontrol
         /**
         * @brief Deletes all the trail points
         */
-        void DeleteTrail()const;
+        void DeleteTrail();
         /**
         * @brief Returns true if the UAV automaticaly sets WP reached value (changing its color)
         *

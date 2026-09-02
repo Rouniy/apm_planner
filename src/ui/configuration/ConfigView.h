@@ -3,9 +3,7 @@
 
 #include "ParamField.h"
 
-#include <QHash>
 #include <QPointer>
-#include <QSet>
 #include <QString>
 #include <QVariant>
 #include <QWidget>
@@ -14,6 +12,7 @@
 
 class BackstageView;
 class ConfigFriendlyParamsView;
+class ConfigRawParams;
 class ConfigUserDefinedView;
 class ParameterMetaDataRepository;
 class ParameterMetaDataUpdater;
@@ -39,9 +38,7 @@ private slots:
     void activeUASSet(UASInterface *uas);
     void vehicleConnected();
     void vehicleDisconnected();
-    void parameterChanged(int uas, int component, int parameterCount,
-                          int parameterId, QString parameterName,
-                          QVariant value);
+    void parameterTargetChanged();
     void parameterListUpToDate(int component);
     void parameterListLoadStarted();
     void parameterListReadyChanged(bool ready);
@@ -67,6 +64,7 @@ private:
     void restorePreferredPage();
     QWidget *createFriendlyParamsPage(bool advanced, QWidget *parent);
     QWidget *createUserDefinedPage(QWidget *parent);
+    QWidget *createRawParamsPage(QWidget *parent);
     QList<ConfigFriendlyParameterValue> parameterSnapshot(int componentId) const;
     ParameterFirmwareFamily parameterFirmwareFamily() const;
     bool friendlyParametersSupported() const;
@@ -78,11 +76,11 @@ private:
     std::unique_ptr<ParameterMetaDataUpdater> m_metadataUpdater;
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
-    QHash<int, QSet<int>> m_receivedParameterIds;
-    QHash<int, int> m_expectedParameterCounts;
     QString m_parameterLoadFailure;
     QString m_preferredPageHeader;
     QString m_firmwareVersion;
+    QString m_targetPageToRestore;
+    qulonglong m_parameterTargetRevision = 0;
     bool m_parameterLoadingCanceled = false;
     bool m_connected = false;
     bool m_parametersReady = false;

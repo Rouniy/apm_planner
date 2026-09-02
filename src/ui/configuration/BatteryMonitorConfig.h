@@ -33,6 +33,7 @@ This file is part of the APM_PLANNER project
 #include <QWidget>
 #include <QSignalMapper>
 #include "AP2ConfigWidget.h"
+#include "BatteryMonitorInstanceModel.h"
 #include "ui_BatteryMonitorConfig.h"
 
 class BatteryPreset: public QObject
@@ -91,6 +92,7 @@ private slots:
 private:
     void setupPresetSelectionTable();
 private:
+    BatteryMonitorInstanceModel m_instanceModel;
     QString m_voltDividerParam;
     QString m_ampPerVoltParam;
     float m_maxVoltOut; // ie. 3.3V or 5.0V

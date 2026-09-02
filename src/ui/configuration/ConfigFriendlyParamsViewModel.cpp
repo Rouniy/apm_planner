@@ -198,8 +198,10 @@ void ConfigFriendlyParamsViewModel::rebuildFields()
         if (!customMode && metadata.title.isEmpty()) {
             continue;
         }
+        // Mission Planner's Standard page accepts only explicit Standard
+        // metadata. Advanced also owns parameters with no User classification.
         const bool isAdvanced =
-            metadata.userLevel == ParameterUserLevel::Advanced;
+            metadata.userLevel != ParameterUserLevel::Standard;
         if (!customMode && m_advanced != isAdvanced) {
             continue;
         }
@@ -265,12 +267,13 @@ void ConfigFriendlyParamsViewModel::loadFavorites()
         m_favoriteSettingsKey).toStringList();
     for (const QString &entry : stored) {
         const QString trimmed = entry.trimmed();
-        if (trimmed.contains(QLatin1Char(':'))) {
-            m_favorites.insert(trimmed.toUpper());
-        } else if (!trimmed.isEmpty()) {
-            // MP10 stored name-only favorites. Migrate them to the primary
-            // component without accidentally pinning a peripheral collision.
-            m_favorites.insert(favoriteKey(1, trimmed));
+        const int separator = trimmed.indexOf(QLatin1Char(':'));
+        bool componentOk = false;
+        const int componentId = trimmed.left(separator).toInt(&componentOk);
+        const QString name = trimmed.mid(separator + 1).trimmed();
+        if (separator > 0 && componentOk && componentId >= 0
+            && !name.isEmpty()) {
+            m_favorites.insert(favoriteKey(componentId, name));
         }
     }
 }
@@ -279,10 +282,7 @@ void ConfigFriendlyParamsViewModel::persistFavorites() const
 {
     QStringList stored;
     for (const QString &favorite : m_favorites) {
-        const QString primaryPrefix = QStringLiteral("1:");
-        stored.append(favorite.startsWith(primaryPrefix)
-                          ? favorite.mid(primaryPrefix.size())
-                          : favorite);
+        stored.append(favorite);
     }
     std::sort(stored.begin(), stored.end(), nameLessThan);
     QSettings settings;

@@ -28,11 +28,14 @@ This file is part of the APM_PLANNER project
 
 #include "LogAnalysisMap.h"
 #include "logging.h"
-#include "pointlatlng.h"
-#include "ui/map/MapTileSourceFactory.h"
+#include "ui/map/AbstractMapWidget.h"
+#include "ui/map/CompiledMapBackends.h"
+#include "ui/map/MapWidgetFactory.h"
 
 #include "ui_LogAnalysisMap.h"
 
+#include <QGridLayout>
+#include <QSettings>
 #include <utility>
 
 //************************************************************************************
@@ -44,33 +47,35 @@ LogAnalysisMap::LogAnalysisMap(QWidget *parent) :
     QLOG_DEBUG() << "LogAnalysisMap::LogAnalysisMap - CTOR";
     mp_Ui->setupUi(this);
 
-    MapTileSourceFactory *mapFactory = MapTileSourceFactory::instance();
-    mp_Ui->map->SetMapType(mapFactory->CurrentMapType());
-    connect(mapFactory, &MapTileSourceFactory::MapTypeChanged, this,
-            [this](core::MapType::Types type) {
-                if (mp_Ui->map->GetMapType() != type) {
-                    mp_Ui->map->SetMapType(type);
-                }
-            });
-    connect(mapFactory, &MapTileSourceFactory::MapRefreshRequested, this,
-            [this]() {
-                if (mp_Ui->map->GetMapType()
-                    == core::MapType::GDALCustom) {
-                    mp_Ui->map->ReloadMap();
-                }
-            });
+    RegisterCompiledMapBackends();
+    m_mapBackend = MapWidgetFactory::instance()->CreateMapWidget(
+        MapWidgetRole::LogAnalysis, mp_Ui->mapHost, this);
+    if (!m_mapBackend || !m_mapBackend->Widget()) {
+        QLOG_ERROR() << "LogAnalysisMap: no map backend is available";
+        mp_Ui->zoomSlider->setEnabled(false);
+        return;
+    }
+    auto *mapLayout = new QGridLayout(mp_Ui->mapHost);
+    mapLayout->setContentsMargins(0, 0, 0, 0);
+    mapLayout->setSpacing(0);
+    m_mapBackend->Widget()->setObjectName(QStringLiteral("map"));
+    mapLayout->addWidget(m_mapBackend->Widget());
 
     // setup zoom slider
-    mp_Ui->zoomSlider->setMinimum(mp_Ui->map->MinZoom() * s_MapScaling);
-    mp_Ui->zoomSlider->setMaximum(mp_Ui->map->MaxZoom() * s_MapScaling);
-    setZoom(static_cast<int>(mp_Ui->map->ZoomReal()));
+    mp_Ui->zoomSlider->setMinimum(
+        m_mapBackend->MinZoom() * s_MapScaling);
+    mp_Ui->zoomSlider->setMaximum(
+        m_mapBackend->MaxZoom() * s_MapScaling);
+    setZoom(qRound(m_mapBackend->ZoomReal()));
 
-    connect(mp_Ui->zoomSlider, SIGNAL(valueChanged(int)), this, SLOT(setMapZoom(int)));
-    connect(mp_Ui->map, SIGNAL(zoomChanged(int)), this, SLOT(setZoom(int)));
+    connect(mp_Ui->zoomSlider, &QSlider::valueChanged,
+            this, &LogAnalysisMap::setMapZoom);
+    connect(m_mapBackend, &AbstractMapWidget::ZoomChanged,
+            this, &LogAnalysisMap::setZoom);
 
     loadSettings();
 
-    mp_Ui->map->SetUseOpenGL(true);
+    m_mapBackend->SetAcceleratedRenderingEnabled(true);
 
 }
 
@@ -78,69 +83,129 @@ LogAnalysisMap::~LogAnalysisMap()
 {
     QLOG_DEBUG() << "LogAnalysisMap::~LogAnalysisMap - DTOR";
     saveSettings();
+    delete mp_Ui;
 }
 
 void LogAnalysisMap::setDataStorage(LogdataStorage::Ptr dataPtr)
 {
     m_dataStoragePtr = std::move(dataPtr);
+    m_gpsType = {};
+    m_attType = {};
+    m_latName.clear();
+    m_lonName.clear();
+    m_headingName.clear();
+    m_xValues.clear();
+    m_latValues.clear();
+    m_lonValues.clear();
+    m_xValuesHeading.clear();
+    m_headingValues.clear();
+    m_validIndex = 0;
+    if (m_mapBackend) {
+        m_mapBackend->SetLogTrail({});
+    }
     findDataNames();
 }
 
 void LogAnalysisMap::paintUAVTrail()
 {
+    if (!m_mapBackend) {
+        return;
+    }
+    if (!m_dataStoragePtr) {
+        m_mapBackend->SetLogTrail({});
+        return;
+    }
     // fetch data
-    m_dataStoragePtr->getValues(m_latName, false, m_xValues, m_latValues);
-    m_dataStoragePtr->getValues(m_lonName, false, m_xValues, m_lonValues);
+    m_xValues.clear();
+    m_latValues.clear();
+    m_lonValues.clear();
+    m_xValuesHeading.clear();
+    m_headingValues.clear();
+    QVector<double> longitudeXValues;
+    const bool latitudeAvailable = m_dataStoragePtr->getValues(
+        m_latName, false, m_xValues, m_latValues);
+    const bool longitudeAvailable = m_dataStoragePtr->getValues(
+        m_lonName, false, longitudeXValues, m_lonValues);
+    m_dataStoragePtr->getValues(
+        m_headingName, false, m_xValuesHeading, m_headingValues);
 
-    m_dataStoragePtr->getValues(m_headingName, false, m_xValuesHeading, m_headingValues);
-
-    if (!m_latValues.empty() && !m_lonValues.empty())
+    if (latitudeAvailable && longitudeAvailable
+        && !m_latValues.empty() && !m_lonValues.empty())
     {
         scaleData();
-
-        // setup trail
-        mapcontrol::GPSItem *p_uav = mp_Ui->map->AddTrail();
-        p_uav->SetTrailDistance(0);
-        p_uav->ShowUavPic(false);
-
-        // set position of map
-        internals::PointLatLng pos(m_latValues.at(m_validIndex), m_lonValues.at(m_validIndex));
-        mp_Ui->map->SetCurrentPosition(pos);
-
-        // add all GPS positions to the trail
-        for (auto i = m_validIndex; i < m_latValues.size(); ++i)
-        {
-            internals::PointLatLng pos(m_latValues.at(i), m_lonValues.at(i));
-            p_uav->SetUAVPos(pos, 10);
+        const int count = qMin(m_latValues.size(), m_lonValues.size());
+        if (m_validIndex >= count) {
+            QLOG_INFO() << "LogAnalysisMap: no valid GPS coordinates";
+            m_mapBackend->SetLogTrail({});
+            return;
         }
-
-        p_uav->SetShowTrail(false);
-        p_uav->RefreshPos();
-
-        // create UAV icon as cursor
-        if (mp_trailCursor == nullptr)
-        {
-            mp_trailCursor = mp_Ui->map->AddTrailCursor();
+        QVector<MapCoordinate> trail;
+        trail.reserve(count - m_validIndex);
+        for (int i = m_validIndex; i < count; ++i) {
+            const double latitude = m_latValues.at(i);
+            const double longitude = m_lonValues.at(i);
+            if (qIsFinite(latitude) && qIsFinite(longitude)
+                && (latitude != 0.0 || longitude != 0.0)) {
+                trail.append({latitude, longitude, 10.0});
+            }
         }
-        mp_trailCursor->SetTrailType(mapcontrol::UAVTrailType::NoTrail); // Cursor does not add a trailline
-        mp_trailCursor->ShowUavPic(true);
-        mp_trailCursor->SetUAVPos(pos, 10);
+        m_mapBackend->SetLogTrail(trail);
     }
     else
     {
         QLOG_INFO() << "LogAnalysisMap: No GPS data - no trail";
+        m_mapBackend->SetLogTrail({});
     }
 }
 
 void LogAnalysisMap::setUavCursor(int index)
 {
+    if (!m_mapBackend || m_latValues.isEmpty() || m_lonValues.isEmpty()) {
+        return;
+    }
     auto bestGpsIndex = findBestIndexMatch(index, m_xValues);
-    auto bestHeadingIndex = findBestIndexMatch(index, m_xValuesHeading);
-
-    internals::PointLatLng pos(m_latValues.at(bestGpsIndex), m_lonValues.at(bestGpsIndex));
-    mp_trailCursor->SetUAVPos(pos, 10);
-    mp_trailCursor->SetUAVHeading(m_headingValues.at(bestHeadingIndex));
-    mp_trailCursor->RefreshPos();
+    const int coordinateCount = qMin(m_latValues.size(), m_lonValues.size());
+    if (m_validIndex >= coordinateCount) {
+        return;
+    }
+    bestGpsIndex = qBound(m_validIndex, bestGpsIndex, coordinateCount - 1);
+    const auto coordinateIsValid = [this](int coordinateIndex) {
+        const double latitude = m_latValues.at(coordinateIndex);
+        const double longitude = m_lonValues.at(coordinateIndex);
+        return qIsFinite(latitude) && qIsFinite(longitude)
+            && latitude >= -90.0 && latitude <= 90.0
+            && longitude >= -180.0 && longitude <= 180.0
+            && (latitude != 0.0 || longitude != 0.0);
+    };
+    if (!coordinateIsValid(bestGpsIndex)) {
+        int nearestValid = -1;
+        for (int offset = 1; offset < coordinateCount; ++offset) {
+            const int before = bestGpsIndex - offset;
+            const int after = bestGpsIndex + offset;
+            if (before >= m_validIndex && coordinateIsValid(before)) {
+                nearestValid = before;
+                break;
+            }
+            if (after < coordinateCount && coordinateIsValid(after)) {
+                nearestValid = after;
+                break;
+            }
+        }
+        if (nearestValid < 0) {
+            return;
+        }
+        bestGpsIndex = nearestValid;
+    }
+    double heading = 0.0;
+    if (!m_xValuesHeading.isEmpty() && !m_headingValues.isEmpty()) {
+        const int bestHeadingIndex = qBound(
+            0, findBestIndexMatch(index, m_xValuesHeading),
+            m_headingValues.size() - 1);
+        heading = m_headingValues.at(bestHeadingIndex);
+    }
+    m_mapBackend->SetLogCursor(
+        {m_latValues.at(bestGpsIndex), m_lonValues.at(bestGpsIndex), 10.0},
+        heading);
 }
 
 void LogAnalysisMap::loadSettings()
@@ -150,15 +215,7 @@ void LogAnalysisMap::loadSettings()
 
     restoreGeometry(settings.value("GEOMETRY").toByteArray());
 
-    int zoomVal = settings.value("ZOOM", 10).toInt();
-    setMapZoom(zoomVal);    // set zoom on map
-    setZoom(zoomVal);       // adjust zoom slider
-
-    internals::PointLatLng pos;
-    pos.SetLat(settings.value("MAP_POSITION_LAT").toDouble());
-    pos.SetLng(settings.value("MAP_POSITION_LON").toDouble());
-    mp_Ui->map->SetCurrentPosition(pos);
-
+    settings.endGroup();
 }
 
 void LogAnalysisMap::saveSettings()
@@ -168,11 +225,7 @@ void LogAnalysisMap::saveSettings()
 
     settings.setValue("GEOMETRY", saveGeometry());
 
-    settings.setValue("ZOOM", mp_Ui->zoomSlider->value() / s_MapScaling);
-
-    internals::PointLatLng pos = mp_Ui->map->CurrentPosition();
-    settings.setValue("MAP_POSITION_LAT", pos.Lat());
-    settings.setValue("MAP_POSITION_LON", pos.Lng());
+    settings.endGroup();
 }
 
 void LogAnalysisMap::findDataNames()
@@ -252,6 +305,9 @@ void LogAnalysisMap::findDataNames()
 
 int LogAnalysisMap::findBestIndexMatch(int index, const QVector<double> &data)
 {
+    if (data.isEmpty()) {
+        return 0;
+    }
     int intervalSize = data.size();
     int intervalStart = 0;
     int middle = 0;
@@ -292,12 +348,17 @@ void LogAnalysisMap::scaleData()
     double scaling = 1.0;
 
     // first find value which is not 0 for lat and lon and store its index
-    for (m_validIndex = 0; m_validIndex < m_latValues.size(); ++m_validIndex)
+    const int coordinateCount = qMin(
+        m_latValues.size(), m_lonValues.size());
+    for (m_validIndex = 0; m_validIndex < coordinateCount; ++m_validIndex)
     {
-        if ((m_latValues.at(m_validIndex) != 0.0) && (m_lonValues.at(m_validIndex) != 0.0))
+        const double latitude = m_latValues.at(m_validIndex);
+        const double longitude = m_lonValues.at(m_validIndex);
+        if (qIsFinite(latitude) && qIsFinite(longitude)
+            && (latitude != 0.0 || longitude != 0.0))
         {
-            latVal = m_latValues.at(m_validIndex);
-            lonVal = m_lonValues.at(m_validIndex);
+            latVal = latitude;
+            lonVal = longitude;
             break;
         }
     }
@@ -330,11 +391,13 @@ void LogAnalysisMap::scaleData()
 
 void LogAnalysisMap::setMapZoom(int value)
 {
-    mp_Ui->map->SetZoom(value / s_MapScaling );
+    if (m_mapBackend) {
+        m_mapBackend->SetZoom(
+            static_cast<double>(value) / s_MapScaling);
+    }
 }
 
 void LogAnalysisMap::setZoom(int value)
 {
     mp_Ui->zoomSlider->setValue(value * s_MapScaling);
 }
-

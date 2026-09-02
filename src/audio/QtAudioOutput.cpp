@@ -78,13 +78,22 @@ void QtAudioOutput::playNextFile()
 bool QtAudioOutput::speak(const QString &text)
 {
 #ifdef APM_HAS_QT_TEXT_TO_SPEECH
-    if (!m_speech || text.trimmed().isEmpty()) {
+    if (!isSpeechReady() || text.trimmed().isEmpty()) {
         return false;
     }
     m_speech->say(text);
     return true;
 #else
     Q_UNUSED(text)
+    return false;
+#endif
+}
+
+bool QtAudioOutput::isSpeechReady() const
+{
+#ifdef APM_HAS_QT_TEXT_TO_SPEECH
+    return m_speech && m_speech->state() == QTextToSpeech::Ready;
+#else
     return false;
 #endif
 }

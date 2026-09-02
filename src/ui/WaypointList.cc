@@ -36,6 +36,8 @@ This file is part of the PIXHAWK project
 #include <UASInterface.h>
 #include <UAS.h>
 #include <UASManager.h>
+#include "QGCUASParamManager.h"
+#include "comm/VehicleTargetManager.h"
 
 #include <QFileDialog>
 #include <QMessageBox>
@@ -172,6 +174,10 @@ void WaypointList::updateAttitude(UASInterface* uas, double roll, double pitch, 
 
 void WaypointList::setUAS(UASInterface* uas)
 {
+    if (QGCUASParamManager *manager =
+            LinkManager::instance()->parameterManager()) {
+        disconnect(manager, nullptr, this, nullptr);
+    }
     if (m_uas != NULL)
     {
         // Clear current list
@@ -193,8 +199,6 @@ void WaypointList::setUAS(UASInterface* uas)
                    this, SLOT(updatePosition(UASInterface*,double,double,double,quint64)));
         disconnect(m_uas, SIGNAL(attitudeChanged(UASInterface*,double,double,double,quint64)),
                    this, SLOT(updateAttitude(UASInterface*,double,double,double,quint64)));
-        disconnect(m_uas,SIGNAL(parameterChanged(int,int,QString,QVariant)),
-                   this,SLOT(parameterChanged(int,int,QString,QVariant)));
         disconnect(m_ui->wpRadiusSpinBox, SIGNAL(valueChanged(double)),
                    this, SLOT(wpRadiusChanged(double)));
         m_ui->wpRadiusSpinBox->setEnabled(false);
@@ -221,8 +225,24 @@ void WaypointList::setUAS(UASInterface* uas)
             this, SLOT(updatePosition(UASInterface*,double,double,double,quint64)));
     connect(uas, SIGNAL(attitudeChanged(UASInterface*,double,double,double,quint64)),
             this, SLOT(updateAttitude(UASInterface*,double,double,double,quint64)));
-    connect(uas,SIGNAL(parameterChanged(int,int,QString,QVariant)),
-               this,SLOT(parameterChanged(int,int,QString,QVariant)));;
+    if (QGCUASParamManager *manager =
+            LinkManager::instance()->parameterManager()) {
+        connect(manager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                this, [this](int component, const QString &name,
+                             const QVariant &value) {
+            VehicleTargetManager *const targets =
+                LinkManager::instance()->vehicleTargetManager();
+            const VehicleTargetLease target = targets
+                ? targets->acquireTarget() : VehicleTargetLease{};
+            if (m_uas && target.isValid()
+                && target.endpoint.systemId == m_uas->getUASID()
+                && target.endpoint.componentId == component) {
+                parameterChanged(m_uas->getUASID(), component, name, value);
+            }
+        });
+    }
     connect(m_ui->wpRadiusSpinBox, SIGNAL(valueChanged(double)),
                this, SLOT(wpRadiusChanged(double)));
     m_ui->wpRadiusSpinBox->setEnabled(true);
@@ -749,8 +769,19 @@ void WaypointList::clearWPWidget()
 
 void WaypointList::wpRadiusChanged(double radius)
 {
-    if (m_uas){
-        m_uas->setParameter(1,"WPNAV_RADIUS", radius*100.0); // WPNAV_RADIUS is in cm
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links->vehicleTargetManager();
+    QGCUASParamManager *const manager = links->parameterManager();
+    const VehicleTargetLease target = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    if (m_uas && manager && target.isValid()
+        && target.endpoint.systemId == m_uas->getUASID()) {
+        manager->writeParameters(
+            target.endpoint.componentId,
+            QVariantList{QVariantMap{
+                {QStringLiteral("name"), QStringLiteral("WPNAV_RADIUS")},
+                {QStringLiteral("value"), radius * 100.0}
+            }}); // WPNAV_RADIUS is in cm
     }
 }
 

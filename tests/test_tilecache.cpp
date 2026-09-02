@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "alllayersoftype.h"
+#include "cache.h"
 #include "opmaps.h"
 #include "pureimagecache.h"
 #include "urlfactory.h"
@@ -55,6 +56,8 @@ private slots:
     void platformRoots();
     void providerDirectories();
     void sharedPathAndRoundTrip();
+    void metadataRoundTripUsesSharedRoot();
+    void sharedTileReplacementIsAtomicAtTheCacheApi();
     void sharedQuotaRemovesLeastRecentlyUsedTiles();
     void sharedAgeCleanupPreservesRecentTiles();
     void missionPlannerCompatibleUrls();
@@ -126,6 +129,46 @@ void TileCacheTest::sharedPathAndRoundTrip()
     QVERIFY(cache.PutImageToCache(tileBytes, core::MapType::GoogleSatellite, tilePosition, 7));
     QVERIFY(QFile::exists(expectedPath));
     QCOMPARE(cache.GetImageFromCache(core::MapType::GoogleSatellite, tilePosition, 7), tileBytes);
+}
+
+void TileCacheTest::metadataRoundTripUsesSharedRoot()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    core::Cache cache(root.path());
+
+    const QString geocoderKey = QStringLiteral("limassol-cyprus");
+    const QString geocoderValue = QStringLiteral("200,4,34.675,33.043");
+    cache.CacheGeocoder(geocoderKey, geocoderValue);
+    QCOMPARE(cache.GetGeocoderFromCache(geocoderKey), geocoderValue);
+    QVERIFY(QFile::exists(root.filePath(
+        QStringLiteral("metadata/geocoder/%1.geo").arg(geocoderKey))));
+
+    const QString placemarkKey = QStringLiteral("34.675-33.043");
+    const QString placemarkValue =
+        QStringLiteral("200,8,Limassol old port, Cyprus");
+    cache.CachePlacemark(placemarkKey, placemarkValue);
+    QCOMPARE(cache.GetPlacemarkFromCache(placemarkKey), placemarkValue);
+    QVERIFY(QFile::exists(root.filePath(
+        QStringLiteral("metadata/placemark/%1.plc").arg(placemarkKey))));
+}
+
+void TileCacheTest::sharedTileReplacementIsAtomicAtTheCacheApi()
+{
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    core::PureImageCache cache(root.path());
+    const core::Point position(7, 9);
+
+    QVERIFY(cache.PutImageToCache(QByteArrayLiteral("old-tile"),
+                                  core::MapType::OpenStreetMap,
+                                  position, 5));
+    QVERIFY(cache.replaceSharedTile(QByteArrayLiteral("replacement-tile"),
+                                    core::MapType::OpenStreetMap,
+                                    position, 5));
+    QCOMPARE(cache.GetImageFromCache(core::MapType::OpenStreetMap,
+                                     position, 5),
+             QByteArrayLiteral("replacement-tile"));
 }
 
 void TileCacheTest::sharedQuotaRemovesLeastRecentlyUsedTiles()

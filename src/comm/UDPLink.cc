@@ -67,7 +67,6 @@ UDPLink::~UDPLink()
     while(_outQueue.count() > 0) {
         delete _outQueue.dequeue();
     }
-    this->deleteLater();
 }
 
 /**
@@ -77,6 +76,17 @@ UDPLink::~UDPLink()
 void UDPLink::run()
 {
     forever {
+        if (isInterruptionRequested()) {
+            _running = false;
+            delete socket;
+            socket = nullptr;
+            connectState = false;
+            emit disconnected();
+            emit connected(false);
+            emit disconnected(this);
+            QLOG_INFO() << "UDPLink:" << "Terminating thread";
+            break;
+        }
         if (!isConnected() && !host.isNull() && port != 0 ) {
             hardwareConnect();
             msleep(50);
@@ -105,8 +115,8 @@ void UDPLink::run()
             continue;
 
         if (!_running) {
-            socket->deleteLater();
-            socket = NULL;
+            delete socket;
+            socket = nullptr;
             connectState = false;
             emit disconnected();
             emit connected(false);

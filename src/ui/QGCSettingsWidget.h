@@ -5,6 +5,9 @@
 #include <QPointer>
 #include <QWidget>
 
+class QComboBox;
+class QLabel;
+
 namespace Ui
 {
 class QGCSettingsWidget;
@@ -17,6 +20,10 @@ class QGCSettingsWidget : public QWidget
 public:
     explicit QGCSettingsWidget(QWidget *parent = nullptr);
     ~QGCSettingsWidget() override;
+
+signals:
+    void altitudeUnitsChanged(const QString &units);
+    void distanceUnitsChanged(const QString &units);
 
 protected:
     void showEvent(QShowEvent *evt) override;
@@ -36,14 +43,22 @@ private slots:
     void mavIdChanged(int id);
 
     void componentIdChanged(int id);
+    void mapWidgetBackendChanged(int index);
+    void altitudeUnitsIndexChanged(int index);
+    void distanceUnitsIndexChanged(int index);
 
 private:
     void setDataRateLineEdits();
+    void populateMapWidgetBackends();
 
 private:
     Ui::QGCSettingsWidget *ui;
     bool m_init = false;
     QPointer<UASInterface> m_uas;
+    QComboBox *m_mapWidgetBackendComboBox = nullptr;
+    QLabel *m_mapWidgetBackendStatus = nullptr;
+    QComboBox *m_altitudeUnitsComboBox = nullptr;
+    QComboBox *m_distanceUnitsComboBox = nullptr;
 };
 
 #endif // QGCSETTINGSWIDGET_H

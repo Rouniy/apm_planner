@@ -2,49 +2,39 @@
 #define CONNECTIONOPTIONSWINDOW_H
 
 #include <QDialog>
+#include <QStringList>
 
 class ConnectionOptionsViewModel;
-class QCheckBox;
 class QComboBox;
-class QLabel;
 class QPushButton;
-class QSettings;
-class QShowEvent;
-class QSpinBox;
 
 class ConnectionOptionsWindow final : public QDialog
 {
     Q_OBJECT
 public:
     explicit ConnectionOptionsWindow(QWidget *parent = nullptr);
-    ConnectionOptionsWindow(QSettings *settings, QWidget *parent = nullptr);
+    ConnectionOptionsWindow(const QStringList &serialPorts,
+                            QWidget *parent = nullptr);
 
-    static ConnectionOptionsWindow *OpenWindow(QWidget *owner = nullptr,
-                                               QSettings *settings = nullptr);
+    static ConnectionOptionsWindow *OpenWindow(QWidget *owner = nullptr);
     ConnectionOptionsViewModel *viewModel() const;
 
 signals:
-    void settingsApplied(int baud, bool sendHeartbeat, int gcsSystemId);
-
-protected:
-    void showEvent(QShowEvent *event) override;
+    void connectRequested(const QString &connection, int baud);
 
 private slots:
-    void OnApply();
-    void OnClose();
+    void BUT_connect_Click();
 
 private:
+    explicit ConnectionOptionsWindow(ConnectionOptionsViewModel *viewModel,
+                                     QWidget *parent);
     void buildUi();
     void bindViewModel();
 
     ConnectionOptionsViewModel *m_viewModel = nullptr;
+    QComboBox *m_serialPortCombo = nullptr;
     QComboBox *m_baudCombo = nullptr;
-    QSpinBox *m_gcsSystemId = nullptr;
-    QCheckBox *m_sendHeartbeat = nullptr;
-    QLabel *m_status = nullptr;
-    QPushButton *m_saveButton = nullptr;
-    QPushButton *m_closeButton = nullptr;
-    bool m_centered = false;
+    QPushButton *m_connectButton = nullptr;
 };
 
 #endif
