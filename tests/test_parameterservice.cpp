@@ -674,16 +674,16 @@ void ParameterServiceTest::mismatchingWriteEchoRemainsPendingAndUpdatesCache()
 
     QCOMPARE(service.setParameter(
                  lease, 250, 190, QStringLiteral("INS_GYRO_FILTER"),
-                 qint32(123457), ParameterType::Int32),
+                 qint32(12345), ParameterType::Int32),
              ParameterService::SendResult::Sent);
     service.observeMessage(
         9, parameterValue(42, 100, QStringLiteral("INS_GYRO_FILTER"),
-                          qint32(123457), ParameterType::Int16));
+                          qint32(12345), ParameterType::Int16));
     QCOMPARE(failures.count(), 0);
     QCOMPARE(acknowledgements.count(), 1);
     service.observeMessage(
         9, parameterValue(42, 100, QStringLiteral("INS_GYRO_FILTER"),
-                          qint32(123457), ParameterType::Int32));
+                          qint32(12345), ParameterType::Int32));
     QCOMPARE(acknowledgements.count(), 2);
 }
 
