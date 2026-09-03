@@ -126,9 +126,9 @@ by platform and channel and independent of manifest order. The legacy unsigned
 download prompt remains transitional: production-equivalent self-update still
 requires an APM Planner 3.0-owned HTTPS manifest, signing key, signed metadata,
 and package hash/size verification before an installer may be executed.
-The Help shortcut list intentionally exposes only commands that are currently
-wired globally; Developer Tools, NMEA Output, and DataFlash Spectrogram remain
-explicit parity work instead of advertising inert shortcuts.
+The Help shortcut list still needs to add the newly wired Developer Tools,
+Plugin Manager and Map Tile Cache shortcuts. NMEA Output and DataFlash
+Spectrogram remain explicitly disabled parity work instead of inert shortcuts.
 
 ## QGroundControl-derived communication safety
 

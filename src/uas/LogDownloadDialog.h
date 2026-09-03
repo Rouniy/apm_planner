@@ -27,6 +27,7 @@ This file is part of the APM_PLANNER project
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QPointer>
 
 namespace Ui {
 class LogDownloadDialog;
@@ -86,7 +87,7 @@ private:
 
 private:
     Ui::LogDownloadDialog *ui;
-    UASInterface *m_uas;
+    QPointer<UASInterface> m_uas;
     QList<LogDownloadDescriptor*> m_logEntriesList; // id & filename to save data to.
     QList<LogDownloadDescriptor*> m_fileSaveList; // id & filename to save data to.
 

@@ -563,6 +563,15 @@ void SetupView::advModeChanged(bool advanced)
     emit advancedModeChanged(advanced);
 }
 
+bool SetupView::showDeveloperTools()
+{
+    if (!m_backstage) {
+        return false;
+    }
+    m_backstage->setGroupExpanded(kAdvancedGroup, true);
+    return m_backstage->setCurrentPage(kDeveloperTools);
+}
+
 void SetupView::activeUASSet(UASInterface *uas)
 {
     const bool targetChanged = m_uas != uas;

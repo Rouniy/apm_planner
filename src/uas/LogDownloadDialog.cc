@@ -86,6 +86,7 @@ LogDownloadDialog::LogDownloadDialog(QWidget *parent) :
 
     ui->refreshPushButton->setEnabled(false);
     ui->getPushButton->setEnabled(false);
+    ui->erasePushButton->setEnabled(false);
 
     connect(UASManager::instance(),SIGNAL(activeUASSet(UASInterface*)),this,SLOT(setActiveUAS(UASInterface*)));
 
@@ -142,48 +143,81 @@ void LogDownloadDialog::cancelButtonClicked()
 
 void LogDownloadDialog::doneButtonClicked()
 {
-    lower();
+    accept();
 }
 
 LogDownloadDialog::~LogDownloadDialog()
 {
-    removeConnections(m_uas);
+    m_timer.stop();
+    if (m_uas) {
+        m_uas->logRequestEnd();
+    }
+    resetDownload();
+    removeConnections(m_uas.data());
+    m_fileSaveList.clear();
+    qDeleteAll(m_logEntriesList);
+    m_logEntriesList.clear();
     delete ui;
 }
 
 void LogDownloadDialog::setActiveUAS(UASInterface *uas)
 {
+    if (m_uas == uas && uas) {
+        return;
+    }
     if (m_uas) {
-        removeConnections(uas);
+        m_uas->logRequestEnd();
+        removeConnections(m_uas.data());
     }
 
-    if (uas == NULL)
+    m_timer.stop();
+    resetDownload();
+    m_fileSaveList.clear();
+    qDeleteAll(m_logEntriesList);
+    m_logEntriesList.clear();
+    ui->tableWidget->setRowCount(0);
+    m_uas = nullptr;
+
+    const bool available = uas != nullptr;
+    ui->refreshPushButton->setEnabled(available);
+    ui->getPushButton->setEnabled(false);
+    ui->erasePushButton->setEnabled(available);
+    if (!available) {
+        setWindowTitle(tr("Download Logs (MAVLink) — No vehicle selected"));
+        ui->statusLabel->setText(tr("Connect and select a vehicle to download logs."));
         return;
+    }
 
     m_uas = uas;
     setWindowTitle(tr("Log Download from MAV%1").arg(m_uas->getUASID()));
-    ui->refreshPushButton->setEnabled(true);
     makeConnections(uas);
 }
 
 void LogDownloadDialog::makeConnections(UASInterface *uas)
 {
-    Q_UNUSED(uas);
-    connect(m_uas, SIGNAL(logEntry(int,uint32_t,uint32_t,uint16_t,uint16_t,uint16_t)),
-            this, SLOT(logEntry(int,uint32_t,uint32_t,uint16_t,uint16_t,uint16_t)));
-    connect(m_uas, SIGNAL(logData(uint32_t,uint32_t,uint16_t,uint8_t,const char*)),
-            this, SLOT(logData(uint32_t,uint32_t,uint16_t,uint8_t,const char*)));
+    if (!uas) {
+        return;
+    }
+    connect(uas, SIGNAL(logEntry(int,uint32_t,uint32_t,uint16_t,uint16_t,uint16_t)),
+            this, SLOT(logEntry(int,uint32_t,uint32_t,uint16_t,uint16_t,uint16_t)),
+            Qt::UniqueConnection);
+    connect(uas, SIGNAL(logData(uint32_t,uint32_t,uint16_t,uint8_t,const char*)),
+            this, SLOT(logData(uint32_t,uint32_t,uint16_t,uint8_t,const char*)),
+            Qt::UniqueConnection);
 }
 
 void LogDownloadDialog::removeConnections(UASInterface *uas)
 {
-    Q_UNUSED(uas);
-    disconnect(m_uas, SIGNAL(logEntry(int,uint32_t,uint32_t,uint16_t,uint16_t,uint16_t)),
+    if (!uas) {
+        return;
+    }
+    disconnect(uas, SIGNAL(logEntry(int,uint32_t,uint32_t,uint16_t,uint16_t,uint16_t)),
             this, SLOT(logEntry(int,uint32_t,uint32_t,uint16_t,uint16_t,uint16_t)));
-    disconnect(m_uas, SIGNAL(logData(uint32_t,uint32_t,uint16_t,uint8_t,const char*)),
+    disconnect(uas, SIGNAL(logData(uint32_t,uint32_t,uint16_t,uint8_t,const char*)),
             this, SLOT(logData(uint32_t,uint32_t,uint16_t,uint8_t,const char*)));
     ui->refreshPushButton->setEnabled(false);
     ui->getPushButton->setEnabled(false);
+    ui->erasePushButton->setEnabled(false);
 }
 
 void LogDownloadDialog::refreshList()
@@ -191,6 +225,8 @@ void LogDownloadDialog::refreshList()
     QLOG_DEBUG() << "Start Log List Download";
     if (m_uas){
         ui->tableWidget->setRowCount(0);
+        m_fileSaveList.clear();
+        qDeleteAll(m_logEntriesList);
         m_logEntriesList.clear();
         m_uas->logRequestList(0,0xffff); // Currently list all available logs
     }
@@ -301,7 +337,7 @@ void LogDownloadDialog::logEntry(int uasId, uint32_t time_utc, uint32_t size, ui
                        "id=" << id << " num_logs=" << num_logs << ", last_log_num=" << last_log_num;
     ui->tableWidget->setSortingEnabled(false);
 
-    if (m_uas == NULL)
+    if (!m_uas || m_uas->getUASID() != uasId)
         return;
 
     LogDownloadDescriptor *logItem = new LogDownloadDescriptor(id, time_utc, size);

@@ -78,6 +78,7 @@ class FlightPlannerViewModel;
 class QGCMapTool;
 class MAVLinkInspectorWindow;
 class HelpView;
+class SetupView;
 
 /**
  * @brief The LogWindowSingleton class is a helper class providing
@@ -201,6 +202,12 @@ public slots:
     void showMissionElevation();
     /** @brief Open a new modeless MAVLink inspector tool window. */
     void showMavlinkInspector();
+    /** @brief Navigate to Mission Planner's Developer Tools SETUP page. */
+    void showDeveloperTools();
+    /** @brief Open the trusted QML plugin manager as a modeless tool. */
+    void showPluginManager();
+    /** @brief Open MAVLink DataFlash log download as a modeless tool. */
+    void showLogDownload();
     /** @brief Apply Mission Planner altitude display units to PLAN live. */
     void setPlannerAltitudeUnits(const QString &units);
     /** @brief Apply Mission Planner distance display units to PLAN live. */
@@ -447,6 +454,7 @@ protected:
     QPointer<QGCMapTool> plannerMapTool;
     QPointer<FlightDataView> pilotView;
     QPointer<HelpView> helpView;
+    QPointer<SetupView> hardwareSetupView;
     QPointer<QAction> helpViewAction;
     QPointer<SubMainWindow> configView;
     QPointer<SubMainWindow> softwareConfigView;
@@ -555,6 +563,7 @@ private slots:
     void closeTerminalConsole();
 
 private:
+    void buildMissionPlannerToolsMenu();
     void closeMavlinkInspectorWindows();
     void pruneMavlinkInspectorWindows();
 

@@ -37,6 +37,7 @@ signals:
 
 public slots:
     void advModeChanged(bool advanced);
+    bool showDeveloperTools();
 
 private slots:
     void activeUASSet(UASInterface *uas);

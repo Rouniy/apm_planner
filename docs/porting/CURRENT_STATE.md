@@ -16,10 +16,10 @@ minor visual matching is recorded and deferred until the useful workflows exist.
 
 The immediate user-directed order is:
 
-1. Keep the committed PLAN row actions, multi-instance MAVLink Inspector and Antenna Tracker foundations green.
-2. Continue the Antenna Tracker vertical slice: the shared serial/live pages and the exact-link `RADIO_STATUS`/legacy `RADIO` SNR consumer are implemented; next are the PLAN "Tracker Home" action and the exact-target parameter page.
-3. Replace disabled Advanced/Developer actions and missing high-value SETUP/TOOLS pages with complete workflows in the master-backlog order; widen the trusted QML API where a real plugin workflow needs it.
-4. Return to complete DATA HUD telemetry and CONFIG Onboard OSD after the main plugin surface is usable; do not spend the primary stream on pixel polish.
+1. Keep the committed PLAN, MAVLink Inspector and Antenna Tracker foundations green.
+2. Continue the main `TOOLS` stream: replace the explicitly disabled MP10 entries with complete modeless windows, starting with Tlog Convert / Extract, MAVLink Mirror and the serial/NMEA tools; no visible action may open an empty panel or silently do nothing.
+3. After the principal Tools workflows are usable, focus the main stream on Settings/CONFIG as requested, including planner preferences and Onboard OSD.
+4. Retain the deferred Tracker Home/parameter work and DATA HUD audit without allowing them to displace the current Tools → Settings order.
 5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
 
 ## Verified checkpoint
@@ -28,14 +28,14 @@ The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD teleme
 
 At this checkpoint:
 
-- CMake configure and one `cmake --build build-codex-qt -j12` completed successfully; the link-scoped radio monitor and its application integration also build in `build-claude`.
-- The complete test suite passed after the radio-monitor integration: **94/94 tests**.
-- Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, opened two simultaneous Inspector windows, verified that Enter/Escape do not invoke dialog semantics, closed one independently and then closed the application cleanly with the other open.
-- The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, `AntennaTrackerGeometry`, raw-serial tracker service and shared tracker pages are committed. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
+- CMake configure and `cmake --build build-codex-qt -j12` completed successfully; Claude's separately leased `build-claude` target also compiled and tested the Link Statistics window.
+- The complete test suite passes with the Tools catalogue and Link Statistics coverage: **96/96 tests**.
+- Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics windows from DATA and SETUP, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with a tool window open.
+- The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, Antenna Tracker stack and first corrected Tools-menu/window slice are verified. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 127 product rows: 35 `in-progress`, 47 `partial`, 45 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 128 product rows: 36 `in-progress`, 47 `partial`, 45 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -61,8 +61,18 @@ These are working foundations, though their parity rows may remain partial becau
 - The thread-confined Antenna Tracker raw-serial service: dedicated Qt SerialPort 8N1 transport, setup/centering pipeline, bounded latest-target-wins backpressure, write watchdog, generation-aware cancellation and fail-closed unplug/reconnect behavior.
 - Visible per-row PLAN Up/Down/Delete controls that reuse the existing store-aware operations, including undo and DO_JUMP remapping.
 - Explicit modeless multi-instance MAVLink Inspector windows and guarded replay multicast, with independent-close and application-shutdown coverage.
+- An exact MP10 top-level TOOLS catalogue: real application tools are no longer mixed with view-dependent DATA/PLAN/SIM docks, unavailable workflows are visibly disabled with a reason, and late vehicle/custom-widget activity cannot append empty panels to the menu.
+- A modeless MP10 Link Statistics window that follows the current exact target's physical link without retaining a stale link pointer, plus direct modeless entry points for Plugin Manager and MAVLink Log Download.
 - Advanced and Developer action inventories, working shared actions/parsers, Advanced Terminal and the user-facing trusted QML plugin manager.
 - Cooperative shutdown ordering, including close with the modeless inspector open, verified by the real-X11 smoke above.
+
+## TOOLS current phase
+
+The header menu now has the exact 24 MP10 items, order, separators and shortcuts. Seven routes are enabled because they have a truthful presentation: Developer Tools, Plugin Manager, MAVLink Inspector, Map Tile Cache, Link Statistics, Connection Options and Download Logs (MAVLink). The other 17 entries are retained in their reference positions but visibly disabled as `not ported yet`; they cannot flip a check mark, open an empty dock or silently no-op. Installed trusted QML tools may append one clearly named extension submenu after the reference inventory.
+
+`LinkStatsWindow` is a fresh 300×250 modeless window per invocation. Every refresh resolves the current exact target to its physical link again, converts the rolling Qt bit rate to bytes per second and reads per-link MAVLink received/lost counters. Link removal or absence shows zero/em-dash values and an explicit status. `LogDownloadDialog` now closes through normal dialog lifecycle, clears an interrupted vehicle's state/connections and presents an explicit no-vehicle state.
+
+The next Tools slices should replace the disabled Tlog Convert / Extract and MAVLink Mirror entries with real windows, then implement NMEA/CoT outputs and Device Operations with immutable exact targets, explicit Start/Stop/cancellation and destruction tests. Settings/CONFIG becomes the main stream after the principal Tools workflows are usable.
 
 ## PLAN action-column audit
 

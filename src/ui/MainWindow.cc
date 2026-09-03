@@ -41,6 +41,8 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCMAVLinkInspector.h"
 #include "MAVLinkInspectorWindow.h"
+#include "LinkStatsWindow.h"
+#include "MissionPlannerToolsMenu.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
 #include "QGCWaypointListMulti.h"
@@ -81,8 +83,11 @@ This file is part of the QGROUNDCONTROL project
 #include "ConnectionOptionsWindow.h"
 #include "ConfigView.h"
 #include "SetupView.h"
+#include "configuration/QmlPluginManagerView.h"
 #include "TerminalConsole.h"
 #include "AP2DataPlot2D.h"
+#include "uas/LogDownloadDialog.h"
+#include "QGCCore.h"
 #include "LinkManager.h"
 #include "LinkManagerFactory.h"
 #include "comm/VehicleTargetManager.h"
@@ -385,25 +390,11 @@ MainWindow::MainWindow(QWidget *parent):
                                                   ui.actionSimulation_View,
                                                   helpViewAction);
     m_mainWindowHeader->setToolsMenu(ui.menuTools);
-    auto *connectionOptionsAction = new QAction(
-        tr("Connection Options"), this);
-    connectionOptionsAction->setObjectName(
-        QStringLiteral("actionConnectionOptions"));
-    const QList<QAction *> toolActions = ui.menuTools->actions();
-    ui.menuTools->insertAction(
-        toolActions.isEmpty() ? nullptr : toolActions.first(),
-        connectionOptionsAction);
-    connect(connectionOptionsAction, &QAction::triggered,
-            this, &MainWindow::showConnectionOptions);
-    m_mainWindowHeader->setConnectionOptionsAction(connectionOptionsAction);
+    // Proximity is an MP10 Advanced SETUP action rather than a top-level
+    // TOOLS item. Keep one shared action source for ConfigAdvancedView without
+    // mixing it into the application-tools inventory.
     auto *proximityAction = new QAction(tr("Proximity"), this);
     proximityAction->setObjectName(QStringLiteral("actionProximity"));
-    const QList<QAction *> actionsAfterConnectionOptions =
-        ui.menuTools->actions();
-    ui.menuTools->insertAction(
-        actionsAfterConnectionOptions.size() > 1
-            ? actionsAfterConnectionOptions.at(1) : nullptr,
-        proximityAction);
     connect(proximityAction, &QAction::triggered, this, [this]() {
         UASManager *manager = UASManager::instance();
         ProximityWindow *window = ProximityWindow::OpenWindow(this);
@@ -421,16 +412,6 @@ MainWindow::MainWindow(QWidget *parent):
         // never lost in the open-window interval.
         window->setActiveUAS(manager->silentGetActiveUAS());
     });
-    auto *mapCacheAction = new QAction(tr("Map Tile Cache"), this);
-    mapCacheAction->setObjectName(QStringLiteral("actionMapTileCache"));
-    mapCacheAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+M")));
-    const QList<QAction *> actionsAfterProximity = ui.menuTools->actions();
-    ui.menuTools->insertAction(
-        actionsAfterProximity.size() > 2
-            ? actionsAfterProximity.at(2) : nullptr,
-        mapCacheAction);
-    connect(mapCacheAction, &QAction::triggered, this,
-            [this]() { MapCacheView::OpenWindow(this); });
     connect(m_mainWindowHeader, &MainWindowHeader::fullScreenRequested,
             ui.actionFullscreen, &QAction::trigger);
     connect(m_mainWindowHeader, &MainWindowHeader::configureLinkRequested,
@@ -452,6 +433,8 @@ MainWindow::MainWindow(QWidget *parent):
 
     // Create actions
     connectCommonActions();
+
+    buildMissionPlannerToolsMenu();
 
     // Populate link menu
     QList<int> links = LinkManager::instance()->getLinks();
@@ -622,6 +605,33 @@ MainWindow::~MainWindow()
     // All communication dialogs and embedded widgets have this window as
     // their QObject parent. Let QObject destroy each child exactly once.
     commsWidgetList.clear();
+}
+
+void MainWindow::buildMissionPlannerToolsMenu()
+{
+    MissionPlannerToolsMenu::HandlerMap handlers;
+    handlers.insert(QStringLiteral("actionDeveloperTools"),
+                    [this]() { showDeveloperTools(); });
+    handlers.insert(QStringLiteral("actionPluginManager"),
+                    [this]() { showPluginManager(); });
+    handlers.insert(QStringLiteral("actionMavlinkInspector"),
+                    [this]() { showMavlinkInspector(); });
+    handlers.insert(QStringLiteral("actionMapTileCache"),
+                    [this]() { MapCacheView::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionLinkStatistics"),
+                    [this]() { LinkStatsWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionConnectionOptions"),
+                    [this]() { showConnectionOptions(); });
+    handlers.insert(QStringLiteral("actionDownloadLogs"),
+                    [this]() { showLogDownload(); });
+
+    MissionPlannerToolsMenu::Populate(ui.menuTools, this, handlers);
+    // The native menu bar is hidden. Register every MP10 shortcut directly on
+    // MainWindow so it remains active when the header auto-hides.
+    addActions(ui.menuTools->actions());
+    ui.menuTools->menuAction()->setVisible(true);
+    m_mainWindowHeader->setConnectionOptionsAction(
+        findChild<QAction *>(QStringLiteral("actionConnectionOptions")));
 }
 
 void MainWindow::disableTLogReplayBar()
@@ -892,10 +902,12 @@ void MainWindow::buildCommonWidgets()
     {
         configView = new SubMainWindow(this);
         configView->setObjectName("VIEW_HARDWARE_CONFIG");
-        SetupView *setupView = new SetupView(this);
-        configView->setCentralWidget(setupView);
+        hardwareSetupView = new SetupView(this);
+        configView->setCentralWidget(hardwareSetupView);
         addToCentralStackedWidget(configView,VIEW_HARDWARE_CONFIG, tr("Hardware"));
-        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)), setupView, SLOT(advModeChanged(bool)));
+        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)),
+                hardwareSetupView, SLOT(advModeChanged(bool)));
+        hardwareSetupView->advModeChanged(isAdvancedMode);
     }
 
     if (!softwareConfigView)
@@ -1437,14 +1449,6 @@ void MainWindow::buildCommonWidgets()
         menuToDockNameMap[tempAction] = "HEAD_DOWN_DISPLAY_1_DOCKWIDGET";
     }
 
-    { //This is required since we disabled the only existing parent window for the MAVLink Inspector
-        QAction* tempAction = ui.menuTools->addAction(tr("MAVLink Inspector"));
-        tempAction->setObjectName(QStringLiteral("actionMavlinkInspector"));
-        tempAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+I")));
-        connect(tempAction, &QAction::triggered,
-                this, &MainWindow::showMavlinkInspector);
-    }
-
     /*{ //Actuator status disabled until such a point that we can ensure it's completly operational
         QAction* tempAction = ui.menuTools->addAction(tr("Actuator Status"));
         tempAction->setCheckable(true);
@@ -1585,7 +1589,10 @@ void MainWindow::addTool(SubMainWindow *parent,VIEW_SECTIONS view,QDockWidget* w
     }
     if (!found)
     {
-        QAction* tempAction = ui.menuTools->addAction(title);
+        // Legacy docks retain their internal toggle action for layout/state
+        // synchronization, but MP10's top-level TOOLS menu contains only
+        // application tools and must not grow when a link/UAS appears.
+        QAction* tempAction = new QAction(title, this);
         tempAction->setCheckable(true);
         menuToDockNameMap[tempAction] = widget->objectName();
         if (!centralWidgetToDockWidgetsMap.contains(view))
@@ -1635,7 +1642,8 @@ void MainWindow::registerDockablePanel(DockableView *parent,
         }
     }
     if (!menuAction) {
-        menuAction = ui.menuTools->addAction(title);
+        // DATA/PLAN panels are controlled by DockableView, not by MP10 TOOLS.
+        menuAction = new QAction(title, this);
         menuAction->setCheckable(true);
         connect(menuAction, SIGNAL(triggered(bool)), this, SLOT(showTool(bool)));
     }
@@ -2027,7 +2035,7 @@ void MainWindow::loadCustomWidget(const QString& fileName, int view)
         {
             //Delete tool, create menu item to tie it to.
             customWidgetNameToFilenameMap[tool->objectName()+"DOCK"] = fileName;
-            QAction* tempAction = ui.menuTools->addAction(tool->getTitle());
+            QAction* tempAction = new QAction(tool->getTitle(), this);
             menuToDockNameMap[tempAction] = tool->objectName()+"DOCK";
             tempAction->setCheckable(true);
             connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
@@ -2072,7 +2080,7 @@ void MainWindow::loadCustomWidget(const QString& fileName, bool singleinstance)
         {
             //Delete tool, create menu item to tie it to.
             customWidgetNameToFilenameMap[tool->objectName()+"DOCK"] = fileName;
-            QAction* tempAction = ui.menuTools->addAction(tool->getTitle());
+            QAction* tempAction = new QAction(tool->getTitle(), this);
             menuToDockNameMap[tempAction] = tool->objectName()+"DOCK";
             tempAction->setCheckable(true);
             connect(tempAction,SIGNAL(triggered(bool)),this, SLOT(showTool(bool)));
@@ -2642,15 +2650,15 @@ void MainWindow::connectCommonActions()
     if (isAdvancedMode)
     {
         ui.menuPerspectives->menuAction()->setVisible(true);
-        ui.menuTools->menuAction()->setVisible(true);
         ui.menuNetwork->menuAction()->setVisible(true);
     }
     else
     {
         ui.menuPerspectives->menuAction()->setVisible(false);
-        ui.menuTools->menuAction()->setVisible(false);
         ui.menuNetwork->menuAction()->setVisible(false);
     }
+    // MP10 exposes TOOLS independently of the legacy advanced-mode toggle.
+    ui.menuTools->menuAction()->setVisible(true);
 
     connect(ui.actionDebug_Console,SIGNAL(triggered()),debugOutput.data(),SLOT(show()));
     connect(ui.actionSimulate, SIGNAL(triggered(bool)), this, SLOT(simulateLink(bool)));
@@ -2769,6 +2777,46 @@ void MainWindow::showMissionElevation()
         plannerElevationDialog = nullptr;
     });
     dialog->show();
+}
+
+void MainWindow::showDeveloperTools()
+{
+    if (!isAdvancedMode) {
+        setAdvancedMode(true);
+    }
+    loadHardwareConfigView();
+    if (!hardwareSetupView || !hardwareSetupView->showDeveloperTools()) {
+        showStatusMessage(tr("Developer Tools are not available."));
+    }
+}
+
+void MainWindow::showPluginManager()
+{
+    auto *core = qobject_cast<QGCCore *>(QCoreApplication::instance());
+    auto *window = new QWidget(this, Qt::Window);
+    window->setObjectName(QStringLiteral("PluginManagerWindow"));
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    window->setWindowModality(Qt::NonModal);
+    window->setWindowTitle(tr("Plugin Manager"));
+    auto *layout = new QVBoxLayout(window);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(new QmlPluginManagerView(
+        core ? core->qmlPluginManager() : nullptr, window));
+    window->resize(900, 600);
+    window->show();
+    window->raise();
+    window->activateWindow();
+}
+
+void MainWindow::showLogDownload()
+{
+    auto *dialog = new LogDownloadDialog(this);
+    dialog->setObjectName(QStringLiteral("LogDownloadWindow"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowModality(Qt::NonModal);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 QString MainWindow::plannerAltitudeUnits() const
@@ -3195,8 +3243,9 @@ void MainWindow::UASCreated(UASInterface* uas)
     showHILConfigurationWidget(uas);
 
 
-    // Load default custom widgets for this autopilot type
-    loadCustomWidgetsFromDefaults(uas->getSystemTypeName(), uas->getAutopilotTypeName());
+    // MP10 configuration pages replace the legacy .qgw parameter docks.
+    // Loading them here also appended view-dependent actions back into TOOLS
+    // after its exact application-tool inventory had been built.
 
 
     if (uas->getAutopilotType() == MAV_AUTOPILOT_PX4)
@@ -3425,7 +3474,7 @@ void MainWindow::setAdvancedMode(bool mode)
     isAdvancedMode = mode;
     ui.actionAdvanced_Mode->setChecked(mode);
     ui.menuPerspectives->menuAction()->setVisible(mode);
-    ui.menuTools->menuAction()->setVisible(mode);
+    ui.menuTools->menuAction()->setVisible(true);
     ui.menuNetwork->menuAction()->setVisible(mode);
 
     for (QMap<QDockWidget*,QWidget*>::const_iterator i=dockToTitleBarMap.constBegin();

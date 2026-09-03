@@ -544,6 +544,11 @@ set(SOURCES
     src/ui/MAVLinkInspectorWindow.cpp
     src/ui/MAVLinkInspectorWindow.h
     src/comm/MAVLinkMessageMetaType.h
+    src/ui/LinkStatsWindow.cpp
+    src/ui/LinkStatsWindow.h
+    src/ui/LinkStatsSampleSource.cpp
+    src/ui/MissionPlannerToolsMenu.cpp
+    src/ui/MissionPlannerToolsMenu.h
     src/ui/QGCMAVLinkLogPlayer.cc
     src/ui/QGCMAVLinkLogPlayer.h
     src/ui/QGCMAVLinkLogPlayer.ui
@@ -2602,6 +2607,46 @@ if(BUILD_TESTING)
     )
     add_test(NAME radiostatusmonitor_tests
              COMMAND radiostatusmonitor_tests)
+
+    add_executable(linkstatswindow_tests
+        tests/test_linkstatswindow.cpp
+        src/ui/LinkStatsWindow.cpp
+        src/ui/LinkStatsWindow.h
+    )
+    target_include_directories(linkstatswindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(linkstatswindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME linkstatswindow_tests
+             COMMAND linkstatswindow_tests)
+    set_tests_properties(linkstatswindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(missionplannertoolsmenu_tests
+        tests/test_missionplannertoolsmenu.cpp
+        src/ui/MissionPlannerToolsMenu.cpp
+        src/ui/MissionPlannerToolsMenu.h
+    )
+    target_include_directories(missionplannertoolsmenu_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(missionplannertoolsmenu_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME missionplannertoolsmenu_tests
+             COMMAND missionplannertoolsmenu_tests)
+    set_tests_properties(missionplannertoolsmenu_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(mavlinkinspectorwindow_tests
         tests/test_mavlinkinspectorwindow.cpp
