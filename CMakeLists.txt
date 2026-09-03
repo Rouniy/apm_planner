@@ -265,6 +265,10 @@ set(SOURCES
     src/comm/MAVLinkDecoder.h
     src/comm/MAVLinkFrameParser.cpp
     src/comm/MAVLinkFrameParser.h
+    src/comm/MavlinkMirrorOutput.cpp
+    src/comm/MavlinkMirrorOutput.h
+    src/comm/MavlinkMirrorService.cpp
+    src/comm/MavlinkMirrorService.h
     src/comm/ParameterService.cpp
     src/comm/ParameterService.h
     src/comm/VehicleCommandService.cpp
@@ -553,6 +557,11 @@ set(SOURCES
     src/comm/TlogExportService.h
     src/ui/MavlinkLogWindow.cpp
     src/ui/MavlinkLogWindow.h
+    src/ui/SerialPassThroughViewModel.cpp
+    src/ui/SerialPassThroughViewModel.h
+    src/ui/SerialPassThroughWindow.cpp
+    src/ui/SerialPassThroughWindow.h
+    src/ui/SerialPassThroughWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2651,6 +2660,70 @@ if(BUILD_TESTING)
     add_test(NAME missionplannertoolsmenu_tests
              COMMAND missionplannertoolsmenu_tests)
     set_tests_properties(missionplannertoolsmenu_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(mavlinkmirroroutput_tests
+        tests/test_mavlinkmirroroutput.cpp
+        src/comm/MavlinkMirrorOutput.cpp
+        src/comm/MavlinkMirrorOutput.h
+    )
+    target_include_directories(mavlinkmirroroutput_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(mavlinkmirroroutput_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME mavlinkmirroroutput_tests
+             COMMAND mavlinkmirroroutput_tests)
+
+    add_executable(mavlinkmirrorservice_tests
+        tests/test_mavlinkmirrorservice.cpp
+        src/comm/MavlinkMirrorOutput.cpp
+        src/comm/MavlinkMirrorOutput.h
+        src/comm/MavlinkMirrorService.cpp
+        src/comm/MavlinkMirrorService.h
+    )
+    target_include_directories(mavlinkmirrorservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(mavlinkmirrorservice_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME mavlinkmirrorservice_tests
+             COMMAND mavlinkmirrorservice_tests)
+
+    add_executable(serialpassthroughwindow_tests
+        tests/test_serialpassthroughwindow.cpp
+        src/comm/MavlinkMirrorOutput.cpp
+        src/comm/MavlinkMirrorOutput.h
+        src/comm/MavlinkMirrorService.cpp
+        src/comm/MavlinkMirrorService.h
+        src/ui/SerialPassThroughViewModel.cpp
+        src/ui/SerialPassThroughViewModel.h
+        src/ui/SerialPassThroughWindow.cpp
+        src/ui/SerialPassThroughWindow.h
+    )
+    target_include_directories(serialpassthroughwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(serialpassthroughwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::SerialPort
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME serialpassthroughwindow_tests
+             COMMAND serialpassthroughwindow_tests)
+    set_tests_properties(serialpassthroughwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

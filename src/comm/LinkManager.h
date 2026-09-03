@@ -95,6 +95,9 @@ public:
     QList<int> getLinks() const;
 
     LinkInterface* getLink(int linkId) const;
+    /** Best-effort raw write to one currently connected physical link. */
+    bool writeRawBytes(int linkId, const QByteArray &bytes);
+    bool isUdpPortInUse(quint16 port) const;
     // Remove a link based on instance
     void removeLink(LinkInterface *link);
     // Remove a link based on unique id

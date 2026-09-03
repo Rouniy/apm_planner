@@ -43,6 +43,7 @@ This file is part of the QGROUNDCONTROL project
 #include "MAVLinkInspectorWindow.h"
 #include "LinkStatsWindow.h"
 #include "MavlinkLogWindow.h"
+#include "SerialPassThroughWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
@@ -617,6 +618,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { showPluginManager(); });
     handlers.insert(QStringLiteral("actionMavlinkInspector"),
                     [this]() { showMavlinkInspector(); });
+    handlers.insert(QStringLiteral("actionMavlinkMirror"),
+                    [this]() { SerialPassThroughWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionMapTileCache"),
                     [this]() { MapCacheView::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),

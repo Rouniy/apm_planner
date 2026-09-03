@@ -110,14 +110,7 @@ LinkManager::LinkManager(QObject *parent) :
     m_radioStatusMonitor = new RadioStatusMonitor(this);
     m_exactLinkTransmitter = new ExactLinkTransmitter(
         [this](int linkId, const QByteArray &frame) {
-            QPointer<LinkInterface> link(
-                m_connectionMap.value(linkId, nullptr));
-            if (!link || !link->isConnected() || frame.isEmpty()) {
-                return false;
-            }
-            link->writeBytes(frame.constData(), frame.size());
-            return link && m_connectionMap.value(linkId, nullptr) == link
-                && link->isConnected();
+            return writeRawBytes(linkId, frame);
         }, this);
     m_vehicleCommandService = new VehicleCommandService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
@@ -601,6 +594,28 @@ void LinkManager::addLink(LinkInterface *link)
 LinkInterface* LinkManager::getLink(int linkId) const
 {
     return m_connectionMap.value(linkId, nullptr);
+}
+
+bool LinkManager::writeRawBytes(int linkId, const QByteArray &bytes)
+{
+    QPointer<LinkInterface> link(m_connectionMap.value(linkId, nullptr));
+    if (!link || !link->isConnected() || bytes.isEmpty()) {
+        return false;
+    }
+    link->writeBytes(bytes.constData(), bytes.size());
+    return link && m_connectionMap.value(linkId, nullptr) == link
+        && link->isConnected();
+}
+
+bool LinkManager::isUdpPortInUse(quint16 port) const
+{
+    for (LinkInterface *link : m_connectionMap) {
+        const auto *udp = qobject_cast<UDPLink *>(link);
+        if (udp && udp->isConnected() && udp->getPort() == port) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void LinkManager::removeLink(LinkInterface *link)

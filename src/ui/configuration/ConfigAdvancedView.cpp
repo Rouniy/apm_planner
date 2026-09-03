@@ -24,8 +24,9 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     AddToolAction(tr("MAVLink Inspector"),
                   QStringLiteral("MAVLinkInspectorButton"),
                   QStringLiteral("actionMavlinkInspector"));
-    AddUnavailableAction(tr("Mavlink Mirror"),
-                         QStringLiteral("MavlinkMirrorButton"), notPorted);
+    AddToolAction(tr("Mavlink Mirror"),
+                  QStringLiteral("MavlinkMirrorButton"),
+                  QStringLiteral("actionMavlinkMirror"));
     AddUnavailableAction(tr("NMEA"),
                          QStringLiteral("NmeaButton"), notPorted);
     AddUnavailableAction(tr("Cursor-on-Target / TAK"),

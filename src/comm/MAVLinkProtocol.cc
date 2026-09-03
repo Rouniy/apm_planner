@@ -39,6 +39,7 @@ This file is part of the APM_PLANNER project
 
 #include <cstring>
 #include <QDataStream>
+#include <QMetaMethod>
 
 MAVLinkProtocol::MAVLinkProtocol()
 {
@@ -241,21 +242,39 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                 setOutboundVersion(1);
             }
 
+            // MP10's mirror sees complete inbound MAVLink packets, not raw
+            // transport chunks. Re-serializing the parsed message preserves
+            // the received header, checksum and MAVLink 2 signature.
+            const bool frameObserved = isSignalConnected(
+                QMetaMethod::fromSignal(&MAVLinkProtocol::frameReceived));
+            const bool logFrame = m_loggingEnabled
+                && !m_ScopedLogfilePtr.isNull();
+            QByteArray receivedFrame;
+            if (frameObserved || logFrame)
+            {
+                uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
+                const int len = mavlink_msg_to_send_buffer(buffer, &message);
+                receivedFrame = QByteArray(
+                    reinterpret_cast<const char *>(buffer), len);
+            }
+
+            if (frameObserved) {
+                emit frameReceived(link->getId(), receivedFrame);
+            }
+
             // Log data
-            if (m_loggingEnabled && !m_ScopedLogfilePtr.isNull())
+            if (logFrame)
             {
                 quint64 time = QGC::groundTimeUsecs();
-                uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
 
                 QDataStream outStream(m_ScopedLogfilePtr.data());
                 outStream.setByteOrder(QDataStream::BigEndian);
                 outStream << time; // write time stamp
 
-                // write decoded message into buffer and buffer to disk
-                int len = mavlink_msg_to_send_buffer(&buffer[0], &message);
-                int bytesWritten = outStream.writeRawData(reinterpret_cast<const char*>(&buffer[0]), len);
+                const int bytesWritten = outStream.writeRawData(
+                    receivedFrame.constData(), receivedFrame.size());
 
-                if(bytesWritten != len)
+                if(bytesWritten != receivedFrame.size())
                 {
                     emit protocolStatusMessage(tr("MAVLink Logging failed"),
                                                tr("Could not write to file %1, disabling logging.")

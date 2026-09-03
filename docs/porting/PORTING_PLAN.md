@@ -165,6 +165,14 @@ leases for asynchronous consumers and atomically invalidate a selected target
 when its link is removed. The registry is available to trusted QML plugins as an
 explicit discovery/selection authority.
 
+The MAVLink Mirror consumes a link-ID-only complete-frame signal after successful
+per-link framing. It never observes arbitrary transport chunks and never retains
+a `LinkInterface *`; reverse traffic is raw by design and re-resolves the pinned
+physical link for every write. Secondary transports stay event-driven on the GUI
+thread and apply one total bounded queue so a slow serial/TCP peer cannot block
+or grow memory on the protocol path. Every modeless window owns and stops its own
+session.
+
 `ExactLinkTransmitter` now owns MAVLink version and sequence state once per
 physical link. It rejects v2-only messages on MAVLink 1 and clears the checksum
 bytes left in a generated encoder's trimmed payload before link-specific

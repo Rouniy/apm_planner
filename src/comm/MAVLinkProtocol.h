@@ -120,6 +120,8 @@ signals:
     void protocolStatusMessage(const QString& title, const QString& message);
     void outboundVersionChanged(int linkId, unsigned int version);
     void receiveLossChanged(int id,float value);
+    /** Complete vehicle-to-GCS frame after successful MAVLink framing. */
+    void frameReceived(int linkId, QByteArray frame);
     void messageReceived(LinkInterface *link,mavlink_message_t message);
 };
 

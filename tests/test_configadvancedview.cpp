@@ -33,6 +33,8 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QWidget actionSource;
     QAction *inspector = makeAction(
         &actionSource, QStringLiteral("actionMavlinkInspector"));
+    QAction *mirror = makeAction(
+        &actionSource, QStringLiteral("actionMavlinkMirror"));
     QAction *cache = makeAction(
         &actionSource, QStringLiteral("actionMapTileCache"));
     QAction *proximity = makeAction(
@@ -42,30 +44,37 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
-    QCOMPARE(view.ImplementedActionCount(), 3);
-    QVERIFY(view.Log().contains(QStringLiteral("3 of 16")));
+    QCOMPARE(view.ImplementedActionCount(), 4);
+    QVERIFY(view.Log().contains(QStringLiteral("4 of 16")));
 
     QSignalSpy inspectorSpy(inspector, &QAction::triggered);
+    QSignalSpy mirrorSpy(mirror, &QAction::triggered);
     QSignalSpy cacheSpy(cache, &QAction::triggered);
     QSignalSpy proximitySpy(proximity, &QAction::triggered);
 
     auto *inspectorButton = view.findChild<QPushButton *>(
         QStringLiteral("MAVLinkInspectorButton"));
+    auto *mirrorButton = view.findChild<QPushButton *>(
+        QStringLiteral("MavlinkMirrorButton"));
     auto *cacheButton = view.findChild<QPushButton *>(
         QStringLiteral("MapTileCacheButton"));
     auto *proximityButton = view.findChild<QPushButton *>(
         QStringLiteral("ProximityButton"));
     QVERIFY(inspectorButton && inspectorButton->isEnabled());
+    QVERIFY(mirrorButton && mirrorButton->isEnabled());
     QVERIFY(cacheButton && cacheButton->isEnabled());
     QVERIFY(proximityButton && proximityButton->isEnabled());
 
     inspectorButton->click();
+    mirrorButton->click();
     cacheButton->click();
     proximityButton->click();
     QCOMPARE(inspectorSpy.count(), 1);
+    QCOMPARE(mirrorSpy.count(), 1);
     QCOMPARE(cacheSpy.count(), 1);
     QCOMPARE(proximitySpy.count(), 1);
     QVERIFY(view.Log().contains(QStringLiteral("Opened MAVLink Inspector")));
+    QVERIFY(view.Log().contains(QStringLiteral("Opened Mavlink Mirror")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Map Tile Cache")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Proximity")));
 
@@ -83,6 +92,7 @@ void ConfigAdvancedViewTest::tracksSharedActionAvailability()
     QWidget actionSource;
     QAction *inspector = makeAction(
         &actionSource, QStringLiteral("actionMavlinkInspector"));
+    makeAction(&actionSource, QStringLiteral("actionMavlinkMirror"));
     makeAction(&actionSource, QStringLiteral("actionMapTileCache"));
     makeAction(&actionSource, QStringLiteral("actionProximity"));
 
