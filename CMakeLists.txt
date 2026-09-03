@@ -727,6 +727,12 @@ set(SOURCES
     src/ui/configuration/ConfigHWOSDView.h
     src/ui/configuration/ConfigHWOSDViewModel.cpp
     src/ui/configuration/ConfigHWOSDViewModel.h
+    src/ui/configuration/ConfigOSDLayoutCanvas.cpp
+    src/ui/configuration/ConfigOSDLayoutCanvas.h
+    src/ui/configuration/ConfigOSDView.cpp
+    src/ui/configuration/ConfigOSDView.h
+    src/ui/configuration/ConfigOSDViewModel.cpp
+    src/ui/configuration/ConfigOSDViewModel.h
     src/ui/configuration/DeveloperToolParsers.cpp
     src/ui/configuration/DeveloperToolParsers.h
     src/ui/configuration/Esp8266Settings.cpp
@@ -2539,6 +2545,66 @@ if(BUILD_TESTING)
     add_test(NAME confighwosdview_tests
              COMMAND confighwosdview_tests)
     set_tests_properties(confighwosdview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configosdviewmodel_tests
+        tests/test_configosdviewmodel.cpp
+        src/ui/configuration/ConfigOSDViewModel.cpp
+        src/ui/configuration/ConfigOSDViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configosdviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(configosdviewmodel_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configosdviewmodel_tests
+             COMMAND configosdviewmodel_tests)
+
+    add_executable(configosdlayoutcanvas_tests
+        tests/test_configosdlayoutcanvas.cpp
+        src/ui/configuration/ConfigOSDLayoutCanvas.cpp
+        src/ui/configuration/ConfigOSDLayoutCanvas.h
+    )
+    target_include_directories(configosdlayoutcanvas_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(configosdlayoutcanvas_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configosdlayoutcanvas_tests
+             COMMAND configosdlayoutcanvas_tests)
+    set_tests_properties(configosdlayoutcanvas_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configosdview_tests
+        tests/test_configosdview.cpp
+        src/ui/configuration/ConfigOSDLayoutCanvas.cpp
+        src/ui/configuration/ConfigOSDLayoutCanvas.h
+        src/ui/configuration/ConfigOSDView.cpp
+        src/ui/configuration/ConfigOSDView.h
+        src/ui/configuration/ConfigOSDViewModel.cpp
+        src/ui/configuration/ConfigOSDViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configosdview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(configosdview_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configosdview_tests COMMAND configosdview_tests)
+    set_tests_properties(configosdview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

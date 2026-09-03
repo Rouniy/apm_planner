@@ -29,13 +29,14 @@ The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD teleme
 At this checkpoint:
 
 - CMake configure and `cmake --build build-codex-qt -j12` completed successfully; Claude's separately leased `build-claude` target also compiled and tested the NMEA sentence builder.
-- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror, NMEA Output, CoT/TAK and Device Operations coverage: **112/112 tests**.
+- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror, NMEA Output, CoT/TAK, Device Operations and CONFIG Onboard OSD coverage: **116/116 tests**.
 - Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics, Tlog Convert, MAVLink Mirror, NMEA Output, CoT/TAK and Device Operations windows from the main surface, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with tool windows open. The Mirror smoke used a live UDP heartbeat source, received 64 framed bytes through TCP Host, observed Tx accounting and Listening after client disconnect, then opened a second independent window and exited with status 0. A separate write-back run sent the exact `WRITEBACK_MARKER_4096` bytes from the TCP peer through the pinned UDP vehicle link, showed Rx 21 with the checkbox enabled and exited cleanly. The NMEA smoke received 100 TCP Host sentences from a live local MAVLink source, verified the first GGA/GLL/HDG/VTG/RMC cycle and its five checksums, opened a second independent window and exited with status 0. The CoT smoke opened the enabled menu route on a live UDP vehicle, selected TCP Host, delivered the same parseable CoT 2.0 event to two simultaneous clients, opened a second independent window and exited cleanly with the first session active. The Device Operations smoke opened the 760×520 window through TOOLS, opened a second independent instance through Ctrl+J, then opened a third through SETUP → Developer Tools and exited with status 0.
+- A new real-X11 CONFIG smoke used a local UDP target with two OSD screens and nine committed parameters, clicked the production `Onboard OSD` navigation row, rendered the non-empty canvas plus ALT/BAT item editors and closed the application cleanly. Evidence is `/tmp/apm-osd-smoke.kLNaLd/osd.png` for this workspace run; reference screenshot diff and physical-vehicle writes remain.
 - The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, Antenna Tracker stack and first corrected Tools-menu/window slice are verified. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 128 product rows: 41 `in-progress`, 46 `partial`, 41 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 128 product rows: 42 `in-progress`, 46 `partial`, 40 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -47,7 +48,7 @@ These are working foundations, though their parity rows may remain partial becau
 - Typed Mission, Fence and Rally stores; mission file/transfer paths; QGC Plan and legacy fence/rally file handling.
 - PLAN mission editing, context commands, store-aware undo, route geometry, polygon drawing/offset/fence conversion, Survey/Corridor import, terrain source, elevation graph and distance measurement.
 - Exact `(link, system, component)` vehicle target registry, shared link transmitter, command service, parameter service and committed parameter store.
-- Backstage SETUP/CONFIG infrastructure and a substantial set of hardware/parameter pages listed in the parity ledger.
+- Backstage SETUP/CONFIG infrastructure, the phase-one Onboard OSD layout editor and a substantial set of hardware/parameter pages listed in the parity ledger.
 - Shared trusted QML plugin engine/API (`docs/porting/QML_PLUGINS.md`); legacy binary APM Planner plugins are intentionally unsupported.
 - Mission Command List editor and catalog, exposed to PLAN and QML.
 - The MP10 Default Settings workflow: official frame catalog discovery/download/cache, compare/stage into the native raw-parameter editor, exact target-generation guards and operation-scoped cancellation.
@@ -110,7 +111,7 @@ The next coherent PLAN package should combine Grid, KML preview/export, a persis
 
 The SETUP phase must compare the whole MP10 navigation model with the Qt backstage model, then classify every route as working, partial, stub or missing. Prioritize pages that can be made end-to-end functional on existing exact-target/parameter/command services and already implemented widgets.
 
-The current navigation audit in `SETUP_INVENTORY_AUDIT.md` finds 53 MP10 pages versus 38 concrete Qt page factories. Both have the same three named group headings, for totals of 56 versus 41 navigation entries. Qt is missing 16 MP10 pages and adds the useful native `QML Plugins` manager, so this is intentionally not a one-to-one count. The SETUP `OSD` route uses the dedicated `ConfigHWOSDView` legacy MinimOSD telemetry helper; the separate CONFIG `Onboard OSD` canvas/editor is still absent, and the unrelated old `OsdConfig` is no longer exposed under that name. Many other MP10 workflows remain partial or missing, while useful non-empty legacy APM Planner hardware modules are retained and classified separately.
+The current navigation audit in `SETUP_INVENTORY_AUDIT.md` finds 53 MP10 pages versus 38 concrete Qt page factories. Both have the same three named group headings, for totals of 56 versus 41 navigation entries. Qt is missing 16 MP10 pages and adds the useful native `QML Plugins` manager, so this is intentionally not a one-to-one count. The SETUP `OSD` route uses the dedicated `ConfigHWOSDView` legacy MinimOSD telemetry helper; the separate CONFIG `Onboard OSD` route now uses its own phase-one layout editor, never the unrelated old `OsdConfig`. Many other MP10 workflows remain partial or missing, while useful non-empty legacy APM Planner hardware modules are retained and classified separately.
 
 The verified SETUP packages include the common `ActionPageView`, the exact 16-action `ConfigAdvancedView` inventory with six working shared tools (MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target / TAK, Map Tile Cache and Proximity), a standalone inspector window, Advanced Terminal, and a user-facing trusted QML plugin manager. Developer Tools exposes the exact 32-action inventory with working byte/MAVLink/hardware-ID parsers plus the shared Device Operations window: 3 of 32 actions are usable and the other 29 are explicitly disabled. Default Settings, HW ID and ADSB are routed in MP10 order and connected to the committed exact-target parameter snapshot; ADSB identification uses the application-owned exact-link transmitter rather than a legacy global send path.
 
@@ -128,10 +129,14 @@ Legacy APM Planner binary plugins are not a requirement. Where MP10 calls someth
 
 The active Settings path is `MainWindow -> ConfigView`; the compiled
 `ApmSoftwareConfig` is not the production surface. MP10 registers 15 ordered
-CONFIG routes, while the truthful Qt shell currently registers 12 concrete
-factories. `Heli Setup`, `Onboard OSD` and `MAVFtp` are absent until their real
-workflows exist; the unrelated legacy MinimOSD stream-rate helper is no longer
-reachable as `Onboard OSD`. Helicopter detection combines MP10's
+CONFIG routes, while the truthful Qt shell currently registers 13 concrete
+factories. `Heli Setup` and `MAVFtp` remain absent until their real workflows
+exist. `Onboard OSD` now opens a dedicated, non-empty 30x16 phase-one layout
+editor rather than the unrelated legacy MinimOSD stream-rate helper. It parses
+complete EN/X/Y triplets, stages drag/toggle/coordinate edits, confirms refresh
+when local changes exist, submits one exact-target batch and retains ownership
+through partial failure, item cancellation and timeout until terminal batch
+completion. Helicopter detection combines MP10's
 `H_SWASH_TYPE` marker with an early heartbeat fail-safe and hides Copter Basic
 rather than opening the wrong widget. The shared firmware
 family now gives Plane Basic to VTOL and Rover Basic to surface boats. Useful
@@ -139,7 +144,7 @@ legacy Flight Modes, GeoFence, vehicle tuning and Planner factories remain
 under their reference headers with a visible `Legacy` badge. Plane `QP Extended Tuning` is still
 absent, and the Qt GeoFence/profile gates do not match MP10's `DisplayView`
 gates. The QtCore-only `ConfigRouteProfile` now records all 15 MP10 routes in
-reference order, separates reference visibility from the 12 currently
+reference order, separates reference visibility from the 13 currently
 actionable Qt factories and tests offline/advanced, Copter, Heli, Plane/VTOL,
 Rover and per-feature profile gates. `ConfigView` consumes that policy instead
 of maintaining a second set of vehicle lambdas.
@@ -156,9 +161,9 @@ factory. A broader production `ConfigView` matrix across Copter, Plane, Rover,
 Heli, advanced mode and target changes is now covered at the pure production
 route-policy boundary; a full singleton-backed `ConfigView` fixture remains
 unnecessarily broad. The first truthful route/profile correction is now in
-place. The next functional package is the phase-one Onboard OSD editor
-documented in `OSD_AUDIT.md`, followed by native Planner preferences and a
-shared `DisplayView` profile service. The parity ledger retains the exact
+place. The next Settings package is native Planner preferences, followed by a
+shared `DisplayView` profile service and the later full-canvas/tuning-slot OSD
+phases documented in `OSD_AUDIT.md`. The parity ledger retains the exact
 per-route classification so missing pages cannot be mistaken for working
 settings.
 

@@ -102,12 +102,13 @@ void ConfigRouteProfileTest::inventoryMatchesMissionPlanner10()
         QStringLiteral("ConfigArduplaneView"),
         QStringLiteral("ConfigArduroverView"),
         QStringLiteral("ConfigExtendedTuningView"),
+        QStringLiteral("ConfigOSDView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView"),
         QStringLiteral("ConfigPlannerAdvView")
     }));
-    QCOMPARE(factoryPageIds(inventory).size(), 12);
+    QCOMPARE(factoryPageIds(inventory).size(), 13);
     QCOMPARE(ConfigRouteProfile::currentFactoryPageIds(),
              factoryPageIds(inventory));
 
@@ -214,6 +215,7 @@ void ConfigRouteProfileTest::copterRoutesSeparateReferenceFromCurrentQt()
                  QStringLiteral("ConfigAC_FenceView"),
                  QStringLiteral("ConfigBasicTuningView"),
                  QStringLiteral("ConfigExtendedTuningView"),
+                 QStringLiteral("ConfigOSDView"),
                  QStringLiteral("ConfigUserDefinedView"),
                  QStringLiteral("RawParamsView"),
                  QStringLiteral("ConfigPlannerView")
@@ -237,6 +239,7 @@ void ConfigRouteProfileTest::helicopterDoesNotReceiveCopterBasicTuning()
         QStringLiteral("ConfigFriendlyParamsView"),
         QStringLiteral("ConfigAC_FenceView"),
         QStringLiteral("ConfigExtendedTuningView"),
+        QStringLiteral("ConfigOSDView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView")
@@ -262,6 +265,7 @@ void ConfigRouteProfileTest::planeUsesQpLabelAndRejectsLegacyExtendedPage()
         QStringLiteral("ConfigFlightModesView"),
         QStringLiteral("ConfigFriendlyParamsView"),
         QStringLiteral("ConfigArduplaneView"),
+        QStringLiteral("ConfigOSDView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView")
@@ -287,6 +291,7 @@ void ConfigRouteProfileTest::roverUsesOnlyItsCurrentTuningPage()
         QStringLiteral("ConfigFriendlyParamsView"),
         QStringLiteral("ConfigFriendlyParamsAdvView"),
         QStringLiteral("ConfigArduroverView"),
+        QStringLiteral("ConfigOSDView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView"),

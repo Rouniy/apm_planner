@@ -61,7 +61,6 @@ bool currentFactoryAllows(ConfigRouteId route, ConfigVehicleKind vehicle)
         return vehicle == ConfigVehicleKind::Copter
             || vehicle == ConfigVehicleKind::Helicopter;
     case ConfigRouteId::HeliSetup:
-    case ConfigRouteId::OnboardOsd:
     case ConfigRouteId::MavFtp:
         return false;
     default:
@@ -186,7 +185,7 @@ QList<ConfigRouteDefinition> ConfigRouteProfile::inventory()
          true, false, false, true},
         {ConfigRouteId::OnboardOsd,
          QStringLiteral("ConfigOSDView"), routeText("Onboard OSD"),
-         ConfigProfileFlag::OnboardOsd, true, false, false, false},
+         ConfigProfileFlag::OnboardOsd, true, false, false, true},
         {ConfigRouteId::MavFtp,
          QStringLiteral("MavFTPUIView"), routeText("MAVFtp"),
          ConfigProfileFlag::MavFtp, true, false, false, false},

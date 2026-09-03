@@ -11,9 +11,9 @@ but have different purposes.
   `displayOsd` in MP10. The Qt route order and purpose are already close, but
   its widget/class identity and transaction feedback are incomplete.
 - CONFIG `Onboard OSD`, ID `ConfigOSDView`, is a separate onboard layout
-  editor after Extended Tuning. It requires a connected target, a complete
-  parameter list and MP10's `displayOSD` gate. The former wrong `OsdConfig`
-  route has been removed; no onboard editor exists yet.
+  editor after Extended Tuning. Its phase-one Qt page now requires a connected
+  target and complete parameter list, while MP10's persisted `displayOSD` gate
+  remains future work. The former wrong `OsdConfig` mapping stays removed.
 - Developer Tools `OSD Video — Telemetry Overlay` and PLAN `OSD Color` are
   independent functions and must not be folded into either page.
 
@@ -58,6 +58,19 @@ captions and SD/HD/decreased canvas modes. Preserve the safer original staged
 semantics in Qt: write only changed values, accept them only after ACK, warn
 before refresh loses dirty state, and restore accepted values on Discard.
 
+The implemented phase-one Qt page discovers complete EN/X/Y item triplets,
+preserves staged edits across an identical snapshot, offers screen selection,
+enable/disable all, numeric coordinates and a draggable 30x16 preview, and
+submits dirty fields as one exact-target batch. Refresh warns while dirty;
+timeout and per-item cancellation keep editing locked until the parameter
+service emits terminal batch completion. Empty/offline states remain visible.
+Full Settings tabs, glyph atlas, SD/HD geometry modes, item backgrounds,
+copy/paste/clear, auto-write and tuning slots remain later phases.
+The production route was also exercised on real X11 with a local UDP target:
+Screen 1 rendered two parameter-backed items and their editors, and the
+application closed cleanly. Reference screenshot comparison and a physical
+OSD write remain outstanding.
+
 Parameter editor rules include `OSD_FONT`, `OSD_UNITS`, `OSD_SW_METHOD` enums,
 `OSD_OPTIONS` bitmask, integer offsets and X/Y, boolean EN/ENABLE, tuning-slot
 type choices and metadata-backed numeric fallbacks. Incomplete item triplets
@@ -92,9 +105,9 @@ require MAVLink 2.
 
 1. Replace only SETUP `OsdConfig` with exact `ConfigHWOSDView` and one
    result-aware 24-parameter batch.
-2. Add `ConfigOSDView`, `ConfigOSDViewModel` and pure OSD model; parse snapshots,
-   provide Settings/Screen tabs, basic 30x16 drag canvas and staged
-   Write/Discard/Refresh.
+2. **Implemented phase 1:** add `ConfigOSDView`, `ConfigOSDViewModel` and pure
+   OSD model; parse snapshots, provide screen/item controls, a basic 30x16
+   drag canvas and staged Write/Discard/Refresh.
 3. Add full canvas, atlas and global/screen/item editor parity.
 4. Add the exact-target tuning-slot service/window.
 5. Add auto-write lifecycle, armed/dirty warnings, profile gates, screenshots
