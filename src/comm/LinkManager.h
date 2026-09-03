@@ -47,6 +47,7 @@ This file is part of the APM_PLANNER project
 #include "MAVLinkProtocol.h"
 #include <QMap>
 #include <QPointer>
+#include <QSet>
 #include <QStringList>
 
 #include "UASInterface.h"
@@ -159,6 +160,10 @@ private:
     QMap<int,LinkInterface*> m_connectionMap;
     QMap<int,QPointer<UASInterface>> m_uasMap;
     QMap<QString,int> m_portToBaudMap;
+    // Automatic MP10 startup listeners are runtime policy, not user-created
+    // connection definitions. Excluding them from LINKMANAGER/LINKS makes the
+    // enable switch effective on the next restart.
+    QSet<int> m_startupUdpLinkIds;
     QScopedPointer<MAVLinkDecoder> m_mavlinkDecoder;
     QScopedPointer<MAVLinkProtocol> m_mavlinkProtocol;
     VehicleTargetManager *m_vehicleTargetManager = nullptr;

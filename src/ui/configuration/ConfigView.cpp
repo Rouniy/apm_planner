@@ -5,6 +5,7 @@
 #include "BasicPidConfig.h"
 #include "CopterPidConfig.h"
 #include "ConfigRouteProfile.h"
+#include "DisplayViewProfile.h"
 #include "ConfigPlannerAdvView.h"
 #include "ConfigFriendlyParamsView.h"
 #include "ConfigOSDView.h"
@@ -111,8 +112,9 @@ ConfigView::ConfigView(QWidget *parent)
     layout->addWidget(m_backstage);
 
     QSettings settings;
-    m_advanced = settings.value(
-        QStringLiteral("QGC_MAINWINDOW/ADVANCED_MODE"), false).toBool();
+    DisplayViewProfileService *const displayProfiles =
+        DisplayViewProfileService::instance();
+    m_advanced = displayProfiles->current().isAdvancedMode();
     m_preferredPageHeader = settings.value(kLastPageKey).toString();
 
     m_backstage->setAutomaticSelectionEnabled(false);
@@ -137,6 +139,17 @@ ConfigView::ConfigView(QWidget *parent)
     connect(UASManager::instance(),
             QOverload<UASInterface *>::of(&UASManager::activeUASSet),
             this, &ConfigView::activeUASSet);
+    connect(displayProfiles, &DisplayViewProfileService::changed,
+            this, [this, displayProfiles]() {
+        const bool advanced =
+            displayProfiles->current().isAdvancedMode();
+        if (m_advanced != advanced) {
+            m_advanced = advanced;
+            emit advancedModeChanged(advanced);
+        }
+        refreshPageVisibility();
+        restorePreferredPage();
+    });
     activeUASSet(UASManager::instance()->getActiveUAS());
     m_backstage->restoreInitialPage(m_preferredPageHeader);
 }
@@ -1231,7 +1244,21 @@ ConfigRouteContext ConfigView::routeContext() const
 {
     ConfigRouteContext context;
     context.connected = m_connected;
-    context.advanced = m_advanced;
+    const DisplayViewConfigFlags displayFlags =
+        DisplayViewProfileService::instance()->current().configFlags();
+    context.advanced =
+        DisplayViewProfileService::instance()->current().isAdvancedMode();
+    context.profile.flightModes = displayFlags.displayFlightModes;
+    context.profile.standardParams = displayFlags.displayStandardParams;
+    context.profile.advancedParams = displayFlags.displayAdvancedParams;
+    context.profile.geoFence = displayFlags.displayGeoFence;
+    context.profile.basicTuning = displayFlags.displayBasicTuning;
+    context.profile.extendedTuning = displayFlags.displayExtendedTuning;
+    context.profile.onboardOsd = displayFlags.displayOSD;
+    context.profile.mavFtp = displayFlags.displayMavFTP;
+    context.profile.userParams = displayFlags.displayUserParam;
+    context.profile.fullParameterList = displayFlags.displayFullParamList;
+    context.profile.plannerSettings = displayFlags.displayPlannerSettings;
     const ParameterFirmwareFamily family = parameterFirmwareFamily();
     switch (family) {
     case ParameterFirmwareFamily::ArduCopter:

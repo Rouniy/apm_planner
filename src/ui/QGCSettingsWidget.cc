@@ -10,14 +10,34 @@
 #include "UASManager.h"
 #include "map/CompiledMapBackends.h"
 #include "map/MapWidgetFactory.h"
+#include "configuration/DisplayViewProfile.h"
+#include "configuration/PlannerStartupUdpOptions.h"
 
 #include <QComboBox>
+#include <QCheckBox>
 #include <QFileDialog>
 #include <QDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QSpinBox>
+
+namespace {
+int findCaseInsensitiveData(const QComboBox *combo, const QString &value)
+{
+    if (!combo) {
+        return -1;
+    }
+    for (int index = 0; index < combo->count(); ++index) {
+        if (combo->itemData(index).toString().compare(
+                value.trimmed(), Qt::CaseInsensitive) == 0) {
+            return index;
+        }
+    }
+    return -1;
+}
+}
 
 QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
     QWidget(parent),
@@ -62,8 +82,8 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
     m_altitudeUnitsComboBox->addItem(tr("Feet"), QStringLiteral("Feet"));
     const QString configuredAltitudeUnits = QSettings().value(
         QStringLiteral("altunits"), QStringLiteral("Meters")).toString();
-    int altitudeUnitsIndex = m_altitudeUnitsComboBox->findData(
-        configuredAltitudeUnits);
+    int altitudeUnitsIndex = findCaseInsensitiveData(
+        m_altitudeUnitsComboBox, configuredAltitudeUnits);
     if (altitudeUnitsIndex < 0) altitudeUnitsIndex = 0;
     m_altitudeUnitsComboBox->setCurrentIndex(altitudeUnitsIndex);
     unitsLayout->addRow(tr("Alt Units"), m_altitudeUnitsComboBox);
@@ -74,13 +94,66 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
     m_distanceUnitsComboBox->addItem(tr("Feet"), QStringLiteral("Feet"));
     const QString configuredDistanceUnits = QSettings().value(
         QStringLiteral("distunits"), QStringLiteral("Meters")).toString();
-    int distanceUnitsIndex = m_distanceUnitsComboBox->findData(
-        configuredDistanceUnits);
+    int distanceUnitsIndex = findCaseInsensitiveData(
+        m_distanceUnitsComboBox, configuredDistanceUnits);
     if (distanceUnitsIndex < 0) distanceUnitsIndex = 0;
     m_distanceUnitsComboBox->setCurrentIndex(distanceUnitsIndex);
     unitsLayout->addRow(tr("Dist Units"), m_distanceUnitsComboBox);
+    m_displayLayoutComboBox = new QComboBox(unitsGroup);
+    m_displayLayoutComboBox->setObjectName(
+        QStringLiteral("CMB_displayview"));
+    m_displayLayoutComboBox->addItem(
+        tr("Basic"), static_cast<int>(DisplayViewPreset::Basic));
+    m_displayLayoutComboBox->addItem(
+        tr("Advanced"), static_cast<int>(DisplayViewPreset::Advanced));
+    m_displayLayoutComboBox->addItem(
+        tr("Custom"), static_cast<int>(DisplayViewPreset::Custom));
+    m_displayLayoutLabel = new QLabel(tr("Layout"), unitsGroup);
+    unitsLayout->addRow(m_displayLayoutLabel, m_displayLayoutComboBox);
+    m_displayLayoutStatus = new QLabel(unitsGroup);
+    m_displayLayoutStatus->setObjectName(
+        QStringLiteral("DisplayLayoutStatus"));
+    m_displayLayoutStatus->setWordWrap(true);
+    unitsLayout->addRow(m_displayLayoutStatus);
     ui->gridLayout_3->addWidget(unitsGroup, 5, 0, 1, 3);
-    ui->gridLayout_3->setRowStretch(6, 1);
+    auto *udpGroup = new QGroupBox(tr("Startup UDP Listeners"), ui->general);
+    udpGroup->setObjectName(QStringLiteral("StartupUdpListenersGroup"));
+    auto *udpLayout = new QFormLayout(udpGroup);
+    QSettings startupSettings;
+    const PlannerStartupUdpOptions startup =
+        PlannerStartupUdpOptions::load(startupSettings);
+    m_startupUdpEnabled = new QCheckBox(
+        tr("Open MAVLink UDP listeners when APM Planner starts"), udpGroup);
+    m_startupUdpEnabled->setObjectName(
+        QStringLiteral("CHK_startup_udp_listeners"));
+    m_startupUdpEnabled->setChecked(startup.enabled);
+    udpLayout->addRow(m_startupUdpEnabled);
+    m_startupUdpPrimaryPort = new QSpinBox(udpGroup);
+    m_startupUdpPrimaryPort->setObjectName(
+        QStringLiteral("NUM_startup_udp_primary_port"));
+    m_startupUdpPrimaryPort->setRange(1, 65535);
+    m_startupUdpPrimaryPort->setValue(startup.primaryPort);
+    m_startupUdpPrimaryPort->setEnabled(startup.enabled);
+    udpLayout->addRow(tr("Primary port"), m_startupUdpPrimaryPort);
+    m_startupUdpAlternatePort = new QSpinBox(udpGroup);
+    m_startupUdpAlternatePort->setObjectName(
+        QStringLiteral("NUM_startup_udp_alternate_port"));
+    m_startupUdpAlternatePort->setRange(1, 65535);
+    m_startupUdpAlternatePort->setValue(startup.alternatePort);
+    m_startupUdpAlternatePort->setEnabled(startup.enabled);
+    udpLayout->addRow(tr("Alternate port"), m_startupUdpAlternatePort);
+    m_startupUdpStatus = new QLabel(startup.configurationStatus(), udpGroup);
+    m_startupUdpStatus->setObjectName(
+        QStringLiteral("StartupUdpListenerStatus"));
+    m_startupUdpStatus->setWordWrap(true);
+    udpLayout->addRow(m_startupUdpStatus);
+    auto *udpNote = new QLabel(
+        PlannerStartupUdpOptions::restartNote(), udpGroup);
+    udpNote->setObjectName(QStringLiteral("StartupUdpListenerNote"));
+    udpNote->setWordWrap(true);
+    udpLayout->addRow(udpNote);
+    ui->gridLayout_3->addWidget(udpGroup, 6, 0, 1, 3);
+    ui->gridLayout_3->setRowStretch(7, 1);
 
     populateMapWidgetBackends();
     connect(m_mapWidgetBackendComboBox,
@@ -92,6 +165,17 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
     connect(m_distanceUnitsComboBox,
             QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &QGCSettingsWidget::distanceUnitsIndexChanged);
+    connect(m_displayLayoutComboBox,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &QGCSettingsWidget::displayLayoutIndexChanged);
+    connect(m_startupUdpEnabled, &QCheckBox::toggled,
+            this, &QGCSettingsWidget::saveStartupUdpOptions);
+    connect(m_startupUdpPrimaryPort,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &QGCSettingsWidget::saveStartupUdpOptions);
+    connect(m_startupUdpAlternatePort,
+            QOverload<int>::of(&QSpinBox::valueChanged),
+            this, &QGCSettingsWidget::saveStartupUdpOptions);
     connect(MapWidgetFactory::instance(),
             &MapWidgetFactory::AvailableBackendsChanged,
             this, &QGCSettingsWidget::populateMapWidgetBackends);
@@ -103,6 +187,10 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
     connect(MapWidgetFactory::instance(),
             &MapWidgetFactory::StatusMessage,
             m_mapWidgetBackendStatus, &QLabel::setText);
+    connect(DisplayViewProfileService::instance(),
+            &DisplayViewProfileService::changed,
+            this, &QGCSettingsWidget::syncDisplayLayout);
+    syncDisplayLayout();
 
     // Add all protocols
     /*QList<ProtocolInterface*> protocols = LinkManager::instance()->getProtocols();
@@ -140,6 +228,69 @@ void QGCSettingsWidget::distanceUnitsIndexChanged(int index)
     QSettings().setValue(QStringLiteral("distunits"), units);
     emit distanceUnitsChanged(units);
     MainWindow::instance()->setPlannerDistanceUnits(units);
+}
+
+void QGCSettingsWidget::displayLayoutIndexChanged(int index)
+{
+    if (!m_displayLayoutComboBox || index < 0) {
+        return;
+    }
+    const int rawPreset = m_displayLayoutComboBox->itemData(index).toInt();
+    if (rawPreset < static_cast<int>(DisplayViewPreset::Basic)
+        || rawPreset > static_cast<int>(DisplayViewPreset::Custom)) {
+        syncDisplayLayout();
+        return;
+    }
+    QString error;
+    if (!DisplayViewProfileService::instance()->applyPreset(
+            static_cast<DisplayViewPreset>(rawPreset), &error)) {
+        syncDisplayLayout();
+        m_displayLayoutStatus->setText(error);
+    }
+}
+
+void QGCSettingsWidget::syncDisplayLayout()
+{
+    if (!m_displayLayoutComboBox || !m_displayLayoutStatus) {
+        return;
+    }
+    const DisplayViewProfile profile =
+        DisplayViewProfileService::instance()->current();
+    const QSignalBlocker blocker(m_displayLayoutComboBox);
+    const int index = m_displayLayoutComboBox->findData(
+        static_cast<int>(profile.preset()));
+    if (index >= 0) {
+        m_displayLayoutComboBox->setCurrentIndex(index);
+    }
+    m_displayLayoutComboBox->setVisible(profile.displayPlannerLayout());
+    m_displayLayoutLabel->setVisible(profile.displayPlannerLayout());
+    m_displayLayoutStatus->setVisible(profile.displayPlannerLayout());
+    m_displayLayoutStatus->setText(tr(
+        "%1 layout is active. CONFIG and SETUP visibility now follows "
+        "the shared Mission Planner profile.").arg(profile.presetName()));
+}
+
+void QGCSettingsWidget::saveStartupUdpOptions()
+{
+    if (!m_startupUdpEnabled || !m_startupUdpPrimaryPort
+        || !m_startupUdpAlternatePort || !m_startupUdpStatus) {
+        return;
+    }
+    PlannerStartupUdpOptions options;
+    options.enabled = m_startupUdpEnabled->isChecked();
+    options.primaryPort = m_startupUdpPrimaryPort->value();
+    options.alternatePort = m_startupUdpAlternatePort->value();
+    QSettings settings;
+    options.save(settings);
+    settings.sync();
+    m_startupUdpPrimaryPort->setEnabled(options.enabled);
+    m_startupUdpAlternatePort->setEnabled(options.enabled);
+    if (settings.status() == QSettings::NoError) {
+        m_startupUdpStatus->setText(options.configurationStatus());
+    } else {
+        m_startupUdpStatus->setText(tr(
+            "Could not save the Startup UDP listener configuration."));
+    }
 }
 
 void QGCSettingsWidget::populateMapWidgetBackends()

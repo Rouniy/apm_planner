@@ -14,6 +14,7 @@
 #include "ConfigAntennaTrackerView.h"
 #include "ConfigBatteryMonitoring2View.h"
 #include "ConfigDefaultSettingsView.h"
+#include "DisplayViewProfile.h"
 #include "CompassConfig.h"
 #include "ConfigDroneCanView.h"
 #include "ConfigDeveloperToolsView.h"
@@ -75,6 +76,7 @@
 #include <QVBoxLayout>
 
 namespace {
+const QString kLastPageKey = QStringLiteral("setup_lastpage");
 const QString kInstallFirmware = QStringLiteral("InstallFirmwareView");
 const QString kMandatoryGroup = QStringLiteral("MandatoryHardwareGroup");
 const QString kFrameType = QStringLiteral("ConfigFrameClassTypeView");
@@ -211,9 +213,12 @@ SetupView::SetupView(QWidget *parent)
 
     QSettings settings;
     settings.setFallbacksEnabled(false);
-    m_advanced = settings.value(
-        QStringLiteral("QGC_MAINWINDOW/ADVANCED_MODE"), false).toBool();
+    DisplayViewProfileService *const displayProfiles =
+        DisplayViewProfileService::instance();
+    m_advanced = displayProfiles->current().isAdvancedMode();
+    m_preferredPageHeader = settings.value(kLastPageKey).toString();
 
+    m_backstage->setAutomaticSelectionEnabled(false);
     buildPages();
     connect(m_backstage, &BackstageView::pageActivated,
             this, [](const QString &id, QWidget *page) {
@@ -258,7 +263,15 @@ SetupView::SetupView(QWidget *parent)
         }
     });
     connect(m_backstage, &BackstageView::currentPageChanged,
-            this, [this]() { refreshLoadingOverlay(); });
+            this, [this](const QString &pageId) {
+        if (!pageId.isEmpty()) {
+            m_preferredPageHeader =
+                m_backstage->pageDefinition(pageId).header;
+            QSettings settings;
+            settings.setValue(kLastPageKey, m_preferredPageHeader);
+        }
+        refreshLoadingOverlay();
+    });
     connect(m_backstage, &BackstageView::stopLoadingRequested,
             this, &SetupView::stopParameterLoading);
     connect(m_backstage, &BackstageView::retryLoadingRequested,
@@ -266,7 +279,18 @@ SetupView::SetupView(QWidget *parent)
     connect(UASManager::instance(),
             QOverload<UASInterface *>::of(&UASManager::activeUASSet),
             this, &SetupView::activeUASSet);
+    connect(displayProfiles, &DisplayViewProfileService::changed,
+            this, [this, displayProfiles]() {
+        const bool advanced =
+            displayProfiles->current().isAdvancedMode();
+        if (m_advanced != advanced) {
+            m_advanced = advanced;
+            emit advancedModeChanged(advanced);
+        }
+        refreshPageVisibility();
+    });
     activeUASSet(UASManager::instance()->getActiveUAS());
+    m_backstage->restoreInitialPage(m_preferredPageHeader);
 }
 
 SetupView::~SetupView()
@@ -835,59 +859,91 @@ void SetupView::firmwareVersionDetected(const QString &versionText)
 
 void SetupView::refreshPageVisibility()
 {
+    const DisplayViewSetupFlags profile =
+        DisplayViewProfileService::instance()->current().setupFlags();
     const bool copter = m_connected
         && firmwareFamily(m_uas) == ParameterFirmwareFamily::ArduCopter;
 
+    m_backstage->setPageVisible(
+        kInstallFirmware, profile.displayInstallFirmware);
     m_backstage->setGroupVisible(kMandatoryGroup, m_connected);
-    m_backstage->setPageVisible(kFrameType, copter);
-    m_backstage->setPageVisible(kDefaultSettings, copter);
-    m_backstage->setPageVisible(kAccelCalibration, m_connected);
-    m_backstage->setPageVisible(kCompass, m_connected);
-    m_backstage->setPageVisible(kRadioInput, m_connected);
-    m_backstage->setPageVisible(kRadioOutput, m_connected);
+    m_backstage->setPageVisible(
+        kFrameType, copter && profile.displayFrameType);
+    m_backstage->setPageVisible(
+        kDefaultSettings, copter && profile.displayFrameType);
+    m_backstage->setPageVisible(
+        kAccelCalibration, m_connected && profile.displayAccelCalibration);
+    m_backstage->setPageVisible(
+        kCompass, m_connected && profile.displayCompassConfiguration);
+    m_backstage->setPageVisible(
+        kRadioInput, m_connected && profile.displayRadioCalibration);
+    m_backstage->setPageVisible(
+        kRadioOutput, m_connected && profile.displayServoOutput);
     m_backstage->setPageVisible(
         kSerialPorts,
-        m_connected
+        profile.displaySerialPorts && m_connected
             && firmwareFamily(m_uas) != ParameterFirmwareFamily::Unknown);
-    m_backstage->setPageVisible(kEscCalibration, m_connected);
-    m_backstage->setPageVisible(kFlightModes, m_connected);
-    m_backstage->setPageVisible(kFailSafe, m_connected);
+    m_backstage->setPageVisible(
+        kEscCalibration, m_connected && profile.displayEscCalibration);
+    m_backstage->setPageVisible(
+        kFlightModes, m_connected && profile.displayFlightModes);
+    m_backstage->setPageVisible(
+        kFailSafe, m_connected && profile.displayFailSafe);
     const ParameterFirmwareFamily family = firmwareFamily(m_uas);
     m_backstage->setPageVisible(
         kInitialParams,
-        m_connected
+        profile.displayInitialParams && m_connected
             && (family == ParameterFirmwareFamily::ArduCopter
                 || family == ParameterFirmwareFamily::ArduPlane));
-    m_backstage->setPageVisible(kHWID, m_connected);
-    m_backstage->setPageVisible(kADSB, m_connected);
+    m_backstage->setPageVisible(
+        kHWID, m_connected && profile.displayHWIDs);
+    m_backstage->setPageVisible(
+        kADSB, m_connected && profile.displayADSB);
 
     m_backstage->setGroupVisible(kOptionalGroup, true);
-    m_backstage->setPageVisible(kGPSInject, true);
-    m_backstage->setPageVisible(kSikRadio, true);
-    m_backstage->setPageVisible(kGPSOrder, m_connected);
-    m_backstage->setPageVisible(kBatteryMonitor, m_connected);
-    m_backstage->setPageVisible(kBatteryMonitor2, m_connected);
-    m_backstage->setPageVisible(kRangeFinder, m_connected);
-    m_backstage->setPageVisible(kAirspeed, m_connected);
-    m_backstage->setPageVisible(kOpticalFlow, m_connected);
-    m_backstage->setPageVisible(kOsd, m_connected);
-    m_backstage->setPageVisible(kCameraGimbal, m_connected);
+    m_backstage->setPageVisible(kGPSInject, profile.displayRTKInject);
+    m_backstage->setPageVisible(kSikRadio, profile.displaySikRadio);
+    m_backstage->setPageVisible(
+        kGPSOrder, m_connected && profile.displayGPSOrder);
+    m_backstage->setPageVisible(
+        kBatteryMonitor, m_connected && profile.displayBattMonitor);
+    m_backstage->setPageVisible(
+        kBatteryMonitor2, m_connected && profile.displayBattMonitor);
+    m_backstage->setPageVisible(
+        kRangeFinder, m_connected && profile.displayRangeFinder);
+    m_backstage->setPageVisible(
+        kAirspeed, m_connected && profile.displayAirSpeed);
+    m_backstage->setPageVisible(
+        kOpticalFlow, m_connected && profile.displayOpticalFlow);
+    m_backstage->setPageVisible(
+        kOsd, m_connected && profile.displayOsd);
+    m_backstage->setPageVisible(
+        kCameraGimbal, m_connected && profile.displayCameraGimbal);
     m_backstage->setPageVisible(
         kMotorTest,
-        m_connected
+        profile.displayMotorTest && m_connected
             && firmwareFamily(m_uas) != ParameterFirmwareFamily::ArduSub);
-    m_backstage->setPageVisible(kBluetoothSetup, true);
-    m_backstage->setPageVisible(kParachute, m_connected);
-    m_backstage->setPageVisible(kESP8266, m_connected);
-    m_backstage->setPageVisible(kDroneCAN, true);
-    m_backstage->setPageVisible(kHWCAN, m_connected);
+    m_backstage->setPageVisible(
+        kBluetoothSetup, profile.displayBluetooth);
+    m_backstage->setPageVisible(
+        kParachute, m_connected && profile.displayParachute);
+    m_backstage->setPageVisible(
+        kESP8266, m_connected && profile.displayEsp);
+    m_backstage->setPageVisible(
+        kAntennaTrackerSerial, profile.displayAntennaTracker);
+    m_backstage->setPageVisible(
+        kAntennaTrackerLive, profile.displayAntennaTracker);
+    m_backstage->setPageVisible(kDroneCAN, profile.displayCAN);
+    m_backstage->setPageVisible(
+        kHWCAN, m_connected && profile.displayCAN);
 
     m_backstage->setGroupVisible(kAdvancedGroup, m_advanced);
     m_backstage->setPageVisible(kAdvancedTools, m_advanced);
     m_backstage->setPageVisible(kElevationSources, m_advanced);
     m_backstage->setPageVisible(kDeveloperTools, m_advanced);
     m_backstage->setPageVisible(kMissionCommandList, m_advanced);
-    m_backstage->setPageVisible(kTerminal, m_advanced);
+    m_backstage->setPageVisible(
+        kTerminal, m_advanced && profile.displayTerminal);
     m_backstage->setPageVisible(kQmlPlugins, m_advanced);
     refreshLoadingOverlay();
 }

@@ -47,6 +47,7 @@ This file is part of the APM_PLANNER project
 #include "VehicleCommandService.h"
 #include "VehicleEndpoint.h"
 #include "VehicleTargetManager.h"
+#include "ui/configuration/PlannerStartupUdpOptions.h"
 #include <QApplication>
 #include <QPointer>
 #include <QSettings>
@@ -150,7 +151,12 @@ void LinkManager::reloadSettings()
     //Check to see if we have a single serial and single UDP connection, since they are the defaults
 
     bool foundserial = false;
-    bool foundudp = false;
+    bool migratedLegacyStartupUdp = false;
+    QSet<int> existingUdpPorts;
+    QList<int> legacyStartupUdpCandidates;
+    QSettings settings;
+    const bool hasExplicitStartupUdp =
+        PlannerStartupUdpOptions::hasExplicitConfiguration(settings);
 
     for (QMap<int,LinkInterface*>::const_iterator i= m_connectionMap.constBegin();i!=m_connectionMap.constEnd();i++)
     {
@@ -160,16 +166,45 @@ void LinkManager::reloadSettings()
         }
         else if (i.value()->getLinkType() == LinkInterface::UDP_LINK)
         {
-            foundudp = true;
+            if (const auto *udp = qobject_cast<UDPLink *>(i.value())) {
+                existingUdpPorts.insert(udp->getPort());
+                // Older APM Planner builds persisted the implicit default
+                // 14550 listener as an ordinary link. Adopt it once so the
+                // new Startup UDP switch can actually disable it later.
+                if (!hasExplicitStartupUdp
+                    && udp->getPort()
+                        == PlannerStartupUdpOptions::DefaultPrimaryPort
+                    && udp->getHosts().isEmpty()) {
+                    legacyStartupUdpCandidates.append(i.key());
+                }
+            }
         }
+    }
+    if (legacyStartupUdpCandidates.size() == 1) {
+        m_startupUdpLinkIds.insert(legacyStartupUdpCandidates.first());
+        migratedLegacyStartupUdp = true;
     }
     if (!foundserial)
     {
         LinkManagerFactory::addSerialConnection();
     }
-    if (!foundudp)
-    {
-        LinkManagerFactory::addUdpConnection(QHostAddress::Any,14550);
+    const QList<int> startupPorts =
+        PlannerStartupUdpOptions::load(settings).orderedPorts();
+    for (int port : startupPorts) {
+        if (existingUdpPorts.contains(port)) {
+            continue;
+        }
+        const int linkId = LinkManagerFactory::addUdpConnection(
+            QHostAddress::Any, port, false);
+        if (linkId >= 0) {
+            m_startupUdpLinkIds.insert(linkId);
+            existingUdpPorts.insert(port);
+        }
+    }
+    if (migratedLegacyStartupUdp) {
+        // Rewrite the manual-link array immediately. A later settings change
+        // or abnormal exit must not resurrect the adopted legacy listener.
+        saveSettings();
     }
 }
 
@@ -268,6 +303,7 @@ void LinkManager::shutdown()
     // while UASManager quiesces DroneCAN and other vehicle-owned transports.
     const QMap<int, LinkInterface *> links = m_connectionMap;
     m_connectionMap.clear();
+    m_startupUdpLinkIds.clear();
     for (auto it = links.constBegin(); it != links.constEnd(); ++it) {
         const int linkId = it.key();
         LinkInterface *link = it.value();
@@ -404,6 +440,9 @@ void LinkManager::saveSettings()
     int index = 0;
     for (QMap<int,LinkInterface*>::const_iterator i= m_connectionMap.constBegin();i!=m_connectionMap.constEnd();i++)
     {
+        if (m_startupUdpLinkIds.contains(i.key())) {
+            continue;
+        }
         settings.setArrayIndex(index++);
         settings.setValue("linkid",i.value()->getId());
         if (i.value()->getLinkType() == LinkInterface::SERIAL_LINK)
@@ -635,6 +674,7 @@ void LinkManager::removeLink(int linkId)
     // shutting down. Deleting a still-running QThread is undefined and was a
     // second shutdown-crash path when a connection was removed at runtime.
     m_connectionMap.remove(linkId);
+    m_startupUdpLinkIds.remove(linkId);
     m_vehicleTargetManager->removeLink(linkId);
     m_vehicleCommandService->forgetLink(linkId);
     m_parameterService->forgetLink(linkId);
@@ -680,6 +720,11 @@ void LinkManager::disconnectLink(int index)
 
 void LinkManager::linkUpdated(LinkInterface *link)
 {
+    // Editing an automatically-created listener turns it into a manual link;
+    // otherwise the visible change would be silently discarded on shutdown.
+    if (link) {
+        m_startupUdpLinkIds.remove(link->getId());
+    }
     emit linkChanged(link);
     emit linkChanged(link->getId());
 }

@@ -42,10 +42,11 @@ This file is part of the QGROUNDCONTROL project
 #include "QGC.h"
 
 
-UDPLink::UDPLink(QHostAddress host, quint16 port) :
+UDPLink::UDPLink(QHostAddress host, quint16 port, bool retryOnBindFailure) :
     socket(NULL),
     connectState(false),
     _shouldRestartConnection(false),
+    _retryOnBindFailure(retryOnBindFailure),
     _running(false)
 {
     this->host = host;
@@ -88,7 +89,12 @@ void UDPLink::run()
             break;
         }
         if (!isConnected() && !host.isNull() && port != 0 ) {
-            hardwareConnect();
+            if (!hardwareConnect() && !_retryOnBindFailure) {
+                delete socket;
+                socket = nullptr;
+                _running = false;
+                break;
+            }
             msleep(50);
             continue;
         }

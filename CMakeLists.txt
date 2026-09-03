@@ -755,6 +755,10 @@ set(SOURCES
     src/ui/configuration/ConfigView.h
     src/ui/configuration/ConfigRouteProfile.cpp
     src/ui/configuration/ConfigRouteProfile.h
+    src/ui/configuration/DisplayViewProfile.cpp
+    src/ui/configuration/DisplayViewProfile.h
+    src/ui/configuration/PlannerStartupUdpOptions.cpp
+    src/ui/configuration/PlannerStartupUdpOptions.h
     src/ui/configuration/ConfigFriendlyParamsView.cpp
     src/ui/configuration/ConfigFriendlyParamsView.h
     src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
@@ -1945,6 +1949,36 @@ if(BUILD_TESTING)
     set_tests_properties(configplanneradvview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_executable(displayviewprofile_tests
+        tests/test_displayviewprofile.cpp
+        src/ui/configuration/DisplayViewProfile.cpp
+        src/ui/configuration/DisplayViewProfile.h
+    )
+    target_include_directories(displayviewprofile_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(displayviewprofile_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME displayviewprofile_tests
+        COMMAND displayviewprofile_tests)
+
+    add_executable(plannerstartupudpoptions_tests
+        tests/test_plannerstartupudpoptions.cpp
+        src/ui/configuration/PlannerStartupUdpOptions.cpp
+        src/ui/configuration/PlannerStartupUdpOptions.h
+    )
+    target_include_directories(plannerstartupudpoptions_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(plannerstartupudpoptions_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME plannerstartupudpoptions_tests
+        COMMAND plannerstartupudpoptions_tests)
 
     add_executable(configelevationsourcesview_tests
         tests/test_configelevationsourcesview.cpp

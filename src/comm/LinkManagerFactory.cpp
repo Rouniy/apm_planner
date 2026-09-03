@@ -4,6 +4,8 @@
 #include "UDPClientLink.h"
 #include "TCPLink.h"
 
+#include <QPointer>
+
 
 void LinkManagerFactory::connectLinkSignals(LinkInterface *link, LinkManager *lmgr)
 {
@@ -47,14 +49,25 @@ int LinkManagerFactory::addSerialConnection(QString port,int baud)
     return link->getId();
 
 }
-int LinkManagerFactory::addUdpConnection(QHostAddress addr,int port)
+int LinkManagerFactory::addUdpConnection(QHostAddress addr, int port,
+                                         bool retryOnBindFailure)
 {
     LinkManager *lmgr = LinkManager::instance();
     if (lmgr->isShuttingDown()) {
         return -1;
     }
-    UDPLink* link = new UDPLink(addr,port);
+    UDPLink* link = new UDPLink(addr, port, retryOnBindFailure);
     connectLinkSignals(link, lmgr);
+    if (!retryOnBindFailure) {
+        const int linkId = link->getId();
+        const QPointer<UDPLink> guardedLink(link);
+        connect(link, &LinkInterface::communicationError, lmgr,
+                [lmgr, guardedLink, linkId](const QString &, const QString &) {
+            if (guardedLink && lmgr->getLink(linkId) == guardedLink.data()) {
+                lmgr->removeLink(linkId);
+            }
+        }, Qt::QueuedConnection);
+    }
 
     lmgr->addLink(link);
     link->connect();

@@ -53,6 +53,8 @@ enum class ConfigProfileFlag
 struct ConfigRouteProfileFlags
 {
     bool flightModes = true;
+    // A standalone policy context is permissive for focused tests/callers.
+    // Production replaces all eleven values from DisplayViewProfile.
     bool standardParams = true;
     bool advancedParams = true;
     bool geoFence = true;

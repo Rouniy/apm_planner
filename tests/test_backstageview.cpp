@@ -25,6 +25,7 @@ private slots:
     void createsAndResetsLazyPages();
     void evaluatesDeclarativeVisibilityWithoutCreatingHiddenPages();
     void restoresPreferredPageWithoutCreatingEarlierFactories();
+    void restoresPreferredSubPageAndExpandsItsGroup();
     void reenablingAutomaticSelectionRestoresConcreteFallback();
     void restoresSelectionWhenPagesReappear();
     void gatesParameterLoadingLikeMissionPlanner();
@@ -225,6 +226,44 @@ void BackstageViewTest::restoresPreferredPageWithoutCreatingEarlierFactories()
     QVERIFY(view.restoreInitialPage(planner.id));
     QCOMPARE(firstCreations, 0);
     QCOMPARE(plannerCreations, 2);
+}
+
+void BackstageViewTest::restoresPreferredSubPageAndExpandsItsGroup()
+{
+    BackstageView view;
+    view.setAutomaticSelectionEnabled(false);
+
+    int fallbackCreations = 0;
+    int subPageCreations = 0;
+    BackstagePage fallback;
+    fallback.id = QStringLiteral("fallbackPage");
+    fallback.header = QStringLiteral("Fallback");
+    fallback.factory = [&fallbackCreations](QWidget *parent) {
+        ++fallbackCreations;
+        return new QWidget(parent);
+    };
+    QVERIFY(view.addPage(fallback));
+
+    const QString groupId = QStringLiteral("mandatoryHardwareGroup");
+    view.addGroup(QStringLiteral(">> Mandatory Hardware"), groupId);
+    BackstagePage subPage;
+    subPage.id = QStringLiteral("menuFrameType");
+    subPage.header = QStringLiteral("Frame Type");
+    subPage.isSub = true;
+    subPage.factory = [&subPageCreations](QWidget *parent) {
+        ++subPageCreations;
+        return new QWidget(parent);
+    };
+    QVERIFY(view.addPage(subPage));
+    QVERIFY(view.setGroupExpanded(groupId, false));
+    QVERIFY(!view.isPageVisible(subPage.id));
+
+    QVERIFY(view.restoreInitialPage(subPage.header));
+    QVERIFY(view.isGroupExpanded(groupId));
+    QVERIFY(view.isPageVisible(subPage.id));
+    QCOMPARE(view.currentPageId(), subPage.id);
+    QCOMPARE(fallbackCreations, 0);
+    QCOMPARE(subPageCreations, 1);
 }
 
 void BackstageViewTest::reenablingAutomaticSelectionRestoresConcreteFallback()

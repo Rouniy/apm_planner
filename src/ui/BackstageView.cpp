@@ -341,11 +341,29 @@ bool BackstageView::restoreInitialPage(const QString &preferredPage)
     if (!preferredPage.isEmpty()) {
         for (const QString &id : m_pageOrder) {
             const PageEntry &entry = m_pages.value(id);
-            if (!entry.definition.isSub && !entry.button->isHidden()
-                && (id == preferredPage
-                    || entry.definition.header == preferredPage)) {
+            if (id != preferredPage
+                && entry.definition.header != preferredPage) {
+                continue;
+            }
+            if (!entry.requestedVisible) {
+                break;
+            }
+            if (!entry.groupId.isEmpty()) {
+                const auto group = m_groups.constFind(entry.groupId);
+                if (group == m_groups.constEnd()
+                    || group->button->isHidden()) {
+                    break;
+                }
+                if (!group->expanded) {
+                    m_automaticSelectionEnabled = false;
+                    setGroupExpanded(entry.groupId, true);
+                    m_automaticSelectionEnabled = true;
+                }
+            }
+            if (!entry.button->isHidden()) {
                 return setCurrentPage(id);
             }
+            break;
         }
     }
     selectFallbackPage();

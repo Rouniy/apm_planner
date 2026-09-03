@@ -48,7 +48,8 @@ class UDPLink : public LinkInterface
     //Q_INTERFACES(UDPLinkInterface:LinkInterface)
 
 public:
-    UDPLink(QHostAddress host = QHostAddress::Any, quint16 port = 14550);
+    UDPLink(QHostAddress host = QHostAddress::Any, quint16 port = 14550,
+            bool retryOnBindFailure = true);
 
     ~UDPLink();
     void disableTimeouts() { }
@@ -120,6 +121,7 @@ private:
     QUdpSocket* socket;
     bool connectState;
     bool _shouldRestartConnection;
+    bool _retryOnBindFailure;
     QList<QHostAddress> hosts;
     QList<quint16> ports;
 

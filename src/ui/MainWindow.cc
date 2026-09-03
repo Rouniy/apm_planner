@@ -88,6 +88,7 @@ This file is part of the QGROUNDCONTROL project
 #include "ConnectionOptionsWindow.h"
 #include "ConfigView.h"
 #include "SetupView.h"
+#include "configuration/DisplayViewProfile.h"
 #include "configuration/QmlPluginManagerView.h"
 #include "TerminalConsole.h"
 #include "AP2DataPlot2D.h"
@@ -105,6 +106,7 @@ This file is part of the QGROUNDCONTROL project
 
 
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QApplication>
 #include <QDockWidget>
 #include <QDialog>
@@ -316,6 +318,13 @@ MainWindow::MainWindow(QWidget *parent):
     hide();
 
     ui.actionAdvanced_Mode->setChecked(isAdvancedMode);
+    connect(DisplayViewProfileService::instance(),
+            &DisplayViewProfileService::changed,
+            this, [this]() {
+        setAdvancedMode(
+            DisplayViewProfileService::instance()->current()
+                .isAdvancedMode());
+    });
     ui.actionSimulate->setVisible(false);
 
     // We only need this menu if we have more than one system
@@ -920,9 +929,6 @@ void MainWindow::buildCommonWidgets()
         hardwareSetupView = new SetupView(this);
         configView->setCentralWidget(hardwareSetupView);
         addToCentralStackedWidget(configView,VIEW_HARDWARE_CONFIG, tr("Hardware"));
-        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)),
-                hardwareSetupView, SLOT(advModeChanged(bool)));
-        hardwareSetupView->advModeChanged(isAdvancedMode);
     }
 
     if (!softwareConfigView)
@@ -932,7 +938,6 @@ void MainWindow::buildCommonWidgets()
         ConfigView *configPage = new ConfigView(this);
         softwareConfigView->setCentralWidget(configPage);
         addToCentralStackedWidget(softwareConfigView, VIEW_SOFTWARE_CONFIG, tr("Software"));
-        connect(ui.actionAdvanced_Mode, SIGNAL(toggled(bool)), configPage, SLOT(advModeChanged(bool)));
     }
 
     if (!helpView)
@@ -2171,7 +2176,11 @@ void MainWindow::loadSettings()
     lowPowerMode = settings.value("LOW_POWER_MODE", false).toBool();
     autoProxyMode = settings.value("AUTO_PROXY_MODE", false).toBool();
     dockWidgetTitleBarEnabled = settings.value("DOCK_WIDGET_TITLEBARS", true).toBool();
-    isAdvancedMode = settings.value("ADVANCED_MODE", false).toBool();
+    // MP10 owns one DisplayView profile. ADVANCED_MODE is retained only as a
+    // mirrored compatibility key when saving, never as a second source of
+    // visibility truth.
+    isAdvancedMode = DisplayViewProfileService::instance()->current()
+                         .isAdvancedMode();
     enableHeartbeat(heartbeat);
     settings.endGroup();
 }
@@ -2184,7 +2193,9 @@ void MainWindow::storeSettings()
     settings.setValue("CURRENT_STYLE", currentStyle);
     settings.setValue("LOW_POWER_MODE", lowPowerMode);
     settings.setValue("AUTO_PROXY_MODE", autoProxyMode);
-    settings.setValue("ADVANCED_MODE", isAdvancedMode);
+    settings.setValue("ADVANCED_MODE",
+                      DisplayViewProfileService::instance()->current()
+                          .isAdvancedMode());
     settings.endGroup();
 
     if (!aboutToCloseFlag && isVisible())
@@ -3486,11 +3497,34 @@ void MainWindow::restoreDockableLayout(DockableView *view)
 }
 void MainWindow::setAdvancedMode(bool mode)
 {
+    DisplayViewProfileService *const profiles =
+        DisplayViewProfileService::instance();
+    if (profiles->current().isAdvancedMode() != mode) {
+        QString error;
+        if (!profiles->applyPreset(mode ? DisplayViewPreset::Advanced
+                                        : DisplayViewPreset::Basic,
+                                   &error)) {
+            QLOG_ERROR() << "Could not update DisplayView profile:" << error;
+            const QSignalBlocker blocker(ui.actionAdvanced_Mode);
+            ui.actionAdvanced_Mode->setChecked(isAdvancedMode);
+        }
+        // A successful preset write emits changed() synchronously and
+        // re-enters this method with the profile already updated.
+        return;
+    }
+    const bool shellModeChanged = isAdvancedMode != mode;
     isAdvancedMode = mode;
-    ui.actionAdvanced_Mode->setChecked(mode);
+    {
+        const QSignalBlocker blocker(ui.actionAdvanced_Mode);
+        ui.actionAdvanced_Mode->setChecked(mode);
+    }
     ui.menuPerspectives->menuAction()->setVisible(mode);
     ui.menuTools->menuAction()->setVisible(true);
     ui.menuNetwork->menuAction()->setVisible(mode);
+
+    if (!shellModeChanged) {
+        return;
+    }
 
     for (QMap<QDockWidget*,QWidget*>::const_iterator i=dockToTitleBarMap.constBegin();
          i!=dockToTitleBarMap.constEnd();i++)

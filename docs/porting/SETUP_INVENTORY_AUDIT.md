@@ -83,10 +83,19 @@ Qt preserves the three broad groups but not the complete MP10 order. Among
 pages common to both applications, the active inversion is `DroneCAN/UAVCAN`:
 MP10 places it immediately after `Battery Monitor 2`, while Qt places it after
 both Antenna Tracker pages. The tracker pages correctly precede `HW CAN` in
-both. Qt also lacks the shared MP10 `DisplayView` profile service, so its
-visibility is based mainly on
-connection state, coarse firmware family and global advanced mode. The exact
-MP10 per-feature gates are therefore not yet reproduced.
+both. Qt now has one shared JSON `DisplayViewProfileService`. All 35 MP10
+SETUP feature flags gate corresponding existing factories, including the
+independent CONFIG `displayOSD` versus SETUP `displayOsd` distinction, CAN,
+tracker and Terminal flags. These gates compose with connection and
+conservative vehicle-family checks; they never make a missing page appear.
+Useful Qt-only `QML Plugins` and Advanced utilities without a reference feature
+flag remain. `setup_lastpage` is persisted and restored.
+
+Three narrower safety/truthfulness checks remain deliberate: Initial
+Parameters stays Copter/Plane-only, Serial Ports requires a known firmware
+family, and Motor Test excludes ArduSub. The profile service writes
+deterministic JSON, preserves unknown Custom fields and omits legacy
+XML/`advancedview` migration for this fresh port.
 
 There are no null factories in active SETUP, but a concrete factory can still
 look empty or be misleading. `FrameTypeConfig` creates its inner widget only

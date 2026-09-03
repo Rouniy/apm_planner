@@ -17,7 +17,8 @@ public:
     static int addSerialConnection();
 
     // IP Links
-    static int addUdpConnection(QHostAddress addr,int port);
+    static int addUdpConnection(QHostAddress addr, int port,
+                                bool retryOnBindFailure = true);
     static int addUdpClientConnection(QHostAddress addr,int port);
     static int addTcpConnection(QHostAddress addr, QString hostName, int port, bool asServer);
 

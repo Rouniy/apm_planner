@@ -6,7 +6,9 @@
 #include <QWidget>
 
 class QComboBox;
+class QCheckBox;
 class QLabel;
+class QSpinBox;
 
 namespace Ui
 {
@@ -46,10 +48,13 @@ private slots:
     void mapWidgetBackendChanged(int index);
     void altitudeUnitsIndexChanged(int index);
     void distanceUnitsIndexChanged(int index);
+    void displayLayoutIndexChanged(int index);
 
 private:
     void setDataRateLineEdits();
     void populateMapWidgetBackends();
+    void syncDisplayLayout();
+    void saveStartupUdpOptions();
 
 private:
     Ui::QGCSettingsWidget *ui;
@@ -59,6 +64,13 @@ private:
     QLabel *m_mapWidgetBackendStatus = nullptr;
     QComboBox *m_altitudeUnitsComboBox = nullptr;
     QComboBox *m_distanceUnitsComboBox = nullptr;
+    QComboBox *m_displayLayoutComboBox = nullptr;
+    QLabel *m_displayLayoutLabel = nullptr;
+    QLabel *m_displayLayoutStatus = nullptr;
+    QCheckBox *m_startupUdpEnabled = nullptr;
+    QSpinBox *m_startupUdpPrimaryPort = nullptr;
+    QSpinBox *m_startupUdpAlternatePort = nullptr;
+    QLabel *m_startupUdpStatus = nullptr;
 };
 
 #endif // QGCSETTINGSWIDGET_H

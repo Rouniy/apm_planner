@@ -103,6 +103,7 @@ private:
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
     QString m_parameterLoadFailure;
+    QString m_preferredPageHeader;
     QString m_firmwareVersion;
     QString m_targetPageToRestore;
     qulonglong m_parameterTargetRevision = 0;
