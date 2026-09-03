@@ -32,7 +32,7 @@ Reference trees:
 ## Work discipline
 
 - The coordinating agent schedules every configure, build and test process. Delegated agents must not configure or compile unless the coordinator grants an explicit, command-scoped build lease. A lease names the exact command, requires the preflight below, and must be released before any other build starts.
-- Run only one build process at a time, with at most `-j12`.
+- Run only one build process globally across the workspace at a time, with at most `-j12`. Never use bare `--parallel`, bare `-j` or an equivalent unbounded job flag; always provide the numeric limit. Do not modify source files while the leased build is running.
 - Immediately before **every** configure or build, run this exact command by itself:
 
   ```sh

@@ -1,6 +1,6 @@
 # APM Planner 3.0 current state and handoff
 
-Updated: 2026-09-02. This is the short operational handoff for the Mission Planner 10 Qt/CMake port. Update it whenever a functional package is committed or the immediate priority changes.
+Updated: 2026-09-03. This is the short operational handoff for the Mission Planner 10 Qt/CMake port. Update it whenever a functional package is committed or the immediate priority changes.
 
 ## Goal and current milestone
 
@@ -9,17 +9,17 @@ The product goal is a cross-platform APM Planner 3.0 (`3.0.0`) that transfers th
 The current milestone is **broadly usable functionality**, not final pixel parity. Small spacing, color, label and geometry differences must be recorded and deferred instead of consuming the main implementation stream. Missing or inert actions are functional gaps and remain high priority.
 
 The complete prioritized route from the current checkpoint to functional and
-release parity is maintained in `MASTER_PORTING_BACKLOG.md`. Its Wave 1 records
-the current user-visible priorities: PLAN right-edge geometry, a true separate
-MAVLink Inspector window and complete visible DATA HUD telemetry including a
-numeric vertical-speed presentation.
+release parity is maintained in `MASTER_PORTING_BACKLOG.md`. The primary stream
+now ports the principal SETUP/TOOLS plugins and fills them with end-to-end
+functionality. Qt Widgets and the trusted QML extension API are both available;
+minor visual matching is recorded and deferred until the useful workflows exist.
 
 The immediate user-directed order is:
 
-1. Expose the already implemented Up/Down/Delete waypoint operations; the expanding PLAN action-panel wrapper/right strip is fixed and covered at 1120/1280/1600 widths.
-2. Verify and replace the ambiguous child-widget MAVLink Inspector ownership with an explicit modeless multi-instance window lifecycle.
-3. Make vertical speed and the rest of the Mission Planner HUD inventory visibly complete on DATA.
-4. Implement CONFIG Onboard OSD and then resume broad SETUP/TOOLS vertical slices in the master-backlog order.
+1. Keep the recovered PLAN row actions, multi-instance MAVLink Inspector and Antenna Tracker foundations green while the uncommitted slices are reviewed and checkpointed.
+2. Continue the Antenna Tracker vertical slice: the shared serial/live view model, both MP10-named pages and their SETUP routes are implemented and tested (uncommitted, see below); next are the RADIO_STATUS SNR consumer for the trim sweep, the PLAN "Tracker Home" action and the exact-target parameter page.
+3. Replace disabled Advanced/Developer actions and missing high-value SETUP/TOOLS pages with complete workflows in the master-backlog order; widen the trusted QML API where a real plugin workflow needs it.
+4. Return to complete DATA HUD telemetry and CONFIG Onboard OSD after the main plugin surface is usable; do not spend the primary stream on pixel polish.
 5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
 
 ## Verified checkpoint
@@ -28,14 +28,14 @@ The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD teleme
 
 At this checkpoint:
 
-- CMake configure and one `cmake --build build -j12` completed successfully.
-- The complete test suite passed: **88/88 tests**.
-- Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, switched to SETUP without waiting for the firmware manifest, rendered the connected dedicated OSD page, and closed the main window cleanly while SETUP network work was active.
-- Claude's three-file `AntennaTrackerGeometry` draft is intentionally left uncommitted for coordinator review; no other functional slice is pending at this checkpoint.
+- CMake configure and one `cmake --build build-codex-qt -j12` completed successfully.
+- The complete test suite passed: **91/91 tests**.
+- Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, opened two simultaneous Inspector windows, verified that Enter/Escape do not invoke dialog semantics, closed one independently and then closed the application cleanly with the other open.
+- The post-checkpoint working tree contains the recovered PLAN row actions, the explicit multi-instance MAVLink Inspector lifecycle, `AntennaTrackerGeometry` and the raw-serial tracker service. Their focused and full-suite gates pass; the slices remain uncommitted and must stay visible in `git status` until deliberately checkpointed.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 127 product rows: 33 `in-progress`, 48 `partial`, 46 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 127 product rows: 35 `in-progress`, 47 `partial`, 45 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -56,6 +56,10 @@ These are working foundations, though their parity rows may remain partial becau
 - The MP10 ESP8266 page: exact component-240 parameter loading, bytewise packed settings, 22 serialized writes, storage/reboot/reset commands and a target-safe Qt view lifecycle.
 - The MP10 SETUP OSD page: the exact legacy MinimOSD telemetry helper surface and its ordered 24-parameter 2 Hz write batch, with committed-snapshot filtering, partial-vehicle reporting and exact-target transaction lifecycle guards.
 - The MP10 Antenna Tracker output foundation: exact Maestro compact commands and ArduTracker/DegreeTracker text protocols with tested trim, reverse, clamp, wrap and tilt-flip arithmetic behind an injectable writer.
+- Pure Antenna Tracker pointing geometry with MP-compatible AZ/EL/distance functions plus explicit validity, dateline and pole handling.
+- The thread-confined Antenna Tracker raw-serial service: dedicated Qt SerialPort 8N1 transport, setup/centering pipeline, bounded latest-target-wins backpressure, write watchdog, generation-aware cancellation and fail-closed unplug/reconnect behavior.
+- Visible per-row PLAN Up/Down/Delete controls that reuse the existing store-aware operations, including undo and DO_JUMP remapping.
+- Explicit modeless multi-instance MAVLink Inspector windows and guarded replay multicast, with independent-close and application-shutdown coverage.
 - Advanced and Developer action inventories, working shared actions/parsers, Advanced Terminal and the user-facing trusted QML plugin manager.
 - Cooperative shutdown ordering, including close with the modeless inspector open, verified by the real-X11 smoke above.
 
@@ -71,6 +75,11 @@ wrapper and its content. Production-order tests prove the exact 168-pixel
 ActionPanel width, 210-pixel WaypointPanel height, full-height right column and
 right-edge ownership across 1120, 1280 and 1600-pixel windows, including
 hide/show and saved-layout restore.
+
+The waypoint table now also exposes the MP10 Up, Down and Delete operations as
+visible per-row controls. They select the clicked row and reuse the existing
+QAction paths, so transfer locks, store-aware undo and DO_JUMP remapping remain
+centralized; mouse and keyboard activation plus boundary rows are covered.
 
 The next coherent PLAN package should combine Grid, KML preview/export, a persistent custom XYZ source using the canonical cache identity, and store-aware undo for Polygon-to-Fence conversion. WMS/WMTS and MAVFTP/Write Fast can follow later. Main work has moved to SETUP as requested.
 
@@ -88,7 +97,7 @@ The first-activation SETUP stall is fixed: `ApmCustomFirmwareConfig` yields befo
 
 The next audited SETUP packages are CubeID and Secure. CubeID is a target-aware firmware updater, not another HW-ID presentation; its CubePilot messages are absent from the current generated dialect and require a coordinated MAVLink update. `ConfigSecureView` manages bootloader public-key slots with `SECURE_COMMAND`, while `ConfigSecureApView` generates Ed25519 keys and signs bootloader/firmware files; MAVLink link signing remains a separate Advanced Tools workflow. The security pages need a reviewed cross-platform Ed25519 dependency before implementation.
 
-The three Antenna Tracker routes are audited in `SETUP_ANTENNA_TRACKER_AUDIT.md`. The pure Maestro/ArduTracker/DegreeTracker output codecs are now implemented and tested; the next sequence is a cancellable raw-serial service, shared serial/live view models and geometry, then the exact-target 25-field parameter page. The old `AntennaTrackerConfig` remains until these replacements are routed and verified.
+The three Antenna Tracker routes are audited in `SETUP_ANTENNA_TRACKER_AUDIT.md`. The `Antenna Tracker (Serial)` and `Antenna Tracker (Live)` routes now exist after `ESP8266 Setup`: one shared `AntennaTrackerUIViewModel` (owned by `SetupView`, so the tracker loop survives page resets and navigation like MP10) drives `ConfigAntennaTrackerView` and `AntennaTrackerUIView` on top of `AntennaTrackerSerialService`, `AntennaTrackerGeometry` and a `UasAntennaTrackerTelemetrySource`; `antennatrackeruiviewmodel_tests` (11 cases) and `antennatrackerviews_tests` (4 cases) cover MP10 texts, validation order, settings, the loop, manual mode, live trim/reverse, failure recovery, the trim sweep and shutdown. The pages were smoke-tested on real X11 under Xvfb with a local SITL: both routes render, a real `QSerialPort` connect to a local UART reached `Connected (Maestro).`, Vehicle Az updated live and the application closed cleanly while connected. Deviations SETUP-018..022 record the shared instance, the Home / Center quirk, the still-missing SiK SNR source, gating/tracker-home gaps and GUI approximations. The pure Maestro/ArduTracker/DegreeTracker output codecs, pointing geometry and cancellable raw-serial service are implemented and tested. The active sequence is shared serial/live view models and routes, then the exact-target 25-field parameter page and cancellable SiK trim search. The old `AntennaTrackerConfig` remains until these replacements are routed and verified.
 
 Legacy APM Planner binary plugins are not a requirement. Where MP10 calls something a plugin/page/tool, reproduce the user-visible function with a native Qt page/service or the trusted QML extension system; do not restore the old ABI.
 
@@ -104,7 +113,7 @@ Legacy APM Planner binary plugins are not a requirement. Where MP10 calls someth
 
 ## Build and verification safety
 
-The coordinating agent owns the build schedule. A delegated agent may build only while holding an explicit lease for one exact command. Use one build process globally, maximum `-j12`; no other agent builds until the lease is released.
+The coordinating agent owns the build schedule. A delegated agent may build only while holding an explicit lease for one exact command. Use one build process globally across all workspace repositories, maximum `-j12`; never use a bare `--parallel` or `-j`, and do not modify source files until the leased build finishes.
 
 Immediately before every configure or build, execute this exact standalone command:
 
@@ -112,7 +121,7 @@ Immediately before every configure or build, execute this exact standalone comma
 pgrep -af '(^|/)(cc1plus|clang\+\+|g\+\+|c\+\+)( |$)' || true
 ```
 
-Do not combine it with the configure/build command. Do not launch if other compilers are active. This rule exists because simultaneous agent builds previously created roughly 30–40 compiler processes and exhausted system memory.
+Do not combine it with the configure/build command. Do not launch if other compilers are active. On 2026-09-02 a separate GTU build used bare `cmake --build ... --parallel`; GNU Make expanded it to unbounded jobs, the OOM snapshot contained 153 `cc1plus` processes using roughly 13 GiB resident memory, and the desktop session failed. Always supply the numeric limit even when only one agent appears active.
 
 For each broad slice, perform proportionate unit/integration tests, then a single full build and full test pass. UI/navigation/shutdown changes also require a real-X11 smoke when available. Commit the verified slice and update this handoff.
 

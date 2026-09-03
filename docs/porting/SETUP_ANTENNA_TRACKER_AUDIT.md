@@ -1,6 +1,6 @@
 # Mission Planner 10 Antenna Tracker SETUP audit
 
-Updated: 2026-09-02. This is a read-only implementation handoff for the three
+Updated: 2026-09-03. This is an implementation handoff for the three
 Mission Planner 10 Antenna Tracker routes. It records the next functional
 slices; it is not evidence that the routes are implemented.
 
@@ -119,14 +119,21 @@ explicit tracker-home state and later share it with the PLAN action.
 
 ## Recommended slices and tests
 
-1. Pure `AntennaTrackerOutputs` codecs/factory with injectable writer and
+1. Done: pure `AntennaTrackerOutputs` codecs/factory with injectable writer and
    golden-byte tests for all three protocols, clamp, reverse and flip.
-2. `AntennaTrackerSerialService` with one owning thread, latest-target-wins
-   queue, port-collision checks and deterministic cancellation/destruction.
-3. Shared serial/live view model plus the two MP10-named views, settings,
-   manual/automatic state and lifecycle tests.
-4. Pure `AntennaTrackerGeometry` with north/east/altitude, zero-distance and
-   dateline tests, then live telemetry binding.
+2. Done: `AntennaTrackerSerialService` with one owning thread,
+   latest-target-wins backpressure, port-collision injection, partial-write
+   handling, watchdog and deterministic cancellation/destruction/reconnect.
+3. Done: shared `AntennaTrackerUIViewModel` (one instance owned by `SetupView`)
+   plus `ConfigAntennaTrackerView` / `AntennaTrackerUIView`, `AntennaTrackerAxisPanel`,
+   the `AntennaTrackerTelemetrySource` abstraction with the UASManager-backed
+   implementation, MP10 settings keys, the 10 Hz loop, manual slew, Home / Center
+   and the cancellable SiK trim sweep; routes registered after ESP8266 Setup.
+   Remaining for this slice: a structured RADIO_STATUS consumer so
+   `localSnrDb()` stops returning 0 (SETUP-020), the PLAN "Tracker Home" action
+   feeding `setTrackerHome()`, and profile gating (SETUP-021).
+4. Done: pure `AntennaTrackerGeometry` with north/east/altitude, zero-distance,
+   dateline, pole and antipodal tests; live telemetry binding remains in slice 3.
 5. `ConfigAntennaTrackerParamViewModel/View` with all fields, custom reverse
    encoding, staged batch write, serialized servo tests and exact-target tests.
 6. Route/profile/firmware gating, metadata packaging, real-X11 and active-loop

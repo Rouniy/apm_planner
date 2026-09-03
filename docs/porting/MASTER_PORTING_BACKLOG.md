@@ -28,12 +28,12 @@
 | SHELL | 1 | 3 | 0 | 4 |
 | DATA | 2 | 3 | 0 | 5 |
 | PLAN | 5 | 2 | 4 | 11 |
-| SETUP | 20 | 22 | 15 | 57 |
+| SETUP | 21 | 22 | 14 | 57 |
 | CONFIG | 4 | 11 | 5 | 20 |
-| TOOLS | 1 | 5 | 22 | 28 |
+| TOOLS | 2 | 4 | 22 | 28 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **33** | **48** | **46** | **127** |
+| **Итого** | **35** | **47** | **45** | **127** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -53,6 +53,11 @@
 
 Работа P0 выполняется первой и не откладывается ради мелкого визуального
 совпадения других страниц.
+
+Текущий пользовательский приоритет после закрытия пунктов 1–2 — основные
+SETUP/TOOLS плагины и их функциональные vertical slices. Пункты 3–4 остаются
+важными пробелами, но их визуальная часть не должна вытеснять перенос рабочих
+инструментов; Qt Widgets и доверенный QML API можно сочетать по назначению.
 
 1. Убрать пустую полосу у правой границы PLAN и зафиксировать геометрию при
    1120×720, 1280×800, 1920×1080 и HiDPI.
@@ -124,6 +129,10 @@ Gate: clean staged scope, `git diff --check`, корректное число TS
 
 #### 1A. PLAN right edge
 
+Состояние 2026-09-03: выполнено. Внешняя пустая полоса устранена, wrapper и
+content имеют единый fixed extent, а видимые Up/Down/Delete добавлены как
+строчные действия поверх существующих операций и покрыты тестами.
+
 - Снять фактическую геометрию `FlightPlannerView`, `HorizontalDockSplitter`,
   `ActionPanel`, `ActionScroller`, viewport и vertical scrollbar.
 - Сравнить с MP10 `FlightPlannerView.axaml`: action column 168 logical px,
@@ -152,12 +161,18 @@ viewport, scrollbar не создаёт второй пустой столбец
 
 #### 1B. MAVLink Inspector window
 
+Состояние 2026-09-03: выполнена window/lifecycle часть. Каждый вызов создаёт
+новое modeless top-level окно, replay использует guarded multicast; unit и
+real-X11 multi-instance/close/shutdown проверки проходят. Фильтры, графики и
+современный dialect остаются отдельной функциональной работой.
+
 - Проверить оба входа: верхнее Tools menu/Ctrl+I и SETUP Advanced Tools.
 - Сначала проверить текущий бинарник: source уже создаёт `QGCMAVLinkInspector`
   с `Qt::Window`, `show/raise/activate`; наблюдение может относиться к старой
   сборке либо platform-specific поведению child-`QWidget`.
 - Вынести содержимое в MP10-подобные `MAVLinkInspectorView` и modeless
-  `MAVLinkInspectorWindow : QDialog`/явный top-level window.
+  `MAVLinkInspectorWindow : QWidget` с явным `Qt::Window`; не наследовать
+  диалоговые Enter/Escape semantics.
 - Не использовать embedded center-stack, dock или child-widget с одним лишь
   поздним `setWindowFlag(Qt::Window)` как долгосрочную модель ownership.
 - MP10 открывает новый modeless Inspector на каждый вызов. Сначала можно
@@ -310,8 +325,10 @@ cancel states и lifecycle tests.
 #### 5D. Antenna Tracker sequence
 
 - pure output protocols — сделано;
-- pure geometry — на ревью;
-- один thread-confined cancellable `QSerialPort` service;
+- pure geometry — сделано и покрыто граничными тестами;
+- один thread-confined cancellable `QSerialPort` service — сделано; setup,
+  initial center, partial writes, latest-target-wins, timeout, unplug/reconnect,
+  reentrant transport callbacks и teardown покрыты тестами;
 - serial setup ViewModel/View, port collision/unplug/partial-write tests;
 - calibration, servo range/trim/reverse/speed/acceleration validation;
 - live tracker view, home selection и vehicle pointing loop;
