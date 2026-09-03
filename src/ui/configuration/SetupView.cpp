@@ -461,9 +461,9 @@ void SetupView::buildPages()
         return createESP8266Page(parent);
     };
     m_backstage->addPage(esp8266);
-    // MP10 lists "Antenna Tracker (Serial)" and "(Live)" after FFT Setup, which
-    // the Qt port does not register yet; both work offline against a dedicated
-    // serial port and must not wait for the autopilot parameter overlay.
+    // MP10 lists these two tracker pages after FFT Setup. Qt does not register
+    // FFT Setup yet; both tracker pages work offline against a dedicated serial
+    // port and must not wait for the autopilot parameter overlay.
     BackstagePage trackerSerial;
     trackerSerial.id = kAntennaTrackerSerial;
     trackerSerial.header = tr("Antenna Tracker (Serial)");

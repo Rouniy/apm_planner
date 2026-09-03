@@ -8,6 +8,7 @@
 #include <QSerialPort>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QUdpSocket>
 
 #include <limits>
@@ -275,6 +276,7 @@ bool CotOutputTransport::start(QString *error)
     // Restarting is supported, but old asynchronous callbacks are invalidated
     // and disconnected before any new object is installed.
     shutdown(false);
+    const quint64 generation = m_generation;
     m_lastError.clear();
     if (error) {
         error->clear();
@@ -285,7 +287,7 @@ bool CotOutputTransport::start(QString *error)
         if (error) {
             *error = localError;
         }
-        fail(localError);
+        fail(localError, generation);
         return false;
     }
 
@@ -294,22 +296,22 @@ bool CotOutputTransport::start(QString *error)
     switch (m_settings.mode) {
     case Mode::TakMulticast:
     case Mode::UdpClient:
-        started = startUdpDestination(&localError);
+        started = startUdpDestination(&localError, generation);
         break;
     case Mode::UdpHost:
-        started = startUdpHost(&localError);
+        started = startUdpHost(&localError, generation);
         break;
     case Mode::TcpClient:
-        started = startTcpClient(&localError);
+        started = startTcpClient(&localError, generation);
         break;
     case Mode::TcpHost:
-        started = startTcpHost(&localError);
+        started = startTcpHost(&localError, generation);
         break;
     case Mode::Serial:
-        started = startSerial(&localError);
+        started = startSerial(&localError, generation);
         break;
     }
-    if (!guard) {
+    if (!guard || m_generation != generation) {
         return false;
     }
     if (!started && m_state == State::Stopped
@@ -323,47 +325,66 @@ bool CotOutputTransport::start(QString *error)
         if (error) {
             *error = localError;
         }
-        fail(localError.isEmpty() ? QStringLiteral("Unable to start CoT transport.") : localError);
+        fail(localError.isEmpty() ? QStringLiteral("Unable to start CoT transport.") : localError,
+             generation);
     }
     return started;
 }
 
-bool CotOutputTransport::startUdpDestination(QString *error)
+bool CotOutputTransport::startUdpDestination(QString *error, quint64 generation)
 {
+    if (generation != m_generation) {
+        return false;
+    }
     auto *socket = new QUdpSocket(this);
     m_udp = socket;
-    connect(socket, &QUdpSocket::bytesWritten, this, &CotOutputTransport::bytesWritten);
+    connect(socket, &QUdpSocket::bytesWritten, this,
+            [this, generation](qint64 bytes) {
+        queueBytesWritten(bytes, generation);
+    });
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     connect(socket, &QAbstractSocket::errorOccurred, this,
-            [this, socket](QAbstractSocket::SocketError) {
+            [this, socket, generation](QAbstractSocket::SocketError) {
 #else
     connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error), this,
-            [this, socket](QAbstractSocket::SocketError) {
+            [this, socket, generation](QAbstractSocket::SocketError) {
 #endif
-        if (socket != m_udp || m_state == State::Stopped || m_state == State::Error) {
+        if (generation != m_generation || socket != m_udp
+            || m_state == State::Stopped || m_state == State::Error) {
             return;
         }
-        reportRecoverableError(QStringLiteral("CoT UDP error: %1").arg(socket->errorString()));
+        reportRecoverableError(QStringLiteral("CoT UDP error: %1").arg(socket->errorString()),
+                               generation);
     });
 
     QHostAddress address;
     if (address.setAddress(m_settings.host.trimmed())) {
         QPointer<CotOutputTransport> guard(this);
-        completeUdpDestination(address, m_generation);
-        return guard && m_state == State::Ready;
+        completeUdpDestination(address, generation);
+        return guard && m_generation == generation && m_state == State::Ready;
     }
 
     const QString status = QStringLiteral("Resolving CoT UDP destination %1…")
                                .arg(configuredEndpointText(m_settings.host, m_settings.port));
-    if (!transition(State::Resolving, status)) {
+    if (!transition(State::Resolving, status, generation)) {
         if (error) {
             *error = QStringLiteral("CoT UDP start was cancelled.");
         }
         return false;
     }
-    m_hostLookupId = QHostInfo::lookupHost(m_settings.host.trimmed(), this,
-                                           SLOT(hostLookupFinished(QHostInfo)));
-    if (m_hostLookupId < 0) {
+    const int lookupId = QHostInfo::lookupHost(
+        m_settings.host.trimmed(), this,
+        [this, generation](const QHostInfo &hostInfo) {
+            hostLookupFinished(hostInfo, generation);
+        });
+    if (generation != m_generation || socket != m_udp || m_state != State::Resolving) {
+        if (lookupId >= 0) {
+            QHostInfo::abortHostLookup(lookupId);
+        }
+        return false;
+    }
+    m_hostLookupId = lookupId;
+    if (lookupId < 0) {
         if (error) {
             *error = QStringLiteral("Unable to start DNS lookup for %1.").arg(m_settings.host);
         }
@@ -372,8 +393,11 @@ bool CotOutputTransport::startUdpDestination(QString *error)
     return true;
 }
 
-void CotOutputTransport::hostLookupFinished(const QHostInfo &hostInfo)
+void CotOutputTransport::hostLookupFinished(const QHostInfo &hostInfo, quint64 generation)
 {
+    if (generation != m_generation || hostInfo.lookupId() != m_hostLookupId) {
+        return;
+    }
     m_hostLookupId = -1;
     if (m_state != State::Resolving || !m_udp
         || (m_settings.mode != Mode::TakMulticast && m_settings.mode != Mode::UdpClient)) {
@@ -381,7 +405,7 @@ void CotOutputTransport::hostLookupFinished(const QHostInfo &hostInfo)
     }
     if (hostInfo.error() != QHostInfo::NoError) {
         fail(QStringLiteral("Cannot resolve CoT UDP destination %1: %2")
-                 .arg(m_settings.host, hostInfo.errorString()));
+                 .arg(m_settings.host, hostInfo.errorString()), generation);
         return;
     }
 
@@ -403,10 +427,10 @@ void CotOutputTransport::hostLookupFinished(const QHostInfo &hostInfo)
                   .arg(m_settings.host)
             : QStringLiteral("CoT UDP destination %1 has no usable IP address.")
                   .arg(m_settings.host);
-        fail(reason);
+        fail(reason, generation);
         return;
     }
-    completeUdpDestination(selected, m_generation);
+    completeUdpDestination(selected, generation);
 }
 
 void CotOutputTransport::completeUdpDestination(const QHostAddress &address, quint64 generation)
@@ -415,7 +439,7 @@ void CotOutputTransport::completeUdpDestination(const QHostAddress &address, qui
         return;
     }
     if (m_settings.mode == Mode::TakMulticast && !address.isMulticast()) {
-        fail(QStringLiteral("TAK Multicast requires a multicast destination address."));
+        fail(QStringLiteral("TAK Multicast requires a multicast destination address."), generation);
         return;
     }
     if (m_settings.mode == Mode::TakMulticast) {
@@ -429,14 +453,17 @@ void CotOutputTransport::completeUdpDestination(const QHostAddress &address, qui
               .arg(endpointText(address, m_settings.port))
         : QStringLiteral("Emitting Cursor-on-Target events to UDP destination %1.")
               .arg(endpointText(address, m_settings.port));
-    if (!transition(State::Ready, status)) {
+    if (!transition(State::Ready, status, generation)) {
         return;
     }
-    notifyPeers(status);
+    notifyPeers(status, generation);
 }
 
-bool CotOutputTransport::startUdpHost(QString *error)
+bool CotOutputTransport::startUdpHost(QString *error, quint64 generation)
 {
+    if (generation != m_generation) {
+        return false;
+    }
     QHostAddress listenAddress;
     if (!parseListenAddress(m_settings.host, &listenAddress)) {
         if (error) {
@@ -458,26 +485,32 @@ bool CotOutputTransport::startUdpHost(QString *error)
     }
     m_udp = socket;
     connect(socket, &QUdpSocket::readyRead, this, &CotOutputTransport::readUdpHostDatagrams);
-    connect(socket, &QUdpSocket::bytesWritten, this, &CotOutputTransport::bytesWritten);
+    connect(socket, &QUdpSocket::bytesWritten, this,
+            [this, generation](qint64 bytes) {
+        queueBytesWritten(bytes, generation);
+    });
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     connect(socket, &QAbstractSocket::errorOccurred, this,
-            [this, socket](QAbstractSocket::SocketError) {
+            [this, socket, generation](QAbstractSocket::SocketError) {
 #else
     connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error), this,
-            [this, socket](QAbstractSocket::SocketError) {
+            [this, socket, generation](QAbstractSocket::SocketError) {
 #endif
-        if (socket == m_udp && m_state != State::Stopped && m_state != State::Error) {
+        if (generation == m_generation && socket == m_udp
+            && m_state != State::Stopped && m_state != State::Error) {
             reportRecoverableError(QStringLiteral("CoT UDP host error: %1")
-                                       .arg(socket->errorString()));
+                                       .arg(socket->errorString()), generation);
         }
     });
     return transition(State::Listening,
                       QStringLiteral("Listening for a UDP peer on %1.")
-                          .arg(endpointText(socket->localAddress(), socket->localPort())));
+                          .arg(endpointText(socket->localAddress(), socket->localPort())),
+                      generation);
 }
 
 void CotOutputTransport::readUdpHostDatagrams()
 {
+    const quint64 generation = m_generation;
     QUdpSocket *socket = m_udp;
     if (!socket || m_settings.mode != Mode::UdpHost) {
         return;
@@ -485,7 +518,7 @@ void CotOutputTransport::readUdpHostDatagrams()
     QHostAddress newestAddress;
     quint16 newestPort = 0;
     bool received = false;
-    while (socket == m_udp && socket->hasPendingDatagrams()) {
+    while (generation == m_generation && socket == m_udp && socket->hasPendingDatagrams()) {
         const QNetworkDatagram datagram = socket->receiveDatagram();
         if (!datagram.isValid()) {
             break;
@@ -496,7 +529,7 @@ void CotOutputTransport::readUdpHostDatagrams()
             received = true;
         }
     }
-    if (!received || socket != m_udp) {
+    if (!received || generation != m_generation || socket != m_udp) {
         return;
     }
 
@@ -510,56 +543,66 @@ void CotOutputTransport::readUdpHostDatagrams()
     }
     const QString status = QStringLiteral("Emitting Cursor-on-Target events to UDP peer %1.")
                                .arg(endpointText(newestAddress, newestPort));
-    if (!transition(State::Ready, status)) {
+    if (!transition(State::Ready, status, generation)) {
         return;
     }
-    notifyPeers(status);
+    notifyPeers(status, generation);
 }
 
-bool CotOutputTransport::startTcpClient(QString *error)
+bool CotOutputTransport::startTcpClient(QString *error, quint64 generation)
 {
     Q_UNUSED(error)
+    if (generation != m_generation) {
+        return false;
+    }
     auto *socket = new QTcpSocket(this);
     m_tcpClient = socket;
     socket->setReadBufferSize(4096);
-    connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
-        if (socket == m_tcpClient) {
+    connect(socket, &QTcpSocket::readyRead, this, [this, socket, generation]() {
+        if (generation == m_generation && socket == m_tcpClient) {
             socket->readAll(); // This transport is output-only; keep input bounded.
         }
     });
-    connect(socket, &QTcpSocket::bytesWritten, this, &CotOutputTransport::bytesWritten);
-    connect(socket, &QTcpSocket::connected, this, [this, socket]() {
-        if (socket != m_tcpClient) {
+    connect(socket, &QTcpSocket::bytesWritten, this,
+            [this, generation](qint64 bytes) {
+        queueBytesWritten(bytes, generation);
+    });
+    connect(socket, &QTcpSocket::connected, this, [this, socket, generation]() {
+        if (generation != m_generation || socket != m_tcpClient) {
             return;
         }
         const QString status = QStringLiteral("CoT TCP client connected: %1.")
                                    .arg(socketPeerText(socket));
-        if (!transition(State::Ready, status)) {
+        if (!transition(State::Ready, status, generation)) {
             return;
         }
-        notifyPeers(status);
+        notifyPeers(status, generation);
     });
-    connect(socket, &QTcpSocket::disconnected, this, [this, socket]() {
-        if (socket == m_tcpClient && m_state != State::Stopped && m_state != State::Error) {
-            fail(QStringLiteral("CoT TCP client disconnected; automatic reconnect is disabled."));
+    connect(socket, &QTcpSocket::disconnected, this, [this, socket, generation]() {
+        if (generation == m_generation && socket == m_tcpClient
+            && m_state != State::Stopped && m_state != State::Error) {
+            fail(QStringLiteral("CoT TCP client disconnected; automatic reconnect is disabled."),
+                 generation);
         }
     });
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     connect(socket, &QAbstractSocket::errorOccurred, this,
-            [this, socket](QAbstractSocket::SocketError) {
+            [this, socket, generation](QAbstractSocket::SocketError) {
 #else
     connect(socket, QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error), this,
-            [this, socket](QAbstractSocket::SocketError) {
+            [this, socket, generation](QAbstractSocket::SocketError) {
 #endif
-        if (socket == m_tcpClient && m_state != State::Stopped && m_state != State::Error) {
+        if (generation == m_generation && socket == m_tcpClient
+            && m_state != State::Stopped && m_state != State::Error) {
             fail(QStringLiteral("CoT TCP client error: %1. Automatic reconnect is disabled.")
-                     .arg(socket->errorString()));
+                     .arg(socket->errorString()), generation);
         }
     });
 
     const QString status = QStringLiteral("Connecting CoT TCP client to %1…")
                                .arg(configuredEndpointText(m_settings.host, m_settings.port));
-    if (!transition(State::Connecting, status) || socket != m_tcpClient) {
+    if (!transition(State::Connecting, status, generation)
+        || generation != m_generation || socket != m_tcpClient) {
         if (error) {
             *error = QStringLiteral("CoT TCP client start was cancelled.");
         }
@@ -569,8 +612,11 @@ bool CotOutputTransport::startTcpClient(QString *error)
     return true;
 }
 
-bool CotOutputTransport::startTcpHost(QString *error)
+bool CotOutputTransport::startTcpHost(QString *error, quint64 generation)
 {
+    if (generation != m_generation) {
+        return false;
+    }
     QHostAddress listenAddress;
     if (!parseListenAddress(m_settings.host, &listenAddress)) {
         if (error) {
@@ -592,24 +638,27 @@ bool CotOutputTransport::startTcpHost(QString *error)
     }
     m_tcpServer = server;
     connect(server, &QTcpServer::newConnection, this, &CotOutputTransport::acceptTcpClients);
-    connect(server, &QTcpServer::acceptError, this, [this, server](QAbstractSocket::SocketError) {
-        if (server == m_tcpServer) {
+    connect(server, &QTcpServer::acceptError, this,
+            [this, server, generation](QAbstractSocket::SocketError) {
+        if (generation == m_generation && server == m_tcpServer) {
             reportRecoverableError(QStringLiteral("CoT TCP host accept error: %1")
-                                       .arg(server->errorString()));
+                                       .arg(server->errorString()), generation);
         }
     });
-    return transition(State::Listening, tcpHostStatus());
+    return transition(State::Listening, tcpHostStatus(), generation);
 }
 
 void CotOutputTransport::acceptTcpClients()
 {
+    const quint64 generation = m_generation;
     QTcpServer *server = m_tcpServer;
     if (!server) {
         return;
     }
     int accepted = 0;
     int rejected = 0;
-    while (server == m_tcpServer && server->hasPendingConnections()) {
+    while (generation == m_generation && server == m_tcpServer
+           && server->hasPendingConnections()) {
         QTcpSocket *client = server->nextPendingConnection();
         if (!client) {
             break;
@@ -624,49 +673,52 @@ void CotOutputTransport::acceptTcpClients()
         client->setReadBufferSize(4096);
         m_tcpClients.append(client);
         ++accepted;
-        connect(client, &QTcpSocket::readyRead, this, [this, client]() {
-            if (m_tcpClients.contains(client)) {
+        connect(client, &QTcpSocket::readyRead, this, [this, client, generation]() {
+            if (generation == m_generation && m_tcpClients.contains(client)) {
                 client->readAll(); // Output-only, but do not retain arbitrary peer input.
             }
         });
-        connect(client, &QTcpSocket::bytesWritten, this, &CotOutputTransport::bytesWritten);
-        connect(client, &QTcpSocket::disconnected, this, [this, client]() {
-            if (!m_tcpClients.contains(client)) {
+        connect(client, &QTcpSocket::bytesWritten, this,
+                [this, generation](qint64 bytes) {
+            queueBytesWritten(bytes, generation);
+        });
+        connect(client, &QTcpSocket::disconnected, this, [this, client, generation]() {
+            if (generation != m_generation || !m_tcpClients.contains(client)) {
                 return;
             }
             removeTcpHostClient(client);
             const State nextState = m_tcpClients.isEmpty() ? State::Listening : State::Ready;
             const QString status = tcpHostStatus();
-            if (!transition(nextState, status)) {
+            if (!transition(nextState, status, generation)) {
                 return;
             }
-            notifyPeers(status);
+            notifyPeers(status, generation);
         });
 #if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
         connect(client, &QAbstractSocket::errorOccurred, this,
-                [this, client](QAbstractSocket::SocketError) {
+                [this, client, generation](QAbstractSocket::SocketError) {
 #else
         connect(client, QOverload<QAbstractSocket::SocketError>::of(&QAbstractSocket::error), this,
-                [this, client](QAbstractSocket::SocketError) {
+                [this, client, generation](QAbstractSocket::SocketError) {
 #endif
-            if (m_tcpClients.contains(client)) {
-                handleTcpHostClientFailure(client, client->errorString());
+            if (generation == m_generation && m_tcpClients.contains(client)) {
+                handleTcpHostClientFailure(client, client->errorString(), generation);
             }
         });
     }
 
     if (accepted > 0) {
         const QString status = tcpHostStatus();
-        if (!transition(State::Ready, status)) {
+        if (!transition(State::Ready, status, generation)) {
             return;
         }
-        if (!notifyPeers(status)) {
+        if (!notifyPeers(status, generation)) {
             return;
         }
     }
-    if (rejected > 0 && server == m_tcpServer) {
+    if (rejected > 0 && generation == m_generation && server == m_tcpServer) {
         reportRecoverableError(QStringLiteral("CoT TCP host client limit (%1) reached; rejected %2 client(s).")
-                                   .arg(MaxTcpClients).arg(rejected));
+                                   .arg(MaxTcpClients).arg(rejected), generation);
     }
 }
 
@@ -680,24 +732,44 @@ void CotOutputTransport::removeTcpHostClient(QTcpSocket *client)
     client->deleteLater();
 }
 
-void CotOutputTransport::handleTcpHostClientFailure(QTcpSocket *client, const QString &reason)
+void CotOutputTransport::handleTcpHostClientFailure(QTcpSocket *client, const QString &reason,
+                                                     quint64 generation)
 {
+    if (generation != m_generation) {
+        return;
+    }
     const QString peer = socketPeerText(client);
     removeTcpHostClient(client);
     const State nextState = m_tcpClients.isEmpty() ? State::Listening : State::Ready;
     const QString status = tcpHostStatus();
-    if (!transition(nextState, status)) {
+    if (!transition(nextState, status, generation)) {
         return;
     }
-    if (!notifyPeers(status)) {
+    if (!notifyPeers(status, generation)) {
         return;
     }
     reportRecoverableError(QStringLiteral("Removed broken CoT TCP client %1: %2")
-                               .arg(peer.isEmpty() ? QStringLiteral("client") : peer, reason));
+                               .arg(peer.isEmpty() ? QStringLiteral("client") : peer, reason),
+                           generation);
 }
 
-bool CotOutputTransport::startSerial(QString *error)
+void CotOutputTransport::queueBytesWritten(qint64 bytes, quint64 generation)
 {
+    // Do not expose a device's potentially synchronous write callback while
+    // send() is still using that device.  Consumers may stop/restart/delete
+    // this transport from the public signal.
+    QTimer::singleShot(0, this, [this, bytes, generation]() {
+        if (generation == m_generation) {
+            emit bytesWritten(bytes); // Last operation: handlers may delete us.
+        }
+    });
+}
+
+bool CotOutputTransport::startSerial(QString *error, quint64 generation)
+{
+    if (generation != m_generation) {
+        return false;
+    }
     auto *port = new QSerialPort(this);
     port->setPortName(m_settings.serialPort.trimmed());
     const bool configured = port->setBaudRate(m_settings.baud)
@@ -715,15 +787,19 @@ bool CotOutputTransport::startSerial(QString *error)
     }
     port->clear();
     m_serial = port;
-    connect(port, &QSerialPort::readyRead, this, [this, port]() {
-        if (port == m_serial) {
+    connect(port, &QSerialPort::readyRead, this, [this, port, generation]() {
+        if (generation == m_generation && port == m_serial) {
             port->readAll(); // Output-only, but keep unsolicited input bounded.
         }
     });
-    connect(port, &QSerialPort::bytesWritten, this, &CotOutputTransport::bytesWritten);
+    connect(port, &QSerialPort::bytesWritten, this,
+            [this, generation](qint64 bytes) {
+        queueBytesWritten(bytes, generation);
+    });
     connect(port, &QSerialPort::errorOccurred, this,
-            [this, port](QSerialPort::SerialPortError serialError) {
-        if (port != m_serial || serialError == QSerialPort::NoError) {
+            [this, port, generation](QSerialPort::SerialPortError serialError) {
+        if (generation != m_generation || port != m_serial
+            || serialError == QSerialPort::NoError) {
             return;
         }
         const QString reason = QStringLiteral("CoT serial port %1: %2")
@@ -732,24 +808,25 @@ bool CotOutputTransport::startSerial(QString *error)
             || serialError == QSerialPort::DeviceNotFoundError
             || serialError == QSerialPort::PermissionError
             || serialError == QSerialPort::WriteError) {
-            fail(reason);
+            fail(reason, generation);
         } else {
-            reportRecoverableError(reason);
+            reportRecoverableError(reason, generation);
         }
     });
     const QString status = QStringLiteral("Emitting Cursor-on-Target events on %1 at %2 baud (8N1).")
                                .arg(m_settings.serialPort).arg(m_settings.baud);
-    if (!transition(State::Ready, status)) {
+    if (!transition(State::Ready, status, generation)) {
         return false;
     }
-    return notifyPeers(status);
+    return notifyPeers(status, generation);
 }
 
 CotOutputTransport::SendResult CotOutputTransport::send(const QByteArray &payload)
 {
+    const quint64 generation = m_generation;
     if (payload.isEmpty() || payload.size() > MaximumPayloadBytes || !payload.endsWith('\n')) {
         reportRecoverableError(QStringLiteral("CoT payload must be 1..%1 bytes and end with LF.")
-                                   .arg(MaximumPayloadBytes));
+                                   .arg(MaximumPayloadBytes), generation);
         return SendResult::InvalidPayload;
     }
     if (!isStarted()) {
@@ -767,14 +844,14 @@ CotOutputTransport::SendResult CotOutputTransport::send(const QByteArray &payloa
             return SendResult::NoPeer;
         }
         if (m_udp->bytesToWrite() + payload.size() > PerPeerPendingLimitBytes) {
-            reportRecoverableError(QStringLiteral("CoT UDP output queue is full."));
+            reportRecoverableError(QStringLiteral("CoT UDP output queue is full."), generation);
             return SendResult::Backpressure;
         }
         // Exactly one call, hence exactly one datagram, for every accepted CoT event.
         const qint64 written = m_udp->writeDatagram(payload, m_udpPeerAddress, m_udpPeerPort);
         if (written != payload.size()) {
             reportRecoverableError(QStringLiteral("Unable to send complete CoT UDP datagram: %1")
-                                       .arg(m_udp->errorString()));
+                                       .arg(m_udp->errorString()), generation);
             return SendResult::IoError;
         }
         emit payloadSent(payload.size(), 1);
@@ -787,13 +864,14 @@ CotOutputTransport::SendResult CotOutputTransport::send(const QByteArray &payloa
             return SendResult::NotReady;
         }
         if (socket->bytesToWrite() + payload.size() > PerPeerPendingLimitBytes) {
-            reportRecoverableError(QStringLiteral("CoT TCP client output queue is full."));
+            reportRecoverableError(QStringLiteral("CoT TCP client output queue is full."),
+                                   generation);
             return SendResult::Backpressure;
         }
         const qint64 written = socket->write(payload);
         if (written != payload.size()) {
             fail(QStringLiteral("CoT TCP client could not queue a complete event: %1")
-                     .arg(socket->errorString()));
+                     .arg(socket->errorString()), generation);
             return SendResult::IoError;
         }
         emit payloadSent(payload.size(), 1);
@@ -827,16 +905,18 @@ CotOutputTransport::SendResult CotOutputTransport::send(const QByteArray &payloa
         if (removed > 0) {
             const State nextState = m_tcpClients.isEmpty() ? State::Listening : State::Ready;
             const QString status = tcpHostStatus();
-            if (!transition(nextState, status)) {
+            if (!transition(nextState, status, generation)) {
                 return delivered > 0 ? SendResult::Sent : SendResult::Backpressure;
             }
-            if (!notifyPeers(status)) {
+            if (!notifyPeers(status, generation)) {
                 return delivered > 0 ? SendResult::Sent : SendResult::Backpressure;
             }
             QPointer<CotOutputTransport> guard(this);
-            reportRecoverableError(QStringLiteral("Removed %1 slow or broken CoT TCP client(s).")
-                                       .arg(removed));
-            if (!guard || !m_tcpServer || !m_tcpServer->isListening()) {
+            if (!reportRecoverableError(
+                    QStringLiteral("Removed %1 slow or broken CoT TCP client(s).").arg(removed),
+                    generation)
+                || !guard || generation != m_generation
+                || !m_tcpServer || !m_tcpServer->isListening()) {
                 return delivered > 0 ? SendResult::Sent : SendResult::Backpressure;
             }
         }
@@ -852,13 +932,13 @@ CotOutputTransport::SendResult CotOutputTransport::send(const QByteArray &payloa
             return SendResult::NotReady;
         }
         if (port->bytesToWrite() + payload.size() > PerPeerPendingLimitBytes) {
-            reportRecoverableError(QStringLiteral("CoT serial output queue is full."));
+            reportRecoverableError(QStringLiteral("CoT serial output queue is full."), generation);
             return SendResult::Backpressure;
         }
         const qint64 written = port->write(payload);
         if (written != payload.size()) {
             fail(QStringLiteral("CoT serial port could not queue a complete event: %1")
-                     .arg(port->errorString()));
+                     .arg(port->errorString()), generation);
             return SendResult::IoError;
         }
         emit payloadSent(payload.size(), 1);
@@ -868,8 +948,11 @@ CotOutputTransport::SendResult CotOutputTransport::send(const QByteArray &payloa
     return SendResult::NotReady;
 }
 
-bool CotOutputTransport::transition(State state, const QString &status)
+bool CotOutputTransport::transition(State state, const QString &status, quint64 generation)
 {
+    if (generation != m_generation) {
+        return false;
+    }
     const bool stateChangedValue = m_state != state;
     const bool statusChangedValue = m_statusText != status;
     m_state = state;
@@ -879,50 +962,73 @@ bool CotOutputTransport::transition(State state, const QString &status)
     if (stateChangedValue) {
         emit stateChanged(state);
     }
-    if (!guard || m_state != state || m_statusText != status) {
+    if (!guard || generation != m_generation || m_state != state || m_statusText != status) {
         return false;
     }
     if (statusChangedValue) {
         emit statusChanged(status);
     }
-    return guard && m_state == state && m_statusText == status;
+    return guard && generation == m_generation && m_state == state && m_statusText == status;
 }
 
-bool CotOutputTransport::notifyPeers(const QString &status)
+bool CotOutputTransport::notifyPeers(const QString &status, quint64 generation)
 {
+    if (generation != m_generation) {
+        return false;
+    }
     const bool statusChangedValue = m_statusText != status;
     m_statusText = status;
     QPointer<CotOutputTransport> guard(this);
     emit peersChanged();
-    if (!guard || m_statusText != status) {
+    if (!guard || generation != m_generation || m_statusText != status) {
         return false;
     }
     if (statusChangedValue) {
         emit statusChanged(status);
     }
-    return guard && m_statusText == status;
+    return guard && generation == m_generation && m_statusText == status;
 }
 
-void CotOutputTransport::reportRecoverableError(const QString &error)
+bool CotOutputTransport::reportRecoverableError(const QString &error, quint64 generation)
 {
+    if (generation != m_generation) {
+        return false;
+    }
     m_lastError = error;
-    emit errorOccurred(error); // No member access after this re-entrant signal.
+    QPointer<CotOutputTransport> guard(this);
+    emit errorOccurred(error);
+    return guard && generation == m_generation;
 }
 
-void CotOutputTransport::fail(const QString &error)
+void CotOutputTransport::fail(const QString &error, quint64 generation)
 {
+    if (generation != m_generation) {
+        return;
+    }
+    const bool hadPeers = hasPeer() || m_hasUdpPeer || m_tcpClient
+        || m_serial || !m_tcpClients.isEmpty();
     shutdown(false);
+    const quint64 failureGeneration = m_generation;
     m_lastError = error;
     m_state = State::Error;
     m_statusText = error;
 
     QPointer<CotOutputTransport> guard(this);
+    if (hadPeers) {
+        emit peersChanged();
+    }
+    if (!guard || failureGeneration != m_generation
+        || m_state != State::Error || m_statusText != error) {
+        return;
+    }
     emit stateChanged(State::Error);
-    if (!guard || m_state != State::Error || m_statusText != error) {
+    if (!guard || failureGeneration != m_generation
+        || m_state != State::Error || m_statusText != error) {
         return;
     }
     emit statusChanged(error);
-    if (!guard || m_state != State::Error || m_statusText != error) {
+    if (!guard || failureGeneration != m_generation
+        || m_state != State::Error || m_statusText != error) {
         return;
     }
     emit errorOccurred(error); // Last operation: error handlers may stop/delete us.

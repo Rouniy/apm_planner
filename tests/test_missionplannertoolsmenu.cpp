@@ -82,6 +82,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     int inspectorOpenCount = 0;
     int mirrorOpenCount = 0;
     int nmeaOpenCount = 0;
+    int cotOpenCount = 0;
     MissionPlannerToolsMenu::HandlerMap handlers;
     handlers.insert(QStringLiteral("actionMavlinkInspector"),
                     [&inspectorOpenCount]() { ++inspectorOpenCount; });
@@ -89,6 +90,8 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
                     [&mirrorOpenCount]() { ++mirrorOpenCount; });
     handlers.insert(QStringLiteral("actionNmeaOutput"),
                     [&nmeaOpenCount]() { ++nmeaOpenCount; });
+    handlers.insert(QStringLiteral("actionCotOutput"),
+                    [&cotOpenCount]() { ++cotOpenCount; });
 
     MissionPlannerToolsMenu::Populate(&menu, &context, handlers);
     QCOMPARE(menu.title(), QStringLiteral("TOOLS"));
@@ -102,7 +105,8 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
         ++toolCount;
         if (action->objectName() == QStringLiteral("actionMavlinkInspector")
             || action->objectName() == QStringLiteral("actionMavlinkMirror")
-            || action->objectName() == QStringLiteral("actionNmeaOutput")) {
+            || action->objectName() == QStringLiteral("actionNmeaOutput")
+            || action->objectName() == QStringLiteral("actionCotOutput")) {
             QVERIFY(action->isEnabled());
             action->trigger();
             continue;
@@ -115,6 +119,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     QCOMPARE(inspectorOpenCount, 1);
     QCOMPARE(mirrorOpenCount, 1);
     QCOMPARE(nmeaOpenCount, 1);
+    QCOMPARE(cotOpenCount, 1);
 }
 
 QTEST_MAIN(MissionPlannerToolsMenuTest)

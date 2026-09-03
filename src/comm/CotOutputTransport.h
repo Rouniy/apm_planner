@@ -130,26 +130,28 @@ signals:
     void errorOccurred(const QString &error);
 
 private slots:
-    void hostLookupFinished(const QHostInfo &hostInfo);
+    void hostLookupFinished(const QHostInfo &hostInfo, quint64 generation);
 
 private:
     bool validateSettings(QString *error) const;
-    bool startUdpDestination(QString *error);
-    bool startUdpHost(QString *error);
-    bool startTcpClient(QString *error);
-    bool startTcpHost(QString *error);
-    bool startSerial(QString *error);
+    bool startUdpDestination(QString *error, quint64 generation);
+    bool startUdpHost(QString *error, quint64 generation);
+    bool startTcpClient(QString *error, quint64 generation);
+    bool startTcpHost(QString *error, quint64 generation);
+    bool startSerial(QString *error, quint64 generation);
 
     void completeUdpDestination(const QHostAddress &address, quint64 generation);
     void readUdpHostDatagrams();
     void acceptTcpClients();
     void removeTcpHostClient(QTcpSocket *client);
-    void handleTcpHostClientFailure(QTcpSocket *client, const QString &reason);
+    void handleTcpHostClientFailure(QTcpSocket *client, const QString &reason,
+                                    quint64 generation);
+    void queueBytesWritten(qint64 bytes, quint64 generation);
 
-    bool transition(State state, const QString &status);
-    bool notifyPeers(const QString &status);
-    void reportRecoverableError(const QString &error);
-    void fail(const QString &error);
+    bool transition(State state, const QString &status, quint64 generation);
+    bool notifyPeers(const QString &status, quint64 generation);
+    bool reportRecoverableError(const QString &error, quint64 generation);
+    void fail(const QString &error, quint64 generation);
     void shutdown(bool notify);
     QString tcpHostStatus() const;
 

@@ -269,6 +269,12 @@ set(SOURCES
     src/comm/MavlinkMirrorOutput.h
     src/comm/MavlinkMirrorService.cpp
     src/comm/MavlinkMirrorService.h
+    src/comm/CotEventSerializer.cpp
+    src/comm/CotEventSerializer.h
+    src/comm/CotOutputTransport.cpp
+    src/comm/CotOutputTransport.h
+    src/comm/CotOutputService.cpp
+    src/comm/CotOutputService.h
     src/comm/NmeaSentenceBuilder.cpp
     src/comm/NmeaSentenceBuilder.h
     src/comm/NmeaOutputService.cpp
@@ -571,6 +577,13 @@ set(SOURCES
     src/ui/SerialOutputNMEAWindow.cpp
     src/ui/SerialOutputNMEAWindow.h
     src/ui/SerialOutputNMEAWindowIntegration.cpp
+    src/ui/CotIdentityModel.cpp
+    src/ui/CotIdentityModel.h
+    src/ui/SerialOutputCotViewModel.cpp
+    src/ui/SerialOutputCotViewModel.h
+    src/ui/SerialOutputCotWindow.cpp
+    src/ui/SerialOutputCotWindow.h
+    src/ui/SerialOutputCotWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2781,6 +2794,114 @@ if(BUILD_TESTING)
     add_test(NAME serialoutputnmeawindow_tests
              COMMAND serialoutputnmeawindow_tests)
     set_tests_properties(serialoutputnmeawindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(coteventserializer_tests
+        tests/test_coteventserializer.cpp
+        src/comm/CotEventSerializer.cpp
+        src/comm/CotEventSerializer.h
+    )
+    target_include_directories(coteventserializer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(coteventserializer_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME coteventserializer_tests
+             COMMAND coteventserializer_tests)
+
+    add_executable(cotidentitymodel_tests
+        tests/test_cotidentitymodel.cpp
+        src/ui/CotIdentityModel.cpp
+        src/ui/CotIdentityModel.h
+    )
+    target_include_directories(cotidentitymodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(cotidentitymodel_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME cotidentitymodel_tests
+             COMMAND cotidentitymodel_tests)
+
+    add_executable(cotoutputtransport_tests
+        tests/test_cotoutputtransport.cpp
+        src/comm/CotOutputTransport.cpp
+        src/comm/CotOutputTransport.h
+    )
+    target_include_directories(cotoutputtransport_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(cotoutputtransport_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME cotoutputtransport_tests
+             COMMAND cotoutputtransport_tests)
+
+    add_executable(cotoutputservice_tests
+        tests/test_cotoutputservice.cpp
+        src/comm/CotEventSerializer.cpp
+        src/comm/CotEventSerializer.h
+        src/comm/CotOutputTransport.cpp
+        src/comm/CotOutputTransport.h
+        src/comm/CotOutputService.cpp
+        src/comm/CotOutputService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(cotoutputservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(cotoutputservice_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME cotoutputservice_tests
+             COMMAND cotoutputservice_tests)
+
+    add_executable(serialoutputcotwindow_tests
+        tests/test_serialoutputcotwindow.cpp
+        src/comm/CotEventSerializer.cpp
+        src/comm/CotEventSerializer.h
+        src/comm/CotOutputTransport.cpp
+        src/comm/CotOutputTransport.h
+        src/comm/CotOutputService.cpp
+        src/comm/CotOutputService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/ui/CotIdentityModel.cpp
+        src/ui/CotIdentityModel.h
+        src/ui/SerialOutputCotViewModel.cpp
+        src/ui/SerialOutputCotViewModel.h
+        src/ui/SerialOutputCotWindow.cpp
+        src/ui/SerialOutputCotWindow.h
+    )
+    target_include_directories(serialoutputcotwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(serialoutputcotwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::SerialPort
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME serialoutputcotwindow_tests
+             COMMAND serialoutputcotwindow_tests)
+    set_tests_properties(serialoutputcotwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

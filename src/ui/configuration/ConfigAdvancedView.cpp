@@ -30,8 +30,9 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     AddToolAction(tr("NMEA"),
                   QStringLiteral("NmeaButton"),
                   QStringLiteral("actionNmeaOutput"));
-    AddUnavailableAction(tr("Cursor-on-Target / TAK"),
-                         QStringLiteral("CotTakButton"), notPorted);
+    AddToolAction(tr("Cursor-on-Target / TAK"),
+                  QStringLiteral("CotTakButton"),
+                  QStringLiteral("actionCotOutput"));
     AddUnavailableAction(tr("Follow Me"),
                          QStringLiteral("FollowMeButton"), notPorted);
     AddUnavailableAction(tr("External Guided"),

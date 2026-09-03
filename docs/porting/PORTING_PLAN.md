@@ -180,6 +180,15 @@ sentence state, timer cadence, lifecycle and status remain owned by the NMEA
 service. A window never retains `LinkInterface *`, never queues stale position
 cycles and stops when its pinned physical link disappears.
 
+CoT/TAK Output pins the current physical link at Connect and maintains separate
+navigation state for every exact `(link, sysid, compid)` endpoint discovered on
+that link, matching MP10's one-comPort MAV-list scope without merging equal ids
+from other links. It emits only after an endpoint has supplied position data.
+Serial, multicast, UDP client/host and TCP client/host are bounded,
+generation-guarded transports; the modeless window owns and stops one service
+session. Identity rows retain MP10's six-cell JSON representation and CoT XML
+serialization is deterministic before one LF wire-frame delimiter is added.
+
 `ExactLinkTransmitter` now owns MAVLink version and sequence state once per
 physical link. It rejects v2-only messages on MAVLink 1 and clears the checksum
 bytes left in a generated encoder's trimmed payload before link-specific

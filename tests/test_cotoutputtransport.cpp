@@ -2,6 +2,8 @@
 
 #include "comm/CotOutputTransport.h"
 
+#include <QHostInfo>
+#include <QPointer>
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -15,12 +17,107 @@ class CotOutputTransportTest final : public QObject
 
 private slots:
     void defaultsAndValidationMatchMp10();
+    void dnsCompletionRequiresCurrentLookupAndGeneration();
+    void reentrantStartSignalsCannotResumeSupersededRun();
     void udpClientSendsOneWholeDatagramAndResolvesDns();
     void udpHostRepliesOnlyToNewestSender();
     void tcpClientConnectsOnceAndDoesNotReconnect();
     void tcpHostFansOutAndRemovesBrokenClients();
     void sendErrorsMayStopTransportReentrantly();
 };
+
+void CotOutputTransportTest::dnsCompletionRequiresCurrentLookupAndGeneration()
+{
+    auto settings = CotOutputTransport::Defaults(CotOutputTransport::Mode::UdpClient);
+    settings.host = QStringLiteral("localhost"); // Local resolver only; no external network.
+    settings.port = 14551;
+    CotOutputTransport transport(settings);
+    QString error;
+    QVERIFY2(transport.start(&error), qPrintable(error));
+    QCOMPARE(transport.state(), CotOutputTransport::State::Resolving);
+
+    // A stale callback with this run's generation but another lookup ID must
+    // neither clear the active ID nor complete/fail the current resolution.
+    QHostInfo staleLookup(-1234567);
+    staleLookup.setHostName(QStringLiteral("stale.invalid"));
+    staleLookup.setAddresses({QHostAddress(QStringLiteral("192.0.2.1"))});
+    QVERIFY(QMetaObject::invokeMethod(
+        &transport, "hostLookupFinished", Qt::DirectConnection,
+        Q_ARG(QHostInfo, staleLookup), Q_ARG(quint64, quint64(1))));
+    QCOMPARE(transport.state(), CotOutputTransport::State::Resolving);
+    QVERIFY(!transport.hasPeer());
+
+    // The real current lookup still owns the ID and can complete normally.
+    QTRY_COMPARE(transport.state(), CotOutputTransport::State::Ready);
+    QVERIFY(!transport.peers().first().address.isNull());
+
+    // Re-entering start from Resolving used to let the outer call schedule a
+    // second lookup afterward and overwrite the nested run's lookup ID.
+    transport.stop();
+    bool restarted = false;
+    bool nestedStartResult = false;
+    QObject::connect(&transport, &CotOutputTransport::stateChanged, &transport,
+                     [&transport, &restarted, &nestedStartResult](CotOutputTransport::State state) {
+        if (state == CotOutputTransport::State::Resolving && !restarted) {
+            restarted = true;
+            nestedStartResult = transport.start();
+        }
+    }, Qt::DirectConnection);
+    QVERIFY(!transport.start());
+    QVERIFY(restarted);
+    QVERIFY(nestedStartResult);
+    QTRY_COMPARE(transport.state(), CotOutputTransport::State::Ready);
+}
+
+void CotOutputTransportTest::reentrantStartSignalsCannotResumeSupersededRun()
+{
+    auto settings = CotOutputTransport::Defaults(CotOutputTransport::Mode::UdpClient);
+    settings.host = QStringLiteral("127.0.0.1");
+    settings.port = 14551;
+
+    // A nested start supersedes the outer generation. Even though both runs
+    // reach identical state/status values, the outer start must return false
+    // and must not continue after the nested run.
+    CotOutputTransport transport(settings);
+    bool restarted = false;
+    bool nestedStartResult = false;
+    QObject::connect(&transport, &CotOutputTransport::stateChanged, &transport,
+                     [&transport, &restarted, &nestedStartResult](CotOutputTransport::State state) {
+        if (state == CotOutputTransport::State::Ready && !restarted) {
+            restarted = true;
+            nestedStartResult = transport.start();
+        }
+    }, Qt::DirectConnection);
+    QVERIFY(!transport.start());
+    QVERIFY(restarted);
+    QVERIFY(nestedStartResult);
+    QCOMPARE(transport.state(), CotOutputTransport::State::Ready);
+    QCOMPARE(transport.peerCount(), 1);
+
+    // Re-entrant stop likewise cancels the in-progress generation.
+    CotOutputTransport stopped(settings);
+    QObject::connect(&stopped, &CotOutputTransport::stateChanged, &stopped,
+                     [&stopped](CotOutputTransport::State state) {
+        if (state == CotOutputTransport::State::Ready) {
+            stopped.stop();
+        }
+    }, Qt::DirectConnection);
+    QVERIFY(!stopped.start());
+    QCOMPARE(stopped.state(), CotOutputTransport::State::Stopped);
+
+    // Deleting from a direct state callback must not leave start() touching
+    // the destroyed object on its way back out through helper frames.
+    auto *deleted = new CotOutputTransport(settings);
+    QPointer<CotOutputTransport> deletedGuard(deleted);
+    QObject::connect(deleted, &CotOutputTransport::stateChanged, deleted,
+                     [deleted](CotOutputTransport::State state) {
+        if (state == CotOutputTransport::State::Ready) {
+            delete deleted;
+        }
+    }, Qt::DirectConnection);
+    QVERIFY(!deleted->start());
+    QVERIFY(deletedGuard.isNull());
+}
 
 void CotOutputTransportTest::defaultsAndValidationMatchMp10()
 {
