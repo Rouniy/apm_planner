@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после последнего Tools-среза:
+Проверенная Linux-точка после первого нативного Planner Settings-среза:
 
-- приложение и все цели CMake собираются одним `cmake --build build -j12`;
-- проходят 112 из 112 тестов;
+- приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
+- проходят 119 из 119 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -29,11 +29,11 @@
 | DATA | 2 | 3 | 0 | 5 |
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 21 | 22 | 14 | 57 |
-| CONFIG | 4 | 11 | 5 | 20 |
+| CONFIG | 5 | 11 | 4 | 20 |
 | TOOLS | 8 | 3 | 18 | 29 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **41** | **46** | **41** | **128** |
+| **Итого** | **42** | **46** | **40** | **128** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -352,9 +352,10 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 - Flight Modes.
 - Basic/Extended tuning, Copter/Plane/Rover tuning.
 - Fence configuration и live status.
-- Planner settings: общий DisplayView profile и restart-scoped dual Startup
-  UDP listeners сделаны; далее native nine-section page, затем
-  map/log/telemetry/speech/HUD preferences.
+- Planner settings: нативная страница уже воспроизводит все девять секций,
+  общий DisplayView profile и restart-scoped dual Startup UDP listeners;
+  точный аудит насчитывает 64 MP10 controls. Далее — language/speed/HUD,
+  полноценные speech/shortcuts, target-safe telemetry/identity и map overlays.
 - Planner Advanced и User Defined — завершить screenshots/native evidence.
 - Param Compare — полный merge/diff/apply workflow.
 - CONFIG Onboard OSD — Wave 2.

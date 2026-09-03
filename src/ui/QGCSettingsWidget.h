@@ -20,8 +20,18 @@ class QGCSettingsWidget : public QWidget
     Q_OBJECT
 
 public:
-    explicit QGCSettingsWidget(QWidget *parent = nullptr);
+    enum class SurfaceMode
+    {
+        Full,
+        LegacyPlanner
+    };
+
+    explicit QGCSettingsWidget(
+        QWidget *parent = nullptr,
+        SurfaceMode mode = SurfaceMode::Full);
     ~QGCSettingsWidget() override;
+
+    void selectLegacyTelemetryRates();
 
 signals:
     void altitudeUnitsChanged(const QString &units);

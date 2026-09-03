@@ -34,6 +34,7 @@ This file is part of the APM_PLANNER project
 #include "MainWindow.h"
 #include "ArduPilotMegaMAV.h"
 #include "UASManager.h"
+#include "configuration/DisplayViewProfile.h"
 
 #include <QQmlContext>
 #include <QGraphicsObject>
@@ -94,13 +95,13 @@ APMToolBar::APMToolBar(QWindow *parent): QQuickView(parent)
 
     connect(&m_heartbeatTimer, SIGNAL(timeout()), this, SLOT(stopHeartbeat()));
 
-    QSettings settings;
-    settings.beginGroup("QGC_MAINWINDOW");
-    if (settings.contains("ADVANCED_MODE"))
-    {
-        bool isAdvanced = settings.value("ADVANCED_MODE").toBool();
-        checkAdvancedMode(isAdvanced);
-    }
+    DisplayViewProfileService *const profiles =
+        DisplayViewProfileService::instance();
+    checkAdvancedMode(profiles->current().isAdvancedMode());
+    connect(profiles, &DisplayViewProfileService::changed,
+            this, [this, profiles]() {
+        checkAdvancedMode(profiles->current().isAdvancedMode());
+    });
     connect(LinkManager::instance(),SIGNAL(linkChanged(int)),this,SLOT(updateLinkDisplay(int)));
 
     connect(this, SIGNAL(triggerDonateView()), this, SLOT(selectDonateView()));

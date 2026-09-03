@@ -6,6 +6,8 @@
 #include "CopterPidConfig.h"
 #include "ConfigRouteProfile.h"
 #include "DisplayViewProfile.h"
+#include "ConfigPlannerView.h"
+#include "ConfigPlannerViewIntegration.h"
 #include "ConfigPlannerAdvView.h"
 #include "ConfigFriendlyParamsView.h"
 #include "ConfigOSDView.h"
@@ -16,7 +18,6 @@
 #include "LinkInterface.h"
 #include "LinkManager.h"
 #include "comm/VehicleTargetManager.h"
-#include "QGCSettingsWidget.h"
 #include "QGCUASParamManager.h"
 #include "ArduPilotMegaMAV.h"
 #include "UASInterface.h"
@@ -249,10 +250,10 @@ void ConfigView::buildPages()
     BackstagePage planner;
     planner.id = kPlanner;
     planner.header = tr("Planner");
-    planner.badge = tr("Legacy");
     planner.visibleWhen = routeVisible(ConfigRouteId::Planner);
     planner.factory = [](QWidget *parent) {
-        auto *settings = new QGCSettingsWidget(parent);
+        auto *settings = new ConfigPlannerView(nullptr, parent);
+        BindConfigPlannerViewToApplication(settings);
         return scrollablePage(settings, kPlanner, parent);
     };
     m_backstage->addPage(planner);

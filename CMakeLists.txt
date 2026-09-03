@@ -824,6 +824,12 @@ set(SOURCES
     src/ui/configuration/ConfigPlannerAdvView.h
     src/ui/configuration/ConfigPlannerAdvViewModel.cpp
     src/ui/configuration/ConfigPlannerAdvViewModel.h
+    src/ui/configuration/ConfigPlannerView.cpp
+    src/ui/configuration/ConfigPlannerView.h
+    src/ui/configuration/ConfigPlannerViewIntegration.cpp
+    src/ui/configuration/ConfigPlannerViewIntegration.h
+    src/ui/configuration/ConfigPlannerViewModel.cpp
+    src/ui/configuration/ConfigPlannerViewModel.h
     src/ui/configuration/ConfigElevationSourcesView.cpp
     src/ui/configuration/ConfigElevationSourcesView.h
     src/ui/configuration/ConfigElevationSourcesViewModel.cpp
@@ -1947,6 +1953,32 @@ if(BUILD_TESTING)
     add_test(NAME configplanneradvview_tests
         COMMAND configplanneradvview_tests)
     set_tests_properties(configplanneradvview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configplannerview_tests
+        tests/test_configplannerview.cpp
+        src/ui/configuration/ConfigPlannerView.cpp
+        src/ui/configuration/ConfigPlannerView.h
+        src/ui/configuration/ConfigPlannerViewModel.cpp
+        src/ui/configuration/ConfigPlannerViewModel.h
+        src/ui/configuration/DisplayViewProfile.cpp
+        src/ui/configuration/DisplayViewProfile.h
+        src/ui/configuration/PlannerStartupUdpOptions.cpp
+        src/ui/configuration/PlannerStartupUdpOptions.h
+    )
+    target_include_directories(configplannerview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configplannerview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configplannerview_tests
+        COMMAND configplannerview_tests)
+    set_tests_properties(configplannerview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

@@ -17,7 +17,7 @@ minor visual matching is recorded and deferred until the useful workflows exist.
 The immediate user-directed order is:
 
 1. Keep the committed PLAN, MAVLink Inspector and Antenna Tracker foundations green.
-2. Focus the main stream on Settings/CONFIG as requested, beginning with the visible-page fallback/profile matrix and the misleading Onboard OSD route, then native planner preferences.
+2. Continue the requested Settings/CONFIG stream from the completed visible-page/profile, Onboard OSD phase-one and native Planner Settings foundations; next fill the highest-value missing Planner controls and CONFIG routes without fake toggles.
 3. Keep the remaining specialized `TOOLS` entries in their exact MP10 positions but disabled until each has a complete modeless workflow; no visible action may open an empty panel or silently do nothing.
 4. Retain the deferred Tracker Home/parameter work and DATA HUD audit without allowing them to displace the current Settings priority.
 5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
@@ -29,9 +29,10 @@ The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD teleme
 At this checkpoint:
 
 - CMake configure and `cmake --build build-codex-qt -j12` completed successfully; Claude's separately leased `build-claude` target also compiled and tested the NMEA sentence builder.
-- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror, NMEA Output, CoT/TAK, Device Operations, CONFIG Onboard OSD, DisplayView profiles and Planner startup-UDP coverage: **118/118 tests**.
+- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror, NMEA Output, CoT/TAK, Device Operations, CONFIG Onboard OSD, DisplayView profiles, Planner startup UDP and the native Planner Settings page: **119/119 tests**.
 - Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics, Tlog Convert, MAVLink Mirror, NMEA Output, CoT/TAK and Device Operations windows from the main surface, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with tool windows open. The Mirror smoke used a live UDP heartbeat source, received 64 framed bytes through TCP Host, observed Tx accounting and Listening after client disconnect, then opened a second independent window and exited with status 0. A separate write-back run sent the exact `WRITEBACK_MARKER_4096` bytes from the TCP peer through the pinned UDP vehicle link, showed Rx 21 with the checkbox enabled and exited cleanly. The NMEA smoke received 100 TCP Host sentences from a live local MAVLink source, verified the first GGA/GLL/HDG/VTG/RMC cycle and its five checksums, opened a second independent window and exited with status 0. The CoT smoke opened the enabled menu route on a live UDP vehicle, selected TCP Host, delivered the same parseable CoT 2.0 event to two simultaneous clients, opened a second independent window and exited cleanly with the first session active. The Device Operations smoke opened the 760×520 window through TOOLS, opened a second independent instance through Ctrl+J, then opened a third through SETUP → Developer Tools and exited with status 0.
 - A new real-X11 CONFIG smoke used a local UDP target with two OSD screens and nine committed parameters, clicked the production `Onboard OSD` navigation row, rendered the non-empty canvas plus ALT/BAT item editors and closed the application cleanly. Evidence is `/tmp/apm-osd-smoke.kLNaLd/osd.png` for this workspace run; reference screenshot diff and physical-vehicle writes remain.
+- A second real-X11 CONFIG smoke clicked the production `Planner` row, rendered the native scrollable Planner Settings page instead of the old generic widget, showed the Display, Speech, Flight Command Shortcuts, Waypoints / Connect, Startup UDP and Telemetry sections, scrolled successfully and exited cleanly. Evidence is `/tmp/apm-planner-settings-smoke.pSKCFA/planner-lower.png`; all nine section/order checks are also deterministic in `configplannerview_tests`.
 - The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, Antenna Tracker stack and first corrected Tools-menu/window slice are verified. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
@@ -49,6 +50,7 @@ These are working foundations, though their parity rows may remain partial becau
 - PLAN mission editing, context commands, store-aware undo, route geometry, polygon drawing/offset/fence conversion, Survey/Corridor import, terrain source, elevation graph and distance measurement.
 - Exact `(link, system, component)` vehicle target registry, shared link transmitter, command service, parameter service and committed parameter store.
 - Backstage SETUP/CONFIG infrastructure, the phase-one Onboard OSD layout editor and a substantial set of hardware/parameter pages listed in the parity ledger.
+- A native Planner Settings page with the exact nine-section MP10 topology, one shared application model across both entry points, live unit/profile/runtime controls, dual startup UDP policy and an explicitly bounded Legacy settings dialog.
 - Shared trusted QML plugin engine/API (`docs/porting/QML_PLUGINS.md`); legacy binary APM Planner plugins are intentionally unsupported.
 - Mission Command List editor and catalog, exposed to PLAN and QML.
 - The MP10 Default Settings workflow: official frame catalog discovery/download/cache, compare/stage into the native raw-parameter editor, exact target-generation guards and operation-scoped cancellation.
@@ -86,6 +88,25 @@ The header menu now has the exact 24 MP10 items, order, separators and shortcuts
 `SerialOutputCotWindow` is a fresh 720×820 modeless window per invocation and is reachable from both TOOLS and SETUP Advanced. It reproduces the reference endpoint order/defaults, 0.1–3600 second interval, event/UID/callsign controls, six-column advanced identity grid, Connect/Stop, indentation and last-event preview. Connect pins the current physical link but emits for every exact system/component endpoint discovered on that link, matching MP10's one-comPort scope without collapsing equal IDs on other links. TAK multicast, UDP Client/Host, TCP Client/Host and Serial 8N1 are separate bounded transports; TCP Host broadcasts to up to 16 clients and UDP Host targets the newest sender. XML attribute/element order, precision, escaping, UTC start/stale and platform-native indentation match MP10, while invalid XML/non-finite state is rejected visibly. Closing one window stops only its session.
 
 MAVLink Device Operations is now a fresh independent modeless window from TOOLS, Ctrl+J and SETUP → Developer Tools. Its event-driven service sends DEVICE_OP_READ/WRITE only on one generation-checked physical-link lease, rejects MAVLink 1, correlates replies by exact link/source/type/request ID, bounds all protocol fields and cancels safely on target change, link loss or destruction. The destructive ICM20948 write/read test requires a current disarmed heartbeat and refuses an edited destination outside the bound endpoint; ordinary register reads retain MP10's editable destination on the pinned link. Settings/CONFIG is now the main stream, as requested; the remaining specialized Tools stay visible but disabled until complete.
+
+## Settings/CONFIG current phase
+
+`CONFIG_SETTINGS_INVENTORY_AUDIT.md` is the count baseline. MP10 has 15 ordered
+CONFIG routes; Qt has 13 concrete factories, with Heli Setup and MAVFtp
+missing and Plane QP Extended Tuning still a functional mismatch. The useful
+legacy Flight Modes, tuning and GeoFence pages remain visibly classified
+instead of being deleted to improve the raw count.
+
+Planner Settings now uses `ConfigPlannerView`, not `QGCSettingsWidget`, on the
+active CONFIG route and the standalone Settings dialog. Its exact nine
+reference sections are always present and non-empty; MP10's 64 interactive
+controls are audited by type. The safe first slice makes units, the shared
+layout profile, exact startup UDP policy, map backend, audio/heartbeat/logging,
+log directories, beta channel and proxy effective. Missing speech, shortcuts,
+target-safe rates/identity, map overlays/ADS-B and advanced policies are stated
+in place. Useful legacy themes, file paths and seven-rate editing remain in an
+explicit Legacy dialog; controls with no consumer or unsafe split ownership
+are hidden.
 
 ## PLAN action-column audit
 

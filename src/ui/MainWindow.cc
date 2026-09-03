@@ -36,7 +36,6 @@ This file is part of the QGROUNDCONTROL project
 #include "services/SpeechAnnouncer.h"
 #include "QGCToolWidget.h"
 #include "QGCMAVLinkLogPlayer.h"
-#include "QGCSettingsWidget.h"
 #include "QGCTabbedInfoView.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCMAVLinkInspector.h"
@@ -88,6 +87,8 @@ This file is part of the QGROUNDCONTROL project
 #include "ConnectionOptionsWindow.h"
 #include "ConfigView.h"
 #include "SetupView.h"
+#include "configuration/ConfigPlannerView.h"
+#include "configuration/ConfigPlannerViewIntegration.h"
 #include "configuration/DisplayViewProfile.h"
 #include "configuration/QmlPluginManagerView.h"
 #include "TerminalConsole.h"
@@ -110,6 +111,7 @@ This file is part of the QGROUNDCONTROL project
 #include <QApplication>
 #include <QDockWidget>
 #include <QDialog>
+#include <QFrame>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QLineEdit>
@@ -118,6 +120,7 @@ This file is part of the QGROUNDCONTROL project
 #include <QNetworkInterface>
 #include <QMessageBox>
 #include <QScreen>
+#include <QScrollArea>
 #include <QShortcut>
 #include <QStyle>
 #include <QVBoxLayout>
@@ -2759,12 +2762,19 @@ void MainWindow::showSettings()
     }
     settingsDialog = new QDialog(this);
     settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
-    settingsDialog->setWindowTitle(tr("APM Planner 3.0 Settings"));
+    settingsDialog->setWindowTitle(tr("Planner Settings"));
     auto *layout = new QVBoxLayout(settingsDialog);
     layout->setContentsMargins(0, 0, 0, 0);
-    auto *settingsWidget = new QGCSettingsWidget(settingsDialog);
-    layout->addWidget(settingsWidget);
-    settingsDialog->resize(1014, 839);
+    auto *scroll = new QScrollArea(settingsDialog);
+    scroll->setObjectName(QStringLiteral("PlannerSettingsScroll"));
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto *settingsWidget = new ConfigPlannerView(nullptr, scroll);
+    BindConfigPlannerViewToApplication(settingsWidget);
+    scroll->setWidget(settingsWidget);
+    layout->addWidget(scroll);
+    settingsDialog->resize(920, 780);
     settingsDialog->show();
 }
 
@@ -2867,11 +2877,11 @@ void MainWindow::setPlannerAltitudeUnits(const QString &units)
 {
     const QString canonical = canonicalPlannerLinearUnits(units);
     if (canonical.isEmpty()) return;
+    if (plannerAltitudeUnits() == canonical) return;
     if (plannerViewModel) {
         plannerViewModel->setAltUnits(canonical);
         return;
     }
-    if (plannerAltitudeUnits() == canonical) return;
     settings.setValue(QStringLiteral("altunits"), canonical);
     emit plannerAltitudeUnitsChanged(canonical);
 }
@@ -2880,11 +2890,11 @@ void MainWindow::setPlannerDistanceUnits(const QString &units)
 {
     const QString canonical = canonicalPlannerLinearUnits(units);
     if (canonical.isEmpty()) return;
+    if (plannerDistanceUnits() == canonical) return;
     if (plannerViewModel) {
         plannerViewModel->setDistUnits(canonical);
         return;
     }
-    if (plannerDistanceUnits() == canonical) return;
     settings.setValue(QStringLiteral("distunits"), canonical);
     emit plannerDistanceUnitsChanged(canonical);
 }

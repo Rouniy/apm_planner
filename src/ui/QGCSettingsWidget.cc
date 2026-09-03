@@ -39,7 +39,7 @@ int findCaseInsensitiveData(const QComboBox *combo, const QString &value)
 }
 }
 
-QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
+QGCSettingsWidget::QGCSettingsWidget(QWidget *parent, SurfaceMode mode) :
     QWidget(parent),
     ui(new Ui::QGCSettingsWidget)
 {
@@ -191,6 +191,33 @@ QGCSettingsWidget::QGCSettingsWidget(QWidget *parent) :
             &DisplayViewProfileService::changed,
             this, &QGCSettingsWidget::syncDisplayLayout);
     syncDisplayLayout();
+
+    if (mode == SurfaceMode::LegacyPlanner) {
+        // The native Planner page owns these controls. Keep only useful
+        // legacy Qt settings here, and hide controls whose values have no
+        // effective consumer or would split the MAVLink identity owners.
+        mapGroup->hide();
+        unitsGroup->hide();
+        udpGroup->hide();
+        ui->reconnectCheckBox->hide();
+        ui->lowPowerCheckBox->hide();
+        ui->titleBarCheckBox->hide();
+        ui->heartbeatCheckBox->hide();
+        ui->mavlinkLoggingCheckBox->hide();
+        ui->enableBetaReleaseCheckBox->hide();
+        ui->autoProxyCheckBox->hide();
+        ui->hideDonateButtonCheckBox->hide();
+        ui->label_14->hide();
+        ui->MavlinkspinBox->hide();
+        ui->label_29->hide();
+        ui->label_15->hide();
+        ui->ComponentspinBox->hide();
+        ui->tabWidget->setTabText(
+            ui->tabWidget->indexOf(ui->general), tr("Legacy General"));
+        ui->tabWidget->setTabText(
+            ui->tabWidget->indexOf(ui->advanced),
+            tr("Legacy Telemetry Rates"));
+    }
 
     // Add all protocols
     /*QList<ProtocolInterface*> protocols = LinkManager::instance()->getProtocols();
@@ -447,6 +474,11 @@ void QGCSettingsWidget::showEvent(QShowEvent *evt)
 QGCSettingsWidget::~QGCSettingsWidget()
 {
     delete ui;
+}
+
+void QGCSettingsWidget::selectLegacyTelemetryRates()
+{
+    ui->tabWidget->setCurrentWidget(ui->advanced);
 }
 
 void QGCSettingsWidget::setLogDir()

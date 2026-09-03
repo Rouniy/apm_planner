@@ -23,11 +23,11 @@ This file is part of the APM_PLANNER project
 #include "ApmSoftwareConfig.h"
 #include "logging.h"
 #include "configuration.h"
+#include "DisplayViewProfile.h"
 
 #include <QXmlStreamReader>
 #include <QDir>
 #include <QFile>
-#include <QSettings>
 #include <QMessageBox>
 
 static const int MAX_REDIRECT_COUNT = 2;
@@ -134,12 +134,13 @@ ApmSoftwareConfig::ApmSoftwareConfig(QWidget *parent) : QWidget(parent),
     // Setup Parameter Progress bars
     ui.globalParamProgressBar->setRange(0,100);
 
-    QSettings settings;
-    settings.beginGroup("QGC_MAINWINDOW");
-    if (settings.contains("ADVANCED_MODE"))
-    {
-        m_isAdvancedMode = settings.value("ADVANCED_MODE").toBool();
-    }
+    DisplayViewProfileService *const profiles =
+        DisplayViewProfileService::instance();
+    m_isAdvancedMode = profiles->current().isAdvancedMode();
+    connect(profiles, &DisplayViewProfileService::changed,
+            this, [this, profiles]() {
+        advModeChanged(profiles->current().isAdvancedMode());
+    });
 
     connect(&m_populateTimer,SIGNAL(timeout()),this,SLOT(populateTimerTick()));
 }
