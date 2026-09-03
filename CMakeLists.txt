@@ -273,6 +273,8 @@ set(SOURCES
     src/comm/VehicleEndpoint.h
     src/comm/VehicleTargetManager.cpp
     src/comm/VehicleTargetManager.h
+    src/comm/RadioStatusMonitor.cpp
+    src/comm/RadioStatusMonitor.h
     src/comm/MAVLinkProtocol.cc
     src/comm/MAVLinkProtocol.h
     src/comm/MAVLinkSimulationLink.cc
@@ -2583,6 +2585,23 @@ if(BUILD_TESTING)
     set_tests_properties(antennatrackerviews_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_executable(radiostatusmonitor_tests
+        tests/test_radiostatusmonitor.cpp
+        src/comm/RadioStatusMonitor.cpp
+        src/comm/RadioStatusMonitor.h
+    )
+    target_include_directories(radiostatusmonitor_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(radiostatusmonitor_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME radiostatusmonitor_tests
+             COMMAND radiostatusmonitor_tests)
 
     add_executable(mavlinkinspectorwindow_tests
         tests/test_mavlinkinspectorwindow.cpp

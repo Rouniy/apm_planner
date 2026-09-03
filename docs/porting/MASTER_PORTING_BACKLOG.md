@@ -329,11 +329,11 @@ cancel states и lifecycle tests.
 - один thread-confined cancellable `QSerialPort` service — сделано; setup,
   initial center, partial writes, latest-target-wins, timeout, unplug/reconnect,
   reentrant transport callbacks и teardown покрыты тестами;
-- serial setup ViewModel/View, port collision/unplug/partial-write tests;
-- calibration, servo range/trim/reverse/speed/acceleration validation;
-- live tracker view, home selection и vehicle pointing loop;
+- serial setup ViewModel/View, port collision/unplug/partial-write tests — сделано;
+- calibration, servo range/trim/reverse/speed/acceleration validation — сделано;
+- live tracker view и vehicle pointing loop — сделано; PLAN home selection остаётся;
 - exact-target 25-field parameter page;
-- SiK trim search, teardown и hardware evidence;
+- SiK trim search и teardown — сделано; hardware evidence остаётся;
 - заменить старый `AntennaTrackerConfig` только после полного route gate.
 
 Gate для SETUP: все 53 MP10 routes классифицированы, ни одна подключённая

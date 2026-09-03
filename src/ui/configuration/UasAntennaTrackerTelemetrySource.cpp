@@ -1,10 +1,13 @@
 #include "UasAntennaTrackerTelemetrySource.h"
 
 #include "LinkManager.h"
+#include "RadioStatusMonitor.h"
 #include "SerialLinkInterface.h"
 #include "UASInterface.h"
 #include "UASManager.h"
+#include "VehicleTargetManager.h"
 
+#include <QDateTime>
 #include <QFileInfo>
 #include <QSerialPortInfo>
 
@@ -41,6 +44,13 @@ UasAntennaTrackerTelemetrySource::UasAntennaTrackerTelemetrySource(QObject *pare
             [this](UASInterface *) { emit telemetrySourceChanged(); });
     connect(manager, &UASManager::homePositionChanged, this,
             [this](double, double, double) { emit telemetrySourceChanged(); });
+    // The SNR source follows the exact current target, not the active UAS.
+    if (LinkManager *links = LinkManager::instance()) {
+        if (VehicleTargetManager *targets = links->vehicleTargetManager()) {
+            connect(targets, &VehicleTargetManager::currentTargetChanged, this,
+                    [this]() { emit telemetrySourceChanged(); });
+        }
+    }
 }
 
 AntennaTrackerVehicleFix UasAntennaTrackerTelemetrySource::vehicleFix() const
@@ -83,8 +93,24 @@ AntennaTrackerPosition UasAntennaTrackerTelemetrySource::trackerLocation(bool *v
 
 double UasAntennaTrackerTelemetrySource::localSnrDb() const
 {
-    // No structured RADIO_STATUS consumer exists yet (see the c19 plan, R5).
-    return 0.0;
+    // MP10 cs.localsnrdb for the exact physical link of the current target
+    // (VehicleTargetLease.endpoint.linkId); duplicate sysids on other links are
+    // never consulted. Every missing piece fails closed to 0.
+    LinkManager *links = LinkManager::instance();
+    if (!links) {
+        return 0.0;
+    }
+    RadioStatusMonitor *monitor = links->radioStatusMonitor();
+    VehicleTargetManager *targets = links->vehicleTargetManager();
+    if (!monitor || !targets) {
+        return 0.0;
+    }
+    const VehicleTargetLease lease = targets->acquireTarget();
+    if (!lease.isValid()) {
+        return 0.0;
+    }
+    return monitor->localSnrDb(
+        lease.endpoint.linkId, QDateTime::currentMSecsSinceEpoch());
 }
 
 void UasAntennaTrackerTelemetrySource::setTrackerHome(const AntennaTrackerPosition &position)

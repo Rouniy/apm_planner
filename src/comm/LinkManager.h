@@ -55,6 +55,7 @@ This file is part of the APM_PLANNER project
 class VehicleTargetManager;
 class VehicleCommandService;
 class ExactLinkTransmitter;
+class RadioStatusMonitor;
 class ParameterService;
 class QGCUASParamManager;
 class LinkManager : public QObject
@@ -76,6 +77,8 @@ public:
     MAVLinkProtocol* getProtocol() const;
     VehicleTargetManager *vehicleTargetManager() const;
     ExactLinkTransmitter *exactLinkTransmitter() const;
+    // Link-scoped SiK RADIO_STATUS / legacy RADIO statistics (MP10 localsnrdb).
+    RadioStatusMonitor *radioStatusMonitor() const;
     VehicleCommandService *vehicleCommandService() const;
     ParameterService *parameterService() const;
     QGCUASParamManager *parameterManager() const;
@@ -157,6 +160,7 @@ private:
     QScopedPointer<MAVLinkProtocol> m_mavlinkProtocol;
     VehicleTargetManager *m_vehicleTargetManager = nullptr;
     ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;
+    RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;
     ParameterService *m_parameterService = nullptr;
     QGCUASParamManager *m_parameterManager = nullptr;

@@ -31,6 +31,7 @@ This file is part of the APM_PLANNER project
 
 #include "LinkManagerFactory.h"
 #include "LinkManager.h"
+#include "RadioStatusMonitor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
 #include "ArduPilotMegaMAV.h"
@@ -51,6 +52,7 @@ This file is part of the APM_PLANNER project
 #include <QSettings>
 #include <QtSerialPort/qserialportinfo.h>
 #include <QTimer>
+#include <QDateTime>
 
 namespace
 {
@@ -105,6 +107,7 @@ LinkManager::LinkManager(QObject *parent) :
     m_mavlinkLoggingEnabled(true)
 {
     m_vehicleTargetManager = new VehicleTargetManager(this);
+    m_radioStatusMonitor = new RadioStatusMonitor(this);
     m_exactLinkTransmitter = new ExactLinkTransmitter(
         [this](int linkId, const QByteArray &frame) {
             QPointer<LinkInterface> link(
@@ -279,6 +282,7 @@ void LinkManager::shutdown()
         m_vehicleCommandService->forgetLink(linkId);
         m_parameterService->forgetLink(linkId);
         m_exactLinkTransmitter->forgetLink(linkId);
+        m_radioStatusMonitor->forgetLink(linkId);
         if (m_mavlinkProtocol) {
             m_mavlinkProtocol->forgetLink(linkId);
             if (link) {
@@ -327,6 +331,7 @@ void LinkManager::shutdown()
     }
 
     m_vehicleTargetManager->clear();
+    m_radioStatusMonitor->clear();
     m_mavlinkDecoder.reset();
     m_mavlinkProtocol.reset();
 }
@@ -537,6 +542,11 @@ ExactLinkTransmitter *LinkManager::exactLinkTransmitter() const
     return m_exactLinkTransmitter;
 }
 
+RadioStatusMonitor *LinkManager::radioStatusMonitor() const
+{
+    return m_radioStatusMonitor;
+}
+
 VehicleCommandService *LinkManager::vehicleCommandService() const
 {
     return m_vehicleCommandService;
@@ -614,6 +624,7 @@ void LinkManager::removeLink(int linkId)
     m_vehicleCommandService->forgetLink(linkId);
     m_parameterService->forgetLink(linkId);
     m_exactLinkTransmitter->forgetLink(linkId);
+    m_radioStatusMonitor->forgetLink(linkId);
     if (m_mavlinkProtocol) {
         m_mavlinkProtocol->forgetLink(linkId);
         disconnect(link,
@@ -750,6 +761,10 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
     if (link) {
         m_vehicleCommandService->observeMessage(link->getId(), message);
         m_parameterService->observeMessage(link->getId(), message);
+        // MP10 propagates RADIO/RADIO_STATUS to every vehicle on the link; the
+        // monitor keys the statistics by this physical link only.
+        m_radioStatusMonitor->observe(link->getId(), message,
+                                      QDateTime::currentMSecsSinceEpoch());
     }
     if (link
         && VehicleTargetManager::isVisibleDiscoveryMessage(message.msgid)) {

@@ -9,10 +9,11 @@
  * Application implementation over UASManager / LinkManager. The vehicle fix
  * comes from the active UAS, the tracker location from an explicit tracker
  * home (MP10 cs.TrackerLocation set by PLAN "Tracker Home") or, as MP10 does
- * when that is unset, from the vehicle home. localSnrDb() stays 0 until the
- * transport layer exposes RADIO_STATUS statistics (MAVLinkProtocol currently
- * decodes and drops them), which makes "Find Trim Pan" report the MP10
- * "No valid SiK radio detected." text instead of sweeping blind.
+ * when that is unset, from the vehicle home. localSnrDb() is MP10's
+ * cs.localsnrdb read from LinkManager's RadioStatusMonitor for the exact
+ * physical link of the current VehicleTargetManager lease, so duplicate sysids
+ * on other links never leak in; without LinkManager, monitor or a valid target
+ * it fails closed to 0, which keeps MP10's "No valid SiK radio detected." path.
  */
 class UasAntennaTrackerTelemetrySource final : public AntennaTrackerTelemetrySource
 {

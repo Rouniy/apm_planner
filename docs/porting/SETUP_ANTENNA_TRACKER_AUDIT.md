@@ -1,15 +1,18 @@
 # Mission Planner 10 Antenna Tracker SETUP audit
 
 Updated: 2026-09-03. This is an implementation handoff for the three
-Mission Planner 10 Antenna Tracker routes. It records the next functional
-slices; it is not evidence that the routes are implemented.
+Mission Planner 10 Antenna Tracker routes. It records both implemented
+foundations and the remaining functional slices.
 
 ## Current Qt state
 
-The active `SetupView` does not register any Antenna Tracker route. The old
-`AntennaTrackerConfig` is a UI-only stub instantiated by the unused
-`ApmHardwareConfig`, whose tracker buttons are hidden. Do not extend that stub
-as the new architecture. Replace it after the new routes are usable.
+The active `SetupView` registers the `Antenna Tracker (Serial)` and `Antenna
+Tracker (Live)` routes over one shared view model and serial service. The
+25-field `Antenna Tracker` parameter route is still missing. The old
+`AntennaTrackerConfig` remains a UI-only stub instantiated by the unused
+`ApmHardwareConfig`, whose tracker buttons are hidden; do not extend that stub
+as the new architecture. Remove it after the replacement parameter route and
+profile gate are usable.
 
 ## Required routes and visibility
 
@@ -109,8 +112,9 @@ batch commit instead of MP10's immediate write followed by a duplicate
   `VehicleCommandService`.
 - `UASInterface::servoOutputChanged`, `globalPositionChanged` and
   `UASManager::homePositionChanged`.
-- `LinkManager::messageReceived` for `RADIO`/`RADIO_STATUS`, after adding a
-  structured SNR consumer rather than scraping logs.
+- `RadioStatusMonitor`, owned and fed by `LinkManager`, for structured
+  link-scoped `RADIO`/`RADIO_STATUS` snapshots and MP10-compatible SNR rather
+  than scraping logs.
 
 The packaged resources currently lack `antennatracker.pdef.xml`; add/update
 the metadata package before relying on enum choices. Never silently treat the
@@ -129,9 +133,10 @@ explicit tracker-home state and later share it with the PLAN action.
    the `AntennaTrackerTelemetrySource` abstraction with the UASManager-backed
    implementation, MP10 settings keys, the 10 Hz loop, manual slew, Home / Center
    and the cancellable SiK trim sweep; routes registered after ESP8266 Setup.
-   Remaining for this slice: a structured RADIO_STATUS consumer so
-   `localSnrDb()` stops returning 0 (SETUP-020), the PLAN "Tracker Home" action
-   feeding `setTrackerHome()`, and profile gating (SETUP-021).
+   `RadioStatusMonitor` now feeds `localSnrDb()` from the current exact
+   target's physical link (SETUP-020). Remaining for this slice: the PLAN
+   "Tracker Home" action feeding `setTrackerHome()` and profile gating
+   (SETUP-021).
 4. Done: pure `AntennaTrackerGeometry` with north/east/altitude, zero-distance,
    dateline, pole and antipodal tests; live telemetry binding remains in slice 3.
 5. `ConfigAntennaTrackerParamViewModel/View` with all fields, custom reverse

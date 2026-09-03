@@ -16,22 +16,22 @@ minor visual matching is recorded and deferred until the useful workflows exist.
 
 The immediate user-directed order is:
 
-1. Keep the recovered PLAN row actions, multi-instance MAVLink Inspector and Antenna Tracker foundations green while the uncommitted slices are reviewed and checkpointed.
-2. Continue the Antenna Tracker vertical slice: the shared serial/live view model, both MP10-named pages and their SETUP routes are implemented and tested (uncommitted, see below); next are the RADIO_STATUS SNR consumer for the trim sweep, the PLAN "Tracker Home" action and the exact-target parameter page.
+1. Keep the committed PLAN row actions, multi-instance MAVLink Inspector and Antenna Tracker foundations green.
+2. Continue the Antenna Tracker vertical slice: the shared serial/live pages and the exact-link `RADIO_STATUS`/legacy `RADIO` SNR consumer are implemented; next are the PLAN "Tracker Home" action and the exact-target parameter page.
 3. Replace disabled Advanced/Developer actions and missing high-value SETUP/TOOLS pages with complete workflows in the master-backlog order; widen the trusted QML API where a real plugin workflow needs it.
 4. Return to complete DATA HUD telemetry and CONFIG Onboard OSD after the main plugin surface is usable; do not spend the primary stream on pixel polish.
 5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
 
 ## Verified checkpoint
 
-The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`). The PLAN fixed-wrapper slice described below is the next verified checkpoint; use `git log` for its final commit id.
+The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`). The later verified checkpoints include `9d69cebb` (PLAN wrapper geometry), `9b180eba` (waypoint row actions), `e6d9e75b` (independent Inspector windows), `fbeacd6e` (Antenna Tracker pages) and `e7d5e58b` (their parity-ledger checkpoint).
 
 At this checkpoint:
 
-- CMake configure and one `cmake --build build-codex-qt -j12` completed successfully.
-- The complete test suite passed: **91/91 tests**.
+- CMake configure and one `cmake --build build-codex-qt -j12` completed successfully; the link-scoped radio monitor and its application integration also build in `build-claude`.
+- The complete test suite passed after the radio-monitor integration: **94/94 tests**.
 - Real X11 smoke tests opened the app with title `APM Planner 3.0.0 (...) — APM Planner`, opened two simultaneous Inspector windows, verified that Enter/Escape do not invoke dialog semantics, closed one independently and then closed the application cleanly with the other open.
-- The post-checkpoint working tree contains the recovered PLAN row actions, the explicit multi-instance MAVLink Inspector lifecycle, `AntennaTrackerGeometry` and the raw-serial tracker service. Their focused and full-suite gates pass; the slices remain uncommitted and must stay visible in `git status` until deliberately checkpointed.
+- The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, `AntennaTrackerGeometry`, raw-serial tracker service and shared tracker pages are committed. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
@@ -56,6 +56,7 @@ These are working foundations, though their parity rows may remain partial becau
 - The MP10 ESP8266 page: exact component-240 parameter loading, bytewise packed settings, 22 serialized writes, storage/reboot/reset commands and a target-safe Qt view lifecycle.
 - The MP10 SETUP OSD page: the exact legacy MinimOSD telemetry helper surface and its ordered 24-parameter 2 Hz write batch, with committed-snapshot filtering, partial-vehicle reporting and exact-target transaction lifecycle guards.
 - The MP10 Antenna Tracker output foundation: exact Maestro compact commands and ArduTracker/DegreeTracker text protocols with tested trim, reverse, clamp, wrap and tilt-flip arithmetic behind an injectable writer.
+- Link-scoped MP10-compatible `RADIO_STATUS`/legacy `RADIO` snapshots and read-driven local/remote SNR filtering, isolated by physical `linkId` and cleared with link removal.
 - Pure Antenna Tracker pointing geometry with MP-compatible AZ/EL/distance functions plus explicit validity, dateline and pole handling.
 - The thread-confined Antenna Tracker raw-serial service: dedicated Qt SerialPort 8N1 transport, setup/centering pipeline, bounded latest-target-wins backpressure, write watchdog, generation-aware cancellation and fail-closed unplug/reconnect behavior.
 - Visible per-row PLAN Up/Down/Delete controls that reuse the existing store-aware operations, including undo and DO_JUMP remapping.
@@ -97,7 +98,7 @@ The first-activation SETUP stall is fixed: `ApmCustomFirmwareConfig` yields befo
 
 The next audited SETUP packages are CubeID and Secure. CubeID is a target-aware firmware updater, not another HW-ID presentation; its CubePilot messages are absent from the current generated dialect and require a coordinated MAVLink update. `ConfigSecureView` manages bootloader public-key slots with `SECURE_COMMAND`, while `ConfigSecureApView` generates Ed25519 keys and signs bootloader/firmware files; MAVLink link signing remains a separate Advanced Tools workflow. The security pages need a reviewed cross-platform Ed25519 dependency before implementation.
 
-The three Antenna Tracker routes are audited in `SETUP_ANTENNA_TRACKER_AUDIT.md`. The `Antenna Tracker (Serial)` and `Antenna Tracker (Live)` routes now exist after `ESP8266 Setup`: one shared `AntennaTrackerUIViewModel` (owned by `SetupView`, so the tracker loop survives page resets and navigation like MP10) drives `ConfigAntennaTrackerView` and `AntennaTrackerUIView` on top of `AntennaTrackerSerialService`, `AntennaTrackerGeometry` and a `UasAntennaTrackerTelemetrySource`; `antennatrackeruiviewmodel_tests` (11 cases) and `antennatrackerviews_tests` (4 cases) cover MP10 texts, validation order, settings, the loop, manual mode, live trim/reverse, failure recovery, the trim sweep and shutdown. The pages were smoke-tested on real X11 under Xvfb with a local SITL: both routes render, a real `QSerialPort` connect to a local UART reached `Connected (Maestro).`, Vehicle Az updated live and the application closed cleanly while connected. Deviations SETUP-018..022 record the shared instance, the Home / Center quirk, the still-missing SiK SNR source, gating/tracker-home gaps and GUI approximations. The pure Maestro/ArduTracker/DegreeTracker output codecs, pointing geometry and cancellable raw-serial service are implemented and tested. The active sequence is shared serial/live view models and routes, then the exact-target 25-field parameter page and cancellable SiK trim search. The old `AntennaTrackerConfig` remains until these replacements are routed and verified.
+The three Antenna Tracker routes are audited in `SETUP_ANTENNA_TRACKER_AUDIT.md`. The `Antenna Tracker (Serial)` and `Antenna Tracker (Live)` routes now exist after `ESP8266 Setup`: one shared `AntennaTrackerUIViewModel` (owned by `SetupView`, so the tracker loop survives page resets and navigation like MP10) drives `ConfigAntennaTrackerView` and `AntennaTrackerUIView` on top of `AntennaTrackerSerialService`, `AntennaTrackerGeometry` and a `UasAntennaTrackerTelemetrySource`; `antennatrackeruiviewmodel_tests` (11 cases) and `antennatrackerviews_tests` (4 cases) cover MP10 texts, validation order, settings, the loop, manual mode, live trim/reverse, failure recovery, the trim sweep and shutdown. `RadioStatusMonitor` now consumes both MAVLink radio-statistics messages per physical link and reproduces MP10's raw-unit SNR formula, 50 percent read-driven EMA and one-second hold; the telemetry source reads only the current exact target's link. The pages were smoke-tested on real X11 under Xvfb with a local SITL: both routes render, a real `QSerialPort` connect to a local UART reached `Connected (Maestro).`, Vehicle Az updated live and the application closed cleanly while connected. Deviations SETUP-018..022 record the shared instance, the Home / Center quirk, the intentional cancellable trim state machine, gating/tracker-home gaps and GUI approximations. The active sequence is the PLAN "Tracker Home" action, then the exact-target 25-field parameter page and remaining route/profile gates. The old `AntennaTrackerConfig` remains until these replacements are routed and verified.
 
 Legacy APM Planner binary plugins are not a requirement. Where MP10 calls something a plugin/page/tool, reproduce the user-visible function with a native Qt page/service or the trusted QML extension system; do not restore the old ABI.
 
