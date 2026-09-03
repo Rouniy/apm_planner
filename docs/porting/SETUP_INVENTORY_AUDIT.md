@@ -73,8 +73,9 @@ seed the missing direct routes after ownership and lifecycle review.
 Retention does not permit a misleading replacement. A legacy module may be an
 additional clearly named route, or a temporary partial implementation of the
 same workflow, but it must not perform an unrelated operation under an MP10
-name. This is why CONFIG `Onboard OSD` is a high-priority wrong-page issue,
-while useful legacy SETUP hardware pages remain available.
+name. This is why the unrelated legacy stream-rate helper was removed from the
+CONFIG `Onboard OSD` route until its real editor is ported, while useful legacy
+SETUP hardware pages remain available.
 
 ## Ordering and visibility gaps
 

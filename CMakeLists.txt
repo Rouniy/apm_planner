@@ -747,6 +747,8 @@ set(SOURCES
     src/ui/configuration/ApmSoftwareConfig.ui
     src/ui/configuration/ConfigView.cpp
     src/ui/configuration/ConfigView.h
+    src/ui/configuration/ConfigRouteProfile.cpp
+    src/ui/configuration/ConfigRouteProfile.h
     src/ui/configuration/ConfigFriendlyParamsView.cpp
     src/ui/configuration/ConfigFriendlyParamsView.h
     src/ui/configuration/ConfigFriendlyParamsViewModel.cpp
@@ -1722,6 +1724,20 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME qgcparamid_tests COMMAND qgcparamid_tests)
+
+    add_executable(configrouteprofile_tests
+        tests/test_configrouteprofile.cpp
+        src/ui/configuration/ConfigRouteProfile.cpp
+        src/ui/configuration/ConfigRouteProfile.h
+    )
+    target_include_directories(configrouteprofile_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(configrouteprofile_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configrouteprofile_tests COMMAND configrouteprofile_tests)
 
     add_executable(friendlyparams_tests
         tests/test_configfriendlyparamsview.cpp

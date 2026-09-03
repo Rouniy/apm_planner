@@ -110,7 +110,7 @@ The next coherent PLAN package should combine Grid, KML preview/export, a persis
 
 The SETUP phase must compare the whole MP10 navigation model with the Qt backstage model, then classify every route as working, partial, stub or missing. Prioritize pages that can be made end-to-end functional on existing exact-target/parameter/command services and already implemented widgets.
 
-The current navigation audit in `SETUP_INVENTORY_AUDIT.md` finds 53 MP10 pages versus 38 concrete Qt page factories. Both have the same three named group headings, for totals of 56 versus 41 navigation entries. Qt is missing 16 MP10 pages and adds the useful native `QML Plugins` manager, so this is intentionally not a one-to-one count. The SETUP `OSD` route uses the dedicated `ConfigHWOSDView` legacy MinimOSD telemetry helper; the separate CONFIG `Onboard OSD` canvas/editor is still absent and remains incorrectly represented by the old `OsdConfig`. Many other MP10 workflows remain partial or missing, while useful non-empty legacy APM Planner hardware modules are retained and classified separately.
+The current navigation audit in `SETUP_INVENTORY_AUDIT.md` finds 53 MP10 pages versus 38 concrete Qt page factories. Both have the same three named group headings, for totals of 56 versus 41 navigation entries. Qt is missing 16 MP10 pages and adds the useful native `QML Plugins` manager, so this is intentionally not a one-to-one count. The SETUP `OSD` route uses the dedicated `ConfigHWOSDView` legacy MinimOSD telemetry helper; the separate CONFIG `Onboard OSD` canvas/editor is still absent, and the unrelated old `OsdConfig` is no longer exposed under that name. Many other MP10 workflows remain partial or missing, while useful non-empty legacy APM Planner hardware modules are retained and classified separately.
 
 The verified SETUP packages include the common `ActionPageView`, the exact 16-action `ConfigAdvancedView` inventory with six working shared tools (MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target / TAK, Map Tile Cache and Proximity), a standalone inspector window, Advanced Terminal, and a user-facing trusted QML plugin manager. Developer Tools exposes the exact 32-action inventory with working byte/MAVLink/hardware-ID parsers plus the shared Device Operations window: 3 of 32 actions are usable and the other 29 are explicitly disabled. Default Settings, HW ID and ADSB are routed in MP10 order and connected to the committed exact-target parameter snapshot; ADSB identification uses the application-owned exact-link transmitter rather than a legacy global send path.
 
@@ -128,13 +128,21 @@ Legacy APM Planner binary plugins are not a requirement. Where MP10 calls someth
 
 The active Settings path is `MainWindow -> ConfigView`; the compiled
 `ApmSoftwareConfig` is not the production surface. MP10 registers 15 ordered
-CONFIG routes, while Qt currently registers 13 concrete factories. `Heli Setup`
-and `MAVFtp` are absent. None of the 13 factories literally returns a null
-widget, but this does not make the surface equivalent: `Onboard OSD` currently
-opens the unrelated legacy MinimOSD stream-rate helper, and a helicopter passes
-Qt's broad multirotor gate and therefore sees the Copter `Basic Tuning` page
-instead of `Heli Setup`. Plane `QP Extended Tuning` is also absent, and the Qt
-GeoFence/profile gates do not match MP10's `DisplayView` gates.
+CONFIG routes, while the truthful Qt shell currently registers 12 concrete
+factories. `Heli Setup`, `Onboard OSD` and `MAVFtp` are absent until their real
+workflows exist; the unrelated legacy MinimOSD stream-rate helper is no longer
+reachable as `Onboard OSD`. Helicopter detection combines MP10's
+`H_SWASH_TYPE` marker with an early heartbeat fail-safe and hides Copter Basic
+rather than opening the wrong widget. The shared firmware
+family now gives Plane Basic to VTOL and Rover Basic to surface boats. Useful
+legacy Flight Modes, GeoFence, vehicle tuning and Planner factories remain
+under their reference headers with a visible `Legacy` badge. Plane `QP Extended Tuning` is still
+absent, and the Qt GeoFence/profile gates do not match MP10's `DisplayView`
+gates. The QtCore-only `ConfigRouteProfile` now records all 15 MP10 routes in
+reference order, separates reference visibility from the 12 currently
+actionable Qt factories and tests offline/advanced, Copter, Heli, Plane/VTOL,
+Rover and per-feature profile gates. `ConfigView` consumes that policy instead
+of maintaining a second set of vehicle lambdas.
 
 The persistent blank Settings content path through vehicle/parameter resets is
 fixed at the shared backstage boundary. Re-enabling automatic selection with
@@ -145,14 +153,14 @@ visibility fallback is guarded so it does not overwrite the user's saved route.
 The regression test proves a non-empty page ID, current widget and stack index
 after the formerly blank reset ordering without eagerly constructing an earlier
 factory. A broader production `ConfigView` matrix across Copter, Plane, Rover,
-Heli, advanced mode and target changes remains desirable coverage rather than a
-known blank-view defect. Until the true onboard editor exists, the wrong
-`Onboard OSD` route must not remain actionable; Copter Basic Tuning must likewise
-be hidden for Heli. The next functional package is the truthful route/profile
-shell, followed by the phase-one Onboard OSD editor documented in
-`OSD_AUDIT.md`, native Planner preferences and a shared `DisplayView` profile
-service. The parity ledger retains the exact per-route classification so missing
-pages cannot be mistaken for working settings.
+Heli, advanced mode and target changes is now covered at the pure production
+route-policy boundary; a full singleton-backed `ConfigView` fixture remains
+unnecessarily broad. The first truthful route/profile correction is now in
+place. The next functional package is the phase-one Onboard OSD editor
+documented in `OSD_AUDIT.md`, followed by native Planner preferences and a
+shared `DisplayView` profile service. The parity ledger retains the exact
+per-route classification so missing pages cannot be mistaken for working
+settings.
 
 ## Architecture constraints
 

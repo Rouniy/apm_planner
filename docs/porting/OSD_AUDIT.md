@@ -12,8 +12,8 @@ but have different purposes.
   its widget/class identity and transaction feedback are incomplete.
 - CONFIG `Onboard OSD`, ID `ConfigOSDView`, is a separate onboard layout
   editor after Extended Tuning. It requires a connected target, a complete
-  parameter list and MP10's `displayOSD` gate. Qt currently misroutes this ID
-  to `OsdConfig`; no onboard editor exists yet.
+  parameter list and MP10's `displayOSD` gate. The former wrong `OsdConfig`
+  route has been removed; no onboard editor exists yet.
 - Developer Tools `OSD Video — Telemetry Overlay` and PLAN `OSD Color` are
   independent functions and must not be folded into either page.
 

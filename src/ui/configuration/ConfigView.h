@@ -2,6 +2,7 @@
 #define CONFIGVIEW_H
 
 #include "ParamField.h"
+#include "ConfigRouteProfile.h"
 
 #include <QPointer>
 #include <QString>
@@ -67,7 +68,8 @@ private:
     QWidget *createRawParamsPage(QWidget *parent);
     QList<ConfigFriendlyParameterValue> parameterSnapshot(int componentId) const;
     ParameterFirmwareFamily parameterFirmwareFamily() const;
-    bool friendlyParametersSupported() const;
+    ConfigRouteContext routeContext() const;
+    bool isHelicopterProfile() const;
     bool hasConnectedLink() const;
     bool currentPageAllowsPartialParameters() const;
 

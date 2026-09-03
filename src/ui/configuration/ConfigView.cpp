@@ -4,6 +4,7 @@
 #include "ArduRoverPidConfig.h"
 #include "BasicPidConfig.h"
 #include "CopterPidConfig.h"
+#include "ConfigRouteProfile.h"
 #include "ConfigPlannerAdvView.h"
 #include "ConfigFriendlyParamsView.h"
 #include "ConfigRawParams.h"
@@ -12,7 +13,6 @@
 #include "GeoFenceConfig.h"
 #include "LinkInterface.h"
 #include "LinkManager.h"
-#include "OsdConfig.h"
 #include "QGCSettingsWidget.h"
 #include "QGCUASParamManager.h"
 #include "ArduPilotMegaMAV.h"
@@ -46,7 +46,6 @@ const QString kBasicTuning = QStringLiteral("ConfigBasicTuningView");
 const QString kPlaneTuning = QStringLiteral("ConfigArduplaneView");
 const QString kRoverTuning = QStringLiteral("ConfigArduroverView");
 const QString kExtendedTuning = QStringLiteral("ConfigExtendedTuningView");
-const QString kOnboardOsd = QStringLiteral("ConfigOSDView");
 const QString kUserParams = QStringLiteral("ConfigUserDefinedView");
 const QString kFullParameterList = QStringLiteral("RawParamsView");
 const QString kPlanner = QStringLiteral("ConfigPlannerView");
@@ -143,28 +142,26 @@ ConfigView::~ConfigView() = default;
 
 void ConfigView::buildPages()
 {
-    const auto connected = [this]() { return m_connected; };
-    const auto copter = [this]() {
-        return m_connected && m_uas && m_uas->isMultirotor();
+    const auto routeVisible = [this](ConfigRouteId route) {
+        return [this, route]() {
+            return ConfigRouteProfile::isActionable(route, routeContext());
+        };
     };
-    const auto plane = [this]() {
-        return m_connected && m_uas && m_uas->isFixedWing();
+    const auto legacy = [this](BackstagePage page) {
+        page.badge = tr("Legacy");
+        return page;
     };
-    const auto rover = [this]() {
-        return m_connected && m_uas && m_uas->isGroundRover();
-    };
-    const auto always = []() { return true; };
 
-    m_backstage->addPage(makeBackstagePage<FlightModeConfig>(
-        kFlightModes, tr("Flight Modes"), connected));
+    m_backstage->addPage(legacy(makeBackstagePage<FlightModeConfig>(
+        kFlightModes, tr("Flight Modes"),
+        routeVisible(ConfigRouteId::FlightModes))));
 
     BackstagePage standardParameters;
     standardParameters.id = kStandardParams;
     standardParameters.header = tr("Standard Params");
     standardParameters.requiresConnection = true;
-    standardParameters.visibleWhen = [this]() {
-        return m_connected && friendlyParametersSupported();
-    };
+    standardParameters.visibleWhen =
+        routeVisible(ConfigRouteId::StandardParams);
     standardParameters.factory = [this](QWidget *parent) {
         return createFriendlyParamsPage(false, parent);
     };
@@ -175,32 +172,39 @@ void ConfigView::buildPages()
     advancedParameters.header = tr("Advanced Params");
     advancedParameters.requiresConnection = true;
     advancedParameters.isAdvanced = true;
-    advancedParameters.visibleWhen = [this]() {
-        return m_connected && m_advanced && friendlyParametersSupported();
-    };
+    advancedParameters.visibleWhen =
+        routeVisible(ConfigRouteId::AdvancedParams);
     advancedParameters.factory = [this](QWidget *parent) {
         return createFriendlyParamsPage(true, parent);
     };
     m_backstage->addPage(advancedParameters);
 
-    m_backstage->addPage(makeBackstagePage<GeoFenceConfig>(
-        kGeoFence, tr("GeoFence"), copter));
-    m_backstage->addPage(makeBackstagePage<BasicPidConfig>(
-        kBasicTuning, tr("Basic Tuning"), copter));
-    m_backstage->addPage(makeBackstagePage<ArduPlanePidConfig>(
-        kPlaneTuning, tr("Basic Tuning (Plane)"), plane));
-    m_backstage->addPage(makeBackstagePage<ArduRoverPidConfig>(
-        kRoverTuning, tr("Basic Tuning (Rover)"), rover));
-    m_backstage->addPage(makeBackstagePage<CopterPidConfig>(
-        kExtendedTuning, tr("Extended Tuning"), copter));
-    m_backstage->addPage(makeBackstagePage<OsdConfig>(
-        kOnboardOsd, tr("Onboard OSD"), connected));
+    m_backstage->addPage(legacy(makeBackstagePage<GeoFenceConfig>(
+        kGeoFence, tr("GeoFence"),
+        routeVisible(ConfigRouteId::GeoFence))));
+    m_backstage->addPage(legacy(makeBackstagePage<BasicPidConfig>(
+        kBasicTuning, tr("Basic Tuning"),
+        routeVisible(ConfigRouteId::BasicTuning))));
+    // MP10's Heli Setup route remains intentionally absent until its distinct
+    // editor is ported; never substitute the Copter tuning widget for it.
+    m_backstage->addPage(legacy(makeBackstagePage<ArduPlanePidConfig>(
+        kPlaneTuning, tr("Basic Tuning (Plane)"),
+        routeVisible(ConfigRouteId::PlaneTuning))));
+    m_backstage->addPage(legacy(makeBackstagePage<ArduRoverPidConfig>(
+        kRoverTuning, tr("Basic Tuning (Rover)"),
+        routeVisible(ConfigRouteId::RoverTuning))));
+    m_backstage->addPage(legacy(makeBackstagePage<CopterPidConfig>(
+        kExtendedTuning, tr("Extended Tuning"),
+        routeVisible(ConfigRouteId::ExtendedTuning))));
+    // MP10's Onboard OSD and MAVFtp routes remain intentionally absent until
+    // their real workflows exist. OsdConfig is only a legacy stream-rate
+    // helper and must not masquerade as the onboard layout editor.
 
     BackstagePage userParameters;
     userParameters.id = kUserParams;
     userParameters.header = tr("User Params");
     userParameters.requiresConnection = true;
-    userParameters.visibleWhen = connected;
+    userParameters.visibleWhen = routeVisible(ConfigRouteId::UserParams);
     userParameters.factory = [this](QWidget *parent) {
         return createUserDefinedPage(parent);
     };
@@ -211,7 +215,8 @@ void ConfigView::buildPages()
     rawParameters.header = tr("Full Parameter List");
     rawParameters.requiresConnection = false;
     rawParameters.allowsPartialParameters = true;
-    rawParameters.visibleWhen = always;
+    rawParameters.visibleWhen =
+        routeVisible(ConfigRouteId::FullParameterList);
     rawParameters.factory = [this](QWidget *parent) {
         return createRawParamsPage(parent);
     };
@@ -220,7 +225,8 @@ void ConfigView::buildPages()
     BackstagePage planner;
     planner.id = kPlanner;
     planner.header = tr("Planner");
-    planner.visibleWhen = always;
+    planner.badge = tr("Legacy");
+    planner.visibleWhen = routeVisible(ConfigRouteId::Planner);
     planner.factory = [](QWidget *parent) {
         auto *settings = new QGCSettingsWidget(parent);
         return scrollablePage(settings, kPlanner, parent);
@@ -229,7 +235,10 @@ void ConfigView::buildPages()
 
     m_backstage->addPage(makeBackstagePage<ConfigPlannerAdvView>(
         kPlannerAdvanced, tr("Planner (Advanced)"),
-        [this]() { return m_advanced; }, false, true));
+        routeVisible(ConfigRouteId::PlannerAdvanced), false, true));
+
+    Q_ASSERT(m_backstage->pageIds()
+             == ConfigRouteProfile::currentFactoryPageIds());
 }
 
 void ConfigView::advModeChanged(bool advanced)
@@ -319,7 +328,6 @@ void ConfigView::vehicleDisconnected()
 
 void ConfigView::parameterListUpToDate(int component)
 {
-    Q_UNUSED(component)
     if (sender() && sender() != m_parameterManager) {
         return;
     }
@@ -327,7 +335,11 @@ void ConfigView::parameterListUpToDate(int component)
     m_parameterLoadFailure.clear();
     m_parameterLoadingCanceled = false;
     m_parameterRetryPending = false;
-    refreshLoadingOverlay();
+    if (component == MAV_COMP_ID_AUTOPILOT1) {
+        refreshPageVisibility();
+    } else {
+        refreshLoadingOverlay();
+    }
 }
 
 void ConfigView::parameterListLoadStarted()
@@ -351,6 +363,8 @@ void ConfigView::parameterListReadyChanged(bool ready)
         m_parameterLoadFailure.clear();
         m_parameterLoadingCanceled = false;
         m_parameterRetryPending = false;
+        refreshPageVisibility();
+        return;
     }
     refreshLoadingOverlay();
 }
@@ -577,6 +591,16 @@ void ConfigView::bindParameterManager(QGCUASParamManager *manager)
     connect(m_parameterManager,
             &QGCUASParamManager::parameterListProgressChanged,
             this, [this](int, int, int) { refreshLoadingOverlay(); });
+    connect(m_parameterManager,
+            QOverload<int, QString, QVariant>::of(
+                &QGCUASParamManager::parameterChanged),
+            this, [this](int component, const QString &name,
+                         const QVariant &) {
+        if (component == MAV_COMP_ID_AUTOPILOT1
+            && name == QStringLiteral("H_SWASH_TYPE")) {
+            refreshPageVisibility();
+        }
+    });
 }
 
 void ConfigView::resetVehiclePages(bool targetChanged)
@@ -1012,12 +1036,51 @@ ParameterFirmwareFamily ConfigView::parameterFirmwareFamily() const
     }
 }
 
-bool ConfigView::friendlyParametersSupported() const
+bool ConfigView::isHelicopterProfile() const
 {
+    if (!m_uas
+        || parameterFirmwareFamily()
+            != ParameterFirmwareFamily::ArduCopter) {
+        return false;
+    }
+    if (m_uas->isHelicopter()) {
+        return true;
+    }
+    QVariant ignored;
+    return m_parameterManager
+        && m_parameterManager->getParameterValue(
+               MAV_COMP_ID_AUTOPILOT1,
+               QStringLiteral("H_SWASH_TYPE"), ignored);
+}
+
+ConfigRouteContext ConfigView::routeContext() const
+{
+    ConfigRouteContext context;
+    context.connected = m_connected;
+    context.advanced = m_advanced;
     const ParameterFirmwareFamily family = parameterFirmwareFamily();
-    return family == ParameterFirmwareFamily::ArduCopter
-        || family == ParameterFirmwareFamily::ArduPlane
-        || family == ParameterFirmwareFamily::Rover;
+    switch (family) {
+    case ParameterFirmwareFamily::ArduCopter:
+        context.vehicle = isHelicopterProfile()
+            ? ConfigVehicleKind::Helicopter
+            : ConfigVehicleKind::Copter;
+        break;
+    case ParameterFirmwareFamily::ArduPlane:
+        context.vehicle = ConfigVehicleKind::Plane;
+        break;
+    case ParameterFirmwareFamily::Rover:
+        context.vehicle = ConfigVehicleKind::Rover;
+        break;
+    case ParameterFirmwareFamily::Unknown:
+        context.vehicle = m_uas ? ConfigVehicleKind::Other
+                                : ConfigVehicleKind::Unknown;
+        break;
+    case ParameterFirmwareFamily::ArduSub:
+    case ParameterFirmwareFamily::AntennaTracker:
+        context.vehicle = ConfigVehicleKind::Other;
+        break;
+    }
+    return context;
 }
 
 void ConfigView::refreshLoadingOverlay()
