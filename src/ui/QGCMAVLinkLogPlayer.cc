@@ -1,6 +1,7 @@
 #include "logging.h"
 #include "MainWindow.h"
 #include "QGCMAVLinkLogPlayer.h"
+#include "QGCMAVLinkInspector.h"
 #include "QGC.h"
 #include "ui_QGCMAVLinkLogPlayer.h"
 
@@ -16,7 +17,7 @@ QGCMAVLinkLogPlayer::QGCMAVLinkLogPlayer(QWidget *parent):
     m_logLink(NULL),
     m_logLoaded(false),
     m_mavlinkDecoder(NULL),
-    m_mavlinkInspector(NULL)
+    m_inspectorRelay()
 {
     ui->setupUi(this);
     ui->horizontalLayout->setAlignment(Qt::AlignTop);
@@ -188,7 +189,9 @@ void QGCMAVLinkLogPlayer::loadLogDialogAccepted()
 
     m_logLink = new TLogReplayLink(this);
     //m_logLink->setMavlinkDecoder(m_mavlinkDecoder);
-    m_logLink->setMavlinkInspector(m_mavlinkInspector);
+    connect(m_logLink, &TLogReplayLink::inspectorMessage,
+            &m_inspectorRelay, &MAVLinkInspectorMessageRelay::publish,
+            Qt::QueuedConnection);
     connect(m_logLink,SIGNAL(logProgress(qint64,qint64)),this,SLOT(logProgress(qint64,qint64)));
     connect(m_logLink,SIGNAL(finished()),this,SLOT(logLinkTerminated()));
 
@@ -218,12 +221,33 @@ void QGCMAVLinkLogPlayer::setMavlinkDecoder(MAVLinkDecoder *decoder)
 {
     m_mavlinkDecoder = decoder;
 }
-void QGCMAVLinkLogPlayer::setMavlinkInspector(QGCMAVLinkInspector *inspector)
+void QGCMAVLinkLogPlayer::addMavlinkInspector(
+    QGCMAVLinkInspector *inspector)
 {
-    m_mavlinkInspector = inspector;
-    if (m_logLink) {
-        m_logLink->setMavlinkInspector(inspector);
+    if (!inspector) {
+        return;
     }
+
+    const QPointer<QGCMAVLinkInspector> guardedInspector(inspector);
+    m_inspectorRelay.subscribe(
+        inspector,
+        [guardedInspector](LinkInterface *link,
+                           const mavlink_message_t &message) {
+            if (guardedInspector) {
+                guardedInspector->receiveMessage(link, message);
+            }
+        });
+}
+
+void QGCMAVLinkLogPlayer::removeMavlinkInspector(
+    QGCMAVLinkInspector *inspector)
+{
+    m_inspectorRelay.unsubscribe(inspector);
+}
+
+int QGCMAVLinkLogPlayer::mavlinkInspectorSubscriberCount() const
+{
+    return m_inspectorRelay.subscriberCount();
 }
 
 void QGCMAVLinkLogPlayer::playButtonClicked()

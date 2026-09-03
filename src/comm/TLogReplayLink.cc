@@ -132,18 +132,6 @@ void TLogReplayLink::setMavlinkDecoder(MAVLinkDecoder *decoder)
         m_ownsMavlinkDecoder = true;
     }
 }
-void TLogReplayLink::setMavlinkInspector(QGCMAVLinkInspector *inspector)
-{
-    QObject::disconnect(m_inspectorConnection);
-    m_inspectorConnection = QMetaObject::Connection();
-    if (inspector) {
-        m_inspectorConnection = QObject::connect(
-            this, &TLogReplayLink::inspectorMessage,
-            inspector, &QGCMAVLinkInspector::receiveMessage,
-            Qt::QueuedConnection);
-    }
-}
-
 void TLogReplayLink::run()
 {
     m_pause = false;

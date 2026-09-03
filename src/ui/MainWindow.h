@@ -64,6 +64,7 @@ This file is part of the QGROUNDCONTROL project
 #include <QList>
 #include <QNetworkProxy>
 #include <QActionGroup>
+#include <QPointer>
 
 class QGCMapTool;
 class QGCFirmwareUpdate;
@@ -75,7 +76,7 @@ class FlightDataView;
 class FlightPlannerView;
 class FlightPlannerViewModel;
 class QGCMapTool;
-class QGCMAVLinkInspector;
+class MAVLinkInspectorWindow;
 class HelpView;
 
 /**
@@ -198,7 +199,7 @@ public slots:
     void showSettings();
     /** @brief Show the current PLAN mission elevation profile. */
     void showMissionElevation();
-    /** @brief Show the shared modeless MAVLink inspector tool window. */
+    /** @brief Open a new modeless MAVLink inspector tool window. */
     void showMavlinkInspector();
     /** @brief Apply Mission Planner altitude display units to PLAN live. */
     void setPlannerAltitudeUnits(const QString &units);
@@ -501,7 +502,7 @@ protected:
     QPointer<QGCStatusBar> customStatusBar;
 
 
-    QPointer<QGCMAVLinkInspector> m_mavlinkInspectorWindow;
+    QList<QPointer<MAVLinkInspectorWindow>> m_mavlinkInspectorWindows;
     QPointer<MAVLinkDecoder> mavlinkDecoder;
     QPointer<QDockWidget> mavlinkSenderWidget;
     QGCMAVLinkLogPlayer* logPlayer;
@@ -554,6 +555,9 @@ private slots:
     void closeTerminalConsole();
 
 private:
+    void closeMavlinkInspectorWindows();
+    void pruneMavlinkInspectorWindows();
+
     bool m_heartbeatEnabled;
     QList<QObject*> commsWidgetList;
     QMap<QString,QString> customWidgetNameToFilenameMap;

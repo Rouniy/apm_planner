@@ -537,6 +537,11 @@ set(SOURCES
     src/ui/QGCMAVLinkInspector.cc
     src/ui/QGCMAVLinkInspector.h
     src/ui/QGCMAVLinkInspector.ui
+    src/ui/MAVLinkInspectorMessageRelay.cpp
+    src/ui/MAVLinkInspectorMessageRelay.h
+    src/ui/MAVLinkInspectorWindow.cpp
+    src/ui/MAVLinkInspectorWindow.h
+    src/comm/MAVLinkMessageMetaType.h
     src/ui/QGCMAVLinkLogPlayer.cc
     src/ui/QGCMAVLinkLogPlayer.h
     src/ui/QGCMAVLinkLogPlayer.ui
@@ -2468,6 +2473,30 @@ if(BUILD_TESTING)
     )
     add_test(NAME antennatrackeroutputs_tests
              COMMAND antennatrackeroutputs_tests)
+
+    add_executable(mavlinkinspectorwindow_tests
+        tests/test_mavlinkinspectorwindow.cpp
+        src/ui/MAVLinkInspectorMessageRelay.cpp
+        src/ui/MAVLinkInspectorMessageRelay.h
+        src/ui/MAVLinkInspectorWindow.cpp
+        src/ui/MAVLinkInspectorWindow.h
+        src/comm/MAVLinkMessageMetaType.h
+    )
+    target_include_directories(mavlinkinspectorwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(mavlinkinspectorwindow_tests PRIVATE
+        Qt::Core
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME mavlinkinspectorwindow_tests
+             COMMAND mavlinkinspectorwindow_tests)
+    set_tests_properties(mavlinkinspectorwindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(vehicle_target_manager_tests
         tests/test_vehicletargetmanager.cpp

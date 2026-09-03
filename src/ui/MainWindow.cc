@@ -39,6 +39,8 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCSettingsWidget.h"
 #include "QGCTabbedInfoView.h"
 #include "QGCMAVLinkLogPlayer.h"
+#include "QGCMAVLinkInspector.h"
+#include "MAVLinkInspectorWindow.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
 #include "QGCWaypointListMulti.h"
@@ -108,6 +110,7 @@ This file is part of the QGROUNDCONTROL project
 #include <QStyle>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
@@ -592,6 +595,12 @@ MainWindow::~MainWindow()
     // which is itself already in QObject teardown.
     LogWindowSingleton::instance().removeDebugOutput();
     debugOutput.clear();
+
+    // Inspector windows contain receivers for both the live LinkManager stream
+    // and the log-player replay relay. Destroy every receiver while both
+    // publishers are still alive; QObject then removes all subscriptions
+    // synchronously and no destroyed-lambda needs to touch a raw logPlayer.
+    closeMavlinkInspectorWindows();
 
     closeTerminalConsole();
 
@@ -1913,6 +1922,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;
+    closeMavlinkInspectorWindows();
     if (logPlayer) {
         logPlayer->shutdown();
     }
@@ -3775,27 +3785,47 @@ void MainWindow::showTerminalConsole()
 
 void MainWindow::showMavlinkInspector()
 {
-    if (!m_mavlinkInspectorWindow) {
-        auto *inspector = new QGCMAVLinkInspector(this);
-        inspector->setObjectName(QStringLiteral("MAVLinkInspectorWindow"));
-        inspector->setWindowFlag(Qt::Window, true);
-        inspector->setWindowTitle(tr("MAVLink Inspector"));
-        inspector->setAttribute(Qt::WA_DeleteOnClose, true);
-        inspector->resize(760, 560);
-        m_mavlinkInspectorWindow = inspector;
-        if (logPlayer) {
-            logPlayer->setMavlinkInspector(inspector);
-        }
-        connect(inspector, &QObject::destroyed, this, [this]() {
-            if (logPlayer) {
-                logPlayer->setMavlinkInspector(nullptr);
-            }
-        });
+    pruneMavlinkInspectorWindows();
+
+    auto *inspector = new QGCMAVLinkInspector;
+    auto *window = new MAVLinkInspectorWindow(inspector, this);
+    m_mavlinkInspectorWindows.append(window);
+    connect(window, &QObject::destroyed,
+            this, &MainWindow::pruneMavlinkInspectorWindows);
+
+    if (logPlayer) {
+        logPlayer->addMavlinkInspector(inspector);
     }
 
-    m_mavlinkInspectorWindow->show();
-    m_mavlinkInspectorWindow->raise();
-    m_mavlinkInspectorWindow->activateWindow();
+    window->show();
+    window->raise();
+    window->activateWindow();
+}
+
+void MainWindow::closeMavlinkInspectorWindows()
+{
+    const QList<QPointer<MAVLinkInspectorWindow>> windows =
+        m_mavlinkInspectorWindows;
+    m_mavlinkInspectorWindows.clear();
+
+    for (const QPointer<MAVLinkInspectorWindow> &window : windows) {
+        // Direct deletion is deliberate during shutdown: WA_DeleteOnClose
+        // alone would leave replay receivers alive until the event loop gets
+        // another deferred-delete pass.
+        delete window.data();
+    }
+}
+
+void MainWindow::pruneMavlinkInspectorWindows()
+{
+    m_mavlinkInspectorWindows.erase(
+        std::remove_if(
+            m_mavlinkInspectorWindows.begin(),
+            m_mavlinkInspectorWindows.end(),
+            [](const QPointer<MAVLinkInspectorWindow> &window) {
+                return window.isNull();
+            }),
+        m_mavlinkInspectorWindows.end());
 }
 
 void MainWindow::closeTerminalConsole()
