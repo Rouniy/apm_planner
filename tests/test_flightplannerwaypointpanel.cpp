@@ -5,6 +5,7 @@
 #include "ui/flightplanner/FlightPlannerViewModel.h"
 
 #include <QAction>
+#include <QAbstractProxyModel>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QComboBox>
@@ -25,6 +26,7 @@ class FlightPlannerWaypointPanelTest final : public QObject
 private slots:
     void exposesMissionPlannerNamesAndModel();
     void toolbarAndDeleteKeyEditSelectedWaypoint();
+    void visibleRowActionsEditClickedWaypoint();
     void missionStoreResetInvalidatesSelection();
     void commandEditorFollowsMissionType();
 };
@@ -44,6 +46,18 @@ void selectRow(QTableView *table, int row)
         index, QItemSelectionModel::ClearAndSelect
                | QItemSelectionModel::Rows);
 }
+
+int columnWithHeader(QTableView *table, const QString &header)
+{
+    if (!table || !table->model()) return -1;
+    for (int column = 0; column < table->model()->columnCount(); ++column) {
+        if (table->model()->headerData(
+                column, Qt::Horizontal).toString() == header) {
+            return column;
+        }
+    }
+    return -1;
+}
 }
 
 void FlightPlannerWaypointPanelTest::exposesMissionPlannerNamesAndModel()
@@ -56,8 +70,28 @@ void FlightPlannerWaypointPanelTest::exposesMissionPlannerNamesAndModel()
     QVERIFY(table);
     QCOMPARE(table, panel.waypointTable());
     QCOMPARE(panel.viewModel(), &viewModel);
-    QCOMPARE(table->model(),
+    auto *proxy = qobject_cast<QAbstractProxyModel *>(table->model());
+    QVERIFY(proxy);
+    QCOMPARE(proxy->objectName(), QStringLiteral("WpGridActionProxy"));
+    QCOMPARE(proxy->sourceModel(),
              static_cast<QAbstractItemModel *>(viewModel.Waypoints()));
+    QCOMPARE(table->model()->columnCount(),
+             int(FlightPlannerMissionModel::ColumnCount) + 3);
+    const int upColumn = columnWithHeader(table, QStringLiteral("Up"));
+    const int downColumn = columnWithHeader(table, QStringLiteral("Down"));
+    const int deleteColumn = columnWithHeader(table, QStringLiteral("Delete"));
+    QCOMPARE(upColumn, int(FlightPlannerMissionModel::ColumnCount));
+    QCOMPARE(downColumn, upColumn + 1);
+    QCOMPARE(deleteColumn, upColumn + 2);
+    QCOMPARE(table->columnWidth(upColumn), 44);
+    QCOMPARE(table->columnWidth(downColumn), 50);
+    QCOMPARE(table->columnWidth(deleteColumn), 70);
+    QCOMPARE(table->itemDelegateForColumn(upColumn)->objectName(),
+             QStringLiteral("WaypointUpButtonDelegate"));
+    QCOMPARE(table->itemDelegateForColumn(downColumn)->objectName(),
+             QStringLiteral("WaypointDownButtonDelegate"));
+    QCOMPARE(table->itemDelegateForColumn(deleteColumn)->objectName(),
+             QStringLiteral("WaypointDeleteButtonDelegate"));
     QCOMPARE(table->selectionBehavior(), QAbstractItemView::SelectRows);
     QCOMPARE(table->selectionMode(), QAbstractItemView::SingleSelection);
     QCOMPARE(table->columnWidth(FlightPlannerMissionModel::CommandColumn), 190);
@@ -245,6 +279,75 @@ void FlightPlannerWaypointPanelTest::toolbarAndDeleteKeyEditSelectedWaypoint()
     QCOMPARE(viewModel.Waypoints()->rowAt(0)->Lat(), 20.0);
     QCOMPARE(panel.selectedWaypoint(), 0);
     QVERIFY(selectionChanged.count() > 0);
+}
+
+void FlightPlannerWaypointPanelTest::visibleRowActionsEditClickedWaypoint()
+{
+    FlightPlannerViewModel viewModel;
+    FlightPlannerWaypointPanel panel(&viewModel);
+    panel.resize(900, 320);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+    QTableView *table = panel.waypointTable();
+    viewModel.setHomeLat(10.0);
+    viewModel.setHomeLng(28.0);
+    viewModel.AddWaypointAt(10.0, 28.0);
+    viewModel.AddWaypointAt(20.0, 29.0);
+    viewModel.AddWaypointAt(30.0, 30.0);
+
+    const int upColumn = columnWithHeader(table, QStringLiteral("Up"));
+    const int downColumn = columnWithHeader(table, QStringLiteral("Down"));
+    const int deleteColumn = columnWithHeader(table, QStringLiteral("Delete"));
+    QVERIFY(upColumn >= 0);
+    QVERIFY(downColumn >= 0);
+    QVERIFY(deleteColumn >= 0);
+
+    const auto clickAction = [table](int row, int column) {
+        const QModelIndex index = table->model()->index(row, column);
+        QVERIFY(index.isValid());
+        table->scrollTo(index, QAbstractItemView::PositionAtCenter);
+        QCoreApplication::processEvents();
+        const QRect rect = table->visualRect(index);
+        QVERIFY(rect.isValid());
+        QVERIFY(table->viewport()->rect().intersects(rect));
+        QTest::mouseClick(table->viewport(), Qt::LeftButton,
+                          Qt::NoModifier, rect.center());
+        QCoreApplication::processEvents();
+    };
+
+    // The first row cannot move up and the last row cannot move down.
+    clickAction(0, upColumn);
+    QCOMPARE(viewModel.Waypoints()->rowAt(0)->Lat(), 10.0);
+    clickAction(2, downColumn);
+    QCOMPARE(viewModel.Waypoints()->rowAt(2)->Lat(), 30.0);
+
+    // Clicked-row actions select that exact row before reusing the existing
+    // move/delete QAction path, including undo and DO_JUMP remapping.
+    clickAction(2, upColumn);
+    QCOMPARE(viewModel.Waypoints()->rowAt(1)->Lat(), 30.0);
+    QCOMPARE(panel.selectedWaypoint(), 1);
+
+    clickAction(0, downColumn);
+    QCOMPARE(viewModel.Waypoints()->rowAt(0)->Lat(), 30.0);
+    QCOMPARE(viewModel.Waypoints()->rowAt(1)->Lat(), 10.0);
+    QCOMPARE(panel.selectedWaypoint(), 1);
+
+    clickAction(1, deleteColumn);
+    QCOMPARE(viewModel.Waypoints()->rowCount(), 2);
+    QCOMPARE(viewModel.Waypoints()->rowAt(0)->Lat(), 30.0);
+    QCOMPARE(viewModel.Waypoints()->rowAt(1)->Lat(), 20.0);
+    QCOMPARE(panel.selectedWaypoint(), 1);
+
+    // Keyboard activation uses the same row-specific path as a mouse click.
+    table->setCurrentIndex(table->model()->index(0, downColumn));
+    QTest::keyClick(table, Qt::Key_Return);
+    QCOMPARE(viewModel.Waypoints()->rowAt(0)->Lat(), 20.0);
+    QCOMPARE(viewModel.Waypoints()->rowAt(1)->Lat(), 30.0);
+    table->setCurrentIndex(table->model()->index(1, upColumn));
+    QTest::keyClick(table, Qt::Key_Space);
+    QCOMPARE(viewModel.Waypoints()->rowAt(0)->Lat(), 30.0);
+    QCOMPARE(viewModel.Waypoints()->rowAt(1)->Lat(), 20.0);
 }
 
 void FlightPlannerWaypointPanelTest::missionStoreResetInvalidatesSelection()

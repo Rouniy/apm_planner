@@ -7,11 +7,13 @@
 
 #include <QAbstractItemModel>
 #include <QAction>
+#include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QEvent>
 #include <QHeaderView>
+#include <QIdentityProxyModel>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QLabel>
@@ -20,11 +22,16 @@
 #include <QFrame>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QStyle>
+#include <QStyleOptionButton>
 #include <QStyledItemDelegate>
 #include <QTableView>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidgetItem>
+
+#include <functional>
+#include <utility>
 
 namespace {
 class PlannerWrapLayout final : public QLayout
@@ -219,6 +226,152 @@ public:
 private:
     QPointer<FlightPlannerViewModel> m_viewModel;
 };
+
+class PlannerActionProxyModel final : public QIdentityProxyModel
+{
+public:
+    enum class Action
+    {
+        Up,
+        Down,
+        Delete
+    };
+
+    explicit PlannerActionProxyModel(QObject *parent = nullptr)
+        : QIdentityProxyModel(parent)
+    {
+    }
+
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override
+    {
+        if (parent.isValid()) return 0;
+        return sourceColumnCount() + 3;
+    }
+
+    QModelIndex index(int row, int column,
+                      const QModelIndex &parent = QModelIndex()) const override
+    {
+        if (parent.isValid() || row < 0 || column < 0
+            || row >= rowCount() || column >= columnCount()) {
+            return {};
+        }
+        return createIndex(row, column);
+    }
+
+    QModelIndex mapToSource(const QModelIndex &proxyIndex) const override
+    {
+        if (!proxyIndex.isValid() || !sourceModel()
+            || proxyIndex.column() >= sourceColumnCount()) {
+            return {};
+        }
+        return sourceModel()->index(proxyIndex.row(), proxyIndex.column());
+    }
+
+    QModelIndex mapFromSource(const QModelIndex &sourceIndex) const override
+    {
+        if (!sourceIndex.isValid()) return {};
+        return index(sourceIndex.row(), sourceIndex.column());
+    }
+
+    QVariant data(const QModelIndex &proxyIndex,
+                  int role = Qt::DisplayRole) const override
+    {
+        if (!proxyIndex.isValid()) return {};
+        if (proxyIndex.column() < sourceColumnCount()) {
+            return QIdentityProxyModel::data(proxyIndex, role);
+        }
+        if (role == Qt::ToolTipRole) {
+            switch (actionForColumn(proxyIndex.column())) {
+            case Action::Up: return tr("Move this waypoint up");
+            case Action::Down: return tr("Move this waypoint down");
+            case Action::Delete: return tr("Delete this waypoint");
+            }
+        }
+        return {};
+    }
+
+    QVariant headerData(int section, Qt::Orientation orientation,
+                        int role = Qt::DisplayRole) const override
+    {
+        if (orientation == Qt::Horizontal && role == Qt::DisplayRole
+            && section >= sourceColumnCount()) {
+            switch (actionForColumn(section)) {
+            case Action::Up: return tr("Up");
+            case Action::Down: return tr("Down");
+            case Action::Delete: return tr("Delete");
+            }
+        }
+        return QIdentityProxyModel::headerData(section, orientation, role);
+    }
+
+    Qt::ItemFlags flags(const QModelIndex &proxyIndex) const override
+    {
+        if (!proxyIndex.isValid()) return Qt::NoItemFlags;
+        if (proxyIndex.column() >= sourceColumnCount()) {
+            return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+        }
+        return QIdentityProxyModel::flags(proxyIndex);
+    }
+
+    int actionColumn(Action action) const
+    {
+        return sourceColumnCount() + static_cast<int>(action);
+    }
+
+    Action actionForColumn(int column) const
+    {
+        const int offset = column - sourceColumnCount();
+        if (offset == static_cast<int>(Action::Down)) return Action::Down;
+        if (offset == static_cast<int>(Action::Delete)) return Action::Delete;
+        return Action::Up;
+    }
+
+private:
+    int sourceColumnCount() const
+    {
+        return sourceModel() ? sourceModel()->columnCount() : 0;
+    }
+};
+
+class WaypointActionDelegate final : public QStyledItemDelegate
+{
+public:
+    using EnabledCallback = std::function<bool(int)>;
+
+    WaypointActionDelegate(const QString &text, EnabledCallback enabled,
+                           QObject *parent = nullptr)
+        : QStyledItemDelegate(parent)
+        , m_text(text)
+        , m_enabled(std::move(enabled))
+    {
+    }
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        QStyleOptionButton button;
+        button.rect = option.rect.adjusted(2, 2, -2, -2);
+        button.text = m_text;
+        button.state = QStyle::State_Raised;
+        if (option.state.testFlag(QStyle::State_Active))
+            button.state |= QStyle::State_Active;
+        if (isEnabled(index.row()))
+            button.state |= QStyle::State_Enabled;
+        const QStyle *style = option.widget
+            ? option.widget->style() : QApplication::style();
+        style->drawControl(QStyle::CE_PushButton, &button, painter,
+                           option.widget);
+    }
+
+private:
+    bool isEnabled(int row) const
+    {
+        return m_enabled && m_enabled(row);
+    }
+
+    QString m_text;
+    EnabledCallback m_enabled;
+};
 }
 
 FlightPlannerWaypointPanel::FlightPlannerWaypointPanel(
@@ -386,13 +539,56 @@ FlightPlannerWaypointPanel::FlightPlannerWaypointPanel(
         updateRouteSummary();
         updateRadiusVisibility();
         FlightPlannerMissionModel *model = m_viewModel->Waypoints();
-        m_waypointTable->setModel(model);
+        auto *actionProxy = new PlannerActionProxyModel(m_waypointTable);
+        actionProxy->setObjectName(QStringLiteral("WpGridActionProxy"));
+        actionProxy->setSourceModel(model);
+        m_waypointTable->setModel(actionProxy);
         m_waypointTable->setItemDelegateForColumn(
             FlightPlannerMissionModel::CommandColumn,
             new MissionCommandDelegate(m_viewModel, m_waypointTable));
         m_waypointTable->setItemDelegateForColumn(
             FlightPlannerMissionModel::FrameColumn,
             new WaypointComboDelegate(WpRow::FrameList(), m_waypointTable));
+
+        const auto editableRow = [this](int row) {
+            return m_viewModel && !m_viewModel->TransferBusy()
+                && row >= 0 && row < m_viewModel->Waypoints()->rowCount();
+        };
+        const auto installRowAction =
+            [this, actionProxy, editableRow](
+                    PlannerActionProxyModel::Action kind,
+                    const QString &text, const QString &delegateName,
+                    std::function<bool(int)> positionEnabled) {
+            const int column = actionProxy->actionColumn(kind);
+            auto *delegate = new WaypointActionDelegate(
+                text,
+                [editableRow, positionEnabled](int row) {
+                    return editableRow(row)
+                        && (!positionEnabled || positionEnabled(row));
+                },
+                m_waypointTable);
+            delegate->setObjectName(delegateName);
+            m_waypointTable->setItemDelegateForColumn(column, delegate);
+        };
+        installRowAction(
+            PlannerActionProxyModel::Action::Up, QStringLiteral("▲"),
+            QStringLiteral("WaypointUpButtonDelegate"),
+            [](int row) { return row > 0; });
+        installRowAction(
+            PlannerActionProxyModel::Action::Down, QStringLiteral("▼"),
+            QStringLiteral("WaypointDownButtonDelegate"),
+            [this](int row) {
+                return m_viewModel
+                    && row + 1 < m_viewModel->Waypoints()->rowCount();
+            });
+        installRowAction(
+            PlannerActionProxyModel::Action::Delete, QStringLiteral("X"),
+            QStringLiteral("WaypointDeleteButtonDelegate"),
+            {});
+        connect(m_waypointTable, &QTableView::clicked,
+                this, [this](const QModelIndex &index) {
+            triggerWaypointAction(index);
+        });
 
         connect(model, &QAbstractItemModel::rowsInserted,
                 this, &FlightPlannerWaypointPanel::updateActions);
@@ -528,6 +724,12 @@ FlightPlannerWaypointPanel::FlightPlannerWaypointPanel(
          ++column) {
         m_waypointTable->setColumnWidth(column, widths[column]);
     }
+    if (m_waypointTable->model()) {
+        const int sourceColumns = FlightPlannerMissionModel::ColumnCount;
+        m_waypointTable->setColumnWidth(sourceColumns, 44);
+        m_waypointTable->setColumnWidth(sourceColumns + 1, 50);
+        m_waypointTable->setColumnWidth(sourceColumns + 2, 70);
+    }
 
     updateActions();
 }
@@ -608,6 +810,12 @@ bool FlightPlannerWaypointPanel::eventFilter(QObject *watched, QEvent *event)
         const auto *keyEvent = static_cast<QKeyEvent *>(event);
         if (keyEvent->key() == Qt::Key_Delete) {
             deleteSelectedWaypoint();
+            return true;
+        }
+        if ((keyEvent->key() == Qt::Key_Space
+             || keyEvent->key() == Qt::Key_Return
+             || keyEvent->key() == Qt::Key_Enter)
+            && triggerWaypointAction(m_waypointTable->currentIndex())) {
             return true;
         }
     }
@@ -709,6 +917,7 @@ void FlightPlannerWaypointPanel::updateActions()
               | QAbstractItemView::EditKeyPressed
               | QAbstractItemView::SelectedClicked
         : QAbstractItemView::NoEditTriggers);
+    m_waypointTable->viewport()->update();
 }
 
 void FlightPlannerWaypointPanel::updateRouteSummary()
@@ -754,4 +963,37 @@ void FlightPlannerWaypointPanel::selectWaypoint(int row)
     }
     syncCommandHeaders();
     updateActions();
+}
+
+bool FlightPlannerWaypointPanel::triggerWaypointAction(
+    const QModelIndex &index)
+{
+    auto *proxy = dynamic_cast<PlannerActionProxyModel *>(
+        m_waypointTable ? m_waypointTable->model() : nullptr);
+    if (!proxy || !index.isValid()
+        || index.column() < proxy->actionColumn(
+               PlannerActionProxyModel::Action::Up)
+        || index.column() > proxy->actionColumn(
+               PlannerActionProxyModel::Action::Delete)) {
+        return false;
+    }
+
+    QAction *action = nullptr;
+    switch (proxy->actionForColumn(index.column())) {
+    case PlannerActionProxyModel::Action::Up:
+        action = m_moveUpAction;
+        break;
+    case PlannerActionProxyModel::Action::Down:
+        action = m_moveDownAction;
+        break;
+    case PlannerActionProxyModel::Action::Delete:
+        action = m_deleteAction;
+        break;
+    }
+
+    selectWaypoint(index.row());
+    if (action && action->isEnabled()) {
+        action->trigger();
+    }
+    return true;
 }

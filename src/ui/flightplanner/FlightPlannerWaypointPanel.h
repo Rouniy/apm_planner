@@ -52,6 +52,7 @@ private slots:
 
 private:
     void selectWaypoint(int row);
+    bool triggerWaypointAction(const QModelIndex &index);
     void updateRouteSummary();
     void syncAltitudePresentation();
     void syncDistancePresentation();
