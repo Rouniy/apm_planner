@@ -522,8 +522,8 @@ void SetupView::buildPages()
     developerTools.isSub = true;
     developerTools.isAdvanced = true;
     developerTools.allowsPartialParameters = true;
-    developerTools.factory = [](QWidget *parent) {
-        return new ConfigDeveloperToolsView(parent);
+    developerTools.factory = [this](QWidget *parent) {
+        return new ConfigDeveloperToolsView(window(), parent);
     };
     m_backstage->addPage(developerTools);
     m_backstage->addPage(configMavCommandBackstagePage());

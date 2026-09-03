@@ -46,6 +46,7 @@ This file is part of the QGROUNDCONTROL project
 #include "SerialPassThroughWindow.h"
 #include "SerialOutputNMEAWindow.h"
 #include "SerialOutputCotWindow.h"
+#include "DeviceOperationsWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
@@ -626,6 +627,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { SerialOutputNMEAWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionCotOutput"),
                     [this]() { SerialOutputCotWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionMavlinkDeviceOperations"),
+                    [this]() { DeviceOperationsWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionMapTileCache"),
                     [this]() { MapCacheView::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),

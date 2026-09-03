@@ -11,7 +11,7 @@
 Проверенная Linux-точка после последнего Tools-среза:
 
 - приложение и все цели CMake собираются одним `cmake --build build -j12`;
-- проходят 110 из 110 тестов;
+- проходят 112 из 112 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -30,10 +30,10 @@
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 21 | 22 | 14 | 57 |
 | CONFIG | 4 | 11 | 5 | 20 |
-| TOOLS | 7 | 3 | 19 | 29 |
+| TOOLS | 8 | 3 | 18 | 29 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **40** | **46** | **42** | **128** |
+| **Итого** | **41** | **46** | **41** | **128** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -54,10 +54,12 @@
 Работа P0 выполняется первой и не откладывается ради мелкого визуального
 совпадения других страниц.
 
-Текущий пользовательский приоритет — основные TOOLS/диалоги, затем Settings/
-CONFIG и их функциональные vertical slices. Пункты 3–4 остаются
-важными пробелами, но их визуальная часть не должна вытеснять перенос рабочих
-инструментов; Qt Widgets и доверенный QML API можно сочетать по назначению.
+Основной первый срез TOOLS/диалогов доведён через Device Operations; текущий
+пользовательский приоритет — Settings/CONFIG и их функциональные vertical
+slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
+включаются только после полноценной реализации. Пункты 3–4 остаются важными
+пробелами, но их визуальная часть не должна вытеснять перенос рабочих настроек;
+Qt Widgets и доверенный QML API можно сочетать по назначению.
 
 1. Убрать пустую полосу у правой границы PLAN и зафиксировать геометрию при
    1120×720, 1280×800, 1920×1080 и HiDPI.
@@ -97,7 +99,9 @@ CONFIG и их функциональные vertical slices. Пункты 3–4 
 - SFTP logs, mag fit, georeference, terrain maker;
 - Follow Me, external guided, moving base, formation/swarm;
 - NMEA/CoT output, MAVLink serial/TCP bridge и serial pass-through;
-- OSD video overlay, Microdrone, Device Operations, translation editor;
+- OSD video overlay, Microdrone и translation editor; Device Operations уже
+  имеет основной modeless/exact-target workflow, но ещё ждёт hardware/native
+  evidence для strict-complete;
 - полная Simulation и signed updater.
 
 ### P3 — release parity и очистка
@@ -383,7 +387,8 @@ dirty state никогда не переносится на новый target.
 - Serial Pass Through;
 - OSD Video Overlay;
 - Microdrone Downlink;
-- Device Operations;
+- Device Operations — основной modeless/exact-target срез сделан; остаются
+  hardware/native evidence и визуальная полировка;
 - Translation Editor;
 - Tracker Home Module.
 

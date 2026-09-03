@@ -2,6 +2,8 @@
 
 #include "ui/configuration/ConfigDeveloperToolsView.h"
 
+#include <QAction>
+#include <QObject>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -13,6 +15,7 @@ class ConfigDeveloperToolsViewTest final : public QObject
 
 private slots:
     void mirrorsMissionPlannerInventory();
+    void deviceOperationsUsesSharedApplicationAction();
     void decodersAppendResultsAndErrors();
     void actionGridAdaptsToAvailableWidth();
 };
@@ -43,6 +46,33 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
         QStringLiteral("DecodeHardwareIdButton"))->isEnabled());
     QVERIFY(!view.findChild<QPushButton *>(
         QStringLiteral("RebootVehicleButton"))->isEnabled());
+}
+
+void ConfigDeveloperToolsViewTest::deviceOperationsUsesSharedApplicationAction()
+{
+    QObject actionSource;
+    QAction deviceOperations(&actionSource);
+    deviceOperations.setObjectName(
+        QStringLiteral("actionMavlinkDeviceOperations"));
+    bool triggered = false;
+    connect(&deviceOperations, &QAction::triggered,
+            this, [&triggered]() { triggered = true; });
+
+    ConfigDeveloperToolsView view(&actionSource);
+    QCOMPARE(view.ActionCount(), 32);
+    QCOMPARE(view.ImplementedActionCount(), 3);
+    QVERIFY(view.Log().contains(QStringLiteral("3 of 32")));
+    auto *button = view.findChild<QPushButton *>(
+        QStringLiteral("MavlinkDeviceOperationsButton"));
+    QVERIFY(button);
+    QVERIFY(button->isEnabled());
+    button->click();
+    QVERIFY(triggered);
+    QVERIFY(view.Log().contains(
+        QStringLiteral("Opened MAVLink Device Operations.")));
+
+    deviceOperations.setEnabled(false);
+    QVERIFY(!button->isEnabled());
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()

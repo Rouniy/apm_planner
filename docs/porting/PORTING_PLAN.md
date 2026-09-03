@@ -189,6 +189,16 @@ generation-guarded transports; the modeless window owns and stops one service
 session. Identity rows retain MP10's six-cell JSON representation and CoT XML
 serialization is deterministic before one LF wire-frame delimiter is added.
 
+MAVLink Device Operations owns one event-driven session per independent
+modeless window. A session pins the current target generation and physical link;
+read-only requests may retain MP10's editable destination system/component on
+that link, but every reply must match link, source, message type and a
+process-unique request ID. The destructive ICM20948 write/read sequence is
+stricter: it is allowed only for the exact bound endpoint after a confirmed
+disarmed heartbeat and rechecks lease and arming between stages. Link loss,
+target changes, timeout and destruction cancel without retaining a raw link
+pointer, and v2-only DEVICE_OP messages are rejected on MAVLink 1.
+
 `ExactLinkTransmitter` now owns MAVLink version and sequence state once per
 physical link. It rejects v2-only messages on MAVLink 1 and clears the checksum
 bytes left in a generated encoder's trimmed payload before link-specific

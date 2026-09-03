@@ -2,10 +2,14 @@
 
 #include "DeveloperToolParsers.h"
 
+#include <QAction>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QPointer>
+#include <QPushButton>
 
-ConfigDeveloperToolsView::ConfigDeveloperToolsView(QWidget *parent)
+ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
+                                                   QWidget *parent)
     : ActionPageView(
           tr("Developer Tools"),
           tr("Cross-platform diagnostics and recovery tools ported from "
@@ -13,6 +17,7 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QWidget *parent)
              "actions require a connection, a disarmed vehicle, and explicit "
              "confirmation."),
           parent)
+    , m_actionSource(actionSource)
 {
     setObjectName(QStringLiteral("ConfigDeveloperToolsView"));
 
@@ -27,8 +32,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QWidget *parent)
               [this]() { DecodeHardwareId(); });
     ++m_implementedActionCount;
 
-    AddUnavailableAction(tr("MAVLink Device Operations"),
-                         QStringLiteral("MavlinkDeviceOperationsButton"), notPorted);
+    AddToolAction(tr("MAVLink Device Operations"),
+                  QStringLiteral("MavlinkDeviceOperationsButton"),
+                  QStringLiteral("actionMavlinkDeviceOperations"));
     AddUnavailableAction(tr("3D Terrain View"),
                          QStringLiteral("Terrain3dViewButton"), notPorted);
     AddUnavailableAction(tr("MicroDrone Downlink"),
@@ -98,6 +104,45 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QWidget *parent)
 int ConfigDeveloperToolsView::ImplementedActionCount() const
 {
     return m_implementedActionCount;
+}
+
+QPushButton *ConfigDeveloperToolsView::AddToolAction(
+    const QString &label, const QString &buttonObjectName,
+    const QString &actionObjectName)
+{
+    QAction *action = m_actionSource
+        ? m_actionSource->findChild<QAction *>(actionObjectName)
+        : nullptr;
+    if (!action) {
+        return AddUnavailableAction(
+            label, buttonObjectName,
+            tr("The shared application action '%1' is unavailable.")
+                .arg(actionObjectName));
+    }
+
+    QPointer<QAction> guardedAction(action);
+    QPushButton *button = AddAction(
+        label, buttonObjectName,
+        [this, guardedAction, label]() {
+            if (!guardedAction || !guardedAction->isEnabled()) {
+                AppendLog(tr("%1 is currently unavailable.").arg(label));
+                return;
+            }
+            guardedAction->trigger();
+            AppendLog(tr("Opened %1.").arg(label));
+        },
+        action->isEnabled(), action->toolTip());
+    ++m_implementedActionCount;
+
+    connect(action, &QAction::changed, button,
+            [button, guardedAction]() {
+        button->setEnabled(guardedAction && guardedAction->isEnabled());
+        button->setToolTip(guardedAction ? guardedAction->toolTip()
+                                         : QString());
+    });
+    connect(action, &QObject::destroyed, button,
+            [button]() { button->setEnabled(false); });
+    return button;
 }
 
 void ConfigDeveloperToolsView::DecodeMavlinkInput(const QString &input)

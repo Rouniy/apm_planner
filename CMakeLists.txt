@@ -275,6 +275,8 @@ set(SOURCES
     src/comm/CotOutputTransport.h
     src/comm/CotOutputService.cpp
     src/comm/CotOutputService.h
+    src/comm/DeviceOperationService.cpp
+    src/comm/DeviceOperationService.h
     src/comm/NmeaSentenceBuilder.cpp
     src/comm/NmeaSentenceBuilder.h
     src/comm/NmeaOutputService.cpp
@@ -584,6 +586,11 @@ set(SOURCES
     src/ui/SerialOutputCotWindow.cpp
     src/ui/SerialOutputCotWindow.h
     src/ui/SerialOutputCotWindowIntegration.cpp
+    src/ui/DeviceOperationsViewModel.cpp
+    src/ui/DeviceOperationsViewModel.h
+    src/ui/DeviceOperationsWindow.cpp
+    src/ui/DeviceOperationsWindow.h
+    src/ui/DeviceOperationsWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2902,6 +2909,65 @@ if(BUILD_TESTING)
     add_test(NAME serialoutputcotwindow_tests
              COMMAND serialoutputcotwindow_tests)
     set_tests_properties(serialoutputcotwindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(deviceoperationservice_tests
+        tests/test_deviceoperationservice.cpp
+        src/comm/DeviceOperationService.cpp
+        src/comm/DeviceOperationService.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(deviceoperationservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(deviceoperationservice_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME deviceoperationservice_tests
+             COMMAND deviceoperationservice_tests)
+
+    add_executable(deviceoperationswindow_tests
+        tests/test_deviceoperationswindow.cpp
+        src/comm/DeviceOperationService.cpp
+        src/comm/DeviceOperationService.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/DeviceOperationsViewModel.cpp
+        src/ui/DeviceOperationsViewModel.h
+        src/ui/DeviceOperationsWindow.cpp
+        src/ui/DeviceOperationsWindow.h
+    )
+    target_include_directories(deviceoperationswindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(deviceoperationswindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME deviceoperationswindow_tests
+             COMMAND deviceoperationswindow_tests)
+    set_tests_properties(deviceoperationswindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
