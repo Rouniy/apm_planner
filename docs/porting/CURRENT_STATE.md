@@ -17,7 +17,7 @@ minor visual matching is recorded and deferred until the useful workflows exist.
 The immediate user-directed order is:
 
 1. Keep the committed PLAN, MAVLink Inspector and Antenna Tracker foundations green.
-2. Continue the main `TOOLS` stream: replace the explicitly disabled MP10 entries with complete modeless windows, starting with Tlog Convert / Extract, MAVLink Mirror and the serial/NMEA tools; no visible action may open an empty panel or silently do nothing.
+2. Continue the main `TOOLS` stream: replace the explicitly disabled MP10 entries with complete modeless windows, starting with MAVLink Mirror and the serial/NMEA tools now that Tlog Convert / Extract is usable; no visible action may open an empty panel or silently do nothing.
 3. After the principal Tools workflows are usable, focus the main stream on Settings/CONFIG as requested, including planner preferences and Onboard OSD.
 4. Retain the deferred Tracker Home/parameter work and DATA HUD audit without allowing them to displace the current Tools → Settings order.
 5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
@@ -29,13 +29,13 @@ The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD teleme
 At this checkpoint:
 
 - CMake configure and `cmake --build build-codex-qt -j12` completed successfully; Claude's separately leased `build-claude` target also compiled and tested the Link Statistics window.
-- The complete test suite passes with the Tools catalogue and Link Statistics coverage: **96/96 tests**.
-- Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics windows from DATA and SETUP, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with a tool window open.
+- The complete test suite passes with the Tools catalogue, Link Statistics and Tlog Convert / Extract coverage: **99/99 tests**.
+- Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics and Tlog Convert windows from DATA and SETUP, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with a tool window open.
 - The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, Antenna Tracker stack and first corrected Tools-menu/window slice are verified. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 128 product rows: 36 `in-progress`, 47 `partial`, 45 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 128 product rows: 37 `in-progress`, 46 `partial`, 45 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -63,16 +63,19 @@ These are working foundations, though their parity rows may remain partial becau
 - Explicit modeless multi-instance MAVLink Inspector windows and guarded replay multicast, with independent-close and application-shutdown coverage.
 - An exact MP10 top-level TOOLS catalogue: real application tools are no longer mixed with view-dependent DATA/PLAN/SIM docks, unavailable workflows are visibly disabled with a reason, and late vehicle/custom-widget activity cannot append empty panels to the menu.
 - A modeless MP10 Link Statistics window that follows the current exact target's physical link without retaining a stale link pointer, plus direct modeless entry points for Plugin Manager and MAVLink Log Download.
+- A modeless MP10 Tlog Convert / Extract window with streaming, cancellable and atomic KML, GPX, CSV, text, parameter and complete-mission-snapshot exports; the unsupported Matlab button is disabled with an explicit reason.
 - Advanced and Developer action inventories, working shared actions/parsers, Advanced Terminal and the user-facing trusted QML plugin manager.
 - Cooperative shutdown ordering, including close with the modeless inspector open, verified by the real-X11 smoke above.
 
 ## TOOLS current phase
 
-The header menu now has the exact 24 MP10 items, order, separators and shortcuts. Seven routes are enabled because they have a truthful presentation: Developer Tools, Plugin Manager, MAVLink Inspector, Map Tile Cache, Link Statistics, Connection Options and Download Logs (MAVLink). The other 17 entries are retained in their reference positions but visibly disabled as `not ported yet`; they cannot flip a check mark, open an empty dock or silently no-op. Installed trusted QML tools may append one clearly named extension submenu after the reference inventory.
+The header menu now has the exact 24 MP10 items, order, separators and shortcuts. Eight routes are enabled because they have a truthful presentation: Developer Tools, Plugin Manager, MAVLink Inspector, Map Tile Cache, Link Statistics, Connection Options, Download Logs (MAVLink) and Tlog Convert / Extract. The other 16 entries are retained in their reference positions but visibly disabled as `not ported yet`; they cannot flip a check mark, open an empty dock or silently no-op. Installed trusted QML tools may append one clearly named extension submenu after the reference inventory.
 
 `LinkStatsWindow` is a fresh 300×250 modeless window per invocation. Every refresh resolves the current exact target to its physical link again, converts the rolling Qt bit rate to bytes per second and reads per-link MAVLink received/lost counters. Link removal or absence shows zero/em-dash values and an explicit status. `LogDownloadDialog` now closes through normal dialog lifecycle, clears an interrupted vehicle's state/connections and presents an explicit no-vehicle state.
 
-The next Tools slices should replace the disabled Tlog Convert / Extract and MAVLink Mirror entries with real windows, then implement NMEA/CoT outputs and Device Operations with immutable exact targets, explicit Start/Stop/cancellation and destruction tests. Settings/CONFIG becomes the main stream after the principal Tools workflows are usable.
+`MavlinkLogWindow` is a fresh 460×340 modeless window per invocation. Its private-buffer reader streams timestamped MAVLink 1/2 records without sharing a protocol channel, resynchronizes corrupt input, and cancellation or failure leaves no partial single-file output. KML/GPX use valid `GLOBAL_POSITION_INT` tracks, CSV/text decode bundled-dialect fields, parameter extraction preserves ArduPilot versus bytewise wire semantics, and mission extraction requires complete per-endpoint transfers and deduplicates snapshots. The source tlog can never be selected as an output, and automatically named mission siblings cannot silently replace existing files. All exports use an explicit sensitive-data confirmation whose default and Escape action is Cancel. Matlab remains visibly unavailable until a verified cross-platform MAT-file writer exists.
+
+The next Tools slice should replace MAVLink Mirror with a real window and a reviewed raw-byte tap, then implement NMEA/CoT outputs and Device Operations with immutable exact targets, explicit Start/Stop/cancellation and destruction tests. Settings/CONFIG becomes the main stream after the principal Tools workflows are usable.
 
 ## PLAN action-column audit
 

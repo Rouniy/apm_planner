@@ -42,6 +42,7 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCMAVLinkInspector.h"
 #include "MAVLinkInspectorWindow.h"
 #include "LinkStatsWindow.h"
+#include "MavlinkLogWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
@@ -624,6 +625,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { showConnectionOptions(); });
     handlers.insert(QStringLiteral("actionDownloadLogs"),
                     [this]() { showLogDownload(); });
+    handlers.insert(QStringLiteral("actionTlogConvertExtract"),
+                    [this]() { MavlinkLogWindow::OpenWindow(this); });
 
     MissionPlannerToolsMenu::Populate(ui.menuTools, this, handlers);
     // The native menu bar is hidden. Register every MP10 shortcut directly on

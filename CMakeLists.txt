@@ -547,6 +547,12 @@ set(SOURCES
     src/ui/LinkStatsWindow.cpp
     src/ui/LinkStatsWindow.h
     src/ui/LinkStatsSampleSource.cpp
+    src/comm/TlogReader.cpp
+    src/comm/TlogReader.h
+    src/comm/TlogExportService.cpp
+    src/comm/TlogExportService.h
+    src/ui/MavlinkLogWindow.cpp
+    src/ui/MavlinkLogWindow.h
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2645,6 +2651,77 @@ if(BUILD_TESTING)
     add_test(NAME missionplannertoolsmenu_tests
              COMMAND missionplannertoolsmenu_tests)
     set_tests_properties(missionplannertoolsmenu_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(tlogreader_tests
+        tests/test_tlogreader.cpp
+        src/comm/TlogReader.cpp
+        src/comm/TlogReader.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+    )
+    target_include_directories(tlogreader_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(tlogreader_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME tlogreader_tests COMMAND tlogreader_tests)
+
+    add_executable(tlogexportservice_tests
+        tests/test_tlogexportservice.cpp
+        src/comm/TlogExportService.cpp
+        src/comm/TlogExportService.h
+        src/comm/TlogReader.cpp
+        src/comm/TlogReader.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+    )
+    target_include_directories(tlogexportservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(tlogexportservice_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME tlogexportservice_tests COMMAND tlogexportservice_tests)
+
+    add_executable(mavlinklogwindow_tests
+        tests/test_mavlinklogwindow.cpp
+        src/ui/MavlinkLogWindow.cpp
+        src/ui/MavlinkLogWindow.h
+        src/comm/TlogExportService.cpp
+        src/comm/TlogExportService.h
+        src/comm/TlogReader.cpp
+        src/comm/TlogReader.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/AppPaths.cpp
+        src/AppPaths.h
+        src/globalobject.cc
+        src/globalobject.h
+    )
+    target_include_directories(mavlinklogwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(mavlinklogwindow_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME mavlinklogwindow_tests COMMAND mavlinklogwindow_tests)
+    set_tests_properties(mavlinklogwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
