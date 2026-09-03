@@ -6,6 +6,20 @@
 #include <QtTest/QTest>
 #include <QtTest/QSignalSpy>
 
+#include <cmath>
+
+namespace {
+QImage renderHud(HudControl &hud)
+{
+    QImage image(hud.size(), QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::black);
+    QPainter painter(&image);
+    hud.render(&painter);
+    painter.end();
+    return image;
+}
+}
+
 class HudControlTest final : public QObject
 {
     Q_OBJECT
@@ -14,6 +28,7 @@ private slots:
     void exposesMissionPlannerTelemetryProperties();
     void acceptsACompleteTelemetrySnapshot();
     void rendersAttitudeAndInstruments();
+    void aoaDoesNotDarkenTranslucentSideTapes();
     void preservesSelectableAspectRatio();
 };
 
@@ -113,6 +128,44 @@ void HudControlTest::rendersAttitudeAndInstruments()
     QVERIFY(skyPixels > 1000);
     QVERIFY(groundPixels > 1000);
     QVERIFY(brightPixels > 50);
+}
+
+void HudControlTest::aoaDoesNotDarkenTranslucentSideTapes()
+{
+    HudControl hud;
+    hud.resize(640, 480);
+    hud.setOverlayEnabled(true);
+    hud.setDisplayHeading(false);
+    hud.setDisplayXTrack(false);
+    hud.setDisplaySpeed(true);
+    hud.setDisplayAlt(true);
+    hud.setGroundSpeed(18.0);
+    hud.setAlt(120.0);
+    hud.setAoa(12.5);
+    hud.setSsa(-1.5);
+    hud.snapToValues();
+
+    hud.setDisplayAoa(false);
+    const QImage withoutAoa = renderHud(hud);
+    hud.setDisplayAoa(true);
+    const QImage withAoa = renderHud(hud);
+
+    const QRect viewport = hud.contentViewport();
+    const double unit = qMin(viewport.width(), viewport.height());
+    const int tapeWidth = static_cast<int>(std::floor(qMax(
+        20.0, qMin(qMax(unit * 0.12, 42.0), viewport.width() * 0.16))));
+    const int tapeTop = viewport.top() + viewport.height() / 4;
+    const int tapeBottom = viewport.top() + viewport.height() * 3 / 4;
+    int changedPixels = 0;
+    for (int y = tapeTop + 2; y < tapeBottom - 2; ++y) {
+        for (int x = viewport.left() + 2;
+             x < viewport.left() + tapeWidth - 2; ++x) {
+            if (withoutAoa.pixel(x, y) != withAoa.pixel(x, y)) {
+                ++changedPixels;
+            }
+        }
+    }
+    QCOMPARE(changedPixels, 0);
 }
 
 void HudControlTest::preservesSelectableAspectRatio()

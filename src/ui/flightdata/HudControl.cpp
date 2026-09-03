@@ -454,6 +454,7 @@ void HudControl::drawScrollTape(QPainter &painter, const QRectF &rect, double va
 {
     painter.fillRect(rect, QColor(0, 0, 0, 140));
     painter.setPen(QPen(Qt::white, 1.5));
+    painter.setBrush(Qt::NoBrush);
     painter.drawRect(rect);
     constexpr double range = 26.0;
     const double spacing = rect.height() / range;
@@ -492,6 +493,7 @@ void HudControl::drawScrollTape(QPainter &painter, const QRectF &rect, double va
 
 void HudControl::drawVsi(QPainter &painter, const QRectF &altRect) const
 {
+    painter.save();
     const double width = altRect.width() / 4.0;
     const double left = altRect.left() - width;
     QPainterPath outline;
@@ -510,6 +512,7 @@ void HudControl::drawVsi(QPainter &painter, const QRectF &altRect) const
     painter.setPen(Qt::NoPen);
     painter.setBrush(Qt::blue);
     painter.drawPolygon(needle);
+    painter.restore();
 }
 
 void HudControl::drawXTrack(QPainter &painter, const QRectF &rect,
@@ -546,6 +549,7 @@ void HudControl::drawXTrack(QPainter &painter, const QRectF &rect,
 
 void HudControl::drawAoaSsa(QPainter &painter, const QRectF &rect) const
 {
+    painter.save();
     const double left = rect.width() - rect.width() / 6.0;
     const double top = rect.height() * 0.55;
     const double barWidth = rect.width() / 25.0;
@@ -568,6 +572,7 @@ void HudControl::drawAoaSsa(QPainter &painter, const QRectF &rect) const
     drawHaloText(painter, QPointF(left - 4, top + barHeight + 2),
                  tr("AOA %1  SSA %2").arg(m_aoa, 0, 'f', 1).arg(m_ssa, 0, 'f', 1),
                  Qt::white, qBound(8.0, rect.height() / 40.0, 16.0), Qt::AlignRight);
+    painter.restore();
 }
 
 void HudControl::paintEvent(QPaintEvent *event)
