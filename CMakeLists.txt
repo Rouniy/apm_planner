@@ -269,6 +269,10 @@ set(SOURCES
     src/comm/MavlinkMirrorOutput.h
     src/comm/MavlinkMirrorService.cpp
     src/comm/MavlinkMirrorService.h
+    src/comm/NmeaSentenceBuilder.cpp
+    src/comm/NmeaSentenceBuilder.h
+    src/comm/NmeaOutputService.cpp
+    src/comm/NmeaOutputService.h
     src/comm/ParameterService.cpp
     src/comm/ParameterService.h
     src/comm/VehicleCommandService.cpp
@@ -562,6 +566,11 @@ set(SOURCES
     src/ui/SerialPassThroughWindow.cpp
     src/ui/SerialPassThroughWindow.h
     src/ui/SerialPassThroughWindowIntegration.cpp
+    src/ui/SerialOutputNMEAViewModel.cpp
+    src/ui/SerialOutputNMEAViewModel.h
+    src/ui/SerialOutputNMEAWindow.cpp
+    src/ui/SerialOutputNMEAWindow.h
+    src/ui/SerialOutputNMEAWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2698,6 +2707,82 @@ if(BUILD_TESTING)
     )
     add_test(NAME mavlinkmirrorservice_tests
              COMMAND mavlinkmirrorservice_tests)
+
+    add_executable(nmeasentencebuilder_tests
+        tests/test_nmeasentencebuilder.cpp
+        src/comm/NmeaSentenceBuilder.cpp
+        src/comm/NmeaSentenceBuilder.h
+    )
+    target_include_directories(nmeasentencebuilder_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(nmeasentencebuilder_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME nmeasentencebuilder_tests
+             COMMAND nmeasentencebuilder_tests)
+
+    add_executable(nmeaoutputservice_tests
+        tests/test_nmeaoutputservice.cpp
+        src/comm/MavlinkMirrorOutput.cpp
+        src/comm/MavlinkMirrorOutput.h
+        src/comm/NmeaSentenceBuilder.cpp
+        src/comm/NmeaSentenceBuilder.h
+        src/comm/NmeaOutputService.cpp
+        src/comm/NmeaOutputService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(nmeaoutputservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(nmeaoutputservice_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME nmeaoutputservice_tests
+             COMMAND nmeaoutputservice_tests)
+
+    add_executable(serialoutputnmeawindow_tests
+        tests/test_serialoutputnmeawindow.cpp
+        src/comm/MavlinkMirrorOutput.cpp
+        src/comm/MavlinkMirrorOutput.h
+        src/comm/NmeaSentenceBuilder.cpp
+        src/comm/NmeaSentenceBuilder.h
+        src/comm/NmeaOutputService.cpp
+        src/comm/NmeaOutputService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/ui/SerialOutputNMEAViewModel.cpp
+        src/ui/SerialOutputNMEAViewModel.h
+        src/ui/SerialOutputNMEAWindow.cpp
+        src/ui/SerialOutputNMEAWindow.h
+    )
+    target_include_directories(serialoutputnmeawindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(serialoutputnmeawindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::SerialPort
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME serialoutputnmeawindow_tests
+             COMMAND serialoutputnmeawindow_tests)
+    set_tests_properties(serialoutputnmeawindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(serialpassthroughwindow_tests
         tests/test_serialpassthroughwindow.cpp

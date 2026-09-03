@@ -127,8 +127,8 @@ download prompt remains transitional: production-equivalent self-update still
 requires an APM Planner 3.0-owned HTTPS manifest, signing key, signed metadata,
 and package hash/size verification before an installer may be executed.
 The Help shortcut list still needs to add the newly wired Developer Tools,
-Plugin Manager and Map Tile Cache shortcuts. NMEA Output and DataFlash
-Spectrogram remain explicitly disabled parity work instead of inert shortcuts.
+Plugin Manager and Map Tile Cache shortcuts. DataFlash Spectrogram remains
+explicitly disabled parity work instead of an inert shortcut.
 
 ## QGroundControl-derived communication safety
 
@@ -172,6 +172,13 @@ physical link for every write. Secondary transports stay event-driven on the GUI
 thread and apply one total bounded queue so a slow serial/TCP peer cannot block
 or grow memory on the protocol path. Every modeless window owns and stops its own
 session.
+
+NMEA Output consumes `LinkManager::messageReceived` on the GUI thread and
+filters every update by the exact `(link, sysid, compid)` endpoint captured at
+Connect. It reuses the bounded secondary-port transports only as byte sinks;
+sentence state, timer cadence, lifecycle and status remain owned by the NMEA
+service. A window never retains `LinkInterface *`, never queues stale position
+cycles and stops when its pinned physical link disappears.
 
 `ExactLinkTransmitter` now owns MAVLink version and sequence state once per
 physical link. It rejects v2-only messages on MAVLink 1 and clears the checksum

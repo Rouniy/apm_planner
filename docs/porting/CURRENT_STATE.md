@@ -17,7 +17,7 @@ minor visual matching is recorded and deferred until the useful workflows exist.
 The immediate user-directed order is:
 
 1. Keep the committed PLAN, MAVLink Inspector and Antenna Tracker foundations green.
-2. Continue the main `TOOLS` stream: replace the explicitly disabled MP10 entries with complete modeless windows, starting with MAVLink Mirror and the serial/NMEA tools now that Tlog Convert / Extract is usable; no visible action may open an empty panel or silently do nothing.
+2. Continue the main `TOOLS` stream: replace the explicitly disabled MP10 entries with complete modeless windows, next with CoT/TAK Output and Device Operations now that MAVLink Mirror and NMEA Output are usable; no visible action may open an empty panel or silently do nothing.
 3. After the principal Tools workflows are usable, focus the main stream on Settings/CONFIG as requested, including planner preferences and Onboard OSD.
 4. Retain the deferred Tracker Home/parameter work and DATA HUD audit without allowing them to displace the current Tools → Settings order.
 5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
@@ -28,14 +28,14 @@ The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD teleme
 
 At this checkpoint:
 
-- CMake configure and `cmake --build build-codex-qt -j12` completed successfully; Claude's separately leased `build-claude` target also compiled and tested the Link Statistics window.
-- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract and MAVLink Mirror coverage: **102/102 tests**.
-- Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics, Tlog Convert and MAVLink Mirror windows from the main surface, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with tool windows open. The Mirror smoke used a live UDP heartbeat source, received 64 framed bytes through TCP Host, observed Tx accounting and Listening after client disconnect, then opened a second independent window and exited with status 0. A separate write-back run sent the exact `WRITEBACK_MARKER_4096` bytes from the TCP peer through the pinned UDP vehicle link, showed Rx 21 with the checkbox enabled and exited cleanly.
+- CMake configure and `cmake --build build-codex-qt -j12` completed successfully; Claude's separately leased `build-claude` target also compiled and tested the NMEA sentence builder.
+- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror and NMEA Output coverage: **105/105 tests**.
+- Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics, Tlog Convert, MAVLink Mirror and NMEA Output windows from the main surface, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with tool windows open. The Mirror smoke used a live UDP heartbeat source, received 64 framed bytes through TCP Host, observed Tx accounting and Listening after client disconnect, then opened a second independent window and exited with status 0. A separate write-back run sent the exact `WRITEBACK_MARKER_4096` bytes from the TCP peer through the pinned UDP vehicle link, showed Rx 21 with the checkbox enabled and exited cleanly. The NMEA smoke received 100 TCP Host sentences from a live local MAVLink source, verified the first GGA/GLL/HDG/VTG/RMC cycle and its five checksums, opened a second independent window and exited with status 0.
 - The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, Antenna Tracker stack and first corrected Tools-menu/window slice are verified. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 128 product rows: 38 `in-progress`, 46 `partial`, 44 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 128 product rows: 39 `in-progress`, 46 `partial`, 43 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -65,12 +65,13 @@ These are working foundations, though their parity rows may remain partial becau
 - A modeless MP10 Link Statistics window that follows the current exact target's physical link without retaining a stale link pointer, plus direct modeless entry points for Plugin Manager and MAVLink Log Download.
 - A modeless MP10 Tlog Convert / Extract window with streaming, cancellable and atomic KML, GPX, CSV, text, parameter and complete-mission-snapshot exports; the unsupported Matlab button is disabled with an explicit reason.
 - A modeless MP10 MAVLink Mirror window with independent per-window sessions, a complete-frame receive tap, immutable physical-link targeting, bounded Serial/TCP/UDP outputs and explicit live write-back control.
+- A modeless MP10 NMEA Output window with independent per-window sessions, exact endpoint targeting, live 1/2/5/10 Hz selection and bounded Serial/TCP/UDP output of checksummed GGA/GLL/HDG/VTG/RMC cycles.
 - Advanced and Developer action inventories, working shared actions/parsers, Advanced Terminal and the user-facing trusted QML plugin manager.
 - Cooperative shutdown ordering, including close with the modeless inspector open, verified by the real-X11 smoke above.
 
 ## TOOLS current phase
 
-The header menu now has the exact 24 MP10 items, order, separators and shortcuts. Nine routes are enabled because they have a truthful presentation: Developer Tools, Plugin Manager, MAVLink Inspector, MAVLink Mirror, Map Tile Cache, Link Statistics, Connection Options, Download Logs (MAVLink) and Tlog Convert / Extract. The other 15 entries are retained in their reference positions but visibly disabled as `not ported yet`; they cannot flip a check mark, open an empty dock or silently no-op. Installed trusted QML tools may append one clearly named extension submenu after the reference inventory.
+The header menu now has the exact 24 MP10 items, order, separators and shortcuts. Ten routes are enabled because they have a truthful presentation: Developer Tools, Plugin Manager, MAVLink Inspector, MAVLink Mirror, NMEA Output, Map Tile Cache, Link Statistics, Connection Options, Download Logs (MAVLink) and Tlog Convert / Extract. The other 14 entries are retained in their reference positions but visibly disabled as `not ported yet`; they cannot flip a check mark, open an empty dock or silently no-op. Installed trusted QML tools may append one clearly named extension submenu after the reference inventory.
 
 `LinkStatsWindow` is a fresh 300×250 modeless window per invocation. Every refresh resolves the current exact target to its physical link again, converts the rolling Qt bit rate to bytes per second and reads per-link MAVLink received/lost counters. Link removal or absence shows zero/em-dash values and an explicit status. `LogDownloadDialog` now closes through normal dialog lifecycle, clears an interrupted vehicle's state/connections and presents an explicit no-vehicle state.
 
@@ -78,7 +79,9 @@ The header menu now has the exact 24 MP10 items, order, separators and shortcuts
 
 `SerialPassThroughWindow` is a fresh 480×380 modeless window per invocation and is reachable from both TOOLS and SETUP Advanced. Start snapshots the current exact target's physical link; successful inbound MAVLink frames are reconstructed byte-for-byte after framing and forwarded without touching the original traffic. Serial uses 8N1/no flow control, TCP Host retains one newest client, and UDP Host learns and fans out to a bounded peer set but refuses a collision with an active vehicle UDP listener. A 256 KiB total mirror-owned backpressure bound drops newest complete frames with a visible counter instead of blocking the protocol thread. Peer bytes are counted and drained with write-back disabled by default; enabling it writes raw bytes through an ephemeral link-ID lookup and automatically disables the reverse path if the link rejects them. Closing one window stops only its own service.
 
-The next Tools slices are NMEA/CoT outputs and Device Operations with immutable exact targets, explicit Start/Stop/cancellation and destruction tests. Settings/CONFIG becomes the main stream immediately after those principal Tools workflows, as requested.
+`SerialOutputNMEAWindow` is a fresh 480×400 modeless window per invocation and is reachable from both TOOLS and SETUP Advanced. Connect pins the exact `(link, system, component)` target and stops explicitly if that physical link disappears. `GLOBAL_POSITION_INT` drives position/altitude, with `GPS_RAW_INT`, `VFR_HUD` and `ATTITUDE` fallbacks/overrides matching MP10 precedence. Each timer tick emits one complete GGA/GLL/HDG/VTG/RMC cycle with checksums and CRLF through bounded Serial 8N1, newest-client TCP Host or learned-peer UDP Host outputs on port 14551. Nothing is written before the first usable `GLOBAL_POSITION_INT` or any `GPS_RAW_INT`; matching MP10 state semantics, a no-fix GPS report can still produce zero coordinates with GGA quality 0. Transport failures remain visible. Closing one window stops only its own service, and guarded service pointers make destruction order safe in both NMEA and Mirror windows.
+
+The next Tools slices are CoT/TAK Output and Device Operations with immutable exact targets, explicit Start/Stop/cancellation and destruction tests. Settings/CONFIG becomes the main stream immediately after those principal Tools workflows, as requested.
 
 ## PLAN action-column audit
 
@@ -106,7 +109,7 @@ The SETUP phase must compare the whole MP10 navigation model with the Qt backsta
 
 The original navigation audit found 53 MP10 pages and 28 Qt routes. The current backstage registers 36 Qt routes; this is not a one-to-one count because the trusted QML manager is a native replacement/extension surface. The SETUP `OSD` route now uses the dedicated `ConfigHWOSDView` legacy MinimOSD telemetry helper; the separate CONFIG `Onboard OSD` canvas/editor is still absent and remains incorrectly represented by the old `OsdConfig`. Many other MP10 workflows remain partial or missing.
 
-The verified SETUP packages include the common `ActionPageView`, the exact 16-action `ConfigAdvancedView` inventory with four working shared tools (MAVLink Inspector, Mavlink Mirror, Map Tile Cache and Proximity), a standalone inspector window, Advanced Terminal, and a user-facing trusted QML plugin manager. Developer Tools exposes the exact 32-action inventory and working byte/MAVLink/hardware-ID parsers. Default Settings, HW ID and ADSB are routed in MP10 order and connected to the committed exact-target parameter snapshot; ADSB identification uses the application-owned exact-link transmitter rather than a legacy global send path.
+The verified SETUP packages include the common `ActionPageView`, the exact 16-action `ConfigAdvancedView` inventory with five working shared tools (MAVLink Inspector, Mavlink Mirror, NMEA, Map Tile Cache and Proximity), a standalone inspector window, Advanced Terminal, and a user-facing trusted QML plugin manager. Developer Tools exposes the exact 32-action inventory and working byte/MAVLink/hardware-ID parsers. Default Settings, HW ID and ADSB are routed in MP10 order and connected to the committed exact-target parameter snapshot; ADSB identification uses the application-owned exact-link transmitter rather than a legacy global send path.
 
 The first-activation SETUP stall is fixed: `ApmCustomFirmwareConfig` yields before serial enumeration, downloads the manifest asynchronously through a dedicated reply, uses progress-based inactivity watchdogs, and keeps firmware download/upload state isolated. Flash actions retain an immutable selected-device snapshot and remain locked until a terminal upload outcome; destruction aborts replies and stops uploader timers. The still-large uncompressed manifest, GUI-thread JSON parsing, serial enumeration and complete MP10 firmware-selector parity remain explicit follow-up work.
 
@@ -117,6 +120,32 @@ The next audited SETUP packages are CubeID and Secure. CubeID is a target-aware 
 The three Antenna Tracker routes are audited in `SETUP_ANTENNA_TRACKER_AUDIT.md`. The `Antenna Tracker (Serial)` and `Antenna Tracker (Live)` routes now exist after `ESP8266 Setup`: one shared `AntennaTrackerUIViewModel` (owned by `SetupView`, so the tracker loop survives page resets and navigation like MP10) drives `ConfigAntennaTrackerView` and `AntennaTrackerUIView` on top of `AntennaTrackerSerialService`, `AntennaTrackerGeometry` and a `UasAntennaTrackerTelemetrySource`; `antennatrackeruiviewmodel_tests` (11 cases) and `antennatrackerviews_tests` (4 cases) cover MP10 texts, validation order, settings, the loop, manual mode, live trim/reverse, failure recovery, the trim sweep and shutdown. `RadioStatusMonitor` now consumes both MAVLink radio-statistics messages per physical link and reproduces MP10's raw-unit SNR formula, 50 percent read-driven EMA and one-second hold; the telemetry source reads only the current exact target's link. The pages were smoke-tested on real X11 under Xvfb with a local SITL: both routes render, a real `QSerialPort` connect to a local UART reached `Connected (Maestro).`, Vehicle Az updated live and the application closed cleanly while connected. Deviations SETUP-018..022 record the shared instance, the Home / Center quirk, the intentional cancellable trim state machine, gating/tracker-home gaps and GUI approximations. The active sequence is the PLAN "Tracker Home" action, then the exact-target 25-field parameter page and remaining route/profile gates. The old `AntennaTrackerConfig` remains until these replacements are routed and verified.
 
 Legacy APM Planner binary plugins are not a requirement. Where MP10 calls something a plugin/page/tool, reproduce the user-visible function with a native Qt page/service or the trusted QML extension system; do not restore the old ABI.
+
+## Settings/CONFIG audit baseline
+
+The active Settings path is `MainWindow -> ConfigView`; the compiled
+`ApmSoftwareConfig` is not the production surface. MP10 registers 15 ordered
+CONFIG routes, while Qt currently registers 13 concrete factories. `Heli Setup`
+and `MAVFtp` are absent. None of the 13 factories literally returns a null
+widget, but this does not make the surface equivalent: `Onboard OSD` currently
+opens the unrelated legacy MinimOSD stream-rate helper, and a helicopter passes
+Qt's broad multirotor gate and therefore sees the Copter `Basic Tuning` page
+instead of `Heli Setup`. Plane `QP Extended Tuning` is also absent, and the Qt
+GeoFence/profile gates do not match MP10's `DisplayView` gates.
+
+The most direct source of a persistent blank Settings content area is
+`ConfigView::resetVehiclePages()`: it can remove the selected page while
+automatic fallback selection is disabled, then rely on a deferred target
+callback which may return early or reject the now-hidden route. The first
+Settings slice must restore the invariant that one visible route always owns a
+real current widget and add a production `ConfigView` navigation/gating test
+that sweeps offline, Copter, Plane, Rover, Heli, advanced-mode and target-reset
+states. Until the true onboard editor exists, the wrong `Onboard OSD` route
+must not remain actionable; Copter Basic Tuning must likewise be hidden for
+Heli. The next functional package is the phase-one Onboard OSD editor documented
+in `OSD_AUDIT.md`, followed by native Planner preferences and a shared
+`DisplayView` profile service. The parity ledger retains the exact per-route
+classification so missing pages cannot be mistaken for working settings.
 
 ## Architecture constraints
 

@@ -1,7 +1,7 @@
-#ifndef SERIALPASSTHROUGHVIEWMODEL_H
-#define SERIALPASSTHROUGHVIEWMODEL_H
+#ifndef SERIALOUTPUTNMEAVIEWMODEL_H
+#define SERIALOUTPUTNMEAVIEWMODEL_H
 
-#include "comm/MavlinkMirrorService.h"
+#include "comm/NmeaOutputService.h"
 
 #include <QObject>
 #include <QPointer>
@@ -9,23 +9,22 @@
 
 #include <functional>
 
-struct MavlinkMirrorSource
+struct NmeaOutputSource
 {
-    int linkId = -1;
+    VehicleEndpoint endpoint;
     QString linkName;
 
-    bool isValid() const { return linkId >= 0; }
+    bool isValid() const { return endpoint.isValid(); }
 };
 
-/** UI state for Mission Planner 10's SerialPassThroughView. */
-class SerialPassThroughViewModel final : public QObject
+/** UI state for Mission Planner 10's SerialOutputNMEAView. */
+class SerialOutputNMEAViewModel final : public QObject
 {
     Q_OBJECT
 
 public:
     using PortEnumerator = std::function<QStringList()>;
-    using SourceResolver = std::function<MavlinkMirrorSource()>;
-    // Empty means accepted; non-empty is shown instead of opening an output.
+    using SourceResolver = std::function<NmeaOutputSource()>;
     using SelectionValidator = std::function<QString(const QString &selection)>;
 
     struct Dependencies
@@ -35,28 +34,27 @@ public:
         SelectionValidator validateSelection;
     };
 
-    explicit SerialPassThroughViewModel(
-        MavlinkMirrorService *service, Dependencies dependencies,
+    explicit SerialOutputNMEAViewModel(
+        NmeaOutputService *service, Dependencies dependencies,
         QObject *parent = nullptr);
-    ~SerialPassThroughViewModel() override;
+    ~SerialOutputNMEAViewModel() override;
 
     QStringList ports() const { return m_ports; }
     QList<int> bauds() const { return m_bauds; }
+    QList<double> rates() const { return m_rates; }
     QString selectedPort() const { return m_selectedPort; }
     int selectedBaud() const { return m_selectedBaud; }
-    bool allowWriteBack() const { return m_allowWriteBack; }
+    double selectedRateHz() const { return m_selectedRateHz; }
     QString connectButtonText() const;
     QString statusText() const { return m_statusText; }
-    quint64 txBytes() const { return m_txBytes; }
-    quint64 rxBytes() const { return m_rxBytes; }
-    quint64 droppedBytes() const { return m_droppedBytes; }
+    QString lastSentence() const { return m_lastSentence; }
     bool isRunning() const;
 
 public slots:
     void refreshPorts();
     void setSelectedPort(const QString &selection);
     void setSelectedBaud(int baud);
-    void setAllowWriteBack(bool enabled);
+    void setSelectedRateHz(double rateHz);
     void toggleConnection();
     void stop();
     void refreshStatus();
@@ -67,21 +65,19 @@ signals:
 private:
     void setLocalStatus(const QString &text);
 
-    QPointer<MavlinkMirrorService> m_service;
+    QPointer<NmeaOutputService> m_service;
     Dependencies m_dependencies;
     QStringList m_ports;
     const QList<int> m_bauds = {
-        1200, 2400, 4800, 9600, 19200, 38400,
-        57600, 115200, 230400, 921600
+        4800, 9600, 19200, 38400, 57600, 115200
     };
+    const QList<double> m_rates = {1.0, 2.0, 5.0, 10.0};
     QString m_selectedPort;
-    int m_selectedBaud = 115200;
-    bool m_allowWriteBack = false;
+    int m_selectedBaud = 4800;
+    double m_selectedRateHz = 5.0;
     QString m_localStatus;
     QString m_statusText;
-    quint64 m_txBytes = 0;
-    quint64 m_rxBytes = 0;
-    quint64 m_droppedBytes = 0;
+    QString m_lastSentence;
 };
 
-#endif // SERIALPASSTHROUGHVIEWMODEL_H
+#endif // SERIALOUTPUTNMEAVIEWMODEL_H
