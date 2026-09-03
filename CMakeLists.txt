@@ -630,8 +630,24 @@ set(SOURCES
     src/ui/configuration/AirspeedConfig.cc
     src/ui/configuration/AirspeedConfig.h
     src/ui/configuration/AirspeedConfig.ui
+    src/ui/configuration/AntennaTrackerGeometry.cpp
+    src/ui/configuration/AntennaTrackerGeometry.h
     src/ui/configuration/AntennaTrackerOutputs.cpp
     src/ui/configuration/AntennaTrackerOutputs.h
+    src/ui/configuration/AntennaTrackerSerialService.cpp
+    src/ui/configuration/AntennaTrackerSerialService.h
+    src/ui/configuration/AntennaTrackerAxisPanel.cpp
+    src/ui/configuration/AntennaTrackerAxisPanel.h
+    src/ui/configuration/AntennaTrackerTelemetrySource.cpp
+    src/ui/configuration/AntennaTrackerTelemetrySource.h
+    src/ui/configuration/AntennaTrackerUIView.cpp
+    src/ui/configuration/AntennaTrackerUIView.h
+    src/ui/configuration/AntennaTrackerUIViewModel.cpp
+    src/ui/configuration/AntennaTrackerUIViewModel.h
+    src/ui/configuration/ConfigAntennaTrackerView.cpp
+    src/ui/configuration/ConfigAntennaTrackerView.h
+    src/ui/configuration/UasAntennaTrackerTelemetrySource.cpp
+    src/ui/configuration/UasAntennaTrackerTelemetrySource.h
     src/ui/configuration/AntennaTrackerConfig.cc
     src/ui/configuration/AntennaTrackerConfig.h
     src/ui/configuration/AntennaTrackerConfig.ui
@@ -2473,6 +2489,100 @@ if(BUILD_TESTING)
     )
     add_test(NAME antennatrackeroutputs_tests
              COMMAND antennatrackeroutputs_tests)
+
+    add_executable(antennatrackergeometry_tests
+        tests/test_antennatrackergeometry.cpp
+        src/ui/configuration/AntennaTrackerGeometry.cpp
+        src/ui/configuration/AntennaTrackerGeometry.h
+    )
+    target_include_directories(antennatrackergeometry_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(antennatrackergeometry_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME antennatrackergeometry_tests
+             COMMAND antennatrackergeometry_tests)
+
+    add_executable(antennatrackerserialservice_tests
+        tests/test_antennatrackerserialservice.cpp
+        src/ui/configuration/AntennaTrackerSerialService.cpp
+        src/ui/configuration/AntennaTrackerSerialService.h
+        src/ui/configuration/AntennaTrackerOutputs.cpp
+        src/ui/configuration/AntennaTrackerOutputs.h
+    )
+    target_include_directories(antennatrackerserialservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(antennatrackerserialservice_tests PRIVATE
+        Qt::Core
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME antennatrackerserialservice_tests
+             COMMAND antennatrackerserialservice_tests)
+
+    add_executable(antennatrackeruiviewmodel_tests
+        tests/test_antennatrackeruiviewmodel.cpp
+        tests/AntennaTrackerTestFakes.h
+        src/ui/configuration/AntennaTrackerUIViewModel.cpp
+        src/ui/configuration/AntennaTrackerUIViewModel.h
+        src/ui/configuration/AntennaTrackerTelemetrySource.cpp
+        src/ui/configuration/AntennaTrackerTelemetrySource.h
+        src/ui/configuration/AntennaTrackerSerialService.cpp
+        src/ui/configuration/AntennaTrackerSerialService.h
+        src/ui/configuration/AntennaTrackerOutputs.cpp
+        src/ui/configuration/AntennaTrackerOutputs.h
+        src/ui/configuration/AntennaTrackerGeometry.cpp
+        src/ui/configuration/AntennaTrackerGeometry.h
+    )
+    target_include_directories(antennatrackeruiviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(antennatrackeruiviewmodel_tests PRIVATE
+        Qt::Core
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME antennatrackeruiviewmodel_tests
+             COMMAND antennatrackeruiviewmodel_tests)
+
+    add_executable(antennatrackerviews_tests
+        tests/test_antennatrackerviews.cpp
+        tests/AntennaTrackerTestFakes.h
+        src/ui/configuration/AntennaTrackerUIView.cpp
+        src/ui/configuration/AntennaTrackerUIView.h
+        src/ui/configuration/ConfigAntennaTrackerView.cpp
+        src/ui/configuration/ConfigAntennaTrackerView.h
+        src/ui/configuration/AntennaTrackerAxisPanel.cpp
+        src/ui/configuration/AntennaTrackerAxisPanel.h
+        src/ui/configuration/AntennaTrackerUIViewModel.cpp
+        src/ui/configuration/AntennaTrackerUIViewModel.h
+        src/ui/configuration/AntennaTrackerTelemetrySource.cpp
+        src/ui/configuration/AntennaTrackerTelemetrySource.h
+        src/ui/configuration/AntennaTrackerSerialService.cpp
+        src/ui/configuration/AntennaTrackerSerialService.h
+        src/ui/configuration/AntennaTrackerOutputs.cpp
+        src/ui/configuration/AntennaTrackerOutputs.h
+        src/ui/configuration/AntennaTrackerGeometry.cpp
+        src/ui/configuration/AntennaTrackerGeometry.h
+    )
+    target_include_directories(antennatrackerviews_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(antennatrackerviews_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME antennatrackerviews_tests
+             COMMAND antennatrackerviews_tests)
+    set_tests_properties(antennatrackerviews_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(mavlinkinspectorwindow_tests
         tests/test_mavlinkinspectorwindow.cpp

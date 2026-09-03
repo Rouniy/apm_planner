@@ -12,6 +12,7 @@
 
 #include <memory>
 
+class AntennaTrackerUIViewModel;
 class BackstageView;
 class ConfigGpsInjectView;
 class ConfigDroneCanView;
@@ -67,6 +68,10 @@ private:
     QWidget *createADSBPage(QWidget *parent);
     QWidget *createHWOSDPage(QWidget *parent);
     QWidget *createESP8266Page(QWidget *parent);
+    QWidget *createAntennaTrackerSerialPage(QWidget *parent);
+    QWidget *createAntennaTrackerLivePage(QWidget *parent);
+    // One shared MP10 AntennaTrackerUIViewModel for both tracker pages.
+    AntennaTrackerUIViewModel *ensureAntennaTrackerViewModel();
     QWidget *createMotorTestPage(QWidget *parent);
     QWidget *createBluetoothSetupPage(QWidget *parent);
     QWidget *createParachutePage(QWidget *parent);
@@ -93,6 +98,7 @@ private:
     QPointer<LinkInterface> m_droneCanLastPrimaryLink;
     std::unique_ptr<ParameterMetaDataRepository> m_metadataRepository;
     QPointer<FrameDefaultCatalogService> m_frameDefaultCatalogService;
+    QPointer<AntennaTrackerUIViewModel> m_antennaTrackerViewModel;
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
     QString m_parameterLoadFailure;

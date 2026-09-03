@@ -2,12 +2,16 @@
 
 #include "AccelCalibrationConfig.h"
 #include "AirspeedConfig.h"
+#include "AntennaTrackerSerialService.h"
+#include "AntennaTrackerUIView.h"
+#include "AntennaTrackerUIViewModel.h"
 #include "ApmCustomFirmwareConfig.h"
 #include "ArduPilotMegaMAV.h"
 #include "BatteryMonitorConfig.h"
 #include "CameraGimbalConfig.h"
 #include "ConfigAdvancedView.h"
 #include "ConfigADSBView.h"
+#include "ConfigAntennaTrackerView.h"
 #include "ConfigBatteryMonitoring2View.h"
 #include "ConfigDefaultSettingsView.h"
 #include "CompassConfig.h"
@@ -45,6 +49,7 @@
 #include "LinkManager.h"
 #include "SerialLinkInterface.h"
 #include "TerminalConsole.h"
+#include "UasAntennaTrackerTelemetrySource.h"
 #include "OpticalFlowConfig.h"
 #include "QGCUASParamManager.h"
 #include "QGCCore.h"
@@ -102,6 +107,8 @@ const QString kMotorTest = QStringLiteral("ConfigMotorTestView");
 const QString kBluetoothSetup = QStringLiteral("ConfigHWBTView");
 const QString kParachute = QStringLiteral("ConfigParachuteView");
 const QString kESP8266 = QStringLiteral("ConfigHWESP8266View");
+const QString kAntennaTrackerSerial = QStringLiteral("ConfigAntennaTrackerView");
+const QString kAntennaTrackerLive = QStringLiteral("AntennaTrackerUIView");
 const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
 const QString kAdvancedTools = QStringLiteral("ConfigAdvancedView");
 const QString kElevationSources = QStringLiteral("ConfigElevationSourcesView");
@@ -223,6 +230,10 @@ SetupView::SetupView(QWidget *parent)
             if (auto *esp = qobject_cast<ConfigHWESP8266View *>(page)) {
                 esp->activate();
             }
+        } else if (id == kAntennaTrackerSerial || id == kAntennaTrackerLive) {
+            if (auto *tracker = qobject_cast<AntennaTrackerUIView *>(page)) {
+                tracker->activate();
+            }
         }
     });
     connect(m_backstage, &BackstageView::pageDeactivated,
@@ -239,6 +250,10 @@ SetupView::SetupView(QWidget *parent)
         } else if (id == kESP8266) {
             if (auto *esp = qobject_cast<ConfigHWESP8266View *>(page)) {
                 esp->deactivate();
+            }
+        } else if (id == kAntennaTrackerSerial || id == kAntennaTrackerLive) {
+            if (auto *tracker = qobject_cast<AntennaTrackerUIView *>(page)) {
+                tracker->deactivate();
             }
         }
     });
@@ -258,6 +273,13 @@ SetupView::~SetupView()
 {
     // Destroy pages with active transports while Setup's transport pointers
     // are still alive, so they can send their final stop commands safely.
+    if (m_antennaTrackerViewModel) {
+        // Saves the MP10 tracker settings, stops the 10 Hz loop and releases
+        // the dedicated serial port before the pages and the view model go.
+        m_antennaTrackerViewModel->shutdown();
+    }
+    m_backstage->resetPage(kAntennaTrackerSerial);
+    m_backstage->resetPage(kAntennaTrackerLive);
     m_backstage->resetPage(kDroneCAN);
     m_backstage->resetPage(kMotorTest);
     m_backstage->resetPage(kDefaultSettings);
@@ -439,6 +461,29 @@ void SetupView::buildPages()
         return createESP8266Page(parent);
     };
     m_backstage->addPage(esp8266);
+    // MP10 lists "Antenna Tracker (Serial)" and "(Live)" after FFT Setup, which
+    // the Qt port does not register yet; both work offline against a dedicated
+    // serial port and must not wait for the autopilot parameter overlay.
+    BackstagePage trackerSerial;
+    trackerSerial.id = kAntennaTrackerSerial;
+    trackerSerial.header = tr("Antenna Tracker (Serial)");
+    trackerSerial.isSub = true;
+    trackerSerial.requiresConnection = false;
+    trackerSerial.allowsPartialParameters = true;
+    trackerSerial.factory = [this](QWidget *parent) {
+        return createAntennaTrackerSerialPage(parent);
+    };
+    m_backstage->addPage(trackerSerial);
+    BackstagePage trackerLive;
+    trackerLive.id = kAntennaTrackerLive;
+    trackerLive.header = tr("Antenna Tracker (Live)");
+    trackerLive.isSub = true;
+    trackerLive.requiresConnection = false;
+    trackerLive.allowsPartialParameters = true;
+    trackerLive.factory = [this](QWidget *parent) {
+        return createAntennaTrackerLivePage(parent);
+    };
+    m_backstage->addPage(trackerLive);
     BackstagePage droneCan;
     droneCan.id = kDroneCAN;
     droneCan.header = tr("DroneCAN/UAVCAN");
@@ -2981,4 +3026,33 @@ void SetupView::refreshLoadingOverlay()
     m_backstage->setParameterLoadingState(
         loading, receivedTotal, expectedTotal,
         m_parameterLoadingCanceled, m_parameterLoadFailure);
+}
+
+AntennaTrackerUIViewModel *SetupView::ensureAntennaTrackerViewModel()
+{
+    if (m_antennaTrackerViewModel) {
+        return m_antennaTrackerViewModel;
+    }
+    auto *service = new AntennaTrackerSerialService;
+    service->setPortOwnershipCheck([](const QString &portName) {
+        return UasAntennaTrackerTelemetrySource::PortOwnedByVehicleLink(portName);
+    });
+    auto *telemetry = new UasAntennaTrackerTelemetrySource;
+    // The view model adopts the service and the telemetry source; both pages
+    // only hold a QPointer to it, so it outlives page resets and navigation
+    // exactly like MP10 keeps its tracker loop running off-page.
+    m_antennaTrackerViewModel = new AntennaTrackerUIViewModel(
+        service, telemetry, nullptr,
+        []() { return ConfigHWBTSerialService::availablePorts(); }, this);
+    return m_antennaTrackerViewModel;
+}
+
+QWidget *SetupView::createAntennaTrackerSerialPage(QWidget *parent)
+{
+    return new ConfigAntennaTrackerView(ensureAntennaTrackerViewModel(), parent);
+}
+
+QWidget *SetupView::createAntennaTrackerLivePage(QWidget *parent)
+{
+    return new AntennaTrackerUIView(ensureAntennaTrackerViewModel(), parent);
 }
