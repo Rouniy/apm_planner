@@ -309,6 +309,11 @@ bool BackstageView::isPageVisible(const QString &id) const
     return m_pages.contains(id) && !m_pages.value(id).button->isHidden();
 }
 
+bool BackstageView::automaticSelectionEnabled() const
+{
+    return m_automaticSelectionEnabled;
+}
+
 bool BackstageView::isGroupExpanded(const QString &id) const
 {
     return m_groups.contains(id) && m_groups.value(id).expanded;
@@ -321,7 +326,13 @@ bool BackstageView::isGroupVisible(const QString &id) const
 
 void BackstageView::setAutomaticSelectionEnabled(bool enabled)
 {
+    if (m_automaticSelectionEnabled == enabled) {
+        return;
+    }
     m_automaticSelectionEnabled = enabled;
+    if (enabled && m_currentPageId.isEmpty()) {
+        selectFallbackPage();
+    }
 }
 
 bool BackstageView::restoreInitialPage(const QString &preferredPage)

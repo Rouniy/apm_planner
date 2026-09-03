@@ -136,19 +136,23 @@ Qt's broad multirotor gate and therefore sees the Copter `Basic Tuning` page
 instead of `Heli Setup`. Plane `QP Extended Tuning` is also absent, and the Qt
 GeoFence/profile gates do not match MP10's `DisplayView` gates.
 
-The most direct source of a persistent blank Settings content area is
-`ConfigView::resetVehiclePages()`: it can remove the selected page while
-automatic fallback selection is disabled, then rely on a deferred target
-callback which may return early or reject the now-hidden route. The first
-Settings slice must restore the invariant that one visible route always owns a
-real current widget and add a production `ConfigView` navigation/gating test
-that sweeps offline, Copter, Plane, Rover, Heli, advanced-mode and target-reset
-states. Until the true onboard editor exists, the wrong `Onboard OSD` route
-must not remain actionable; Copter Basic Tuning must likewise be hidden for
-Heli. The next functional package is the phase-one Onboard OSD editor documented
-in `OSD_AUDIT.md`, followed by native Planner preferences and a shared
-`DisplayView` profile service. The parity ledger retains the exact per-route
-classification so missing pages cannot be mistaken for working settings.
+The persistent blank Settings content path through vehicle/parameter resets is
+fixed at the shared backstage boundary. Re-enabling automatic selection with
+an empty stack now synchronously materializes the first visible concrete page,
+while `ConfigView::resetVehiclePages()` preserves a still-visible current route
+and the constructor's deliberately disabled lazy-selection state. Programmatic
+visibility fallback is guarded so it does not overwrite the user's saved route.
+The regression test proves a non-empty page ID, current widget and stack index
+after the formerly blank reset ordering without eagerly constructing an earlier
+factory. A broader production `ConfigView` matrix across Copter, Plane, Rover,
+Heli, advanced mode and target changes remains desirable coverage rather than a
+known blank-view defect. Until the true onboard editor exists, the wrong
+`Onboard OSD` route must not remain actionable; Copter Basic Tuning must likewise
+be hidden for Heli. The next functional package is the truthful route/profile
+shell, followed by the phase-one Onboard OSD editor documented in
+`OSD_AUDIT.md`, native Planner preferences and a shared `DisplayView` profile
+service. The parity ledger retains the exact per-route classification so missing
+pages cannot be mistaken for working settings.
 
 ## Architecture constraints
 

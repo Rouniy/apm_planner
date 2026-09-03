@@ -28,6 +28,7 @@
 #include <QDir>
 #include <QMessageBox>
 #include <QScrollArea>
+#include <QScopedValueRollback>
 #include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -488,6 +489,10 @@ void ConfigView::parameterMetadataUpdated(
 
 void ConfigView::refreshPageVisibility()
 {
+    // Visibility changes are programmatic. If the selected route disappears,
+    // BackstageView chooses a visible fallback synchronously, but that fallback
+    // must not replace the user's saved route preference.
+    QScopedValueRollback<bool> selectionGuard(m_adjustingSelection, true);
     m_backstage->refreshVisibility();
     if (auto *page = qobject_cast<ConfigRawParams *>(
             m_backstage->page(kFullParameterList))) {
@@ -576,7 +581,10 @@ void ConfigView::bindParameterManager(QGCUASParamManager *manager)
 
 void ConfigView::resetVehiclePages(bool targetChanged)
 {
-    m_adjustingSelection = true;
+    const QString selectedPage = m_backstage->currentPageId();
+    const bool automaticSelectionWasEnabled =
+        m_backstage->automaticSelectionEnabled();
+    QScopedValueRollback<bool> selectionGuard(m_adjustingSelection, true);
     m_backstage->setAutomaticSelectionEnabled(false);
     for (const QString &pageId : m_backstage->pageIds()) {
         const BackstagePage definition = m_backstage->pageDefinition(pageId);
@@ -585,8 +593,19 @@ void ConfigView::resetVehiclePages(bool targetChanged)
             m_backstage->resetPage(pageId);
         }
     }
-    m_backstage->setAutomaticSelectionEnabled(true);
-    m_adjustingSelection = false;
+
+    // Recreate the route the user was looking at before re-enabling automatic
+    // fallback. This preserves a still-visible selection across a target reset.
+    // If it became hidden, re-enabling selects the first visible concrete page.
+    if (!selectedPage.isEmpty()
+        && m_backstage->isPageVisible(selectedPage)) {
+        m_backstage->setCurrentPage(selectedPage);
+    }
+    // During construction automatic selection is deliberately disabled until
+    // restoreInitialPage() can honor the saved preference lazily. Preserve that
+    // outer state instead of creating an earlier page factory here.
+    m_backstage->setAutomaticSelectionEnabled(
+        automaticSelectionWasEnabled);
 }
 
 void ConfigView::parameterTargetChanged()
@@ -677,9 +696,9 @@ void ConfigView::restorePreferredPage()
         if (m_backstage->isPageVisible(pageId)
             && m_backstage->pageDefinition(pageId).header
                 == m_preferredPageHeader) {
-            m_adjustingSelection = true;
+            QScopedValueRollback<bool> selectionGuard(
+                m_adjustingSelection, true);
             m_backstage->setCurrentPage(pageId);
-            m_adjustingSelection = false;
             return;
         }
     }

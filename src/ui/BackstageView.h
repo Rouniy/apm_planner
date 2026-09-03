@@ -50,6 +50,7 @@ public:
     BackstagePage pageDefinition(const QString &id) const;
     bool isPageCreated(const QString &id) const;
     bool isPageVisible(const QString &id) const;
+    bool automaticSelectionEnabled() const;
     bool isGroupExpanded(const QString &id) const;
     bool isGroupVisible(const QString &id) const;
     static bool shouldShowParameterLoading(bool connected,

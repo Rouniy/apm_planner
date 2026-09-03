@@ -9,6 +9,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalSpy>
+#include <QStackedWidget>
 #include <QTest>
 
 class BackstageViewTest : public QObject
@@ -24,6 +25,7 @@ private slots:
     void createsAndResetsLazyPages();
     void evaluatesDeclarativeVisibilityWithoutCreatingHiddenPages();
     void restoresPreferredPageWithoutCreatingEarlierFactories();
+    void reenablingAutomaticSelectionRestoresConcreteFallback();
     void restoresSelectionWhenPagesReappear();
     void gatesParameterLoadingLikeMissionPlanner();
     void modelsMissionPlannerParameterLoadingStates();
@@ -223,6 +225,52 @@ void BackstageViewTest::restoresPreferredPageWithoutCreatingEarlierFactories()
     QVERIFY(view.restoreInitialPage(planner.id));
     QCOMPARE(firstCreations, 0);
     QCOMPARE(plannerCreations, 2);
+}
+
+void BackstageViewTest::reenablingAutomaticSelectionRestoresConcreteFallback()
+{
+    BackstageView view;
+    view.setAutomaticSelectionEnabled(false);
+
+    int firstCreations = 0;
+    int selectedCreations = 0;
+    BackstagePage first;
+    first.id = QStringLiteral("firstPage");
+    first.header = QStringLiteral("First Page");
+    first.factory = [&firstCreations](QWidget *parent) {
+        ++firstCreations;
+        return new QWidget(parent);
+    };
+    BackstagePage selected;
+    selected.id = QStringLiteral("selectedPage");
+    selected.header = QStringLiteral("Selected Page");
+    selected.factory = [&selectedCreations](QWidget *parent) {
+        ++selectedCreations;
+        return new QWidget(parent);
+    };
+    QVERIFY(view.addPage(first));
+    QVERIFY(view.addPage(selected));
+
+    // restoreInitialPage() must still create only the preferred lazy page.
+    QVERIFY(view.restoreInitialPage(selected.id));
+    QCOMPARE(firstCreations, 0);
+    QCOMPARE(selectedCreations, 1);
+    QCOMPARE(view.currentPageId(), selected.id);
+
+    view.setAutomaticSelectionEnabled(false);
+    QVERIFY(view.resetPage(selected.id));
+    QVERIFY(view.currentPageId().isEmpty());
+    QVERIFY(!view.page(selected.id));
+
+    view.setAutomaticSelectionEnabled(true);
+    QCOMPARE(view.currentPageId(), first.id);
+    QCOMPARE(firstCreations, 1);
+    QVERIFY(view.page(first.id));
+    auto *stack = view.findChild<QStackedWidget *>(
+        QStringLiteral("backstagePageStack"));
+    QVERIFY(stack);
+    QCOMPARE(stack->currentWidget(), view.page(first.id));
+    QVERIFY(stack->currentIndex() >= 0);
 }
 
 void BackstageViewTest::restoresSelectionWhenPagesReappear()
