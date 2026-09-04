@@ -19,32 +19,31 @@ sections.
 |---|---:|---:|---:|---:|
 | Ungrouped | 4 | 1 | 0 | 0 |
 | Mandatory Hardware | 16 | 13 | 1 | 1 |
-| Optional Hardware | 26 | 18 | 1 | 1 |
+| Optional Hardware | 26 | 19 | 1 | 1 |
 | Advanced | 7 | 6 | 1 | 1 |
-| **Total** | **53** | **38** | **3** | **3** |
+| **Total** | **53** | **39** | **3** | **3** |
 
 Thus MP10 registers 56 potential navigation entries when group headings are
-included. Qt registers 41: 38 page factories plus the same three group
+included. Qt registers 42: 39 page factories plus the same three group
 headings. Every current Qt page registration has a concrete factory. Counts
 alone do not imply parity because several factories still wrap legacy APM
 Planner widgets rather than the corresponding MP10 implementation.
 
 ## Missing MP10 pages
 
-Qt is missing 16 direct MP10 pages:
+Qt is missing 15 direct MP10 pages:
 
 - Ungrouped: `Install Firmware Legacy`, `Secure`, and
   `Secure (Bootloader Keys)`.
 - Mandatory Hardware: `Heli Setup (4.0+)`, `Frame Type (Legacy)`, and
   `Compass (Legacy)`.
 - Optional Hardware: `CubeID Update`, `NV Modem`, `Joystick`,
-  `Compass/Motor Calib`, `PX4Flow`, `Antenna Tracker`, `FFT Setup`, and
-  `MAVFtp`.
+  `Compass/Motor Calib`, `PX4Flow`, `Antenna Tracker`, and `FFT Setup`.
 - Advanced: `Onboard Lua REPL` and `Local Script REPL`.
 
 Qt also has one intentional additional page, `QML Plugins`. It is the useful
 user-facing manager for the fresh port's trusted QML extension system and must
-remain. The arithmetic is therefore `53 - 16 + 1 = 38` Qt pages.
+remain. The arithmetic is therefore `53 - 15 + 1 = 39` Qt pages.
 
 ## Retained useful legacy modules
 
@@ -108,7 +107,7 @@ cases the SETUP click/reset test must expose.
 
 The required navigation regression test must lock:
 
-- the 38 Qt page IDs and three group IDs in production order;
+- the 39 Qt page IDs and three group IDs in production order;
 - a non-null concrete widget after activating every visible page;
 - offline, connected, partial-parameter and advanced-mode visibility;
 - Copter, Plane, Rover, Heli and tracker profile transitions;

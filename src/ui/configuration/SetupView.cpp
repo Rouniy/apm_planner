@@ -48,6 +48,7 @@
 #include "FrameTypeConfig.h"
 #include "LinkInterface.h"
 #include "LinkManager.h"
+#include "MavFTPUIView.h"
 #include "SerialLinkInterface.h"
 #include "TerminalConsole.h"
 #include "UasAntennaTrackerTelemetrySource.h"
@@ -111,6 +112,7 @@ const QString kParachute = QStringLiteral("ConfigParachuteView");
 const QString kESP8266 = QStringLiteral("ConfigHWESP8266View");
 const QString kAntennaTrackerSerial = QStringLiteral("ConfigAntennaTrackerView");
 const QString kAntennaTrackerLive = QStringLiteral("AntennaTrackerUIView");
+const QString kMavFtp = QStringLiteral("MavFTPUIView");
 const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
 const QString kAdvancedTools = QStringLiteral("ConfigAdvancedView");
 const QString kElevationSources = QStringLiteral("ConfigElevationSourcesView");
@@ -527,6 +529,17 @@ void SetupView::buildPages()
         return createHWCANPage(parent);
     };
     m_backstage->addPage(hwCan);
+    BackstagePage mavFtp;
+    mavFtp.id = kMavFtp;
+    mavFtp.header = tr("MAVFtp");
+    mavFtp.isSub = true;
+    mavFtp.requiresConnection = true;
+    mavFtp.allowsPartialParameters = true;
+    mavFtp.factory = [](QWidget *parent) {
+        return new MavFTPUIView(
+            LinkManager::instance()->mavFtpService(), parent);
+    };
+    m_backstage->addPage(mavFtp);
 
     m_backstage->addGroup(tr(">> Advanced"), kAdvancedGroup);
     BackstagePage advancedTools;
@@ -936,6 +949,8 @@ void SetupView::refreshPageVisibility()
     m_backstage->setPageVisible(kDroneCAN, profile.displayCAN);
     m_backstage->setPageVisible(
         kHWCAN, m_connected && profile.displayCAN);
+    m_backstage->setPageVisible(
+        kMavFtp, m_connected && profile.displayMavFTP);
 
     m_backstage->setGroupVisible(kAdvancedGroup, m_advanced);
     m_backstage->setPageVisible(kAdvancedTools, m_advanced);

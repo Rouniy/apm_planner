@@ -17,6 +17,7 @@
 #include "GeoFenceConfig.h"
 #include "LinkInterface.h"
 #include "LinkManager.h"
+#include "MavFTPUIView.h"
 #include "comm/VehicleTargetManager.h"
 #include "QGCUASParamManager.h"
 #include "ArduPilotMegaMAV.h"
@@ -51,6 +52,7 @@ const QString kPlaneTuning = QStringLiteral("ConfigArduplaneView");
 const QString kRoverTuning = QStringLiteral("ConfigArduroverView");
 const QString kExtendedTuning = QStringLiteral("ConfigExtendedTuningView");
 const QString kOnboardOsd = QStringLiteral("ConfigOSDView");
+const QString kMavFtp = QStringLiteral("MavFTPUIView");
 const QString kUserParams = QStringLiteral("ConfigUserDefinedView");
 const QString kFullParameterList = QStringLiteral("RawParamsView");
 const QString kPlanner = QStringLiteral("ConfigPlannerView");
@@ -222,8 +224,18 @@ void ConfigView::buildPages()
         return createOsdPage(parent);
     };
     m_backstage->addPage(onboardOsd);
-    // MP10's MAVFtp route remains intentionally absent until its real
-    // workflow exists. Never substitute an unrelated legacy widget.
+
+    BackstagePage mavFtp;
+    mavFtp.id = kMavFtp;
+    mavFtp.header = tr("MAVFtp");
+    mavFtp.requiresConnection = true;
+    mavFtp.allowsPartialParameters = true;
+    mavFtp.visibleWhen = routeVisible(ConfigRouteId::MavFtp);
+    mavFtp.factory = [](QWidget *parent) {
+        return new MavFTPUIView(
+            LinkManager::instance()->mavFtpService(), parent);
+    };
+    m_backstage->addPage(mavFtp);
 
     BackstagePage userParameters;
     userParameters.id = kUserParams;

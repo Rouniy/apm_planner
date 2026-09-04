@@ -251,6 +251,11 @@ set(SOURCES
     src/comm/Esp8266ParameterClient.h
     src/comm/ExactLinkTransmitter.cpp
     src/comm/ExactLinkTransmitter.h
+    src/comm/MavFtpProtocol.cpp
+    src/comm/MavFtpProtocol.h
+    src/comm/MavFtpService.cpp
+    src/comm/MavFtpService.h
+    src/comm/MavFtpServiceInterface.h
     src/comm/GpsCorrectionSource.cpp
     src/comm/GpsCorrectionSource.h
     src/comm/GpsRtcmPacketizer.cpp
@@ -838,6 +843,8 @@ set(SOURCES
     src/ui/configuration/ConfigMavCommandView.h
     src/ui/configuration/ConfigMavCommandViewModel.cpp
     src/ui/configuration/ConfigMavCommandViewModel.h
+    src/ui/configuration/MavFTPUIView.cpp
+    src/ui/configuration/MavFTPUIView.h
     src/ui/configuration/ElevationSourceService.cpp
     src/ui/configuration/ElevationSourceService.h
     src/ui/configuration/SrtmElevationSource.cpp
@@ -3313,6 +3320,69 @@ if(BUILD_TESTING)
     )
     add_test(NAME parameter_service_tests
              COMMAND parameter_service_tests)
+
+    add_executable(mavftpprotocol_tests
+        tests/test_mavftpprotocol.cpp
+        src/comm/MavFtpProtocol.cpp
+        src/comm/MavFtpProtocol.h
+    )
+    target_include_directories(mavftpprotocol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(mavftpprotocol_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME mavftpprotocol_tests COMMAND mavftpprotocol_tests)
+
+    add_executable(mavftpservice_tests
+        tests/test_mavftpservice.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/MavFtpProtocol.cpp
+        src/comm/MavFtpProtocol.h
+        src/comm/MavFtpService.cpp
+        src/comm/MavFtpService.h
+        src/comm/MavFtpServiceInterface.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(mavftpservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(mavftpservice_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME mavftpservice_tests COMMAND mavftpservice_tests)
+
+    add_executable(mavftpuiview_tests
+        tests/test_mavftpuiview.cpp
+        src/comm/MavFtpProtocol.h
+        src/comm/MavFtpServiceInterface.h
+        src/ui/configuration/MavFTPUIView.cpp
+        src/ui/configuration/MavFTPUIView.h
+    )
+    target_include_directories(mavftpuiview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(mavftpuiview_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME mavftpuiview_tests COMMAND mavftpuiview_tests)
+    set_tests_properties(mavftpuiview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(backstageview_tests
         tests/test_backstageview.cpp

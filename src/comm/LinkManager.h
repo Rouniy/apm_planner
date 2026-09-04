@@ -58,6 +58,8 @@ class VehicleCommandService;
 class ExactLinkTransmitter;
 class RadioStatusMonitor;
 class ParameterService;
+class MavFtpService;
+class MavFtpServiceInterface;
 class QGCUASParamManager;
 class LinkManager : public QObject
 {
@@ -82,6 +84,7 @@ public:
     RadioStatusMonitor *radioStatusMonitor() const;
     VehicleCommandService *vehicleCommandService() const;
     ParameterService *parameterService() const;
+    MavFtpServiceInterface *mavFtpService() const;
     QGCUASParamManager *parameterManager() const;
     Q_INVOKABLE QObject *vehicleTargetManagerObject() const;
     Q_INVOKABLE QObject *vehicleCommandServiceObject() const;
@@ -171,6 +174,7 @@ private:
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;
     ParameterService *m_parameterService = nullptr;
+    MavFtpService *m_mavFtpService = nullptr;
     QGCUASParamManager *m_parameterManager = nullptr;
     QString m_logSubDir;
     bool m_mavlinkLoggingEnabled;

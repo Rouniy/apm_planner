@@ -10,7 +10,7 @@ not support classes or controls that are merely present in source files.
 ## CONFIG route count
 
 Mission Planner 10 registers 15 ordered CONFIG routes. Qt models all 15 in
-`ConfigRouteProfile`, but deliberately registers only the 13 routes that have
+`ConfigRouteProfile`, but deliberately registers only the 14 routes that have
 concrete factories. There are no null factories in the active Qt navigation.
 
 | # | Mission Planner 10 route | Qt status |
@@ -25,14 +25,14 @@ concrete factories. There are no null factories in the active Qt navigation.
 | 8 | Basic Tuning (Rover) | Useful legacy Rover page retained; partial |
 | 9 | Extended / QP Extended Tuning | Legacy Copter editor retained; Plane QP workflow missing |
 | 10 | Onboard OSD | Native phase-one editor; in progress |
-| 11 | MAVFtp | Missing; no unrelated substitute |
+| 11 | MAVFtp | Native remote file browser and exact-target service; in progress |
 | 12 | User Params | Native metadata-backed page; in progress |
 | 13 | Full Parameter List | Native staged parameter page; in progress |
 | 14 | Planner | Native nine-section page; partial |
 | 15 | Planner (Advanced) | Native read-only settings snapshot; in progress |
 
-The raw factory gap is therefore two routes: `Heli Setup` and `MAVFtp`.
-Plane `QP Extended Tuning` is a third functional mismatch even though the Qt
+The raw factory gap is therefore one route: `Heli Setup`.
+Plane `QP Extended Tuning` is a second functional mismatch even though the Qt
 route count is occupied by a useful Copter-only legacy editor. Existing APM
 Planner pages remain only where they provide a non-empty same-domain workflow;
 their Legacy/partial classification is not a parity claim.
@@ -78,6 +78,6 @@ split-brain MAVLink identity controls are hidden there.
 The separate `SETUP_INVENTORY_AUDIT.md` remains the count baseline: both
 applications have four logical sections (ungrouped plus three named groups).
 Mission Planner 10 registers 53 pages plus three group headings, or 56
-navigation entries. Qt registers 38 concrete pages plus the same three group
-headings, or 41 entries. Qt is missing 16 reference pages and intentionally
+navigation entries. Qt registers 39 concrete pages plus the same three group
+headings, or 42 entries. Qt is missing 15 reference pages and intentionally
 keeps one useful extra page, `QML Plugins`.

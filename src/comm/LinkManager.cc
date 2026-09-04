@@ -42,6 +42,7 @@ This file is part of the APM_PLANNER project
 #include "TCPLink.h"
 #include "UASObject.h"
 #include "ExactLinkTransmitter.h"
+#include "MavFtpService.h"
 #include "ParameterService.h"
 #include "QGCUASParamManager.h"
 #include "VehicleCommandService.h"
@@ -120,6 +121,10 @@ LinkManager::LinkManager(QObject *parent) :
     m_parameterService = new ParameterService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_parameterService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
+    m_mavFtpService = new MavFtpService(
+        m_vehicleTargetManager, m_exactLinkTransmitter, this);
+    m_mavFtpService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
     m_parameterManager = new QGCUASParamManager(
         m_parameterService, m_vehicleTargetManager, this);
@@ -299,6 +304,11 @@ void LinkManager::shutdown()
         }
     }
 
+    // Flush any open MAVFTP session while exact-link lookup and the physical
+    // transport are still available. No terminal signal is needed during
+    // application shutdown.
+    m_mavFtpService->shutdown();
+
     // Make every outbound lookup fail and detach ingress. Links remain live
     // while UASManager quiesces DroneCAN and other vehicle-owned transports.
     const QMap<int, LinkInterface *> links = m_connectionMap;
@@ -310,6 +320,7 @@ void LinkManager::shutdown()
         m_vehicleTargetManager->removeLink(linkId);
         m_vehicleCommandService->forgetLink(linkId);
         m_parameterService->forgetLink(linkId);
+        m_mavFtpService->forgetLink(linkId);
         m_exactLinkTransmitter->forgetLink(linkId);
         m_radioStatusMonitor->forgetLink(linkId);
         if (m_mavlinkProtocol) {
@@ -589,6 +600,11 @@ ParameterService *LinkManager::parameterService() const
     return m_parameterService;
 }
 
+MavFtpServiceInterface *LinkManager::mavFtpService() const
+{
+    return m_mavFtpService;
+}
+
 QGCUASParamManager *LinkManager::parameterManager() const
 {
     return m_parameterManager;
@@ -670,6 +686,10 @@ void LinkManager::removeLink(int linkId)
     if (!link) {
         return;
     }
+    // Give MAVFTP one bounded best-effort Terminate/Reset while the exact
+    // target and physical-link lookup are still valid.
+    m_mavFtpService->forgetLink(linkId);
+
     // Fail exact-link lookups and detach ingress before the worker begins
     // shutting down. Deleting a still-running QThread is undefined and was a
     // second shutdown-crash path when a connection was removed at runtime.
@@ -821,6 +841,7 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
     if (link) {
         m_vehicleCommandService->observeMessage(link->getId(), message);
         m_parameterService->observeMessage(link->getId(), message);
+        m_mavFtpService->observeMessage(link->getId(), message);
         // MP10 propagates RADIO/RADIO_STATUS to every vehicle on the link; the
         // monitor keys the statistics by this physical link only.
         m_radioStatusMonitor->observe(link->getId(), message,

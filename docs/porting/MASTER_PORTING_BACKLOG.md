@@ -359,8 +359,9 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 - Planner Advanced и User Defined — завершить screenshots/native evidence.
 - Param Compare — полный merge/diff/apply workflow.
 - CONFIG Onboard OSD — Wave 2.
-- Отсутствующие: Traditional Heli, MAVFTP UI, FFT analysis window и Warning
-  Manager.
+- Shared MAVFTP UI: завершить streaming/burst, capability gate, exclusive
+  no-replace local save и live-hardware evidence.
+- Отсутствующие: Traditional Heli, FFT analysis window и Warning Manager.
 
 Gate: изменение параметров всегда проходит typed metadata validation и ACK,
 dirty state никогда не переносится на новый target.

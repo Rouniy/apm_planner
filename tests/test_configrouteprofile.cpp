@@ -103,12 +103,13 @@ void ConfigRouteProfileTest::inventoryMatchesMissionPlanner10()
         QStringLiteral("ConfigArduroverView"),
         QStringLiteral("ConfigExtendedTuningView"),
         QStringLiteral("ConfigOSDView"),
+        QStringLiteral("MavFTPUIView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView"),
         QStringLiteral("ConfigPlannerAdvView")
     }));
-    QCOMPARE(factoryPageIds(inventory).size(), 13);
+    QCOMPARE(factoryPageIds(inventory).size(), 14);
     QCOMPARE(ConfigRouteProfile::currentFactoryPageIds(),
              factoryPageIds(inventory));
 
@@ -216,6 +217,7 @@ void ConfigRouteProfileTest::copterRoutesSeparateReferenceFromCurrentQt()
                  QStringLiteral("ConfigBasicTuningView"),
                  QStringLiteral("ConfigExtendedTuningView"),
                  QStringLiteral("ConfigOSDView"),
+                 QStringLiteral("MavFTPUIView"),
                  QStringLiteral("ConfigUserDefinedView"),
                  QStringLiteral("RawParamsView"),
                  QStringLiteral("ConfigPlannerView")
@@ -240,6 +242,7 @@ void ConfigRouteProfileTest::helicopterDoesNotReceiveCopterBasicTuning()
         QStringLiteral("ConfigAC_FenceView"),
         QStringLiteral("ConfigExtendedTuningView"),
         QStringLiteral("ConfigOSDView"),
+        QStringLiteral("MavFTPUIView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView")
@@ -266,6 +269,7 @@ void ConfigRouteProfileTest::planeUsesQpLabelAndRejectsLegacyExtendedPage()
         QStringLiteral("ConfigFriendlyParamsView"),
         QStringLiteral("ConfigArduplaneView"),
         QStringLiteral("ConfigOSDView"),
+        QStringLiteral("MavFTPUIView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView")
@@ -292,6 +296,7 @@ void ConfigRouteProfileTest::roverUsesOnlyItsCurrentTuningPage()
         QStringLiteral("ConfigFriendlyParamsAdvView"),
         QStringLiteral("ConfigArduroverView"),
         QStringLiteral("ConfigOSDView"),
+        QStringLiteral("MavFTPUIView"),
         QStringLiteral("ConfigUserDefinedView"),
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView"),
