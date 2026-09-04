@@ -333,6 +333,16 @@ bool SwarmTelemetryRegistry::validateGroup(
     return true;
 }
 
+bool SwarmTelemetryRegistry::observationIsFresh(
+    qint64 observedMs, int maximumAgeMs) const
+{
+    if (observedMs < 0 || maximumAgeMs <= 0) {
+        return false;
+    }
+    const qint64 now = nowMs();
+    return observedMs <= now && now - observedMs <= maximumAgeMs;
+}
+
 int SwarmTelemetryRegistry::retireStaleEndpoints()
 {
     QList<PendingEvent> events;

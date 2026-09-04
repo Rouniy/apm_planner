@@ -209,6 +209,16 @@ Native `UASActionsWidget` operations use it whenever the selected endpoint
 belongs to the active UAS and fail closed when that lease becomes stale or
 unavailable.
 
+Swarm command workflows add a second immutable epoch to that envelope:
+`(link, sysid, compid, link-session, vehicle-instance)`. One application-owned
+sender may reserve one complete group at a time, validates every consumed field
+and route before a batch, consumes its rate slot before the first write and
+rechecks the session after every synchronous callback. Listening UDP is never an
+exact route; Serial/radio requires an explicit dedicated-link policy. A partial
+batch is terminal for the active workflow and must be reported without retrying
+already-sent members as a burst. Command-bearing UI remains disabled until it
+uses this boundary and the single shared command-ACK arbiter.
+
 `ParameterService` uses the same transmitter for exact `PARAM_REQUEST_LIST`,
 `PARAM_REQUEST_READ` and `PARAM_SET`. Responses are accepted only from the
 leased `(link, sysid, compid)` and read/write acknowledgements additionally

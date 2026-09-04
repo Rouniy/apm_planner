@@ -181,6 +181,14 @@ public:
         QList<SwarmTelemetrySnapshot> *snapshots = nullptr,
         int heartbeatMaximumAgeMs = -1) const;
 
+    /**
+     * Compares an observation timestamp with the registry's injected
+     * monotonic clock. Consumers must not mix these values with a separately
+     * started QElapsedTimer.
+     */
+    bool observationIsFresh(qint64 observedMs, int maximumAgeMs) const;
+    qint64 observationClockNowMs() const { return nowMs(); }
+
     /** Retires endpoints whose most recent HEARTBEAT is older than the limit. */
     int retireStaleEndpoints();
 

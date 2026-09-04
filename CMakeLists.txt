@@ -322,6 +322,8 @@ set(SOURCES
     src/comm/VehicleCommandService.h
     src/comm/VehicleEndpoint.cpp
     src/comm/VehicleEndpoint.h
+    src/comm/SwarmCommandService.cpp
+    src/comm/SwarmCommandService.h
     src/comm/SwarmTelemetryRegistry.cpp
     src/comm/SwarmTelemetryRegistry.h
     src/comm/VehicleTargetManager.cpp
@@ -644,6 +646,11 @@ set(SOURCES
     src/ui/FollowMeWindow.cpp
     src/ui/FollowMeWindow.h
     src/ui/FollowMeWindowIntegration.cpp
+    src/ui/FormationGridControl.cpp
+    src/ui/FormationGridControl.h
+    src/ui/SwarmFormationWindow.cpp
+    src/ui/SwarmFormationWindow.h
+    src/ui/SwarmFormationWindowIntegration.cpp
     src/ui/MovingBaseWindow.cpp
     src/ui/MovingBaseWindow.h
     src/ui/MovingBaseWindowIntegration.cpp
@@ -683,6 +690,8 @@ set(SOURCES
     src/ui/tools/PropagationSettingsStore.h
     src/ui/tools/PropagationSettingsWindow.cpp
     src/ui/tools/PropagationSettingsWindow.h
+    src/ui/tools/SwarmFormationCore.cpp
+    src/ui/tools/SwarmFormationCore.h
     src/ui/tools/PropagationTelemetrySource.cpp
     src/ui/tools/PropagationTelemetrySource.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2431,6 +2440,101 @@ if(BUILD_TESTING)
     )
     add_test(NAME swarmtelemetryregistry_tests
         COMMAND swarmtelemetryregistry_tests)
+
+    add_executable(swarmcommandservice_tests
+        tests/test_swarmcommandservice.cpp
+        src/comm/SwarmCommandService.cpp
+        src/comm/SwarmCommandService.h
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmcommandservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmcommandservice_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME swarmcommandservice_tests COMMAND swarmcommandservice_tests)
+
+    add_executable(swarmformationcore_tests
+        tests/test_swarmformationcore.cpp
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmformationcore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmformationcore_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME swarmformationcore_tests COMMAND swarmformationcore_tests)
+
+    add_executable(formationgridcontrol_tests
+        tests/test_formationgridcontrol.cpp
+        src/ui/FormationGridControl.cpp
+        src/ui/FormationGridControl.h
+    )
+    target_include_directories(formationgridcontrol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(formationgridcontrol_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME formationgridcontrol_tests COMMAND formationgridcontrol_tests)
+    set_tests_properties(formationgridcontrol_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(swarmformationwindow_tests
+        tests/test_swarmformationwindow.cpp
+        src/ui/SwarmFormationWindow.cpp
+        src/ui/SwarmFormationWindow.h
+        src/ui/FormationGridControl.cpp
+        src/ui/FormationGridControl.h
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/SwarmCommandService.cpp
+        src/comm/SwarmCommandService.h
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmformationwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmformationwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME swarmformationwindow_tests
+        COMMAND swarmformationwindow_tests)
+    set_tests_properties(swarmformationwindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(swarmsequencecore_tests
         tests/test_swarmsequencecore.cpp

@@ -88,6 +88,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     int externalGuidedOpenCount = 0;
     int followMeOpenCount = 0;
     int movingBaseOpenCount = 0;
+    int swarmFormationOpenCount = 0;
     int swarmSequenceOpenCount = 0;
     int deviceOperationsOpenCount = 0;
     int propagationOpenCount = 0;
@@ -115,6 +116,10 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
                     [&followMeOpenCount]() { ++followMeOpenCount; });
     handlers.insert(QStringLiteral("actionMovingBase"),
                     [&movingBaseOpenCount]() { ++movingBaseOpenCount; });
+    handlers.insert(QStringLiteral("actionSwarmFormation"),
+                    [&swarmFormationOpenCount]() {
+        ++swarmFormationOpenCount;
+    });
     handlers.insert(QStringLiteral("actionSwarmSequence"),
                     [&swarmSequenceOpenCount]() {
         ++swarmSequenceOpenCount;
@@ -152,6 +157,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
             || action->objectName() == QStringLiteral("actionExternalGuided")
             || action->objectName() == QStringLiteral("actionFollowMe")
             || action->objectName() == QStringLiteral("actionMovingBase")
+            || action->objectName() == QStringLiteral("actionSwarmFormation")
             || action->objectName() == QStringLiteral("actionSwarmSequence")
             || action->objectName()
                 == QStringLiteral("actionPropagationSettings")
@@ -177,6 +183,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     QCOMPARE(externalGuidedOpenCount, 1);
     QCOMPARE(followMeOpenCount, 1);
     QCOMPARE(movingBaseOpenCount, 1);
+    QCOMPARE(swarmFormationOpenCount, 1);
     QCOMPARE(swarmSequenceOpenCount, 1);
     QCOMPARE(deviceOperationsOpenCount, 1);
     QCOMPARE(propagationOpenCount, 1);

@@ -32,6 +32,7 @@ This file is part of the APM_PLANNER project
 #include "LinkManagerFactory.h"
 #include "LinkManager.h"
 #include "RadioStatusMonitor.h"
+#include "SwarmCommandService.h"
 #include "SwarmTelemetryRegistry.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
@@ -120,6 +121,46 @@ LinkManager::LinkManager(QObject *parent) :
         [this](int linkId, const QByteArray &frame) {
             return writeRawBytes(linkId, frame);
         }, this);
+    m_swarmCommandService = new SwarmCommandService(
+        m_swarmTelemetryRegistry, m_exactLinkTransmitter,
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            const int linkId = lease.endpoint.linkId;
+            QPointer<LinkInterface> link(getLink(linkId));
+            if (!link || !link->isConnected()) {
+                if (error) {
+                    *error = QStringLiteral(
+                        "The exact physical link is unavailable.");
+                }
+                return false;
+            }
+            switch (link->getLinkType()) {
+            case LinkInterface::TCP_LINK:
+            case LinkInterface::UDP_CLIENT_LINK:
+                return true;
+            case LinkInterface::SERIAL_LINK:
+                if (error) {
+                    *error = QStringLiteral(
+                        "Serial/radio swarm control requires an explicit dedicated-link approval that is not yet available.");
+                }
+                return false;
+            case LinkInterface::UDP_LINK:
+                if (error) {
+                    *error = QStringLiteral(
+                        "Listening UDP broadcasts queued frames to every learned peer; use TCP or UDP Client for exact swarm control.");
+                }
+                return false;
+            case LinkInterface::SIM_LINK:
+            case LinkInterface::UNKNOWN_LINK:
+                if (error) {
+                    *error = QStringLiteral(
+                        "Simulation or unknown transports are not exact swarm command routes.");
+                }
+                return false;
+            }
+            return false;
+        }, this);
+    m_swarmCommandService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
     m_vehicleCommandService = new VehicleCommandService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_vehicleCommandService->setLocalIdentity(
@@ -337,6 +378,13 @@ void LinkManager::shutdown()
     for (auto it = links.constBegin(); it != links.constEnd(); ++it) {
         const int linkId = it.key();
         LinkInterface *link = it.value();
+        const quint64 swarmSession =
+            m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
+        if (swarmSession != 0) {
+            // Retire exact instances while the shared transmitter still has
+            // its link state, so any active swarm owner is cancelled first.
+            m_swarmTelemetryRegistry->endLinkSession(linkId, swarmSession);
+        }
         m_compassCalibrationService->forgetLink(linkId);
         m_guidedTargetService->forgetLink(linkId);
         m_movingBaseService->forgetLink(linkId);
@@ -354,11 +402,6 @@ void LinkManager::shutdown()
                            m_mavlinkProtocol.data(),
                            SLOT(receiveBytes(LinkInterface*,QByteArray)));
             }
-        }
-        const quint64 swarmSession =
-            m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
-        if (swarmSession != 0) {
-            m_swarmTelemetryRegistry->endLinkSession(linkId, swarmSession);
         }
     }
 
@@ -611,6 +654,11 @@ VehicleTargetManager *LinkManager::vehicleTargetManager() const
 SwarmTelemetryRegistry *LinkManager::swarmTelemetryRegistry() const
 {
     return m_swarmTelemetryRegistry;
+}
+
+SwarmCommandService *LinkManager::swarmCommandService() const
+{
+    return m_swarmCommandService;
 }
 
 ExactLinkTransmitter *LinkManager::exactLinkTransmitter() const
@@ -1228,6 +1276,9 @@ void LinkManager::invalidateLinkSession(int linkId)
     }
     const quint64 swarmSession =
         m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
+    if (swarmSession != 0) {
+        m_swarmTelemetryRegistry->endLinkSession(linkId, swarmSession);
+    }
     m_mavFtpService->forgetLink(linkId);
     m_compassCalibrationService->forgetLink(linkId);
     m_guidedTargetService->forgetLink(linkId);
@@ -1239,9 +1290,6 @@ void LinkManager::invalidateLinkSession(int linkId)
     m_radioStatusMonitor->forgetLink(linkId);
     if (m_mavlinkProtocol) {
         m_mavlinkProtocol->forgetLink(linkId);
-    }
-    if (swarmSession != 0) {
-        m_swarmTelemetryRegistry->endLinkSession(linkId, swarmSession);
     }
 }
 
