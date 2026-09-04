@@ -666,6 +666,8 @@ set(SOURCES
     src/ui/SwarmWaypointLeaderWindowAdapter.cpp
     src/ui/SwarmWaypointLeaderWindowAdapter.h
     src/ui/SwarmWaypointLeaderWindowIntegration.cpp
+    src/services/SwarmSequenceExecutor.cpp
+    src/services/SwarmSequenceExecutor.h
     src/services/SwarmWaypointLeaderExecutor.cpp
     src/services/SwarmWaypointLeaderExecutor.h
     src/comm/SwarmFlightMode.h
@@ -680,6 +682,8 @@ set(SOURCES
     src/ui/SequenceLayoutControl.h
     src/ui/SwarmSequenceWindow.cpp
     src/ui/SwarmSequenceWindow.h
+    src/ui/SwarmSequenceWindowAdapter.cpp
+    src/ui/SwarmSequenceWindowAdapter.h
     src/ui/SwarmSequenceWindowIntegration.cpp
     src/ui/Terrain3DWindow.cpp
     src/ui/Terrain3DWindow.h
@@ -2912,6 +2916,38 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME swarmsequencecore_tests COMMAND swarmsequencecore_tests)
+
+    add_executable(swarmsequenceexecutor_tests
+        tests/test_swarmsequenceexecutor.cpp
+        src/services/SwarmSequenceExecutor.cpp
+        src/services/SwarmSequenceExecutor.h
+        src/ui/tools/SwarmSequenceCore.cpp
+        src/ui/tools/SwarmSequenceCore.h
+        src/comm/SwarmCommandService.cpp
+        src/comm/SwarmCommandService.h
+        src/comm/SwarmFlightMode.h
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(swarmsequenceexecutor_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmsequenceexecutor_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME swarmsequenceexecutor_tests
+        COMMAND swarmsequenceexecutor_tests)
 
     add_executable(sequencelayoutcontrol_tests
         tests/test_sequencelayoutcontrol.cpp

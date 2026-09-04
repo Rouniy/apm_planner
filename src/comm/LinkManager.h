@@ -57,6 +57,7 @@ class VehicleTargetManager;
 struct SwarmVehicleInstanceLease;
 class SwarmTelemetryRegistry;
 class SwarmCommandService;
+class SwarmSequenceExecutor;
 class SwarmWaypointLeaderExecutor;
 class VehicleCommandService;
 class GuidedTargetService;
@@ -90,6 +91,7 @@ public:
     VehicleTargetManager *vehicleTargetManager() const;
     SwarmTelemetryRegistry *swarmTelemetryRegistry() const;
     SwarmCommandService *swarmCommandService() const;
+    SwarmSequenceExecutor *swarmSequenceExecutor() const;
     SwarmWaypointLeaderExecutor *swarmWaypointLeaderExecutor() const;
     ExactMissionSnapshotService *exactMissionSnapshotService() const;
     ExactLinkTransmitter *exactLinkTransmitter() const;
@@ -194,6 +196,7 @@ private:
     VehicleTargetManager *m_vehicleTargetManager = nullptr;
     SwarmTelemetryRegistry *m_swarmTelemetryRegistry = nullptr;
     SwarmCommandService *m_swarmCommandService = nullptr;
+    SwarmSequenceExecutor *m_swarmSequenceExecutor = nullptr;
     SwarmWaypointLeaderExecutor *m_swarmWaypointLeaderExecutor = nullptr;
     ExactMissionSnapshotService *m_exactMissionSnapshotService = nullptr;
     ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;

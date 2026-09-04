@@ -5,6 +5,7 @@
 
 #include <QAbstractItemView>
 #include <QApplication>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -16,6 +17,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -30,14 +32,18 @@
 // Supplied by SwarmSequenceWindowIntegration.cpp in the application and by a
 // tiny test seam in the focused widget test.
 SwarmTelemetryRegistry *SwarmSequenceApplicationRegistry();
+SwarmSequenceWindowInterface *SwarmSequenceApplicationInterface(
+    QObject *parent);
 
 namespace
 {
 const char kNoVehicles[] =
     "No live ArduCopter autopilots were found across open MAVLink links.";
 const char kCommandUnavailable[] =
-    "Live swarm commands are unavailable: the exact multi-endpoint command "
-    "sender has not been ported yet.";
+    "Live Sequence commands require the application exact-link executor.";
+const char kCommandReady[] =
+    "Run Step and Takeoff use exact link/session/instance leases. Position "
+    "targets require GUIDED; every dangerous action asks for confirmation.";
 
 QPushButton *button(const QString &text, const QString &objectName,
                     QWidget *parent)
@@ -59,31 +65,69 @@ QString number(double value)
 {
     return QString::number(value, 'g', 12);
 }
+
+bool defaultConfirmation(QWidget *owner, const QString &title,
+                         const QString &text, const QString &acceptText)
+{
+    QMessageBox box(QMessageBox::Warning, title, text,
+                    QMessageBox::NoButton, owner);
+    QPushButton *cancel = box.addButton(QMessageBox::Cancel);
+    QPushButton *accept = box.addButton(acceptText, QMessageBox::AcceptRole);
+    box.setDefaultButton(cancel);
+    box.setEscapeButton(cancel);
+    box.exec();
+    return box.clickedButton() == accept;
+}
 }
 
 QPointer<SwarmSequenceWindow> SwarmSequenceWindow::s_current;
 
 SwarmSequenceWindow::SwarmSequenceWindow(QWidget *owner)
-    : SwarmSequenceWindow(SwarmSequenceApplicationRegistry(),
-                          DefaultDependencies(), owner)
+    : QWidget(owner, Qt::Window)
 {
+    m_registry = SwarmSequenceApplicationRegistry();
+    m_interface = SwarmSequenceApplicationInterface(this);
+    m_dependencies = DefaultDependencies();
+    buildUi(owner);
+    connectUi();
+    syncAll(true);
+    refreshVehicles(true);
+    updateCommandActions();
 }
 
 SwarmSequenceWindow::SwarmSequenceWindow(
     SwarmTelemetryRegistry *registry, Dependencies dependencies,
     QWidget *owner)
+    : SwarmSequenceWindow(registry, nullptr,
+                          std::move(dependencies), owner)
+{
+}
+
+SwarmSequenceWindow::SwarmSequenceWindow(
+    SwarmTelemetryRegistry *registry,
+    SwarmSequenceWindowInterface *interface,
+    Dependencies dependencies, QWidget *owner)
     : QWidget(owner, Qt::Window)
     , m_registry(registry)
+    , m_interface(interface)
     , m_dependencies(std::move(dependencies))
 {
+    if (!m_dependencies.confirmDangerous) {
+        m_dependencies.confirmDangerous = defaultConfirmation;
+    }
     buildUi(owner);
     connectUi();
     syncAll(true);
     refreshVehicles(true);
+    updateCommandActions();
 }
 
 SwarmSequenceWindow::~SwarmSequenceWindow()
 {
+    if (m_interface) {
+        m_interface->setChangedHandler(
+            SwarmSequenceWindowInterface::ChangedHandler());
+    }
     if (s_current == this) {
         s_current = nullptr;
     }
@@ -137,6 +181,7 @@ SwarmSequenceWindow::Dependencies SwarmSequenceWindow::DefaultDependencies()
             suggested, &accepted);
         return accepted ? name : QString();
     };
+    dependencies.confirmDangerous = defaultConfirmation;
     return dependencies;
 }
 
@@ -227,9 +272,9 @@ void SwarmSequenceWindow::buildUi(QWidget *owner)
     QLabel *danger = label(tr(
         "BETA / USE AT OWN RISK — port of the official Mission Planner "
         "Sequence Layout Editor. JSON layouts and ordered steps are editable "
-        "and compatible with upstream. Live commands remain locked until the "
-        "exact multi-endpoint sender is ported. DelayStart/DelayEnd are "
-        "preserved in files."), QStringLiteral("sequenceDangerBanner"), this);
+        "and compatible with upstream. Run Step and Takeoff use the "
+        "application-owned exact multi-endpoint sender. DelayStart/DelayEnd "
+        "are preserved in files."), QStringLiteral("sequenceDangerBanner"), this);
     danger->setWordWrap(true);
     root->addWidget(danger);
 
@@ -383,22 +428,15 @@ void SwarmSequenceWindow::buildUi(QWidget *owner)
         tr("Reset Sequence"), QStringLiteral("sequenceReset"), this);
     m_takeoff = button(tr("Takeoff Assigned (2 m)"),
                        QStringLiteral("sequenceTakeoff"), this);
-    const QString commandReason = tr(kCommandUnavailable);
-    for (QPushButton *command : {m_runStep, m_takeoff}) {
-        command->setEnabled(false);
-        command->setToolTip(commandReason);
-        command->setStatusTip(commandReason);
-        command->setAccessibleDescription(commandReason);
-    }
     commands->addWidget(m_runStep);
     commands->addWidget(reset);
     commands->addWidget(m_takeoff);
     commands->addStretch(1);
-    QLabel *commandHint = label(commandReason,
-        QStringLiteral("sequenceCommandUnavailable"), this);
-    commandHint->setWordWrap(true);
-    commandHint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    commands->addWidget(commandHint);
+    m_commandHint = label(tr(kCommandUnavailable),
+        QStringLiteral("sequenceCommandStatus"), this);
+    m_commandHint->setWordWrap(true);
+    m_commandHint->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    commands->addWidget(m_commandHint);
     root->addLayout(commands);
 
     auto *footer = new QHBoxLayout;
@@ -422,7 +460,12 @@ void SwarmSequenceWindow::buildUi(QWidget *owner)
             [this]() { refreshVehicles(); });
     connect(background, &QPushButton::clicked, this,
             &SwarmSequenceWindow::chooseBackground);
+    connect(m_runStep, &QPushButton::clicked, this,
+            &SwarmSequenceWindow::runCurrentStep);
+    connect(m_takeoff, &QPushButton::clicked, this,
+            &SwarmSequenceWindow::takeoffAssigned);
     connect(reset, &QPushButton::clicked, this, [this]() {
+        ++m_revision;
         resetOfflineState(tr(
             "Sequence reset to the first step; origin will be captured again."));
     });
@@ -432,6 +475,8 @@ void SwarmSequenceWindow::buildUi(QWidget *owner)
 
 void SwarmSequenceWindow::connectUi()
 {
+    connect(this, &SwarmSequenceWindow::documentChanged,
+            this, [this]() { ++m_revision; });
     connect(m_layouts, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int) {
         if (!m_loading) {
@@ -462,7 +507,8 @@ void SwarmSequenceWindow::connectUi()
             return;
         }
         m_anchor = selected;
-        resetOfflineState(tr(
+        ++m_revision;
+        clearOrigin(tr(
             "Sequence origin reset because the anchor changed."));
     });
     connect(findChild<QPushButton *>(QStringLiteral("sequenceStepUp")),
@@ -474,6 +520,21 @@ void SwarmSequenceWindow::connectUi()
     connect(findChild<QPushButton *>(QStringLiteral("sequenceStepRemove")),
             &QPushButton::clicked, this,
             &SwarmSequenceWindow::removeSelectedStep);
+
+    if (m_interface) {
+        m_interface->setChangedHandler(
+            [guard = QPointer<SwarmSequenceWindow>(this)]() {
+                if (guard) {
+                    guard->executorChanged();
+                }
+            });
+        connect(m_interface, &QObject::destroyed, this, [this]() {
+            m_ownedOperationGeneration = 0;
+            setStatus(tr(
+                "Sequence stopped: the exact executor is unavailable."));
+            updateCommandActions();
+        });
+    }
 
     struct BackgroundAction { const char *name; std::function<void()> invoke; };
     const BackgroundAction backgroundActions[] = {
@@ -516,7 +577,10 @@ void SwarmSequenceWindow::connectUi()
             m_assignments.clear();
             m_anchor = SwarmVehicleInstanceLease();
             rebuildVehicleControls();
+            m_origin = SwarmSequenceOrigin();
+            clearTargets();
             setStatus(tr(kNoVehicles));
+            updateCommandActions();
         });
     }
 }
@@ -609,12 +673,19 @@ void SwarmSequenceWindow::refreshVehicles(bool explicitlyRequested)
         rebuildVehicleControls();
     }
     if (changed || explicitlyRequested) {
+        m_origin = SwarmSequenceOrigin();
+        m_originDisplay->setText(tr("Origin not captured"));
+        clearTargets();
+        ++m_revision;
+    }
+    if (changed || explicitlyRequested) {
         setStatus(discovered.isEmpty() ? tr(kNoVehicles)
             : tr("Found %1 Sequence vehicle(s). Assign every layout system "
                  "id to an exact modem vehicle; duplicate sysids are never guessed.")
                 .arg(discovered.size()));
     }
     m_refreshingVehicles = false;
+    updateCommandActions();
 }
 
 int SwarmSequenceWindow::optionIndex(
@@ -773,7 +844,9 @@ void SwarmSequenceWindow::syncAll(bool selectFirst)
     rebuildAssignments();
     m_stepIndex = 0;
     syncStepDisplay();
+    m_origin = SwarmSequenceOrigin();
     m_originDisplay->setText(tr("Origin not captured"));
+    clearTargets();
 }
 
 void SwarmSequenceWindow::syncLayouts(int selectedIndex)
@@ -853,13 +926,9 @@ void SwarmSequenceWindow::resetOfflineState(const QString &status)
     if (!document().steps.isEmpty()) {
         m_steps->setCurrentRow(0);
     }
+    m_origin = SwarmSequenceOrigin();
     m_originDisplay->setText(tr("Origin not captured"));
-    for (int row = 0; row < m_assignmentTable->rowCount(); ++row) {
-        QTableWidgetItem *target = m_assignmentTable->item(row, 2);
-        if (target) {
-            target->setText(QStringLiteral("—"));
-        }
-    }
+    clearTargets();
     syncStepDisplay();
     setStatus(status);
 }
@@ -978,7 +1047,7 @@ void SwarmSequenceWindow::resizeSlots(int count)
     }
     syncOffsets();
     rebuildAssignments();
-    resetOfflineState(tr("Resized every layout to %1 vehicle slot(s).").arg(count));
+    clearOrigin(tr("Resized every layout to %1 vehicle slot(s).").arg(count));
     emit documentChanged();
 }
 
@@ -1016,7 +1085,7 @@ void SwarmSequenceWindow::offsetCellChanged(int row, int column)
         return;
     }
     syncOffsets();
-    resetOfflineState(tr("Layout '%1' changed.").arg(layoutId));
+    setStatus(tr("Layout '%1' changed.").arg(layoutId));
     emit documentChanged();
 }
 
@@ -1039,7 +1108,7 @@ void SwarmSequenceWindow::offsetDragged(
         return;
     }
     syncOffsets();
-    resetOfflineState(tr("Layout '%1' changed.").arg(layoutId));
+    setStatus(tr("Layout '%1' changed.").arg(layoutId));
     emit documentChanged();
 }
 
@@ -1110,7 +1179,9 @@ void SwarmSequenceWindow::assignmentChanged(
     const SwarmVehicleInstanceLease selected = vehicleForCombo(combo);
     if (!selected.isValid()) {
         m_assignments.remove(systemId);
-        resetOfflineState(tr("System %1 assignment cleared.").arg(systemId));
+        ++m_revision;
+        clearOrigin(tr("System %1 assignment cleared.").arg(systemId));
+        updateCommandActions();
         return;
     }
     for (auto iterator = m_assignments.constBegin();
@@ -1126,8 +1197,10 @@ void SwarmSequenceWindow::assignmentChanged(
         }
     }
     m_assignments.insert(systemId, selected);
-    resetOfflineState(tr("Assigned layout system %1 to %2.")
+    ++m_revision;
+    clearOrigin(tr("Assigned layout system %1 to %2.")
         .arg(systemId).arg(vehicleLabel(selected)));
+    updateCommandActions();
 }
 
 void SwarmSequenceWindow::chooseBackground()
@@ -1146,4 +1219,380 @@ void SwarmSequenceWindow::chooseBackground()
     }
     setStatus(tr("Loaded Sequence background image from %1.")
               .arg(QFileInfo(path).absoluteFilePath()));
+}
+
+void SwarmSequenceWindow::runCurrentStep()
+{
+    if (!m_interface || m_closing) {
+        setStatus(tr(kCommandUnavailable));
+        return;
+    }
+    if (m_stepIndex >= document().steps.size()) {
+        setStatus(document().steps.isEmpty()
+            ? tr("Add at least one sequence step.")
+            : tr("Sequence is complete. Press Reset Sequence to run it again."));
+        return;
+    }
+
+    const QString layoutId = document().steps.at(m_stepIndex);
+    const SwarmSequenceLayout *layout = nullptr;
+    for (const SwarmSequenceLayout &candidate : document().layouts) {
+        if (candidate.id == layoutId) {
+            layout = &candidate;
+            break;
+        }
+    }
+    if (!layout) {
+        setStatus(tr("Step %1 references missing layout '%2'.")
+                      .arg(m_stepIndex + 1).arg(layoutId));
+        return;
+    }
+    if (!m_anchor.isValid()) {
+        setStatus(tr("Select an exact live anchor vehicle."));
+        return;
+    }
+
+    SwarmSequenceRunStepRequest request;
+    request.layoutId = layoutId;
+    request.anchor = m_anchor;
+    request.origin = m_origin;
+    request.assignments.reserve(layout->offsets.size());
+    for (auto iterator = layout->offsets.constBegin();
+         iterator != layout->offsets.constEnd(); ++iterator) {
+        const SwarmVehicleInstanceLease lease =
+            m_assignments.value(iterator.key());
+        if (!lease.isValid()) {
+            setStatus(tr("Assign an exact live vehicle to layout system id %1.")
+                          .arg(iterator.key()));
+            return;
+        }
+        SwarmSequenceExactAssignment assignment;
+        assignment.systemId = iterator.key();
+        assignment.lease = lease;
+        assignment.offset = iterator.value();
+        request.assignments.append(assignment);
+    }
+
+    SwarmSequencePreparedRunStep prepared;
+    QString error;
+    if (!m_interface->prepareRunStep(request, &prepared, &error)) {
+        setStatus(tr("Sequence step rejected: %1").arg(error));
+        updateCommandActions();
+        return;
+    }
+
+    QStringList targets;
+    for (const SwarmSequenceExactAssignment &assignment
+         : prepared.assignments) {
+        targets.append(tr("• Sys %1 — %2: E %3 m, N %4 m, Alt %5 m")
+            .arg(assignment.systemId)
+            .arg(vehicleLabel(assignment.lease))
+            .arg(number(assignment.offset.x))
+            .arg(number(assignment.offset.y))
+            .arg(number(assignment.offset.z)));
+    }
+    const quint64 revision = m_revision;
+    const int stepIndex = m_stepIndex;
+    const SwarmVehicleInstanceLease anchor = m_anchor;
+    const QPointer<SwarmSequenceWindow> windowGuard(this);
+    const QPointer<SwarmSequenceWindowInterface> interfaceGuard = m_interface;
+    const bool accepted = m_dependencies.confirmDangerous
+        && m_dependencies.confirmDangerous(
+            this, tr("Run Sequence Step %1").arg(stepIndex + 1),
+            tr("BETA / USE AT OWN RISK. This sends the official Sequence "
+               "layout as relative-altitude position targets with zero target "
+               "velocity. It does not change flight mode.\n\n"
+               "Layout: %1\nOrigin: %2, %3\n\n%4\n\n"
+               "Verify every exact modem assignment and put aircraft in "
+               "GUIDED first. Cancel is the default action.")
+                .arg(prepared.layoutId)
+                .arg(number(prepared.origin.latitude))
+                .arg(number(prepared.origin.longitude))
+                .arg(targets.join(QLatin1Char('\n'))),
+            tr("SEND SEQUENCE STEP"));
+    if (!windowGuard || m_closing || !interfaceGuard
+        || interfaceGuard != m_interface) {
+        return;
+    }
+    if (!accepted) {
+        setStatus(tr("Sequence step cancelled."));
+        return;
+    }
+    if (revision != m_revision || stepIndex != m_stepIndex
+        || !sameVehicle(anchor, m_anchor)) {
+        setStatus(tr(
+            "Sequence changed while confirmation was open; no commands were sent."));
+        return;
+    }
+    if (!assignmentsMatch(prepared.assignments)) {
+        setStatus(tr(
+            "Vehicle assignments changed while confirmation was open; no commands were sent."));
+        return;
+    }
+
+    const quint64 previousReportGeneration =
+        interfaceGuard->lastReport().operationGeneration;
+    const bool started = interfaceGuard->runStep(prepared, &error);
+    if (!windowGuard || m_closing || !interfaceGuard
+        || interfaceGuard != m_interface) {
+        return;
+    }
+    if (!started) {
+        const SwarmSequenceOperationReport report =
+            interfaceGuard->lastReport();
+        const bool newReport = report.operationGeneration != 0
+            && report.operationGeneration != previousReportGeneration;
+        setStatus(newReport && !report.description.isEmpty()
+            ? report.description
+            : tr("Sequence step rejected: %1").arg(error));
+        updateCommandActions();
+        return;
+    }
+
+    const SwarmSequenceOperationReport report = interfaceGuard->lastReport();
+    if (report.result != SwarmSequenceOperationResult::SentAll) {
+        setStatus(!report.description.isEmpty()
+            ? report.description
+            : tr("Sequence step did not reach every assigned vehicle."));
+        updateCommandActions();
+        return;
+    }
+
+    m_origin = report.origin.valid ? report.origin : prepared.origin;
+    m_originDisplay->setText(tr("Origin %1, %2")
+        .arg(number(m_origin.latitude)).arg(number(m_origin.longitude)));
+    clearTargets();
+    for (const SwarmSequenceTarget &target : report.targets) {
+        for (int row = 0; row < m_assignmentTable->rowCount(); ++row) {
+            QTableWidgetItem *system = m_assignmentTable->item(row, 0);
+            QTableWidgetItem *display = m_assignmentTable->item(row, 2);
+            if (system && display
+                && system->text().toInt() == target.systemId) {
+                display->setText(tr("%1, %2 / %3 m")
+                    .arg(QString::number(target.latitude, 'f', 6))
+                    .arg(QString::number(target.longitude, 'f', 6))
+                    .arg(number(target.relativeAltitudeM)));
+                break;
+            }
+        }
+    }
+    ++m_stepIndex;
+    m_steps->setCurrentRow(m_stepIndex < document().steps.size()
+                               ? m_stepIndex : -1);
+    syncStepDisplay();
+    setStatus(report.description);
+    updateCommandActions();
+}
+
+void SwarmSequenceWindow::takeoffAssigned()
+{
+    if (!m_interface || m_closing) {
+        setStatus(tr(kCommandUnavailable));
+        return;
+    }
+    QVector<SwarmSequenceTakeoffAssignment> assignments;
+    assignments.reserve(m_assignments.size());
+    for (auto iterator = m_assignments.constBegin();
+         iterator != m_assignments.constEnd(); ++iterator) {
+        if (!iterator.value().isValid()) {
+            continue;
+        }
+        bool duplicate = false;
+        for (const SwarmSequenceTakeoffAssignment &existing : assignments) {
+            duplicate = duplicate
+                || sameVehicle(existing.lease, iterator.value());
+        }
+        if (!duplicate) {
+            SwarmSequenceTakeoffAssignment assignment;
+            assignment.systemId = iterator.key();
+            assignment.lease = iterator.value();
+            assignments.append(assignment);
+        }
+    }
+
+    SwarmSequencePreparedTakeoff prepared;
+    QString error;
+    if (!m_interface->prepareTakeoff(assignments, &prepared, &error)) {
+        setStatus(tr("Takeoff rejected: %1").arg(error));
+        updateCommandActions();
+        return;
+    }
+    QStringList vehicles;
+    for (const SwarmSequenceTakeoffAssignment &assignment
+         : prepared.assignments) {
+        vehicles.append(tr("• Sys %1 — %2")
+            .arg(assignment.systemId).arg(vehicleLabel(assignment.lease)));
+    }
+    const quint64 revision = m_revision;
+    const QPointer<SwarmSequenceWindow> windowGuard(this);
+    const QPointer<SwarmSequenceWindowInterface> interfaceGuard = m_interface;
+    const bool accepted = m_dependencies.confirmDangerous
+        && m_dependencies.confirmDangerous(
+            this, tr("Take Off Sequence Vehicles"),
+            tr("This ports the official Sequence Takeoff action: it switches "
+               "the explicitly assigned exact vehicles to GUIDED, arms them "
+               "and requests takeoff to 2 m.\n\n%1\n\n"
+               "Cancel is the default action.")
+                .arg(vehicles.join(QLatin1Char('\n'))),
+            tr("GUIDED, ARM AND TAKE OFF"));
+    if (!windowGuard || m_closing || !interfaceGuard
+        || interfaceGuard != m_interface) {
+        return;
+    }
+    if (!accepted) {
+        setStatus(tr("Sequence takeoff cancelled."));
+        return;
+    }
+    if (revision != m_revision
+        || !takeoffAssignmentsMatch(prepared.assignments)) {
+        setStatus(tr(
+            "Sequence takeoff rejected because assignments changed during confirmation."));
+        return;
+    }
+    const quint64 previousReportGeneration =
+        interfaceGuard->lastReport().operationGeneration;
+    const bool started = interfaceGuard->startTakeoff(prepared, &error);
+    if (!windowGuard || m_closing || !interfaceGuard
+        || interfaceGuard != m_interface) {
+        return;
+    }
+    if (!started) {
+        const SwarmSequenceOperationReport report =
+            interfaceGuard->lastReport();
+        const bool newReport = report.operationGeneration != 0
+            && report.operationGeneration != previousReportGeneration;
+        setStatus(newReport && !report.description.isEmpty()
+            ? report.description : tr("Takeoff rejected: %1").arg(error));
+        updateCommandActions();
+        return;
+    }
+    m_ownedOperationGeneration = interfaceGuard->operationGeneration();
+    setStatus(interfaceGuard->statusText());
+    updateCommandActions();
+}
+
+void SwarmSequenceWindow::executorChanged()
+{
+    if (!m_interface || m_closing) {
+        return;
+    }
+    const SwarmSequenceOperationReport report = m_interface->lastReport();
+    const bool ownedTerminal = m_ownedOperationGeneration != 0
+        && report.operationGeneration == m_ownedOperationGeneration
+        && report.result != SwarmSequenceOperationResult::None;
+    if (ownedTerminal) {
+        m_ownedOperationGeneration = 0;
+    }
+    setStatus(ownedTerminal && !report.description.isEmpty()
+        ? report.description : m_interface->statusText());
+    updateCommandActions();
+}
+
+void SwarmSequenceWindow::updateCommandActions()
+{
+    QString reason;
+    const bool ready = m_interface && !m_closing
+        && m_interface->executorReady(&reason)
+        && m_interface->state() == SwarmSequenceExecutor::State::Idle;
+    if (reason.trimmed().isEmpty()) {
+        reason = ready ? tr(kCommandReady)
+                       : (m_interface ? m_interface->statusText()
+                                      : tr(kCommandUnavailable));
+    }
+    for (QPushButton *command : {m_runStep, m_takeoff}) {
+        if (!command) {
+            continue;
+        }
+        command->setEnabled(ready);
+        command->setToolTip(reason);
+        command->setStatusTip(reason);
+        command->setAccessibleDescription(reason);
+    }
+    if (m_commandHint) {
+        m_commandHint->setText(reason);
+    }
+}
+
+void SwarmSequenceWindow::clearOrigin(const QString &status)
+{
+    m_origin = SwarmSequenceOrigin();
+    if (m_originDisplay) {
+        m_originDisplay->setText(tr("Origin not captured"));
+    }
+    clearTargets();
+    setStatus(status);
+}
+
+void SwarmSequenceWindow::clearTargets()
+{
+    if (!m_assignmentTable) {
+        return;
+    }
+    for (int row = 0; row < m_assignmentTable->rowCount(); ++row) {
+        QTableWidgetItem *target = m_assignmentTable->item(row, 2);
+        if (target) {
+            target->setText(QStringLiteral("—"));
+        }
+    }
+}
+
+bool SwarmSequenceWindow::assignmentsMatch(
+    const QVector<SwarmSequenceExactAssignment> &assignments) const
+{
+    if (assignments.size() != m_assignments.size()) {
+        return false;
+    }
+    for (const SwarmSequenceExactAssignment &assignment : assignments) {
+        const SwarmVehicleInstanceLease current =
+            m_assignments.value(assignment.systemId);
+        if (!sameVehicle(current, assignment.lease)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool SwarmSequenceWindow::takeoffAssignmentsMatch(
+    const QVector<SwarmSequenceTakeoffAssignment> &assignments) const
+{
+    QVector<SwarmSequenceTakeoffAssignment> current;
+    for (auto iterator = m_assignments.constBegin();
+         iterator != m_assignments.constEnd(); ++iterator) {
+        if (!iterator.value().isValid()) {
+            continue;
+        }
+        SwarmSequenceTakeoffAssignment item;
+        item.systemId = iterator.key();
+        item.lease = iterator.value();
+        current.append(item);
+    }
+    if (current.size() != assignments.size()) {
+        return false;
+    }
+    for (int index = 0; index < current.size(); ++index) {
+        if (current.at(index).systemId != assignments.at(index).systemId
+            || !sameVehicle(current.at(index).lease,
+                            assignments.at(index).lease)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void SwarmSequenceWindow::closeEvent(QCloseEvent *event)
+{
+    if (m_closing) {
+        event->accept();
+        return;
+    }
+    m_closing = true;
+    if (m_interface && m_ownedOperationGeneration != 0
+        && m_interface->isActive()
+        && m_interface->operationGeneration()
+            == m_ownedOperationGeneration) {
+        m_interface->cancelActiveOperation(tr(
+            "Sequence stopped because the window closed; no further commands are sent."));
+    }
+    updateCommandActions();
+    QWidget::closeEvent(event);
 }

@@ -11,7 +11,7 @@
 Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 193 из 193 тестов;
+- проходят 194 из 194 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -56,13 +56,18 @@
 
 Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
 Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base, RF
-Propagation, OSD Video, полезный offline Swarm Sequence editor, Formation,
+Propagation, OSD Video, Swarm Sequence editor, Formation,
 Follow Path и Follow Leader. Waypoint Leader теперь имеет application-owned
 exact mission adapter, центральные COMMAND_ACK/Parameter владельцы,
 safety-critical core, all-or-nothing executor и включённое bounded native
-окно. Далее идёт общий Sequence command runner,
-после чего приоритет переходит к Settings/CONFIG и их функциональным vertical
-slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
+окно. Для Sequence теперь также подключён отдельный application-owned exact
+Run Step/Takeoff executor с immutable revalidation, общей Swarm/COMMAND_ACK
+резервацией и fail-closed partial/uncertain состояниями; focused и полный
+194-test suite проходят, новый X11 smoke ещё не зафиксирован. Дальнейшая Swarm
+работа перенесена за оставшиеся single-vehicle Tools; сначала исправляется
+регрессия action-binding в SETUP Advanced Tools, затем портируются остальные
+одиночные диалоги, после чего приоритет переходит к Settings/CONFIG.
+Оставшиеся специализированные Tools сохраняются в точном меню, но
 включаются только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
 Qt Widgets и доверенный QML API можно сочетать по назначению.
 
@@ -436,6 +441,15 @@ dirty state никогда не переносится на новый target.
   exact-GUIDED group control, MP10 trail/velocity/turn geometry и 10 Гц sender
   сделаны; остаются подключение exact mission/current-navigation snapshot,
   bulk commands через центральный ACK arbiter и live/reference/native evidence;
+- Swarm Sequence: singleton editor подключён к application-owned exact executor;
+  Run Step требует уже подтверждённый exact GUIDED, запрашивает POSITION 10 Гц и
+  отправляет zero-velocity global targets, а Takeoff проходит GUIDED/heartbeat/
+  ARM/heartbeat/TAKEOFF 2 m ACK-цепочку по назначенным машинам. Immutable план
+  повторно проверяется после default-Cancel подтверждения и после Swarm →
+  VehicleCommand reservation, reverse drain и `PartialEffect`/
+  `OutcomeUncertain` блокируют безопасный повтор. Focused и полный 194-test
+  suite проходят; остаются production X11, live multi-vehicle/reference/native evidence и операторское
+  восстановление после заблокированного результата;
 - Swarm Waypoint Leader: exact mission cache/coordinator, центральные exact
   endpoint/COMMAND_ACK/Parameter владельцы, transport-free staged-flight core,
   all-or-nothing intent executor и production 1320x790 окно подключены; пункт
@@ -449,7 +463,6 @@ dirty state никогда не переносится на новый target.
 - Offline Mag Fit;
 - Photo/video GeoRef;
 - Terrain Maker;
-- exact group runner поверх готового endpoint reservation/COMMAND_ACK arbiter для уже доступного offline Sequence editor;
 - MAVLink Serial/TCP Bridge;
 - Microdrone Downlink;
 - Translation Editor;

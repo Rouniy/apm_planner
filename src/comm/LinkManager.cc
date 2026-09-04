@@ -34,6 +34,7 @@ This file is part of the APM_PLANNER project
 #include "RadioStatusMonitor.h"
 #include "SwarmCommandService.h"
 #include "SwarmTelemetryRegistry.h"
+#include "services/SwarmSequenceExecutor.h"
 #include "services/SwarmWaypointLeaderExecutor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
@@ -219,6 +220,11 @@ LinkManager::LinkManager(QObject *parent) :
         m_swarmCommandService,
         m_vehicleCommandService,
         m_parameterService,
+        this);
+    m_swarmSequenceExecutor = new SwarmSequenceExecutor(
+        m_swarmTelemetryRegistry,
+        m_swarmCommandService,
+        m_vehicleCommandService,
         this);
     m_mavFtpService = new MavFtpService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
@@ -431,6 +437,10 @@ void LinkManager::shutdown()
     // session and physical route is still available for orderly cancellation.
     if (m_swarmWaypointLeaderExecutor) {
         m_swarmWaypointLeaderExecutor->cancelActiveRun(
+            QStringLiteral("Application is shutting down."));
+    }
+    if (m_swarmSequenceExecutor) {
+        m_swarmSequenceExecutor->cancelActiveOperation(
             QStringLiteral("Application is shutting down."));
     }
 
@@ -749,6 +759,11 @@ SwarmTelemetryRegistry *LinkManager::swarmTelemetryRegistry() const
 SwarmCommandService *LinkManager::swarmCommandService() const
 {
     return m_swarmCommandService;
+}
+
+SwarmSequenceExecutor *LinkManager::swarmSequenceExecutor() const
+{
+    return m_swarmSequenceExecutor;
 }
 
 SwarmWaypointLeaderExecutor *LinkManager::swarmWaypointLeaderExecutor() const

@@ -14,8 +14,15 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <utility>
+
 // The production application supplies this through the integration unit.
 SwarmTelemetryRegistry *SwarmSequenceApplicationRegistry()
+{
+    return nullptr;
+}
+
+SwarmSequenceWindowInterface *SwarmSequenceApplicationInterface(QObject *)
 {
     return nullptr;
 }
@@ -63,6 +70,176 @@ SwarmSequenceDocument sampleDocument()
     document.steps << QStringLiteral("Line") << QStringLiteral("Line");
     return document;
 }
+
+class FakeSequenceInterface final : public SwarmSequenceWindowInterface
+{
+public:
+    bool executorReady(QString *error) const override
+    {
+        if (error) {
+            error->clear();
+        }
+        return ready && !active;
+    }
+
+    bool prepareRunStep(
+        const SwarmSequenceRunStepRequest &request,
+        SwarmSequencePreparedRunStep *prepared, QString *error) const override
+    {
+        ++prepareRunCalls;
+        if (error) {
+            error->clear();
+        }
+        if (!prepared || request.assignments.isEmpty()) {
+            return false;
+        }
+        prepared->preparationId = 41;
+        prepared->layoutId = request.layoutId;
+        prepared->anchor = request.anchor;
+        prepared->origin = request.origin;
+        if (!prepared->origin.valid) {
+            prepared->origin.valid = true;
+            prepared->origin.latitude = 35.0;
+            prepared->origin.longitude = 33.0;
+        }
+        prepared->assignments = request.assignments;
+        for (const SwarmSequenceExactAssignment &assignment
+             : request.assignments) {
+            SwarmSequenceGeodeticPoint point;
+            if (!SwarmSequenceGeometry::projectEastNorth(
+                    prepared->origin.latitude, prepared->origin.longitude,
+                    assignment.offset, &point)) {
+                return false;
+            }
+            SwarmSequenceTarget target;
+            target.systemId = assignment.systemId;
+            target.lease = assignment.lease;
+            target.latitude = point.latitude;
+            target.longitude = point.longitude;
+            target.relativeAltitudeM = point.altitudeM;
+            prepared->targets.append(target);
+        }
+        return true;
+    }
+
+    bool runStep(const SwarmSequencePreparedRunStep &prepared,
+                 QString *error) override
+    {
+        ++runCalls;
+        ++generation;
+        if (error) {
+            error->clear();
+        }
+        report = {};
+        report.operationGeneration = generation;
+        report.operation = SwarmSequenceOperation::RunStep;
+        report.result = runResult;
+        report.origin = prepared.origin;
+        report.targets = prepared.targets;
+        report.description = runResult == SwarmSequenceOperationResult::SentAll
+            ? QStringLiteral("Sequence layout sent by fake executor.")
+            : QStringLiteral("Fake Sequence batch was partial.");
+        notify();
+        return runResult == SwarmSequenceOperationResult::SentAll;
+    }
+
+    bool prepareTakeoff(
+        const QVector<SwarmSequenceTakeoffAssignment> &assignments,
+        SwarmSequencePreparedTakeoff *prepared, QString *error) const override
+    {
+        ++prepareTakeoffCalls;
+        if (error) {
+            error->clear();
+        }
+        if (!prepared || assignments.isEmpty()) {
+            return false;
+        }
+        prepared->preparationId = 42;
+        prepared->assignments = assignments;
+        prepared->altitudeM = 2.0;
+        return true;
+    }
+
+    bool startTakeoff(const SwarmSequencePreparedTakeoff &prepared,
+                      QString *error) override
+    {
+        ++takeoffCalls;
+        lastTakeoff = prepared;
+        ++generation;
+        active = true;
+        report = {};
+        status = QStringLiteral("Taking off exact Sequence vehicles.");
+        if (error) {
+            error->clear();
+        }
+        notify();
+        return true;
+    }
+
+    void cancelActiveOperation(const QString &) override
+    {
+        ++cancelCalls;
+        active = false;
+        report.operationGeneration = generation;
+        report.operation = SwarmSequenceOperation::Takeoff;
+        report.result = SwarmSequenceOperationResult::Cancelled;
+        report.description = QStringLiteral("Fake takeoff cancelled.");
+        notify();
+    }
+
+    bool isActive() const noexcept override { return active; }
+    SwarmSequenceExecutor::State state() const noexcept override
+    {
+        return active ? SwarmSequenceExecutor::State::TakingOff
+                      : SwarmSequenceExecutor::State::Idle;
+    }
+    QString statusText() const override { return status; }
+    quint64 operationGeneration() const noexcept override
+    {
+        return generation;
+    }
+    SwarmSequenceOperationReport lastReport() const override
+    {
+        return report;
+    }
+    void setChangedHandler(ChangedHandler value) override
+    {
+        handler = std::move(value);
+    }
+
+    void finishTakeoff()
+    {
+        active = false;
+        report.operationGeneration = generation;
+        report.operation = SwarmSequenceOperation::Takeoff;
+        report.result = SwarmSequenceOperationResult::SentAll;
+        report.description = QStringLiteral("Fake takeoff complete.");
+        status = report.description;
+        notify();
+    }
+
+    void notify() const
+    {
+        if (handler) {
+            handler();
+        }
+    }
+
+    mutable int prepareRunCalls = 0;
+    mutable int prepareTakeoffCalls = 0;
+    int runCalls = 0;
+    int takeoffCalls = 0;
+    int cancelCalls = 0;
+    bool ready = true;
+    bool active = false;
+    quint64 generation = 0;
+    SwarmSequenceOperationResult runResult =
+        SwarmSequenceOperationResult::SentAll;
+    QString status = QStringLiteral("Fake Sequence executor is idle.");
+    SwarmSequencePreparedTakeoff lastTakeoff;
+    SwarmSequenceOperationReport report;
+    ChangedHandler handler;
+};
 }
 
 class SwarmSequenceWindowTest final : public QObject
@@ -73,6 +250,8 @@ private slots:
     void rendersCompleteOfflineEditorWithoutVehicles();
     void editsLoadsAndAtomicallySavesOfficialDocument();
     void discoversOnlyExactLiveArduCopters();
+    void runsConfirmedStepAndStartsExactTakeoff();
+    void rejectsConfirmationMutationAndCancelsOwnedTakeoffOnClose();
     void singletonReactivatesExistingWindow();
 };
 
@@ -114,7 +293,7 @@ void SwarmSequenceWindowTest::rendersCompleteOfflineEditorWithoutVehicles()
     QVERIFY(!takeoff->isEnabled());
     QVERIFY(reset->isEnabled());
     QVERIFY(run->toolTip().contains(
-        QStringLiteral("exact multi-endpoint command sender")));
+        QStringLiteral("application exact-link executor")));
     QCOMPARE(run->toolTip(), takeoff->toolTip());
     QCOMPARE(window.statusText(), QStringLiteral(
         "No live ArduCopter autopilots were found across open MAVLink links."));
@@ -124,6 +303,144 @@ void SwarmSequenceWindowTest::rendersCompleteOfflineEditorWithoutVehicles()
     QCOMPARE(required<QLabel>(&window,
         QStringLiteral("sequenceOriginDisplay"))->text(),
         QStringLiteral("Origin not captured"));
+}
+
+void SwarmSequenceWindowTest::runsConfirmedStepAndStartsExactTakeoff()
+{
+    qint64 now = 100;
+    SwarmTelemetryRegistry registry([&now]() { return now; });
+    const quint64 firstSession = registry.beginLinkSession(
+        20, QStringLiteral("Sequence A"));
+    const quint64 secondSession = registry.beginLinkSession(
+        21, QStringLiteral("Sequence B"));
+    QVERIFY(registry.observeMessage(20, firstSession, heartbeat(7)));
+    QVERIFY(registry.observeMessage(21, secondSession, heartbeat(9)));
+
+    FakeSequenceInterface interface;
+    SwarmSequenceWindow::Dependencies dependencies;
+    dependencies.confirmDangerous = [](
+        QWidget *, const QString &, const QString &, const QString &) {
+        return true;
+    };
+    SwarmSequenceWindow window(
+        &registry, &interface, dependencies);
+    QVERIFY(window.setDocument(sampleDocument()));
+    QPushButton *run = required<QPushButton>(
+        &window, QStringLiteral("sequenceRunStep"));
+    QPushButton *takeoff = required<QPushButton>(
+        &window, QStringLiteral("sequenceTakeoff"));
+    QVERIFY(run->isEnabled());
+    QVERIFY(takeoff->isEnabled());
+
+    run->click();
+    QCOMPARE(interface.runCalls, 1);
+    QCOMPARE(required<QLabel>(&window,
+        QStringLiteral("sequenceStepDisplay"))->text(),
+        QStringLiteral("Step 2 / 2"));
+    QVERIFY(required<QLabel>(&window,
+        QStringLiteral("sequenceOriginDisplay"))->text().startsWith(
+            QStringLiteral("Origin 35")));
+    QTableWidget *table = required<QTableWidget>(
+        &window, QStringLiteral("sequenceAssignmentTable"));
+    QVERIFY(table->item(0, 2)->text() != QStringLiteral("—"));
+    QVERIFY(table->item(1, 2)->text() != QStringLiteral("—"));
+
+    window.refreshVehicles();
+    QCOMPARE(required<QLabel>(&window,
+        QStringLiteral("sequenceOriginDisplay"))->text(),
+        QStringLiteral("Origin not captured"));
+    QCOMPARE(required<QLabel>(&window,
+        QStringLiteral("sequenceStepDisplay"))->text(),
+        QStringLiteral("Step 2 / 2"));
+
+    takeoff->click();
+    QCOMPARE(interface.takeoffCalls, 1);
+    QCOMPARE(interface.lastTakeoff.assignments.size(), 2);
+    QVERIFY(interface.active);
+    QVERIFY(!run->isEnabled());
+    QVERIFY(!takeoff->isEnabled());
+    interface.finishTakeoff();
+    QVERIFY(run->isEnabled());
+    QVERIFY(takeoff->isEnabled());
+    QCOMPARE(window.statusText(), QStringLiteral("Fake takeoff complete."));
+}
+
+void SwarmSequenceWindowTest::
+rejectsConfirmationMutationAndCancelsOwnedTakeoffOnClose()
+{
+    qint64 now = 100;
+    SwarmTelemetryRegistry registry([&now]() { return now; });
+    const quint64 firstSession = registry.beginLinkSession(
+        20, QStringLiteral("Sequence A"));
+    const quint64 secondSession = registry.beginLinkSession(
+        21, QStringLiteral("Sequence B"));
+    QVERIFY(registry.observeMessage(20, firstSession, heartbeat(7)));
+    QVERIFY(registry.observeMessage(21, secondSession, heartbeat(9)));
+
+    FakeSequenceInterface interface;
+    SwarmSequenceWindow *window = nullptr;
+    SwarmSequenceWindow::Dependencies dependencies;
+    dependencies.confirmDangerous = [&window](
+        QWidget *, const QString &, const QString &, const QString &) {
+        QTableWidget *table = required<QTableWidget>(
+            window, QStringLiteral("sequenceAssignmentTable"));
+        auto *assignment = qobject_cast<QComboBox *>(
+            table->cellWidget(0, 1));
+        assignment->setCurrentIndex(0);
+        return true;
+    };
+    SwarmSequenceWindow actual(
+        &registry, &interface, dependencies);
+    window = &actual;
+    QVERIFY(actual.setDocument(sampleDocument()));
+    required<QPushButton>(&actual,
+        QStringLiteral("sequenceRunStep"))->click();
+    QCOMPARE(interface.runCalls, 0);
+    QVERIFY(actual.statusText().contains(
+        QStringLiteral("changed while confirmation")));
+
+    FakeSequenceInterface anchorInterface;
+    SwarmSequenceWindow *anchorWindow = nullptr;
+    SwarmSequenceWindow::Dependencies changeAnchor;
+    changeAnchor.confirmDangerous = [&anchorWindow](
+        QWidget *, const QString &, const QString &, const QString &) {
+        QComboBox *anchor = required<QComboBox>(
+            anchorWindow, QStringLiteral("sequenceAnchor"));
+        const int original = anchor->currentIndex();
+        anchor->setCurrentIndex(original == 0 ? 1 : 0);
+        anchor->setCurrentIndex(original);
+        return true;
+    };
+    SwarmSequenceWindow anchorActual(
+        &registry, &anchorInterface, changeAnchor);
+    anchorWindow = &anchorActual;
+    QVERIFY(anchorActual.setDocument(sampleDocument()));
+    required<QPushButton>(&anchorActual,
+        QStringLiteral("sequenceRunStep"))->click();
+    QCOMPARE(anchorInterface.runCalls, 0);
+    QVERIFY(anchorActual.statusText().contains(
+        QStringLiteral("changed while confirmation")));
+
+    QTableWidget *table = required<QTableWidget>(
+        &actual, QStringLiteral("sequenceAssignmentTable"));
+    auto *assignment = qobject_cast<QComboBox *>(table->cellWidget(0, 1));
+    assignment->setCurrentIndex(1);
+    dependencies.confirmDangerous = {};
+    // The window keeps its injected function, so start directly with a fresh
+    // always-accepting window to exercise matching-operation close cleanup.
+    SwarmSequenceWindow::Dependencies accept;
+    accept.confirmDangerous = [](
+        QWidget *, const QString &, const QString &, const QString &) {
+        return true;
+    };
+    SwarmSequenceWindow closing(&registry, &interface, accept);
+    QVERIFY(closing.setDocument(sampleDocument()));
+    required<QPushButton>(&closing,
+        QStringLiteral("sequenceTakeoff"))->click();
+    QVERIFY(interface.active);
+    closing.close();
+    QCOMPARE(interface.cancelCalls, 1);
+    QVERIFY(!interface.active);
 }
 
 void SwarmSequenceWindowTest::editsLoadsAndAtomicallySavesOfficialDocument()

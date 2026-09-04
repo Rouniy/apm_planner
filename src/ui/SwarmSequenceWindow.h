@@ -2,6 +2,7 @@
 #define SWARMSEQUENCEWINDOW_H
 
 #include "comm/SwarmTelemetryRegistry.h"
+#include "services/SwarmSequenceExecutor.h"
 #include "tools/SwarmSequenceCore.h"
 
 #include <QMap>
@@ -12,12 +13,45 @@
 #include <functional>
 
 class QComboBox;
+class QCloseEvent;
 class QLabel;
 class QListWidget;
 class QPushButton;
 class QSpinBox;
 class QTableWidget;
 class SequenceLayoutControl;
+
+/** Fakeable GUI-thread boundary around the application-owned executor. */
+class SwarmSequenceWindowInterface : public QObject
+{
+public:
+    using ChangedHandler = std::function<void()>;
+
+    explicit SwarmSequenceWindowInterface(QObject *parent = nullptr)
+        : QObject(parent)
+    {
+    }
+    ~SwarmSequenceWindowInterface() override = default;
+
+    virtual bool executorReady(QString *error) const = 0;
+    virtual bool prepareRunStep(
+        const SwarmSequenceRunStepRequest &request,
+        SwarmSequencePreparedRunStep *prepared, QString *error) const = 0;
+    virtual bool runStep(const SwarmSequencePreparedRunStep &prepared,
+                         QString *error) = 0;
+    virtual bool prepareTakeoff(
+        const QVector<SwarmSequenceTakeoffAssignment> &assignments,
+        SwarmSequencePreparedTakeoff *prepared, QString *error) const = 0;
+    virtual bool startTakeoff(const SwarmSequencePreparedTakeoff &prepared,
+                              QString *error) = 0;
+    virtual void cancelActiveOperation(const QString &reason) = 0;
+    virtual bool isActive() const noexcept = 0;
+    virtual SwarmSequenceExecutor::State state() const noexcept = 0;
+    virtual QString statusText() const = 0;
+    virtual quint64 operationGeneration() const noexcept = 0;
+    virtual SwarmSequenceOperationReport lastReport() const = 0;
+    virtual void setChangedHandler(ChangedHandler handler) = 0;
+};
 
 /** Mission Planner 10 Tools > Swarm Sequence Layout Editor (Beta). */
 class SwarmSequenceWindow final : public QWidget
@@ -31,6 +65,8 @@ public:
         std::function<QString(QWidget *, const QString &)> chooseSavePath;
         std::function<QString(QWidget *)> chooseBackgroundPath;
         std::function<QString(QWidget *, const QString &)> requestLayoutName;
+        std::function<bool(QWidget *, const QString &, const QString &,
+                           const QString &)> confirmDangerous;
     };
 
     static constexpr int WindowWidth = 1380;
@@ -44,6 +80,10 @@ public:
 
     explicit SwarmSequenceWindow(QWidget *owner = nullptr);
     SwarmSequenceWindow(SwarmTelemetryRegistry *registry,
+                        Dependencies dependencies,
+                        QWidget *owner = nullptr);
+    SwarmSequenceWindow(SwarmTelemetryRegistry *registry,
+                        SwarmSequenceWindowInterface *interface,
                         Dependencies dependencies,
                         QWidget *owner = nullptr);
     ~SwarmSequenceWindow() override;
@@ -65,6 +105,9 @@ public slots:
 
 signals:
     void documentChanged();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private:
     static Dependencies DefaultDependencies();
@@ -105,10 +148,21 @@ private:
     void removeSelectedStep();
     void assignmentChanged(int systemId, QComboBox *combo);
     void chooseBackground();
+    void runCurrentStep();
+    void takeoffAssigned();
+    void executorChanged();
+    void updateCommandActions();
+    void clearOrigin(const QString &status);
+    void clearTargets();
+    bool assignmentsMatch(
+        const QVector<SwarmSequenceExactAssignment> &assignments) const;
+    bool takeoffAssignmentsMatch(
+        const QVector<SwarmSequenceTakeoffAssignment> &assignments) const;
 
     static QPointer<SwarmSequenceWindow> s_current;
 
     QPointer<SwarmTelemetryRegistry> m_registry;
+    QPointer<SwarmSequenceWindowInterface> m_interface;
     Dependencies m_dependencies;
     SwarmSequenceEditor m_editor;
     QVector<SwarmVehicleInstanceLease> m_vehicleOptions;
@@ -118,6 +172,10 @@ private:
     bool m_loading = false;
     bool m_refreshingVehicles = false;
     int m_stepIndex = 0;
+    quint64 m_revision = 0;
+    quint64 m_ownedOperationGeneration = 0;
+    SwarmSequenceOrigin m_origin;
+    bool m_closing = false;
 
     QComboBox *m_layouts = nullptr;
     QSpinBox *m_vehicleCount = nullptr;
@@ -131,6 +189,7 @@ private:
     QLabel *m_status = nullptr;
     QPushButton *m_runStep = nullptr;
     QPushButton *m_takeoff = nullptr;
+    QLabel *m_commandHint = nullptr;
 };
 
 #endif // SWARMSEQUENCEWINDOW_H
