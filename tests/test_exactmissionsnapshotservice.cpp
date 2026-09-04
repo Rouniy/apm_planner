@@ -191,6 +191,77 @@ public:
     ExactMissionSnapshotService service;
 };
 
+class DeletingCallbackFixture
+{
+public:
+    DeletingCallbackFixture()
+        : registry([this]() { return registryNowMs; })
+        , transmitter([this](int linkId, const QByteArray &bytes) {
+            ++writeAttempts;
+            frames.append({linkId, bytes});
+            return true;
+        })
+    {
+        service = new ExactMissionSnapshotService(
+            &registry, &transmitter,
+            [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+                ++routeCalls;
+                if (routeHook) {
+                    return routeHook(lease, error);
+                }
+                if (error) {
+                    error->clear();
+                }
+                return true;
+            },
+            [this](const SwarmVehicleInstanceLease &lease) {
+                ++resolverCalls;
+                if (resolverHook) {
+                    return resolverHook(lease);
+                }
+                return &coordinator;
+            });
+        service->setLocalIdentity(LocalSystemId, LocalComponentId);
+        QObject::connect(
+            service.data(),
+            &ExactMissionSnapshotService::transferFinished,
+            &signalContext,
+            [this](const ExactMissionTransferResult &) {
+                ++terminalSignals;
+            });
+    }
+
+    ~DeletingCallbackFixture()
+    {
+        delete service.data();
+    }
+
+    SwarmVehicleInstanceLease addVehicle(int linkId, int systemId)
+    {
+        const quint64 session = registry.beginLinkSession(
+            linkId, QStringLiteral("Link %1").arg(linkId));
+        if (!registry.observeMessage(linkId, session,
+                                     heartbeat(systemId))) {
+            return {};
+        }
+        return registry.acquireVehicle(endpoint(linkId, systemId));
+    }
+
+    qint64 registryNowMs = 100;
+    int writeAttempts = 0;
+    int routeCalls = 0;
+    int resolverCalls = 0;
+    int terminalSignals = 0;
+    ExactMissionSnapshotService::RouteValidator routeHook;
+    ExactMissionSnapshotService::CoordinatorResolver resolverHook;
+    QVector<CapturedFrame> frames;
+    QObject signalContext;
+    SwarmTelemetryRegistry registry;
+    ExactLinkTransmitter transmitter;
+    MissionProtocolCoordinator coordinator;
+    QPointer<ExactMissionSnapshotService> service;
+};
+
 bool completeDownload(
     Fixture *fixture, QObject *owner,
     const SwarmVehicleInstanceLease &vehicle,
@@ -234,6 +305,9 @@ private slots:
     void partialOrRejectedRefreshPreservesLastSnapshot();
     void contentGenerationAndMp10SignatureAreDeterministic();
     void endpointRetirementInvalidatesAndCancels();
+    void routeValidatorDeletionDuringPreflightIsBounded();
+    void coordinatorResolverDeletionIsBounded();
+    void routeValidatorDeletionAtActiveBarriersIsBounded();
     void routeRetirementDuringCallbackCannotLeakFrame();
     void ownerDestroyedDuringRouteValidationIsRejected();
     void recursiveStartDuringRouteValidationIsBusy();
@@ -245,6 +319,147 @@ private slots:
     void completeSnapshotSurvivesTerminalAckWriteFailure();
     void terminalOwnerDestructionAndBusyReentrancyPreserveOrdering();
 };
+
+void ExactMissionSnapshotServiceTest::
+routeValidatorDeletionDuringPreflightIsBounded()
+{
+    DeletingCallbackFixture fixture;
+    QObject owner;
+    const auto vehicle = fixture.addVehicle(43, 102);
+    QVERIFY(vehicle.isValid());
+    fixture.routeHook = [&fixture](
+        const SwarmVehicleInstanceLease &, QString *error) {
+        if (error) {
+            error->clear();
+        }
+        delete fixture.service.data();
+        return true;
+    };
+
+    ExactMissionTransferToken token;
+    QString error;
+    ExactMissionSnapshotService *const service = fixture.service.data();
+    QCOMPARE(
+        service->requestDownload(
+            &owner, vehicle, MAV_MISSION_TYPE_MISSION, &token, &error),
+        ExactMissionSnapshotService::StartResult::TransportUnavailable);
+    QVERIFY(!fixture.service);
+    QVERIFY(!token.isValid());
+    QCOMPARE(fixture.routeCalls, 1);
+    QCOMPARE(fixture.resolverCalls, 0);
+    QCOMPARE(fixture.writeAttempts, 0);
+    QCOMPARE(fixture.frames.size(), 0);
+    QCOMPARE(fixture.terminalSignals, 0);
+    QVERIFY(error.contains(QStringLiteral("destroyed"), Qt::CaseInsensitive));
+}
+
+void ExactMissionSnapshotServiceTest::
+coordinatorResolverDeletionIsBounded()
+{
+    DeletingCallbackFixture fixture;
+    QObject owner;
+    const auto vehicle = fixture.addVehicle(44, 103);
+    QVERIFY(vehicle.isValid());
+    fixture.resolverHook = [&fixture](
+        const SwarmVehicleInstanceLease &) -> MissionProtocolCoordinator * {
+        delete fixture.service.data();
+        return &fixture.coordinator;
+    };
+
+    ExactMissionTransferToken token;
+    QString error;
+    ExactMissionSnapshotService *const service = fixture.service.data();
+    QCOMPARE(
+        service->requestDownload(
+            &owner, vehicle, MAV_MISSION_TYPE_MISSION, &token, &error),
+        ExactMissionSnapshotService::StartResult::MissionCoordinatorUnavailable);
+    QVERIFY(!fixture.service);
+    QVERIFY(!token.isValid());
+    QCOMPARE(fixture.routeCalls, 1);
+    QCOMPARE(fixture.resolverCalls, 1);
+    QCOMPARE(fixture.writeAttempts, 0);
+    QCOMPARE(fixture.frames.size(), 0);
+    QCOMPARE(fixture.terminalSignals, 0);
+    QVERIFY(fixture.coordinator.owner() == nullptr);
+    QVERIFY(error.contains(QStringLiteral("destroyed"), Qt::CaseInsensitive));
+}
+
+void ExactMissionSnapshotServiceTest::
+routeValidatorDeletionAtActiveBarriersIsBounded()
+{
+    {
+        DeletingCallbackFixture fixture;
+        QObject owner;
+        const auto vehicle = fixture.addVehicle(45, 104);
+        QVERIFY(vehicle.isValid());
+        fixture.routeHook = [&fixture](
+            const SwarmVehicleInstanceLease &, QString *error) {
+            if (error) {
+                error->clear();
+            }
+            // The second call is the immediate pre-transmit barrier.
+            if (fixture.routeCalls == 2) {
+                delete fixture.service.data();
+            }
+            return true;
+        };
+
+        ExactMissionTransferToken token;
+        QString error;
+        ExactMissionSnapshotService *const service = fixture.service.data();
+        QCOMPARE(
+            service->requestDownload(
+                &owner, vehicle, MAV_MISSION_TYPE_MISSION, &token, &error),
+            ExactMissionSnapshotService::StartResult::TransportUnavailable);
+        QVERIFY(!fixture.service);
+        QVERIFY(!token.isValid());
+        QCOMPARE(fixture.routeCalls, 2);
+        QCOMPARE(fixture.resolverCalls, 1);
+        QCOMPARE(fixture.writeAttempts, 0);
+        QCOMPARE(fixture.frames.size(), 0);
+        QCOMPARE(fixture.terminalSignals, 0);
+        QVERIFY(fixture.coordinator.owner() == nullptr);
+    }
+
+    {
+        DeletingCallbackFixture fixture;
+        QObject owner;
+        const auto vehicle = fixture.addVehicle(46, 105);
+        QVERIFY(vehicle.isValid());
+        fixture.routeHook = [&fixture](
+            const SwarmVehicleInstanceLease &, QString *error) {
+            if (error) {
+                error->clear();
+            }
+            // Calls one and two start the operation.  Call three validates an
+            // accepted inbound message before it can advance the transaction.
+            if (fixture.routeCalls == 3) {
+                delete fixture.service.data();
+            }
+            return true;
+        };
+
+        ExactMissionTransferToken token;
+        QCOMPARE(
+            fixture.service->requestDownload(
+                &owner, vehicle, MAV_MISSION_TYPE_MISSION, &token),
+            ExactMissionSnapshotService::StartResult::Started);
+        QVERIFY(token.isValid());
+        QCOMPARE(fixture.writeAttempts, 1);
+        QCOMPARE(fixture.frames.size(), 1);
+
+        ExactMissionSnapshotService *const service = fixture.service.data();
+        service->observeMessage(
+            vehicle.endpoint.linkId, vehicle.linkSessionEpoch,
+            missionCount(vehicle.endpoint.systemId, 1));
+        QVERIFY(!fixture.service);
+        QCOMPARE(fixture.routeCalls, 3);
+        QCOMPARE(fixture.writeAttempts, 1);
+        QCOMPARE(fixture.frames.size(), 1);
+        QCOMPARE(fixture.terminalSignals, 0);
+        QVERIFY(fixture.coordinator.owner() == nullptr);
+    }
+}
 
 void ExactMissionSnapshotServiceTest::routesAndCachesByExactInstance()
 {

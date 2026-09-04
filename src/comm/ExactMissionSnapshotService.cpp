@@ -274,14 +274,19 @@ ExactMissionSnapshotService::requestDownload(
         }
         return StartResult::IncompatibleProtocolVersion;
     }
-    if (!m_routeValidator) {
+    // These callbacks are application-owned code.  Keep independent callable
+    // instances on the stack so deleting this service from inside either
+    // callback cannot destroy the std::function that is currently executing.
+    const RouteValidator routeValidator = m_routeValidator;
+    const CoordinatorResolver coordinatorResolver = m_coordinatorResolver;
+    if (!routeValidator) {
         if (error) {
             *error = QStringLiteral(
                 "No exact mission route policy is installed.");
         }
         return StartResult::UnsafeRoute;
     }
-    if (!m_coordinatorResolver) {
+    if (!coordinatorResolver) {
         if (error) {
             *error = QStringLiteral(
                 "No mission-protocol coordinator resolver is installed.");
@@ -291,7 +296,7 @@ ExactMissionSnapshotService::requestDownload(
 
     QPointer<ExactMissionSnapshotService> guard(this);
     QString routeError;
-    const bool routeAccepted = m_routeValidator(vehicle, &routeError);
+    const bool routeAccepted = routeValidator(vehicle, &routeError);
     if (!guard) {
         if (token) {
             *token = ExactMissionTransferToken();
@@ -348,7 +353,7 @@ ExactMissionSnapshotService::requestDownload(
     }
 
     QPointer<MissionProtocolCoordinator> coordinator =
-        m_coordinatorResolver(vehicle);
+        coordinatorResolver(vehicle);
     if (!guard) {
         if (error) {
             *error = QStringLiteral(
@@ -467,6 +472,16 @@ ExactMissionSnapshotService::requestDownload(
     // A direct busyChanged receiver may synchronously cancel the operation.
     if (tokenIsCurrent(activeToken)) {
         applyTransition(activeToken, first);
+    }
+    if (!guard) {
+        if (token) {
+            *token = ExactMissionTransferToken();
+        }
+        if (error) {
+            *error = QStringLiteral(
+                "The exact mission service was destroyed while starting the mission transfer.");
+        }
+        return StartResult::TransportUnavailable;
     }
     return StartResult::Started;
 }
@@ -681,7 +696,12 @@ void ExactMissionSnapshotService::observeMessage(
     }
 
     QString routeError;
-    if (!validateRouteWithBarrier(token, &routeError)) {
+    QPointer<ExactMissionSnapshotService> routeGuard(this);
+    const bool routeAccepted = validateRouteWithBarrier(token, &routeError);
+    if (!routeGuard) {
+        return;
+    }
+    if (!routeAccepted) {
         if (tokenIsCurrent(token)) {
             failActive(token, routeError.isEmpty()
                 ? defaultRouteError() : routeError);
@@ -736,7 +756,12 @@ void ExactMissionSnapshotService::timeout()
     }
     disarmTimeout();
     QString routeError;
-    if (!validateRouteWithBarrier(token, &routeError)) {
+    QPointer<ExactMissionSnapshotService> routeGuard(this);
+    const bool routeAccepted = validateRouteWithBarrier(token, &routeError);
+    if (!routeGuard) {
+        return;
+    }
+    if (!routeAccepted) {
         if (tokenIsCurrent(token)) {
             failActive(token, routeError.isEmpty()
                 ? defaultRouteError() : routeError);
@@ -825,7 +850,8 @@ bool ExactMissionSnapshotService::validateRouteWithBarrier(
         }
         return false;
     }
-    if (!m_routeValidator) {
+    const RouteValidator routeValidator = m_routeValidator;
+    if (!routeValidator) {
         if (error) {
             *error = QStringLiteral("No exact mission route policy is installed.");
         }
@@ -834,7 +860,7 @@ bool ExactMissionSnapshotService::validateRouteWithBarrier(
 
     QPointer<ExactMissionSnapshotService> guard(this);
     QString callbackError;
-    const bool accepted = m_routeValidator(vehicle, &callbackError);
+    const bool accepted = routeValidator(vehicle, &callbackError);
     if (!guard) {
         if (error) {
             *error = QStringLiteral(
@@ -880,7 +906,9 @@ bool ExactMissionSnapshotService::sendOutbound(
     if (error) {
         error->clear();
     }
-    if (!validateRouteWithBarrier(token, error)) {
+    QPointer<ExactMissionSnapshotService> routeGuard(this);
+    const bool routeAccepted = validateRouteWithBarrier(token, error);
+    if (!routeGuard || !routeAccepted) {
         return false;
     }
 
