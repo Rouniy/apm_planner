@@ -191,6 +191,27 @@ LinkManager::LinkManager(QObject *parent) :
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_parameterService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
+    const bool exactParametersConfigured =
+        m_parameterService->configureExactTransactions(
+            [registry = QPointer<SwarmTelemetryRegistry>(
+                 m_swarmTelemetryRegistry)](
+                const SwarmVehicleInstanceLease &lease) {
+                return registry && registry->validateLease(lease);
+            },
+            [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+                return exactVehicleRouteIsEligible(lease, error);
+            });
+    Q_ASSERT(exactParametersConfigured);
+    connect(m_swarmTelemetryRegistry,
+            &SwarmTelemetryRegistry::endpointRetired,
+            m_parameterService,
+            [service = QPointer<ParameterService>(m_parameterService)](
+                const SwarmVehicleInstanceLease &lease,
+                SwarmTelemetryRegistry::RetirementReason) {
+                if (service) {
+                    service->retireExactVehicle(lease);
+                }
+            });
     m_mavFtpService = new MavFtpService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_mavFtpService->setLocalIdentity(

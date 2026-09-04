@@ -91,6 +91,35 @@ mavlink_message_t parameterValue(
     return message;
 }
 
+SwarmVehicleInstanceLease swarmLease(
+    int linkId, int systemId, int componentId = 1,
+    quint64 linkSessionEpoch = 1, quint64 instanceEpoch = 1)
+{
+    SwarmVehicleInstanceLease lease;
+    lease.endpoint = endpoint(linkId, systemId, componentId);
+    lease.linkSessionEpoch = linkSessionEpoch;
+    lease.instanceEpoch = instanceEpoch;
+    return lease;
+}
+
+bool containsLease(
+    const QList<SwarmVehicleInstanceLease> &active,
+    const SwarmVehicleInstanceLease &lease)
+{
+    return std::any_of(
+        active.cbegin(), active.cend(),
+        [&lease](const SwarmVehicleInstanceLease &candidate) {
+            return candidate.sameInstance(lease);
+        });
+}
+
+ParameterService::ExactOperationReport exactReportAt(
+    const QSignalSpy &spy, int index)
+{
+    return qvariant_cast<ParameterService::ExactOperationReport>(
+        spy.at(index).at(0));
+}
+
 } // namespace
 
 class ParameterServiceTest final : public QObject
@@ -132,6 +161,19 @@ private slots:
     void compatibilityFacadeCoalescesSameTurnFailures();
     void commandAndParameterTrafficShareOneLinkSequence();
     void targetSwitchCancelsPendingTransactions();
+    void exactReadsDisambiguateEqualIdsOnDifferentLinks();
+    void exactReentrantRepliesAndSameLeaseSkipAreSafe();
+    void exactMismatchingWriteEchoIsDefiniteRejection();
+    void exactTransportFailureClassifiesReadAndWriteSafely();
+    void exactReadRetriesHaveDefiniteBoundedTimeout();
+    void exactWriteRetriesStopAtAbsoluteDeadlineAndQuarantine();
+    void exactWriteDeadlineIsRecheckedAfterRouteCallback();
+    void exactReservationValidatesRouteAndExcludesLegacyOperations();
+    void exactValidatorCallbacksCanDeleteService();
+    void legacyTrafficFenceCoversDirectAndCancelledReads();
+    void exactOwnerDestructionDrainsAndRetirementIsUncertain();
+    void exactForgetLinkDrainsAndRemovesCache();
+    void exactTerminalSignalsCanDeleteService();
 };
 
 void ParameterServiceTest::requestsUseOnlyTheExactSelectedEndpoint()
@@ -1751,6 +1793,1006 @@ void ParameterServiceTest::targetSwitchCancelsPendingTransactions()
              newTarget.generation);
     QVERIFY(service.store()->snapshot(second)
                 .contains(1, QStringLiteral("NEW")));
+}
+
+void ParameterServiceTest::exactReadsDisambiguateEqualIdsOnDifferentLinks()
+{
+    VehicleTargetManager targets;
+    QVector<CapturedFrame> frames;
+    ExactLinkTransmitter transmitter(
+        [&frames](int linkId, const QByteArray &bytes) {
+            frames.append({linkId, bytes});
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    const SwarmVehicleInstanceLease radio = swarmLease(31, 42, 1, 2, 3);
+    const SwarmVehicleInstanceLease simulator = swarmLease(32, 42, 1, 4, 5);
+    QList<SwarmVehicleInstanceLease> active{radio, simulator};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &lease) {
+            return containsLease(active, lease);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("SYSID_THISMAV");
+    QCOMPARE(service.submitExactRead(
+                 reservation, radio, read),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(frames.size(), 1);
+    QCOMPARE(frames.first().linkId, 31);
+
+    service.observeMessage(
+        32, parameterValue(42, 1, read.name, qint32(84),
+                           ParameterType::Int32));
+    QCOMPARE(finished.count(), 0);
+    QVERIFY(!service.store()->snapshot(simulator.endpoint)
+                 .contains(1, read.name));
+
+    service.observeMessage(
+        31, parameterValue(42, 1, read.name, qint32(42),
+                           ParameterType::Int32));
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(exactReportAt(finished, 0).terminalResult,
+             ParameterService::ExactTerminalResult::ReadSucceeded);
+    QCOMPARE(exactReportAt(finished, 0).value.toInt(), 42);
+    QCOMPARE(service.store()->snapshot(radio.endpoint)
+                 .value(1, read.name).value.toInt(), 42);
+
+    QCOMPARE(service.submitExactRead(
+                 reservation, simulator, read),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(frames.size(), 2);
+    QCOMPARE(frames.last().linkId, 32);
+    service.observeMessage(
+        32, parameterValue(42, 1, read.name, qint32(84),
+                           ParameterType::Int32));
+    QCOMPARE(finished.count(), 2);
+    QCOMPARE(exactReportAt(finished, 1).value.toInt(), 84);
+    QVERIFY(service.releaseExactReservation(reservation));
+}
+
+void ParameterServiceTest::exactReentrantRepliesAndSameLeaseSkipAreSafe()
+{
+    VehicleTargetManager targets;
+    ParameterService *servicePointer = nullptr;
+    int transmissions = 0;
+    ExactLinkTransmitter transmitter(
+        [&servicePointer, &transmissions](
+            int linkId, const QByteArray &bytes) {
+            ++transmissions;
+            const mavlink_message_t message = decodeFrame(bytes);
+            QString name;
+            QVariant value = qint32(5);
+            ParameterType type = ParameterType::Int32;
+            if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) {
+                mavlink_param_request_read_t request{};
+                mavlink_msg_param_request_read_decode(&message, &request);
+                name = QString::fromLatin1(parameterId(request.param_id));
+            } else if (message.msgid == MAVLINK_MSG_ID_PARAM_SET) {
+                mavlink_param_set_t request{};
+                mavlink_msg_param_set_decode(&message, &request);
+                name = QString::fromLatin1(parameterId(request.param_id));
+                type = static_cast<ParameterType>(request.param_type);
+                bool decoded = false;
+                value = ParameterCodec::decodeClassic(
+                    request.param_value, type,
+                    ParameterEncoding::Bytewise, &decoded);
+                Q_ASSERT(decoded);
+            }
+            servicePointer->observeMessage(
+                linkId, parameterValue(55, 1, name, value, type));
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    servicePointer = &service;
+    const SwarmVehicleInstanceLease lease = swarmLease(33, 55, 1, 7, 9);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("EXACT_GAIN");
+    ParameterService::ExactOperationToken readToken;
+    QCOMPARE(service.submitExactRead(
+                 reservation, lease, read, &readToken),
+             ParameterService::ExactSubmitResult::Started);
+    QVERIFY(readToken.isValid());
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(exactReportAt(finished, 0).terminalResult,
+             ParameterService::ExactTerminalResult::ReadSucceeded);
+    QCOMPARE(transmissions, 1);
+
+    ParameterService::ExactWriteRequest write;
+    write.name = read.name;
+    write.value = qint32(5);
+    write.type = ParameterType::Int32;
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(finished.count(), 2);
+    QCOMPARE(exactReportAt(finished, 1).terminalResult,
+             ParameterService::ExactTerminalResult::WriteSkipped);
+    QCOMPARE(transmissions, 1);
+
+    write.value = qint32(6);
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(finished.count(), 3);
+    QCOMPARE(exactReportAt(finished, 2).terminalResult,
+             ParameterService::ExactTerminalResult::WriteSucceeded);
+    QCOMPARE(transmissions, 2);
+
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(finished.count(), 4);
+    const ParameterService::ExactOperationReport skipped =
+        exactReportAt(finished, 3);
+    QCOMPARE(skipped.terminalResult,
+             ParameterService::ExactTerminalResult::WriteSkipped);
+    QVERIFY(!skipped.frameAttempted);
+    QCOMPARE(skipped.attempts, 0);
+    QCOMPARE(transmissions, 2);
+}
+
+void ParameterServiceTest::exactMismatchingWriteEchoIsDefiniteRejection()
+{
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    ParameterService service(&targets, &transmitter);
+    const SwarmVehicleInstanceLease lease = swarmLease(34, 56, 1, 2, 8);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("EXACT_MODE");
+    write.value = qint32(9);
+    write.type = ParameterType::Int32;
+
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    service.observeMessage(
+        34, parameterValue(56, 1, write.name, qint32(8), write.type));
+    QCOMPARE(finished.count(), 1);
+    const ParameterService::ExactOperationReport report =
+        exactReportAt(finished, 0);
+    QCOMPARE(report.terminalResult,
+             ParameterService::ExactTerminalResult::Rejected);
+    QCOMPARE(report.value.toInt(), 8);
+    QVERIFY(report.frameAttempted);
+    QVERIFY(!service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+}
+
+void ParameterServiceTest::
+exactTransportFailureClassifiesReadAndWriteSafely()
+{
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return false; });
+    ParameterService service(&targets, &transmitter);
+    const SwarmVehicleInstanceLease lease = swarmLease(40, 62, 1, 8, 14);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("FAILED_READ");
+    QCOMPARE(service.submitExactRead(reservation, lease, read),
+             ParameterService::ExactSubmitResult::TransportUnavailable);
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(exactReportAt(finished, 0).terminalResult,
+             ParameterService::ExactTerminalResult::ReadTransportFailure);
+
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("FAILED_WRITE");
+    write.value = qint32(12);
+    write.type = ParameterType::Int32;
+    write.force = true;
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::
+                 TransportOutcomeUncertain);
+    QCOMPARE(finished.count(), 2);
+    const ParameterService::ExactOperationReport report =
+        exactReportAt(finished, 1);
+    QCOMPARE(report.terminalResult,
+             ParameterService::ExactTerminalResult::
+                 WriteTransportOutcomeUncertain);
+    QVERIFY(report.frameAttempted);
+    QVERIFY(service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+}
+
+void ParameterServiceTest::exactReadRetriesHaveDefiniteBoundedTimeout()
+{
+    VehicleTargetManager targets;
+    int transmissions = 0;
+    ExactLinkTransmitter transmitter(
+        [&transmissions](int, const QByteArray &) {
+            ++transmissions;
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(15, 2, 20, 3, 200, 200);
+    const SwarmVehicleInstanceLease lease = swarmLease(35, 57, 1, 3, 9);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    QSignalSpy retried(
+        &service, &ParameterService::exactOperationRetried);
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("NO_REPLY");
+
+    QCOMPARE(service.submitExactRead(reservation, lease, read),
+             ParameterService::ExactSubmitResult::Started);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 250);
+    QCOMPARE(transmissions, 3);
+    QCOMPARE(retried.count(), 2);
+    const ParameterService::ExactOperationReport report =
+        exactReportAt(finished, 0);
+    QCOMPARE(report.terminalResult,
+             ParameterService::ExactTerminalResult::ReadTimedOut);
+    QCOMPARE(report.attempts, 3);
+    QVERIFY(report.frameAttempted);
+    QVERIFY(!service.isExactWriteQuarantined(
+        lease, read.name, qint32(1), ParameterType::Int32));
+}
+
+void ParameterServiceTest::
+exactWriteRetriesStopAtAbsoluteDeadlineAndQuarantine()
+{
+    VehicleTargetManager targets;
+    int transmissions = 0;
+    ExactLinkTransmitter transmitter(
+        [&transmissions](int, const QByteArray &) {
+            ++transmissions;
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(20, 1, 15, 100, 80, 300);
+    const SwarmVehicleInstanceLease lease = swarmLease(36, 58, 1, 4, 10);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    QSignalSpy released(
+        &service, &ParameterService::exactReservationReleased);
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("ABSOLUTE_BOUND");
+    write.value = qint32(77);
+    write.type = ParameterType::Int32;
+    write.force = true;
+    QElapsedTimer elapsed;
+    elapsed.start();
+
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    QVERIFY(service.releaseExactReservation(reservation));
+    QCOMPARE(released.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 300);
+    QVERIFY(elapsed.elapsed() < 250);
+    QVERIFY(transmissions >= 3);
+    const ParameterService::ExactOperationReport report =
+        exactReportAt(finished, 0);
+    QCOMPARE(report.terminalResult,
+             ParameterService::ExactTerminalResult::
+                 WriteTimedOutOutcomeUncertain);
+    QCOMPARE(report.attempts, transmissions);
+    QVERIFY(report.frameAttempted);
+    QVERIFY(report.description.contains(
+        QStringLiteral("maximum lifetime"), Qt::CaseInsensitive));
+    QCOMPARE(released.count(), 1);
+    QVERIFY(service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+    QVERIFY(service.isExactWriteQuarantined(
+        lease, write.name, quint16(5), ParameterType::UInt16));
+
+    // PARAM_VALUE does not identify the PARAM_SET it answers.  A vehicle may
+    // clamp or reject the requested value, so quarantine must consume every
+    // same-name echo regardless of value and type.
+    service.observeMessage(
+        36, parameterValue(58, 1, write.name, qint16(12),
+                           ParameterType::Int16));
+    service.observeMessage(
+        36, parameterValue(58, 1, write.name, write.value, write.type));
+    QVERIFY(!service.store()->snapshot(lease.endpoint)
+                 .contains(1, write.name));
+
+    QObject secondOwner;
+    ParameterService::ExactReservationToken secondReservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &secondOwner, active, &secondReservation),
+             ParameterService::ExactReservationResult::Reserved);
+    service.setLocalIdentity(201, 77);
+    ParameterService::ExactReadRequest quarantinedRead;
+    quarantinedRead.name = write.name;
+    QCOMPARE(service.submitExactRead(
+                 secondReservation, lease, quarantinedRead),
+             ParameterService::ExactSubmitResult::Quarantined);
+    write.value = quint16(5);
+    write.type = ParameterType::UInt16;
+    QCOMPARE(service.submitExactWrite(
+                 secondReservation, lease, write),
+             ParameterService::ExactSubmitResult::Quarantined);
+    QVERIFY(service.releaseExactReservation(secondReservation));
+}
+
+void ParameterServiceTest::
+exactWriteDeadlineIsRecheckedAfterRouteCallback()
+{
+    VehicleTargetManager targets;
+    int transmissions = 0;
+    int routeCalls = 0;
+    ExactLinkTransmitter transmitter(
+        [&transmissions](int, const QByteArray &) {
+            ++transmissions;
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(10, 1, 10, 20, 35, 100);
+    const SwarmVehicleInstanceLease lease = swarmLease(46, 68, 1, 9, 15);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [&routeCalls](const SwarmVehicleInstanceLease &, QString *) {
+            ++routeCalls;
+            // reserve, initial submit, then the first retry.  Cross the hard
+            // lifetime inside application policy after the timer's early check.
+            if (routeCalls == 3) {
+                QTest::qWait(50);
+            }
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("SLOW_ROUTE");
+    write.value = qint32(17);
+    write.type = ParameterType::Int32;
+    write.force = true;
+
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 200);
+    QCOMPARE(transmissions, 1);
+    QCOMPARE(exactReportAt(finished, 0).terminalResult,
+             ParameterService::ExactTerminalResult::
+                 WriteTimedOutOutcomeUncertain);
+    QVERIFY(service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+}
+
+void ParameterServiceTest::
+exactReservationValidatesRouteAndExcludesLegacyOperations()
+{
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(20, 1, 20, 1, 100, 25);
+    const SwarmVehicleInstanceLease lease = swarmLease(37, 59, 1, 5, 11);
+    const SwarmVehicleInstanceLease stale = swarmLease(37, 59, 1, 5, 12);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    bool routeAvailable = false;
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::ContextUnavailable);
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [&routeAvailable](const SwarmVehicleInstanceLease &, QString *) {
+            return routeAvailable;
+        }));
+    QCOMPARE(service.reserveExactEndpoints(
+                 nullptr, active, &reservation),
+             ParameterService::ExactReservationResult::InvalidOwner);
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, QList<SwarmVehicleInstanceLease>(), &reservation),
+             ParameterService::ExactReservationResult::InvalidLease);
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, QList<SwarmVehicleInstanceLease>{stale},
+                 &reservation),
+             ParameterService::ExactReservationResult::StaleLease);
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::RouteUnavailable);
+
+    routeAvailable = true;
+    QVERIFY(targets.observeEndpoint(lease.endpoint, true));
+    const VehicleTargetLease selected = targets.acquireTarget();
+    QCOMPARE(service.requestParameterRead(
+                 selected, 250, 190, QStringLiteral("LEGACY_PENDING")),
+             ParameterService::SendResult::Sent);
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Busy);
+    service.observeMessage(
+        37, parameterValue(59, 1, QStringLiteral("LEGACY_PENDING"),
+                           qint32(1), ParameterType::Int32));
+
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Busy);
+    QTest::qWait(35);
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QCOMPARE(service.requestParameterList(selected, 250, 190),
+             ParameterService::SendResult::Busy);
+    QCOMPARE(service.requestParameterRead(
+                 selected, 250, 190, QStringLiteral("BLOCKED")),
+             ParameterService::SendResult::Busy);
+    QCOMPARE(service.requestParameterReadByIndex(
+                 selected, 250, 190, 3),
+             ParameterService::SendResult::Busy);
+    QCOMPARE(service.setParameter(
+                 selected, 250, 190, QStringLiteral("BLOCKED"), qint32(2),
+                 ParameterType::Int32),
+             ParameterService::SendResult::Busy);
+    QCOMPARE(service.writeCurrentParameter(
+                 QStringLiteral("LEGACY_PENDING"), qint32(2)),
+             qulonglong(0));
+    QCOMPARE(service.writeCurrentParameters(
+                 QVariantList{QVariantMap{
+                     {QStringLiteral("name"),
+                      QStringLiteral("LEGACY_PENDING")},
+                     {QStringLiteral("value"), qint32(2)}}}),
+             qulonglong(0));
+
+    QObject otherOwner;
+    ParameterService::ExactReservationToken otherReservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &otherOwner, active, &otherReservation),
+             ParameterService::ExactReservationResult::Busy);
+
+    routeAvailable = false;
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("EXACT_BLOCKED");
+    QCOMPARE(service.submitExactRead(reservation, lease, read),
+             ParameterService::ExactSubmitResult::RouteUnavailable);
+    QVERIFY(service.releaseExactReservation(reservation));
+    QCOMPARE(service.requestParameterRead(
+                 selected, 250, 190, QStringLiteral("UNBLOCKED")),
+             ParameterService::SendResult::Sent);
+}
+
+void ParameterServiceTest::exactValidatorCallbacksCanDeleteService()
+{
+    const SwarmVehicleInstanceLease lease = swarmLease(47, 69, 1, 10, 16);
+    const QList<SwarmVehicleInstanceLease> active{lease};
+
+    // Policy validation is a reentrancy boundary.  A recursive operation must
+    // not slip through before the outer waiter is published.
+    {
+        VehicleTargetManager targets;
+        ExactLinkTransmitter transmitter(
+            [](int, const QByteArray &) { return true; });
+        ParameterService service(&targets, &transmitter);
+        QObject owner;
+        ParameterService::ExactReservationToken reservation;
+        ParameterService::ExactReadRequest read;
+        read.name = QStringLiteral("REENTRANT_POLICY");
+        bool recurse = false;
+        ParameterService::ExactSubmitResult nestedResult =
+            ParameterService::ExactSubmitResult::Started;
+        QVERIFY(service.configureExactTransactions(
+            [&active](const SwarmVehicleInstanceLease &candidate) {
+                return containsLease(active, candidate);
+            },
+            [&service, &reservation, &lease, &read, &recurse, &nestedResult](
+                const SwarmVehicleInstanceLease &, QString *) {
+                if (recurse) {
+                    recurse = false;
+                    nestedResult = service.submitExactRead(
+                        reservation, lease, read);
+                }
+                return true;
+            }));
+        QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+                 ParameterService::ExactReservationResult::Reserved);
+        recurse = true;
+        QCOMPARE(service.submitExactRead(reservation, lease, read),
+                 ParameterService::ExactSubmitResult::Started);
+        QCOMPARE(nestedResult, ParameterService::ExactSubmitResult::Busy);
+        service.observeMessage(
+            lease.endpoint.linkId,
+            parameterValue(lease.endpoint.systemId,
+                           lease.endpoint.componentId,
+                           read.name, qint32(1), ParameterType::Int32));
+    }
+
+    // A route validator may destroy the service while reservation policy is
+    // running.  The validator callable itself must remain alive until return.
+    {
+        VehicleTargetManager targets;
+        ExactLinkTransmitter transmitter(
+            [](int, const QByteArray &) { return true; });
+        ParameterService *service = new ParameterService(&targets, &transmitter);
+        QPointer<ParameterService> guarded(service);
+        QVERIFY(service->configureExactTransactions(
+            [&active](const SwarmVehicleInstanceLease &candidate) {
+                return containsLease(active, candidate);
+            },
+            [&service](const SwarmVehicleInstanceLease &, QString *) {
+                ParameterService *victim = service;
+                service = nullptr;
+                delete victim;
+                return true;
+            }));
+        QObject owner;
+        ParameterService::ExactReservationToken reservation;
+        QCOMPARE(service->reserveExactEndpoints(&owner, active, &reservation),
+                 ParameterService::ExactReservationResult::ContextUnavailable);
+        QVERIFY(guarded.isNull());
+    }
+
+    // Submission has an independent pre-route lease callback boundary.
+    {
+        VehicleTargetManager targets;
+        ExactLinkTransmitter transmitter(
+            [](int, const QByteArray &) { return true; });
+        ParameterService *service = new ParameterService(&targets, &transmitter);
+        QPointer<ParameterService> guarded(service);
+        bool destroyOnLease = false;
+        QVERIFY(service->configureExactTransactions(
+            [&active, &destroyOnLease, &service](
+                const SwarmVehicleInstanceLease &candidate) {
+                if (destroyOnLease) {
+                    ParameterService *victim = service;
+                    service = nullptr;
+                    delete victim;
+                }
+                return containsLease(active, candidate);
+            },
+            [](const SwarmVehicleInstanceLease &, QString *) {
+                return true;
+            }));
+        QObject owner;
+        ParameterService::ExactReservationToken reservation;
+        QCOMPARE(service->reserveExactEndpoints(&owner, active, &reservation),
+                 ParameterService::ExactReservationResult::Reserved);
+        destroyOnLease = true;
+        ParameterService::ExactReadRequest read;
+        read.name = QStringLiteral("DELETE_ON_SUBMIT");
+        QCOMPARE(service->submitExactRead(reservation, lease, read),
+                 ParameterService::ExactSubmitResult::ContextUnavailable);
+        QVERIFY(guarded.isNull());
+    }
+
+    // Retry route policy can delete the service from the timer callback.
+    {
+        VehicleTargetManager targets;
+        ExactLinkTransmitter transmitter(
+            [](int, const QByteArray &) { return true; });
+        ParameterService *service = new ParameterService(&targets, &transmitter);
+        QPointer<ParameterService> guarded(service);
+        int routeCalls = 0;
+        service->setExactRetryPolicyForTesting(10, 2, 10, 2, 100, 100);
+        QVERIFY(service->configureExactTransactions(
+            [&active](const SwarmVehicleInstanceLease &candidate) {
+                return containsLease(active, candidate);
+            },
+            [&routeCalls, &service](
+                const SwarmVehicleInstanceLease &, QString *) {
+                ++routeCalls;
+                if (routeCalls == 3) {
+                    ParameterService *victim = service;
+                    service = nullptr;
+                    delete victim;
+                }
+                return true;
+            }));
+        QObject owner;
+        ParameterService::ExactReservationToken reservation;
+        QCOMPARE(service->reserveExactEndpoints(&owner, active, &reservation),
+                 ParameterService::ExactReservationResult::Reserved);
+        ParameterService::ExactReadRequest read;
+        read.name = QStringLiteral("DELETE_ON_RETRY");
+        QCOMPARE(service->submitExactRead(reservation, lease, read),
+                 ParameterService::ExactSubmitResult::Started);
+        QTRY_VERIFY_WITH_TIMEOUT(guarded.isNull(), 150);
+    }
+
+    // Inbound observation revalidates the lease before touching the store.
+    {
+        VehicleTargetManager targets;
+        ExactLinkTransmitter transmitter(
+            [](int, const QByteArray &) { return true; });
+        ParameterService *service = new ParameterService(&targets, &transmitter);
+        QPointer<ParameterService> guarded(service);
+        bool destroyOnLease = false;
+        QVERIFY(service->configureExactTransactions(
+            [&active, &destroyOnLease, &service](
+                const SwarmVehicleInstanceLease &candidate) {
+                if (destroyOnLease) {
+                    ParameterService *victim = service;
+                    service = nullptr;
+                    delete victim;
+                }
+                return containsLease(active, candidate);
+            },
+            [](const SwarmVehicleInstanceLease &, QString *) {
+                return true;
+            }));
+        QObject owner;
+        ParameterService::ExactReservationToken reservation;
+        QCOMPARE(service->reserveExactEndpoints(&owner, active, &reservation),
+                 ParameterService::ExactReservationResult::Reserved);
+        ParameterService::ExactReadRequest read;
+        read.name = QStringLiteral("DELETE_OBSERVE");
+        QCOMPARE(service->submitExactRead(reservation, lease, read),
+                 ParameterService::ExactSubmitResult::Started);
+        destroyOnLease = true;
+        service->observeMessage(
+            lease.endpoint.linkId,
+            parameterValue(lease.endpoint.systemId,
+                           lease.endpoint.componentId,
+                           read.name, qint32(1), ParameterType::Int32));
+        QVERIFY(guarded.isNull());
+    }
+}
+
+void ParameterServiceTest::
+legacyTrafficFenceCoversDirectAndCancelledReads()
+{
+    VehicleTargetManager targets;
+    int transmissions = 0;
+    ExactLinkTransmitter transmitter(
+        [&transmissions](int, const QByteArray &) {
+            ++transmissions;
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(10, 1, 10, 1, 100, 100);
+    const SwarmVehicleInstanceLease lease = swarmLease(48, 70, 1, 11, 17);
+    const QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; }));
+    QVERIFY(targets.observeEndpoint(lease.endpoint, true));
+    const VehicleTargetLease selected = targets.acquireTarget();
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    ParameterService::ExactReadRequest seedRead;
+    seedRead.name = QStringLiteral("INDEXED");
+    QCOMPARE(service.submitExactRead(reservation, lease, seedRead),
+             ParameterService::ExactSubmitResult::Started);
+    service.observeMessage(
+        lease.endpoint.linkId,
+        parameterValue(lease.endpoint.systemId, lease.endpoint.componentId,
+                       seedRead.name, qint32(3), ParameterType::Int32));
+    QVERIFY(service.releaseExactReservation(reservation));
+    QCOMPARE(transmissions, 1);
+
+    // Direct index reads have no name waiter, but their wire response is still
+    // ambiguous.  An accepted response refreshes the same bounded fence.
+    QCOMPARE(service.requestParameterReadByIndex(selected, 250, 190, 0),
+             ParameterService::SendResult::Sent);
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Busy);
+    QTest::qWait(20);
+    service.observeMessage(
+        lease.endpoint.linkId,
+        parameterValue(lease.endpoint.systemId, lease.endpoint.componentId,
+                       QStringLiteral("INDEXED"), qint32(3),
+                       ParameterType::Int32));
+    QTest::qWait(20);
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Busy);
+    QTest::qWait(90);
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    ParameterService::ExactWriteRequest verifyInvalidatedCache;
+    verifyInvalidatedCache.name = seedRead.name;
+    verifyInvalidatedCache.value = qint32(3);
+    verifyInvalidatedCache.type = ParameterType::Int32;
+    QCOMPARE(service.submitExactWrite(
+                 reservation, lease, verifyInvalidatedCache),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(transmissions, 3);
+    service.observeMessage(
+        lease.endpoint.linkId,
+        parameterValue(lease.endpoint.systemId, lease.endpoint.componentId,
+                       verifyInvalidatedCache.name,
+                       verifyInvalidatedCache.value,
+                       verifyInvalidatedCache.type));
+    QVERIFY(service.releaseExactReservation(reservation));
+
+    // Cancelling the legacy name waiter on target switch must not erase the
+    // physical-traffic ambiguity window.
+    QCOMPARE(service.requestParameterRead(
+                 selected, 250, 190, QStringLiteral("CANCELLED_READ")),
+             ParameterService::SendResult::Sent);
+    const VehicleEndpoint other = endpoint(49, 71, 1);
+    QVERIFY(targets.observeEndpoint(other));
+    QVERIFY(targets.selectTarget(other.linkId, other.systemId,
+                                 other.componentId));
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Busy);
+    QTest::qWait(110);
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QVERIFY(service.releaseExactReservation(reservation));
+}
+
+void ParameterServiceTest::
+exactOwnerDestructionDrainsAndRetirementIsUncertain()
+{
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    ParameterService service(&targets, &transmitter);
+    const SwarmVehicleInstanceLease lease = swarmLease(38, 60, 1, 6, 12);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    QSignalSpy released(
+        &service, &ParameterService::exactReservationReleased);
+
+    auto *owner = new QObject;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("OWNER_DRAIN");
+    QCOMPARE(service.submitExactRead(reservation, lease, read),
+             ParameterService::ExactSubmitResult::Started);
+    delete owner;
+    QCOMPARE(released.count(), 0);
+    service.observeMessage(
+        38, parameterValue(60, 1, read.name, qint32(3),
+                           ParameterType::Int32));
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(exactReportAt(finished, 0).terminalResult,
+             ParameterService::ExactTerminalResult::ReadSucceeded);
+    QVERIFY(exactReportAt(finished, 0).ownerDetached);
+    QCOMPARE(released.count(), 1);
+    QVERIFY(service.store()->snapshot(lease.endpoint)
+                .contains(1, read.name));
+
+    QObject writeOwner;
+    ParameterService::ExactReservationToken writeReservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &writeOwner, active, &writeReservation),
+             ParameterService::ExactReservationResult::Reserved);
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("RETIRE_WRITE");
+    write.value = qint32(4);
+    write.type = ParameterType::Int32;
+    write.force = true;
+    QCOMPARE(service.submitExactWrite(
+                 writeReservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    active.clear();
+    service.retireExactVehicle(lease);
+    QCOMPARE(finished.count(), 2);
+    QCOMPARE(exactReportAt(finished, 1).terminalResult,
+             ParameterService::ExactTerminalResult::
+                 WriteLeaseRetiredOutcomeUncertain);
+    QVERIFY(exactReportAt(finished, 1).frameAttempted);
+    QCOMPARE(released.count(), 2);
+    QVERIFY(!service.store()->hasSnapshot(lease.endpoint));
+    QVERIFY(service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+}
+
+void ParameterServiceTest::exactForgetLinkDrainsAndRemovesCache()
+{
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    ParameterService service(&targets, &transmitter);
+    const SwarmVehicleInstanceLease lease = swarmLease(39, 61, 1, 7, 13);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    QSignalSpy released(
+        &service, &ParameterService::exactReservationReleased);
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("LINK_CACHE");
+    QCOMPARE(service.submitExactRead(reservation, lease, read),
+             ParameterService::ExactSubmitResult::Started);
+    service.observeMessage(
+        39, parameterValue(61, 1, read.name, qint32(5),
+                           ParameterType::Int32));
+    QVERIFY(service.store()->hasSnapshot(lease.endpoint));
+
+    read.name = QStringLiteral("LINK_PENDING");
+    QCOMPARE(service.submitExactRead(reservation, lease, read),
+             ParameterService::ExactSubmitResult::Started);
+    service.forgetLink(39);
+    QCOMPARE(finished.count(), 2);
+    QCOMPARE(exactReportAt(finished, 1).terminalResult,
+             ParameterService::ExactTerminalResult::ReadLinkForgotten);
+    QCOMPARE(released.count(), 1);
+    QVERIFY(!service.store()->hasSnapshot(lease.endpoint));
+}
+
+void ParameterServiceTest::exactTerminalSignalsCanDeleteService()
+{
+    // finishExactOperation() emits before retireExactVehicle() has completed;
+    // the outer terminal path must not touch a deleted service afterwards.
+    {
+        VehicleTargetManager targets;
+        ExactLinkTransmitter transmitter(
+            [](int, const QByteArray &) { return true; });
+        ParameterService *service = new ParameterService(&targets, &transmitter);
+        QPointer<ParameterService> guarded(service);
+        const SwarmVehicleInstanceLease lease = swarmLease(50, 72, 1, 12, 18);
+        const QList<SwarmVehicleInstanceLease> active{lease};
+        QVERIFY(service->configureExactTransactions(
+            [&active](const SwarmVehicleInstanceLease &candidate) {
+                return containsLease(active, candidate);
+            },
+            [](const SwarmVehicleInstanceLease &, QString *) {
+                return true;
+            }));
+        QObject owner;
+        ParameterService::ExactReservationToken reservation;
+        QCOMPARE(service->reserveExactEndpoints(&owner, active, &reservation),
+                 ParameterService::ExactReservationResult::Reserved);
+        ParameterService::ExactWriteRequest write;
+        write.name = QStringLiteral("DELETE_ON_FINISH");
+        write.value = qint32(1);
+        write.type = ParameterType::Int32;
+        write.force = true;
+        QCOMPARE(service->submitExactWrite(reservation, lease, write),
+                 ParameterService::ExactSubmitResult::Started);
+        connect(service, &ParameterService::exactOperationFinished,
+                [&service](const ParameterService::ExactOperationReport &) {
+                    ParameterService *victim = service;
+                    service = nullptr;
+                    delete victim;
+                });
+        service->retireExactVehicle(lease);
+        QVERIFY(guarded.isNull());
+    }
+
+    // Multiple closing reservations exercise the release loop: deletion from
+    // the first release signal must prevent access to the second iterator.
+    {
+        VehicleTargetManager targets;
+        ExactLinkTransmitter transmitter(
+            [](int, const QByteArray &) { return true; });
+        ParameterService *service = new ParameterService(&targets, &transmitter);
+        QPointer<ParameterService> guarded(service);
+        const SwarmVehicleInstanceLease first = swarmLease(51, 73, 1, 13, 19);
+        const SwarmVehicleInstanceLease second = swarmLease(51, 74, 1, 13, 20);
+        const QList<SwarmVehicleInstanceLease> active{first, second};
+        QVERIFY(service->configureExactTransactions(
+            [&active](const SwarmVehicleInstanceLease &candidate) {
+                return containsLease(active, candidate);
+            },
+            [](const SwarmVehicleInstanceLease &, QString *) {
+                return true;
+            }));
+        QObject firstOwner;
+        QObject secondOwner;
+        ParameterService::ExactReservationToken firstReservation;
+        ParameterService::ExactReservationToken secondReservation;
+        QCOMPARE(service->reserveExactEndpoints(
+                     &firstOwner,
+                     QList<SwarmVehicleInstanceLease>{first},
+                     &firstReservation),
+                 ParameterService::ExactReservationResult::Reserved);
+        QCOMPARE(service->reserveExactEndpoints(
+                     &secondOwner,
+                     QList<SwarmVehicleInstanceLease>{second},
+                     &secondReservation),
+                 ParameterService::ExactReservationResult::Reserved);
+        connect(service, &ParameterService::exactReservationReleased,
+                [&service](qulonglong) {
+                    ParameterService *victim = service;
+                    service = nullptr;
+                    delete victim;
+                });
+        service->forgetLink(first.endpoint.linkId);
+        QVERIFY(guarded.isNull());
+    }
 }
 
 QTEST_GUILESS_MAIN(ParameterServiceTest)

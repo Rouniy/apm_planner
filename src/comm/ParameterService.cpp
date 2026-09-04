@@ -9,9 +9,32 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace
 {
+
+constexpr int MaximumExactIntervalMs = 10 * 60 * 1000;
+
+class ScopeExit final
+{
+public:
+    explicit ScopeExit(std::function<void()> callback)
+        : m_callback(std::move(callback))
+    {
+    }
+
+    ScopeExit(const ScopeExit &) = delete;
+    ScopeExit &operator=(const ScopeExit &) = delete;
+
+    ~ScopeExit()
+    {
+        m_callback();
+    }
+
+private:
+    std::function<void()> m_callback;
+};
 
 QString parameterName(const char *bytes, int size)
 {
@@ -21,6 +44,14 @@ QString parameterName(const char *bytes, int size)
         name.truncate(terminator);
     }
     return QString::fromLatin1(name);
+}
+
+QString endpointLabel(const VehicleEndpoint &endpoint)
+{
+    return QStringLiteral("link %1, vehicle %2:%3")
+        .arg(endpoint.linkId)
+        .arg(endpoint.systemId)
+        .arg(endpoint.componentId);
 }
 
 } // namespace
@@ -36,6 +67,24 @@ ParameterService::ParameterService(
 {
     Q_ASSERT(m_targetManager);
     Q_ASSERT(m_transmitter);
+    qRegisterMetaType<ExactReservationToken>();
+    qRegisterMetaType<ExactReservationResult>();
+    qRegisterMetaType<ExactOperationKind>();
+    qRegisterMetaType<ExactReadRequest>();
+    qRegisterMetaType<ExactWriteRequest>();
+    qRegisterMetaType<ExactOperationToken>();
+    qRegisterMetaType<ExactSubmitResult>();
+    qRegisterMetaType<ExactTerminalResult>();
+    qRegisterMetaType<ExactOperationReport>();
+    m_exactClock.start();
+    m_exactRetryTimer.setSingleShot(true);
+    m_exactRetryTimer.setTimerType(Qt::PreciseTimer);
+    m_exactQuarantineTimer.setSingleShot(true);
+    m_exactQuarantineTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_exactRetryTimer, &QTimer::timeout,
+            this, &ParameterService::handleExactRetryTimeout);
+    connect(&m_exactQuarantineTimer, &QTimer::timeout,
+            this, &ParameterService::cleanupExpiredExactQuarantines);
     m_listRetryTimer.setSingleShot(true);
     connect(&m_listRetryTimer, &QTimer::timeout,
             this, &ParameterService::handleListRetryTimeout);
@@ -65,6 +114,299 @@ void ParameterService::setLocalIdentity(
         m_localSystemId = systemId;
     }
     m_localComponentId = componentId;
+}
+
+bool ParameterService::configureExactTransactions(
+    ExactLeaseValidator leaseValidator,
+    ExactRouteValidator routeValidator)
+{
+    if (m_exactApiInFlight || m_exactOperationActive
+        || !m_exactReservations.isEmpty()
+        || !leaseValidator || !routeValidator) {
+        return false;
+    }
+    m_exactLeaseValidator = std::move(leaseValidator);
+    m_exactRouteValidator = std::move(routeValidator);
+    return static_cast<bool>(m_exactLeaseValidator)
+        && static_cast<bool>(m_exactRouteValidator);
+}
+
+ParameterService::ExactReservationResult
+ParameterService::reserveExactEndpoints(
+    QObject *owner,
+    const QList<SwarmVehicleInstanceLease> &leases,
+    ExactReservationToken *reservationOut,
+    QString *error)
+{
+    if (reservationOut) {
+        *reservationOut = ExactReservationToken();
+    }
+    if (error) {
+        error->clear();
+    }
+    QPointer<ParameterService> serviceGuard(this);
+    if (m_exactApiInFlight) {
+        if (error) {
+            *error = QStringLiteral(
+                "Another exact parameter API call is validating application policy.");
+        }
+        return ExactReservationResult::Busy;
+    }
+    m_exactApiInFlight = true;
+    ScopeExit apiCallGuard([serviceGuard]() {
+        if (!serviceGuard.isNull()) {
+            serviceGuard->m_exactApiInFlight = false;
+        }
+    });
+
+    QPointer<QObject> ownerGuard(owner);
+    if (!owner || owner == this || owner->thread() != thread()) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact parameter owner must be a separate object on the service thread.");
+        }
+        return ExactReservationResult::InvalidOwner;
+    }
+    if (!m_exactLeaseValidator || !m_exactRouteValidator) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact vehicle registry or route validator is unavailable.");
+        }
+        return ExactReservationResult::ContextUnavailable;
+    }
+    if (leases.isEmpty()
+        || leases.size() > SwarmTelemetryRegistry::MaximumVehicleEndpoints) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact parameter group is empty or too large.");
+        }
+        return ExactReservationResult::InvalidLease;
+    }
+
+    QSet<VehicleEndpoint> endpoints;
+    for (const SwarmVehicleInstanceLease &lease : leases) {
+        if (!lease.isValid() || endpoints.contains(lease.endpoint)) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The exact parameter group contains an invalid or duplicate endpoint.");
+            }
+            return ExactReservationResult::InvalidLease;
+        }
+        endpoints.insert(lease.endpoint);
+        const bool leaseCurrent = exactLeaseIsCurrent(lease);
+        if (serviceGuard.isNull()) {
+            return ExactReservationResult::ContextUnavailable;
+        }
+        if (!leaseCurrent) {
+            if (error) {
+                *error = QStringLiteral("The vehicle instance on %1 is stale.")
+                    .arg(endpointLabel(lease.endpoint));
+            }
+            return ExactReservationResult::StaleLease;
+        }
+        if (exactEndpointReserved(lease.endpoint)
+            || legacyOperationTouches(lease.endpoint)) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The parameter protocol for %1 is busy.")
+                    .arg(endpointLabel(lease.endpoint));
+            }
+            return ExactReservationResult::Busy;
+        }
+    }
+
+    // Route validators are application callbacks. Publish nothing until every
+    // route and lease has survived the callback boundary.
+    for (const SwarmVehicleInstanceLease &lease : leases) {
+        QString routeError;
+        const bool routeEligible = exactRouteIsEligible(lease, &routeError);
+        if (serviceGuard.isNull()) {
+            return ExactReservationResult::ContextUnavailable;
+        }
+        if (!routeEligible) {
+            if (error) {
+                *error = routeError.isEmpty()
+                    ? QStringLiteral("No safe parameter route is available for %1.")
+                          .arg(endpointLabel(lease.endpoint))
+                    : routeError;
+            }
+            return ExactReservationResult::RouteUnavailable;
+        }
+        if (ownerGuard.isNull()) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The exact parameter owner was destroyed during validation.");
+            }
+            return ExactReservationResult::InvalidOwner;
+        }
+    }
+    for (const SwarmVehicleInstanceLease &lease : leases) {
+        const bool leaseCurrent = exactLeaseIsCurrent(lease);
+        if (serviceGuard.isNull()) {
+            return ExactReservationResult::ContextUnavailable;
+        }
+        if (!leaseCurrent) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The exact parameter group changed during route validation.");
+            }
+            return ExactReservationResult::StaleLease;
+        }
+        if (ownerGuard.isNull()) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The exact parameter owner was destroyed during validation.");
+            }
+            return ExactReservationResult::InvalidOwner;
+        }
+        if (exactEndpointReserved(lease.endpoint)
+            || legacyOperationTouches(lease.endpoint)) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The parameter protocol became busy during validation.");
+            }
+            return ExactReservationResult::Busy;
+        }
+    }
+
+    const quint64 reservationId = nextExactReservationId();
+    ExactReservationRecord record;
+    record.owner = ownerGuard;
+    record.leases = leases;
+    record.ownerDestroyedConnection = connect(
+        owner, &QObject::destroyed, this,
+        [this, reservationId]() {
+            handleExactOwnerDestroyed(reservationId);
+        });
+    m_exactReservations.insert(reservationId, record);
+    for (const SwarmVehicleInstanceLease &lease : leases) {
+        m_exactEndpointReservations.insert(
+            lease.endpoint, reservationId);
+    }
+    if (reservationOut) {
+        reservationOut->owner = ownerGuard;
+        reservationOut->reservationId = reservationId;
+        reservationOut->leases = leases;
+    }
+    return ExactReservationResult::Reserved;
+}
+
+bool ParameterService::releaseExactReservation(
+    const ExactReservationToken &reservation)
+{
+    auto record = m_exactReservations.find(reservation.reservationId);
+    if (record == m_exactReservations.end()
+        || reservation.reservationId == 0
+        || reservation.owner.isNull()
+        || record->owner != reservation.owner
+        || record->leases != reservation.leases) {
+        return false;
+    }
+    record->closing = true;
+    disconnect(record->ownerDestroyedConnection);
+    maybeReleaseExactReservation(reservation.reservationId);
+    return true;
+}
+
+ParameterService::ExactSubmitResult ParameterService::submitExactRead(
+    const ExactReservationToken &reservation,
+    const SwarmVehicleInstanceLease &lease,
+    const ExactReadRequest &request,
+    ExactOperationToken *operationOut,
+    QString *error)
+{
+    return submitExactOperation(
+        reservation, lease, ExactOperationKind::Read,
+        request.name, QVariant(), ParameterType::Unknown, false,
+        operationOut, error);
+}
+
+ParameterService::ExactSubmitResult ParameterService::submitExactWrite(
+    const ExactReservationToken &reservation,
+    const SwarmVehicleInstanceLease &lease,
+    const ExactWriteRequest &request,
+    ExactOperationToken *operationOut,
+    QString *error)
+{
+    return submitExactOperation(
+        reservation, lease, ExactOperationKind::Write,
+        request.name, request.value, request.type, request.force,
+        operationOut, error);
+}
+
+void ParameterService::retireExactVehicle(
+    const SwarmVehicleInstanceLease &lease)
+{
+    if (!lease.isValid()) {
+        return;
+    }
+    QList<quint64> affectedReservations;
+    for (auto reservation = m_exactReservations.begin();
+         reservation != m_exactReservations.end(); ++reservation) {
+        if (exactReservationContains(reservation.value(), lease)) {
+            reservation->closing = true;
+            affectedReservations.append(reservation.key());
+        }
+    }
+    QPointer<ParameterService> guard(this);
+    m_store->removeEndpoint(lease.endpoint);
+    if (guard.isNull()) {
+        return;
+    }
+    const auto cached = m_exactCachedValues.find(lease.endpoint);
+    if (cached != m_exactCachedValues.end()) {
+        bool belongsToLease = false;
+        for (const ExactCachedValue &value : cached.value()) {
+            if (value.lease.sameInstance(lease)) {
+                belongsToLease = true;
+                break;
+            }
+        }
+        if (belongsToLease) {
+            m_exactCachedValues.erase(cached);
+        }
+    }
+    if (m_exactOperationActive
+        && m_exactOperation.token.lease.sameInstance(lease)) {
+        const bool write = m_exactOperation.token.kind
+            == ExactOperationKind::Write;
+        finishExactOperation(
+            write
+                ? ExactTerminalResult::WriteLeaseRetiredOutcomeUncertain
+                : ExactTerminalResult::ReadLeaseRetired,
+            QVariant(), ParameterType::Unknown,
+            QStringLiteral(
+                "The exact vehicle instance retired during the parameter operation."),
+            write && m_exactOperation.frameAttempted);
+        if (guard.isNull()) {
+            return;
+        }
+    }
+    for (quint64 reservationId : affectedReservations) {
+        maybeReleaseExactReservation(reservationId);
+        if (guard.isNull()) {
+            return;
+        }
+    }
+}
+
+bool ParameterService::isExactWriteQuarantined(
+    const SwarmVehicleInstanceLease &lease,
+    const QString &name,
+    const QVariant &value,
+    ParameterType type)
+{
+    cleanupExpiredExactQuarantines();
+    if (!lease.isValid()) {
+        return false;
+    }
+    QVariant normalized;
+    if (!normalizeParameterWrite(
+            VehicleTargetLease{lease.endpoint, 1}, value, type,
+            &normalized, nullptr, nullptr)) {
+        return false;
+    }
+    return matchesExactWriteQuarantine(lease.endpoint, name);
 }
 
 int ParameterService::requestCurrentParameterList()
@@ -159,6 +501,9 @@ qulonglong ParameterService::writeCurrentParameters(
     if (!target.isValid() || !targetIsCurrent(target) || changes.isEmpty()) {
         return 0;
     }
+    if (exactEndpointReserved(target.endpoint)) {
+        return 0;
+    }
 
     struct Candidate
     {
@@ -202,6 +547,18 @@ qulonglong ParameterService::writeCurrentParameters(
         }
         return left.name < right.name;
     });
+
+    cleanupExpiredExactQuarantines();
+    for (const Candidate &candidate : std::as_const(candidates)) {
+        QVariant normalized;
+        if (!normalizeParameterWrite(
+                target, candidate.value, candidate.type,
+                &normalized, nullptr, nullptr)
+            || matchesExactWriteQuarantine(
+                target.endpoint, candidate.name)) {
+            return 0;
+        }
+    }
 
     const quint64 batchId = m_nextBatchId++;
     m_pendingBatches.insert(batchId, PendingBatch{candidates.size(), 0, 0, 0});
@@ -313,6 +670,13 @@ ParameterService::SendResult ParameterService::requestParameterList(
     if (!targetIsCurrent(target)) {
         return SendResult::StaleTarget;
     }
+    if (exactEndpointReserved(target.endpoint)) {
+        return SendResult::Busy;
+    }
+    cleanupExpiredExactQuarantines();
+    if (exactEndpointQuarantined(target.endpoint)) {
+        return SendResult::Busy;
+    }
 
     // The manager has already installed the exact final identity, but signal
     // delivery may still be invalidating the previous generation. Preserve
@@ -391,6 +755,13 @@ ParameterService::SendResult ParameterService::startParameterList(
     if (!targetIsCurrent(target)) {
         return SendResult::StaleTarget;
     }
+    if (exactEndpointReserved(target.endpoint)) {
+        return SendResult::Busy;
+    }
+    cleanupExpiredExactQuarantines();
+    if (exactEndpointQuarantined(target.endpoint)) {
+        return SendResult::Busy;
+    }
     m_listActive = true;
     m_listTarget = target;
     m_listLocalSystemId = localSystemId;
@@ -426,6 +797,13 @@ ParameterService::SendResult ParameterService::requestParameterRead(
     }
     if (!targetIsCurrent(target)) {
         return SendResult::StaleTarget;
+    }
+    if (exactEndpointReserved(target.endpoint)) {
+        return SendResult::Busy;
+    }
+    cleanupExpiredExactQuarantines();
+    if (exactEndpointQuarantined(target.endpoint)) {
+        return SendResult::Busy;
     }
     QByteArray nameBytes;
     if (!parameterNameBytes(name, &nameBytes)) {
@@ -482,6 +860,13 @@ ParameterService::SendResult ParameterService::requestParameterReadByIndex(
     }
     if (!targetIsCurrent(target)) {
         return SendResult::StaleTarget;
+    }
+    if (exactEndpointReserved(target.endpoint)) {
+        return SendResult::Busy;
+    }
+    cleanupExpiredExactQuarantines();
+    if (exactEndpointQuarantined(target.endpoint)) {
+        return SendResult::Busy;
     }
     if (index < 0 || index > std::numeric_limits<qint16>::max()) {
         return SendResult::InvalidParameter;
@@ -541,18 +926,7 @@ void ParameterService::observeMessage(
         return;
     }
     if (message.msgid != MAVLINK_MSG_ID_PARAM_VALUE
-        || !source.isValid()
-        || !m_targetManager->isTargetGenerationSettled()) {
-        return;
-    }
-
-    // Parameter operations are leased to the selected endpoint.  Once the
-    // generation changes, late packets from the cancelled transaction must
-    // not mutate a committed cache that the user may later select again.
-    const VehicleTargetLease currentTarget =
-        m_targetManager->acquireTarget();
-    if (!sameEnvelope(currentTarget, linkId, message)
-        || !targetIsCurrent(currentTarget)) {
+        || !source.isValid()) {
         return;
     }
 
@@ -561,18 +935,66 @@ void ParameterService::observeMessage(
     const QString name = parameterName(
         payload.param_id, MAVLINK_MSG_PARAM_VALUE_FIELD_PARAM_ID_LEN);
     const ParameterType type = parameterType(payload.param_type);
+    const bool exactCandidate = m_exactOperationActive
+        && m_exactOperation.token.name == name
+        && m_exactOperation.token.lease.endpoint.sameIdentity(source);
     const quint64 candidateWriteId =
         m_writeActive && m_activeWrite.name == name
             && sameEnvelope(m_activeWrite.target, linkId, message)
             && targetIsCurrent(m_activeWrite.target)
         ? m_activeWrite.transactionId : 0;
-    const ParameterEncoding decodeEncoding = candidateWriteId != 0
-        ? m_activeWrite.encoding : encodingFor(source);
+    const ParameterEncoding decodeEncoding = exactCandidate
+        ? m_exactOperation.encoding
+        : candidateWriteId != 0
+            ? m_activeWrite.encoding : encodingFor(source);
     bool decoded = false;
     const QVariant value = ParameterCodec::decodeClassic(
         payload.param_value, type, decodeEncoding, &decoded);
     if (name.isEmpty() || !decoded) {
         return;
+    }
+
+    cleanupExpiredExactQuarantines();
+    if (matchesExactWriteQuarantine(source, name)) {
+        // PARAM_VALUE has no transaction identifier. A quarantined echo must
+        // not mutate cache state or satisfy any newer legacy/exact waiter.
+        return;
+    }
+    if (exactCandidate) {
+        observeExactParameterValue(
+            linkId, message, source, name, type, value,
+            payload.param_count, payload.param_index);
+        return;
+    }
+    if (exactEndpointReserved(source)) {
+        // A reservation is an exclusive PARAM_VALUE consumer boundary.  An
+        // unsolicited or late legacy response must not mutate its cache.
+        return;
+    }
+
+    // Legacy parameter operations remain leased to the selected endpoint.
+    // Once the generation changes, late packets from the cancelled operation
+    // cannot mutate a cache the user may later select again.
+    if (!m_targetManager->isTargetGenerationSettled()) {
+        return;
+    }
+    const VehicleTargetLease currentTarget =
+        m_targetManager->acquireTarget();
+    if (!sameEnvelope(currentTarget, linkId, message)
+        || !targetIsCurrent(currentTarget)) {
+        return;
+    }
+    touchLegacyTrafficFence(source);
+
+    // A selected-target observation is not pinned to a swarm instance lease.
+    // It remains valid legacy cache data, but it revokes any older exact-cache
+    // provenance so a later exact write cannot skip from a stale value.
+    auto exactEndpointCache = m_exactCachedValues.find(source);
+    if (exactEndpointCache != m_exactCachedValues.end()) {
+        exactEndpointCache->remove(name);
+        if (exactEndpointCache->isEmpty()) {
+            m_exactCachedValues.erase(exactEndpointCache);
+        }
     }
 
     if (!m_store->ingest(source, payload.param_count, payload.param_index,
@@ -668,16 +1090,60 @@ void ParameterService::setEncoding(
 
 void ParameterService::forgetLink(int linkId)
 {
+    QPointer<ParameterService> guard(this);
     QSet<quint64> cancelled;
     m_cancellingTransactions = true;
+    QList<quint64> exactReservations;
+    for (auto reservation = m_exactReservations.begin();
+         reservation != m_exactReservations.end(); ++reservation) {
+        const bool includesLink = std::any_of(
+            reservation->leases.cbegin(), reservation->leases.cend(),
+            [linkId](const SwarmVehicleInstanceLease &lease) {
+                return lease.endpoint.linkId == linkId;
+            });
+        if (includesLink) {
+            reservation->closing = true;
+            exactReservations.append(reservation.key());
+        }
+    }
+    if (m_exactOperationActive
+        && m_exactOperation.token.lease.endpoint.linkId == linkId) {
+        const bool write = m_exactOperation.token.kind
+            == ExactOperationKind::Write;
+        finishExactOperation(
+            write
+                ? ExactTerminalResult::WriteLinkForgottenOutcomeUncertain
+                : ExactTerminalResult::ReadLinkForgotten,
+            QVariant(), ParameterType::Unknown,
+            QStringLiteral(
+                "The exact parameter link was forgotten during the operation."),
+            write && m_exactOperation.frameAttempted);
+        if (guard.isNull()) {
+            return;
+        }
+    }
+    for (auto cached = m_exactCachedValues.begin();
+         cached != m_exactCachedValues.end();) {
+        if (cached.key().linkId == linkId) {
+            cached = m_exactCachedValues.erase(cached);
+        } else {
+            ++cached;
+        }
+    }
     if (m_listActive && m_listTarget.endpoint.linkId == linkId) {
         cancelled.insert(m_listTarget.generation);
         cancelParameterList(true);
+        if (guard.isNull()) {
+            return;
+        }
     }
     if (m_queuedList.active
         && m_queuedList.target.endpoint.linkId == linkId) {
         cancelled.insert(m_queuedList.target.generation);
         cancelQueuedParameterList(true);
+        if (guard.isNull()) {
+            return;
+        }
     }
     for (auto it = m_pendingReads.begin(); it != m_pendingReads.end();) {
         if (it->target.endpoint.linkId == linkId) {
@@ -690,6 +1156,9 @@ void ParameterService::forgetLink(int linkId)
     if (m_writeActive && m_activeWrite.target.endpoint.linkId == linkId) {
         cancelled.insert(m_activeWrite.target.generation);
         cancelActiveWrite();
+        if (guard.isNull()) {
+            return;
+        }
     }
     for (const PendingWrite &write : m_writeQueue) {
         if (write.target.endpoint.linkId == linkId) {
@@ -697,6 +1166,9 @@ void ParameterService::forgetLink(int linkId)
         }
     }
     cancelQueuedWritesForGeneration(0, linkId);
+    if (guard.isNull()) {
+        return;
+    }
     for (auto it = m_encodings.begin(); it != m_encodings.end();) {
         if (it.key().linkId == linkId) {
             it = m_encodings.erase(it);
@@ -704,14 +1176,34 @@ void ParameterService::forgetLink(int linkId)
             ++it;
         }
     }
+    for (auto fence = m_legacyTrafficFenceExpiries.begin();
+         fence != m_legacyTrafficFenceExpiries.end();) {
+        if (fence.key().linkId == linkId) {
+            fence = m_legacyTrafficFenceExpiries.erase(fence);
+        } else {
+            ++fence;
+        }
+    }
     const QList<VehicleEndpoint> endpoints = m_store->cachedEndpoints();
     for (const VehicleEndpoint &endpoint : endpoints) {
         if (endpoint.linkId == linkId) {
             m_store->removeEndpoint(endpoint);
+            if (guard.isNull()) {
+                return;
+            }
         }
     }
     for (quint64 generation : cancelled) {
         emit transactionsCancelled(generation);
+        if (guard.isNull()) {
+            return;
+        }
+    }
+    for (quint64 reservationId : exactReservations) {
+        maybeReleaseExactReservation(reservationId);
+        if (guard.isNull()) {
+            return;
+        }
     }
     m_cancellingTransactions = false;
     pumpTransactions();
@@ -734,6 +1226,28 @@ void ParameterService::setWriteRetryPolicyForTesting(
     m_writeMaximumRetries = qMax(0, maximumRetries);
 }
 
+void ParameterService::setExactRetryPolicyForTesting(
+    int readRetryIntervalMs,
+    int readMaximumRetries,
+    int writeRetryIntervalMs,
+    int writeMaximumRetries,
+    int writeMaximumLifetimeMs,
+    int quarantineMs)
+{
+    m_exactReadRetryIntervalMs = qBound(
+        1, readRetryIntervalMs, MaximumExactIntervalMs);
+    m_exactReadMaximumRetries = qBound(0, readMaximumRetries, 1000000);
+    m_exactWriteRetryIntervalMs = qBound(
+        1, writeRetryIntervalMs, MaximumExactIntervalMs);
+    m_exactWriteMaximumRetries = qBound(
+        0, writeMaximumRetries, 1000000);
+    m_exactWriteMaximumLifetimeMs = qBound(
+        1, writeMaximumLifetimeMs, MaximumExactIntervalMs);
+    m_exactWriteQuarantineMs = qBound(
+        1, quarantineMs, MaximumExactIntervalMs);
+    cleanupExpiredExactQuarantines();
+}
+
 ParameterService::SendResult ParameterService::enqueueParameterWrite(
     const VehicleTargetLease &target,
     quint8 localSystemId, quint8 localComponentId,
@@ -749,6 +1263,9 @@ ParameterService::SendResult ParameterService::enqueueParameterWrite(
     }
     if (!targetIsCurrent(target)) {
         return SendResult::StaleTarget;
+    }
+    if (exactEndpointReserved(target.endpoint)) {
+        return SendResult::Busy;
     }
     if (!validateParameterWrite(target, name, value, type)) {
         return SendResult::InvalidParameter;
@@ -770,6 +1287,10 @@ ParameterService::SendResult ParameterService::enqueueParameterWrite(
             target, value, type, &write.value,
             &write.wireValue, &write.encoding)) {
         return SendResult::InvalidParameter;
+    }
+    cleanupExpiredExactQuarantines();
+    if (matchesExactWriteQuarantine(target.endpoint, name)) {
+        return SendResult::Busy;
     }
     write.force = force;
     write.schemaBound = schemaBound;
@@ -1241,6 +1762,855 @@ void ParameterService::cancelQueuedParameterList(bool notify)
     pumpTransactions();
 }
 
+ParameterService::ExactSubmitResult
+ParameterService::submitExactOperation(
+    const ExactReservationToken &reservation,
+    const SwarmVehicleInstanceLease &lease,
+    ExactOperationKind kind,
+    const QString &name,
+    const QVariant &value,
+    ParameterType type,
+    bool force,
+    ExactOperationToken *operationOut,
+    QString *error)
+{
+    if (operationOut) {
+        *operationOut = ExactOperationToken();
+    }
+    if (error) {
+        error->clear();
+    }
+    QPointer<ParameterService> serviceGuard(this);
+    if (m_exactApiInFlight) {
+        if (error) {
+            *error = QStringLiteral(
+                "Another exact parameter API call is validating application policy.");
+        }
+        return ExactSubmitResult::Busy;
+    }
+    m_exactApiInFlight = true;
+    ScopeExit apiCallGuard([serviceGuard]() {
+        if (!serviceGuard.isNull()) {
+            serviceGuard->m_exactApiInFlight = false;
+        }
+    });
+    if (!m_exactLeaseValidator || !m_exactRouteValidator) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact vehicle registry or route validator is unavailable.");
+        }
+        return ExactSubmitResult::ContextUnavailable;
+    }
+    if (m_exactOperationActive) {
+        if (error) {
+            *error = QStringLiteral(
+                "Another exact parameter operation is already active.");
+        }
+        return ExactSubmitResult::Busy;
+    }
+    if (!lease.isValid()) {
+        if (error) {
+            *error = QStringLiteral("The exact vehicle lease is invalid.");
+        }
+        return ExactSubmitResult::InvalidLease;
+    }
+    QByteArray nameBytes;
+    if (!parameterNameBytes(name, &nameBytes)) {
+        if (error) {
+            *error = QStringLiteral("The exact parameter name is invalid.");
+        }
+        return ExactSubmitResult::InvalidParameter;
+    }
+    QPointer<QObject> ownerGuard(reservation.owner);
+    auto reserved = m_exactReservations.find(reservation.reservationId);
+    if (reservation.reservationId == 0 || ownerGuard.isNull()
+        || reserved == m_exactReservations.end() || reserved->closing
+        || reserved->owner != ownerGuard
+        || reserved->leases != reservation.leases
+        || !exactReservationContains(*reserved, lease)
+        || m_exactEndpointReservations.value(lease.endpoint, 0)
+            != reservation.reservationId) {
+        if (error) {
+            *error = ownerGuard.isNull()
+                ? QStringLiteral("The exact parameter owner is unavailable.")
+                : QStringLiteral(
+                    "The exact parameter reservation is invalid or closing.");
+        }
+        return ownerGuard.isNull()
+            ? ExactSubmitResult::InvalidOwner
+            : ExactSubmitResult::InvalidReservation;
+    }
+    const bool initialLeaseCurrent = exactLeaseIsCurrent(lease);
+    if (serviceGuard.isNull()) {
+        return ExactSubmitResult::ContextUnavailable;
+    }
+    if (!initialLeaseCurrent) {
+        if (error) {
+            *error = QStringLiteral("The exact vehicle lease is stale.");
+        }
+        return ExactSubmitResult::StaleLease;
+    }
+    if (legacyOperationTouches(lease.endpoint)) {
+        if (error) {
+            *error = QStringLiteral(
+                "A legacy parameter operation owns this endpoint.");
+        }
+        return ExactSubmitResult::Busy;
+    }
+    cleanupExpiredExactQuarantines();
+    if (matchesExactWriteQuarantine(lease.endpoint, name)) {
+        if (error) {
+            *error = QStringLiteral(
+                "A previous uncertain write response for this exact parameter is still quarantined.");
+        }
+        return ExactSubmitResult::Quarantined;
+    }
+    const quint8 operationLocalSystemId = m_localSystemId;
+    const quint8 operationLocalComponentId = m_localComponentId;
+
+    QVariant normalizedValue;
+    float wireValue = 0.0F;
+    ParameterEncoding encoding = encodingFor(lease.endpoint);
+    if (kind == ExactOperationKind::Write) {
+        VehicleTargetLease normalizationTarget;
+        normalizationTarget.endpoint = lease.endpoint;
+        if (!value.isValid()
+            || !normalizeParameterWrite(
+                normalizationTarget, value, type,
+                &normalizedValue, &wireValue, &encoding)) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The exact parameter value cannot be represented.");
+            }
+            return ExactSubmitResult::InvalidParameter;
+        }
+    }
+
+    QString routeError;
+    const bool routeEligible = exactRouteIsEligible(lease, &routeError);
+    if (serviceGuard.isNull()) {
+        return ExactSubmitResult::ContextUnavailable;
+    }
+    if (!routeEligible) {
+        if (error) {
+            *error = routeError.isEmpty()
+                ? QStringLiteral("No safe exact parameter route is available.")
+                : routeError;
+        }
+        return ExactSubmitResult::RouteUnavailable;
+    }
+
+    // The route validator can synchronously retire endpoints, release the
+    // reservation, or start another operation. Revalidate every dependency.
+    reserved = m_exactReservations.find(reservation.reservationId);
+    if (ownerGuard.isNull()) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact parameter owner was destroyed during validation.");
+        }
+        return ExactSubmitResult::InvalidOwner;
+    }
+    if (m_exactOperationActive || reserved == m_exactReservations.end()
+        || reserved->closing || reserved->owner != ownerGuard
+        || reserved->leases != reservation.leases
+        || !exactReservationContains(*reserved, lease)
+        || m_exactEndpointReservations.value(lease.endpoint, 0)
+            != reservation.reservationId
+        || legacyOperationTouches(lease.endpoint)) {
+        if (error) {
+            *error = QStringLiteral(
+                "The parameter protocol became busy during validation.");
+        }
+        return ExactSubmitResult::Busy;
+    }
+    const bool finalLeaseCurrent = exactLeaseIsCurrent(lease);
+    if (serviceGuard.isNull()) {
+        return ExactSubmitResult::ContextUnavailable;
+    }
+    if (!finalLeaseCurrent) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact vehicle lease changed during route validation.");
+        }
+        return ExactSubmitResult::StaleLease;
+    }
+    cleanupExpiredExactQuarantines();
+    if (matchesExactWriteQuarantine(lease.endpoint, name)) {
+        if (error) {
+            *error = QStringLiteral(
+                "A previous uncertain write response appeared during validation.");
+        }
+        return ExactSubmitResult::Quarantined;
+    }
+    if (kind == ExactOperationKind::Write) {
+        VehicleTargetLease normalizationTarget;
+        normalizationTarget.endpoint = lease.endpoint;
+        if (!normalizeParameterWrite(
+                normalizationTarget, value, type,
+                &normalizedValue, &wireValue, &encoding)) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The exact parameter encoding changed to an incompatible representation during validation.");
+            }
+            return ExactSubmitResult::InvalidParameter;
+        }
+    }
+
+    // Policy callbacks can recurse into this API.  Keep them excluded while
+    // validating, but allow normal synchronous completion handlers to submit
+    // the next operation after the waiter below has reached a terminal state.
+    m_exactApiInFlight = false;
+
+    PendingExactOperation operation;
+    operation.token.operationId = nextExactOperationId();
+    operation.token.reservationId = reservation.reservationId;
+    operation.token.lease = lease;
+    operation.token.kind = kind;
+    operation.token.name = name;
+    operation.token.type = type;
+    operation.token.normalizedValue = normalizedValue;
+    operation.localSystemId = operationLocalSystemId;
+    operation.localComponentId = operationLocalComponentId;
+    operation.encoding = encoding;
+    operation.wireValue = wireValue;
+    if (kind == ExactOperationKind::Read) {
+        operation.retryIntervalMs = m_exactReadRetryIntervalMs;
+        operation.maximumAttempts = 1 + m_exactReadMaximumRetries;
+    } else {
+        operation.retryIntervalMs = m_exactWriteRetryIntervalMs;
+        operation.maximumAttempts = 1 + m_exactWriteMaximumRetries;
+        operation.absoluteDeadlineMs =
+            m_exactClock.elapsed() + m_exactWriteMaximumLifetimeMs;
+    }
+
+    m_exactOperation = operation;
+    m_exactOperationActive = true;
+    if (operationOut) {
+        *operationOut = operation.token;
+    }
+
+    if (kind == ExactOperationKind::Write && !force
+        && exactCacheMatches(lease, name, normalizedValue, type)) {
+        finishExactOperation(
+            ExactTerminalResult::WriteSkipped,
+            normalizedValue, type,
+            QStringLiteral(
+                "The same exact-instance value is already confirmed."),
+            false);
+        return ExactSubmitResult::Started;
+    }
+
+    return transmitExactOperation();
+}
+
+ParameterService::ExactSubmitResult
+ParameterService::transmitExactOperation()
+{
+    if (!m_exactOperationActive) {
+        return ExactSubmitResult::Busy;
+    }
+    const quint64 operationId = m_exactOperation.token.operationId;
+    const bool write = m_exactOperation.token.kind
+        == ExactOperationKind::Write;
+    QByteArray nameBytes;
+    if (!parameterNameBytes(m_exactOperation.token.name, &nameBytes)) {
+        finishExactOperation(
+            m_exactOperation.token.kind == ExactOperationKind::Write
+                ? ExactTerminalResult::Rejected
+                : ExactTerminalResult::ReadTransportFailure,
+            QVariant(), ParameterType::Unknown,
+            QStringLiteral("The exact parameter name became invalid."),
+            false);
+        return ExactSubmitResult::InvalidParameter;
+    }
+
+    mavlink_message_t message{};
+    if (m_exactOperation.token.kind == ExactOperationKind::Read) {
+        mavlink_param_request_read_t payload{};
+        payload.target_system = static_cast<quint8>(
+            m_exactOperation.token.lease.endpoint.systemId);
+        payload.target_component = static_cast<quint8>(
+            m_exactOperation.token.lease.endpoint.componentId);
+        payload.param_index = -1;
+        std::memcpy(payload.param_id, nameBytes.constData(),
+                    static_cast<size_t>(nameBytes.size()));
+        mavlink_msg_param_request_read_encode(
+            m_exactOperation.localSystemId,
+            m_exactOperation.localComponentId,
+            &message, &payload);
+    } else {
+        mavlink_param_set_t payload{};
+        payload.target_system = static_cast<quint8>(
+            m_exactOperation.token.lease.endpoint.systemId);
+        payload.target_component = static_cast<quint8>(
+            m_exactOperation.token.lease.endpoint.componentId);
+        payload.param_value = m_exactOperation.wireValue;
+        payload.param_type = static_cast<quint8>(
+            m_exactOperation.token.type);
+        std::memcpy(payload.param_id, nameBytes.constData(),
+                    static_cast<size_t>(nameBytes.size()));
+        mavlink_msg_param_set_encode(
+            m_exactOperation.localSystemId,
+            m_exactOperation.localComponentId,
+            &message, &payload);
+    }
+
+    if (write
+        && m_exactClock.elapsed() >= m_exactOperation.absoluteDeadlineMs) {
+        const bool frameAttempted = m_exactOperation.frameAttempted;
+        finishExactOperation(
+            frameAttempted
+                ? ExactTerminalResult::WriteTimedOutOutcomeUncertain
+                : ExactTerminalResult::WriteTimedOut,
+            QVariant(), ParameterType::Unknown,
+            frameAttempted
+                ? QStringLiteral(
+                    "The exact parameter write maximum lifetime expired before retransmission; outcome is uncertain.")
+                : QStringLiteral(
+                    "The exact parameter write maximum lifetime expired before its first transmission."),
+            frameAttempted);
+        return ExactSubmitResult::Started;
+    }
+    ++m_exactOperation.attempts;
+    m_exactOperation.frameAttempted = true;
+    QPointer<ParameterService> guard(this);
+    const ExactLinkTransmitter::SendResult sent =
+        m_transmitter->sendMessage(
+            m_exactOperation.token.lease.endpoint.linkId,
+            m_exactOperation.localSystemId,
+            m_exactOperation.localComponentId, message);
+    if (guard.isNull()) {
+        return write
+            ? ExactSubmitResult::TransportOutcomeUncertain
+            : ExactSubmitResult::TransportUnavailable;
+    }
+    // A test transport or in-process simulation can deliver PARAM_VALUE
+    // synchronously from sendMessage(). The exact waiter is already installed.
+    if (!m_exactOperationActive
+        || m_exactOperation.token.operationId != operationId) {
+        return ExactSubmitResult::Started;
+    }
+    if (sent != ExactLinkTransmitter::SendResult::Sent) {
+        finishExactOperation(
+            write
+                ? ExactTerminalResult::WriteTransportOutcomeUncertain
+                : ExactTerminalResult::ReadTransportFailure,
+            QVariant(), ParameterType::Unknown,
+            QStringLiteral(
+                "The frame writer did not confirm exact parameter transport."),
+            write);
+        return write
+            ? ExactSubmitResult::TransportOutcomeUncertain
+            : ExactSubmitResult::TransportUnavailable;
+    }
+    scheduleExactRetry();
+    return ExactSubmitResult::Started;
+}
+
+void ParameterService::scheduleExactRetry()
+{
+    if (!m_exactOperationActive) {
+        m_exactRetryTimer.stop();
+        return;
+    }
+    qint64 delay = m_exactOperation.retryIntervalMs;
+    if (m_exactOperation.token.kind == ExactOperationKind::Write) {
+        delay = qMin(
+            delay,
+            m_exactOperation.absoluteDeadlineMs - m_exactClock.elapsed());
+    }
+    m_exactRetryTimer.start(static_cast<int>(qMax<qint64>(1, delay)));
+}
+
+void ParameterService::handleExactRetryTimeout()
+{
+    if (!m_exactOperationActive) {
+        return;
+    }
+    const ExactOperationToken token = m_exactOperation.token;
+    QPointer<ParameterService> guard(this);
+    const bool write = token.kind == ExactOperationKind::Write;
+    if (write
+        && m_exactClock.elapsed() >= m_exactOperation.absoluteDeadlineMs) {
+        finishExactOperation(
+            ExactTerminalResult::WriteTimedOutOutcomeUncertain,
+            QVariant(), ParameterType::Unknown,
+            QStringLiteral(
+                "The exact parameter write maximum lifetime expired; outcome is uncertain."),
+            m_exactOperation.frameAttempted);
+        return;
+    }
+    if (m_exactOperation.attempts >= m_exactOperation.maximumAttempts) {
+        finishExactOperation(
+            write
+                ? ExactTerminalResult::WriteTimedOutOutcomeUncertain
+                : ExactTerminalResult::ReadTimedOut,
+            QVariant(), ParameterType::Unknown,
+            write
+                ? QStringLiteral(
+                    "The exact parameter write exhausted bounded retries; outcome is uncertain.")
+                : QStringLiteral(
+                    "The exact parameter read exhausted bounded retries."),
+            write && m_exactOperation.frameAttempted);
+        return;
+    }
+    const bool initialLeaseCurrent = exactLeaseIsCurrent(token.lease);
+    if (guard.isNull()) {
+        return;
+    }
+    if (!initialLeaseCurrent) {
+        retireExactVehicle(token.lease);
+        return;
+    }
+    if (!m_exactOperationActive
+        || m_exactOperation.token.operationId != token.operationId) {
+        return;
+    }
+    QString routeError;
+    const bool routeEligible = exactRouteIsEligible(token.lease, &routeError);
+    if (guard.isNull()) {
+        return;
+    }
+    if (!routeEligible) {
+        if (m_exactOperationActive
+            && m_exactOperation.token.operationId == token.operationId) {
+            finishExactOperation(
+                write
+                    ? ExactTerminalResult::WriteTransportOutcomeUncertain
+                    : ExactTerminalResult::ReadTransportFailure,
+                QVariant(), ParameterType::Unknown,
+                routeError.isEmpty()
+                    ? QStringLiteral(
+                        "The exact parameter route became unavailable.")
+                    : routeError,
+                write && m_exactOperation.frameAttempted);
+        }
+        return;
+    }
+    if (!m_exactOperationActive
+        || m_exactOperation.token.operationId != token.operationId) {
+        return;
+    }
+    const bool finalLeaseCurrent = exactLeaseIsCurrent(token.lease);
+    if (guard.isNull()) {
+        return;
+    }
+    if (!finalLeaseCurrent) {
+        retireExactVehicle(token.lease);
+        return;
+    }
+    const ExactSubmitResult result = transmitExactOperation();
+    if (guard.isNull()) {
+        return;
+    }
+    if (result == ExactSubmitResult::Started
+        && m_exactOperationActive
+        && m_exactOperation.token.operationId == token.operationId) {
+        emit exactOperationRetried(
+            m_exactOperation.token, m_exactOperation.attempts);
+    }
+}
+
+void ParameterService::finishExactOperation(
+    ExactTerminalResult result,
+    const QVariant &value,
+    ParameterType type,
+    const QString &description,
+    bool quarantine)
+{
+    if (!m_exactOperationActive) {
+        return;
+    }
+    const PendingExactOperation completed = m_exactOperation;
+    m_exactRetryTimer.stop();
+    m_exactOperationActive = false;
+    m_exactOperation = PendingExactOperation();
+    if (quarantine && completed.frameAttempted
+        && completed.token.kind == ExactOperationKind::Write) {
+        addExactWriteQuarantine(completed);
+    }
+
+    bool ownerDetached = true;
+    const auto reservation = m_exactReservations.constFind(
+        completed.token.reservationId);
+    if (reservation != m_exactReservations.constEnd()) {
+        ownerDetached = reservation->owner.isNull();
+    }
+    ExactOperationReport report;
+    report.token = completed.token;
+    report.terminalResult = result;
+    report.value = value.isValid()
+        ? value : completed.token.normalizedValue;
+    report.type = type != ParameterType::Unknown
+        ? type : completed.token.type;
+    report.attempts = completed.attempts;
+    report.frameAttempted = completed.frameAttempted;
+    report.ownerDetached = ownerDetached;
+    report.description = description;
+
+    QPointer<ParameterService> guard(this);
+    emit exactOperationFinished(report);
+    if (!guard.isNull()) {
+        maybeReleaseExactReservation(completed.token.reservationId);
+    }
+}
+
+bool ParameterService::observeExactParameterValue(
+    int linkId,
+    const mavlink_message_t &message,
+    const VehicleEndpoint &source,
+    const QString &name,
+    ParameterType type,
+    const QVariant &value,
+    int parameterCount,
+    int parameterIndex)
+{
+    if (!m_exactOperationActive
+        || m_exactOperation.token.name != name
+        || !m_exactOperation.token.lease.endpoint.sameIdentity(source)
+        || source.linkId != linkId
+        || source.systemId != message.sysid
+        || source.componentId != message.compid) {
+        return false;
+    }
+    const quint64 operationId = m_exactOperation.token.operationId;
+    const SwarmVehicleInstanceLease operationLease =
+        m_exactOperation.token.lease;
+    if (m_exactOperation.token.kind == ExactOperationKind::Write
+        && m_exactClock.elapsed()
+            >= m_exactOperation.absoluteDeadlineMs) {
+        finishExactOperation(
+            ExactTerminalResult::WriteTimedOutOutcomeUncertain,
+            QVariant(), ParameterType::Unknown,
+            QStringLiteral(
+                "The exact parameter write maximum lifetime expired; outcome is uncertain."),
+            m_exactOperation.frameAttempted);
+        return true;
+    }
+    QPointer<ParameterService> guard(this);
+    const bool leaseCurrent = exactLeaseIsCurrent(operationLease);
+    if (guard.isNull()) {
+        return true;
+    }
+    if (!leaseCurrent) {
+        retireExactVehicle(operationLease);
+        return true;
+    }
+    if (!m_exactOperationActive
+        || m_exactOperation.token.operationId != operationId) {
+        return true;
+    }
+    const bool ingested = m_store->ingest(
+            source, parameterCount, parameterIndex,
+            name, value, type);
+    if (guard.isNull()) {
+        return true;
+    }
+    if (!ingested) {
+        return true;
+    }
+    if (!m_exactOperationActive
+        || m_exactOperation.token.operationId != operationId) {
+        return true;
+    }
+    const SwarmVehicleInstanceLease lease =
+        m_exactOperation.token.lease;
+    rememberExactValue(lease, name, value, type);
+
+    if (m_exactOperation.token.kind == ExactOperationKind::Read) {
+        finishExactOperation(
+            ExactTerminalResult::ReadSucceeded,
+            value, type,
+            QStringLiteral("The exact parameter read succeeded."),
+            false);
+        return true;
+    }
+    if (m_exactOperation.token.type != type) {
+        return true;
+    }
+    if (ParameterCodec::valuesEqual(
+            m_exactOperation.token.normalizedValue, value, type)) {
+        finishExactOperation(
+            ExactTerminalResult::WriteSucceeded,
+            value, type,
+            QStringLiteral("The vehicle echoed the exact parameter value."),
+            false);
+    } else {
+        finishExactOperation(
+            ExactTerminalResult::Rejected,
+            value, type,
+            QStringLiteral(
+                "The vehicle echoed a different value for the exact parameter."),
+            false);
+    }
+    return true;
+}
+
+void ParameterService::rememberExactValue(
+    const SwarmVehicleInstanceLease &lease,
+    const QString &name,
+    const QVariant &value,
+    ParameterType type)
+{
+    m_exactCachedValues[lease.endpoint].insert(
+        name, ExactCachedValue{lease, name, value, type});
+}
+
+bool ParameterService::exactCacheMatches(
+    const SwarmVehicleInstanceLease &lease,
+    const QString &name,
+    const QVariant &value,
+    ParameterType type) const
+{
+    const auto endpointCache = m_exactCachedValues.constFind(lease.endpoint);
+    if (endpointCache == m_exactCachedValues.constEnd()) {
+        return false;
+    }
+    const auto cached = endpointCache->constFind(name);
+    return cached != endpointCache->constEnd()
+        && cached->lease.sameInstance(lease)
+        && cached->type == type
+        && ParameterCodec::valuesEqual(cached->value, value, type);
+}
+
+bool ParameterService::matchesExactWriteQuarantine(
+    const VehicleEndpoint &endpoint,
+    const QString &name,
+    int *index) const
+{
+    for (int candidate = 0;
+         candidate < m_exactWriteQuarantines.size(); ++candidate) {
+        const ExactWriteQuarantine &quarantine =
+            m_exactWriteQuarantines.at(candidate);
+        if (quarantine.endpoint.sameIdentity(endpoint)
+            && quarantine.name == name) {
+            if (index) {
+                *index = candidate;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ParameterService::exactEndpointQuarantined(
+    const VehicleEndpoint &endpoint) const
+{
+    return std::any_of(
+        m_exactWriteQuarantines.cbegin(),
+        m_exactWriteQuarantines.cend(),
+        [&endpoint](const ExactWriteQuarantine &quarantine) {
+            return quarantine.endpoint.sameIdentity(endpoint);
+        });
+}
+
+void ParameterService::addExactWriteQuarantine(
+    const PendingExactOperation &operation)
+{
+    int existing = -1;
+    const bool found = matchesExactWriteQuarantine(
+        operation.token.lease.endpoint,
+        operation.token.name,
+        &existing);
+    ExactWriteQuarantine quarantine;
+    quarantine.endpoint = operation.token.lease.endpoint;
+    quarantine.name = operation.token.name;
+    quarantine.normalizedValue = operation.token.normalizedValue;
+    quarantine.type = operation.token.type;
+    quarantine.localSystemId = operation.localSystemId;
+    quarantine.localComponentId = operation.localComponentId;
+    quarantine.expiresAtMs =
+        m_exactClock.elapsed() + m_exactWriteQuarantineMs;
+    if (found) {
+        m_exactWriteQuarantines[existing] = quarantine;
+    } else {
+        m_exactWriteQuarantines.append(quarantine);
+    }
+    scheduleExactQuarantineExpiry();
+}
+
+void ParameterService::cleanupExpiredExactQuarantines()
+{
+    const qint64 now = m_exactClock.elapsed();
+    for (int index = m_exactWriteQuarantines.size() - 1;
+         index >= 0; --index) {
+        if (m_exactWriteQuarantines.at(index).expiresAtMs <= now) {
+            m_exactWriteQuarantines.removeAt(index);
+        }
+    }
+    scheduleExactQuarantineExpiry();
+}
+
+void ParameterService::scheduleExactQuarantineExpiry()
+{
+    if (m_exactWriteQuarantines.isEmpty()) {
+        m_exactQuarantineTimer.stop();
+        return;
+    }
+    qint64 earliest = std::numeric_limits<qint64>::max();
+    for (const ExactWriteQuarantine &quarantine
+         : std::as_const(m_exactWriteQuarantines)) {
+        earliest = qMin(earliest, quarantine.expiresAtMs);
+    }
+    const qint64 remaining = qMax<qint64>(
+        1, earliest - m_exactClock.elapsed());
+    m_exactQuarantineTimer.start(static_cast<int>(qMin<qint64>(
+        remaining, std::numeric_limits<int>::max())));
+}
+
+void ParameterService::touchLegacyTrafficFence(
+    const VehicleEndpoint &endpoint)
+{
+    if (!endpoint.isValid()) {
+        return;
+    }
+    const qint64 now = m_exactClock.elapsed();
+    for (auto fence = m_legacyTrafficFenceExpiries.begin();
+         fence != m_legacyTrafficFenceExpiries.end();) {
+        if (*fence <= now) {
+            fence = m_legacyTrafficFenceExpiries.erase(fence);
+        } else {
+            ++fence;
+        }
+    }
+    m_legacyTrafficFenceExpiries.insert(
+        endpoint, now + m_exactWriteQuarantineMs);
+}
+
+bool ParameterService::legacyTrafficFenced(
+    const VehicleEndpoint &endpoint) const
+{
+    const auto fence = m_legacyTrafficFenceExpiries.constFind(endpoint);
+    return fence != m_legacyTrafficFenceExpiries.constEnd()
+        && *fence > m_exactClock.elapsed();
+}
+
+void ParameterService::handleExactOwnerDestroyed(quint64 reservationId)
+{
+    auto reservation = m_exactReservations.find(reservationId);
+    if (reservation == m_exactReservations.end()) {
+        return;
+    }
+    reservation->owner.clear();
+    reservation->closing = true;
+    maybeReleaseExactReservation(reservationId);
+}
+
+bool ParameterService::exactReservationHasPending(
+    quint64 reservationId) const
+{
+    return m_exactOperationActive
+        && m_exactOperation.token.reservationId == reservationId;
+}
+
+void ParameterService::maybeReleaseExactReservation(quint64 reservationId)
+{
+    const auto reservation = m_exactReservations.constFind(reservationId);
+    if (reservation == m_exactReservations.constEnd()
+        || !reservation->closing
+        || exactReservationHasPending(reservationId)) {
+        return;
+    }
+    removeExactReservation(reservationId);
+}
+
+void ParameterService::removeExactReservation(quint64 reservationId)
+{
+    auto reservation = m_exactReservations.find(reservationId);
+    if (reservation == m_exactReservations.end()) {
+        return;
+    }
+    const QList<SwarmVehicleInstanceLease> leases = reservation->leases;
+    disconnect(reservation->ownerDestroyedConnection);
+    m_exactReservations.erase(reservation);
+    for (const SwarmVehicleInstanceLease &lease : leases) {
+        if (m_exactEndpointReservations.value(lease.endpoint, 0)
+            == reservationId) {
+            m_exactEndpointReservations.remove(lease.endpoint);
+        }
+    }
+    emit exactReservationReleased(reservationId);
+}
+
+quint64 ParameterService::nextExactReservationId()
+{
+    do {
+        ++m_nextExactReservationId;
+    } while (m_nextExactReservationId == 0
+             || m_exactReservations.contains(m_nextExactReservationId));
+    return m_nextExactReservationId;
+}
+
+quint64 ParameterService::nextExactOperationId()
+{
+    do {
+        ++m_nextExactOperationId;
+    } while (m_nextExactOperationId == 0
+             || (m_exactOperationActive
+                 && m_exactOperation.token.operationId
+                    == m_nextExactOperationId));
+    return m_nextExactOperationId;
+}
+
+bool ParameterService::exactLeaseIsCurrent(
+    const SwarmVehicleInstanceLease &lease) const
+{
+    const ExactLeaseValidator validator = m_exactLeaseValidator;
+    return lease.isValid() && validator && validator(lease);
+}
+
+bool ParameterService::exactRouteIsEligible(
+    const SwarmVehicleInstanceLease &lease, QString *error) const
+{
+    if (error) {
+        error->clear();
+    }
+    const ExactRouteValidator validator = m_exactRouteValidator;
+    return lease.isValid() && validator && validator(lease, error);
+}
+
+bool ParameterService::exactReservationContains(
+    const ExactReservationRecord &reservation,
+    const SwarmVehicleInstanceLease &lease) const
+{
+    return std::any_of(
+        reservation.leases.cbegin(), reservation.leases.cend(),
+        [&lease](const SwarmVehicleInstanceLease &candidate) {
+            return candidate.sameInstance(lease);
+        });
+}
+
+bool ParameterService::legacyOperationTouches(
+    const VehicleEndpoint &endpoint) const
+{
+    if ((m_listActive
+         && m_listTarget.endpoint.sameIdentity(endpoint))
+        || (m_queuedList.active
+            && m_queuedList.target.endpoint.sameIdentity(endpoint))
+        || (m_writeActive
+            && m_activeWrite.target.endpoint.sameIdentity(endpoint))
+        || legacyTrafficFenced(endpoint)) {
+        return true;
+    }
+    for (const PendingRead &read : m_pendingReads) {
+        if (read.target.endpoint.sameIdentity(endpoint)) {
+            return true;
+        }
+    }
+    for (const PendingWrite &write : m_writeQueue) {
+        if (write.target.endpoint.sameIdentity(endpoint)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ParameterService::exactEndpointReserved(
+    const VehicleEndpoint &endpoint) const
+{
+    return m_exactEndpointReservations.contains(endpoint);
+}
+
 bool ParameterService::targetIsCurrent(
     const VehicleTargetLease &target) const
 {
@@ -1320,6 +2690,37 @@ ParameterService::SendResult ParameterService::send(
     if (!m_transmitter) {
         return SendResult::TransportUnavailable;
     }
+    auto exactCache = m_exactCachedValues.find(target.endpoint);
+    if (exactCache != m_exactCachedValues.end()) {
+        if (message.msgid == MAVLINK_MSG_ID_PARAM_SET) {
+            mavlink_param_set_t payload{};
+            mavlink_msg_param_set_decode(&message, &payload);
+            exactCache->remove(parameterName(
+                payload.param_id, MAVLINK_MSG_PARAM_SET_FIELD_PARAM_ID_LEN));
+        } else if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) {
+            mavlink_param_request_read_t payload{};
+            mavlink_msg_param_request_read_decode(&message, &payload);
+            if (payload.param_index < 0) {
+                exactCache->remove(parameterName(
+                    payload.param_id,
+                    MAVLINK_MSG_PARAM_REQUEST_READ_FIELD_PARAM_ID_LEN));
+            } else {
+                m_exactCachedValues.erase(exactCache);
+                exactCache = m_exactCachedValues.end();
+            }
+        } else if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST) {
+            m_exactCachedValues.erase(exactCache);
+            exactCache = m_exactCachedValues.end();
+        }
+        if (exactCache != m_exactCachedValues.end()
+            && exactCache->isEmpty()) {
+            m_exactCachedValues.erase(exactCache);
+        }
+    }
+    // Classic PARAM messages carry no transaction identifier.  Fence an exact
+    // reservation before calling the transport because it may reply
+    // synchronously, and retain the fence after cancellation/transport doubt.
+    touchLegacyTrafficFence(target.endpoint);
     return m_transmitter->sendMessage(
                target.endpoint.linkId, localSystemId, localComponentId,
                message)
