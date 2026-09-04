@@ -87,6 +87,10 @@ int OPMapBackendWidget::MinZoom() const { return m_map ? m_map->MinZoom() : 1; }
 int OPMapBackendWidget::MaxZoom() const { return m_map ? m_map->MaxZoom() : 21; }
 double OPMapBackendWidget::ZoomReal() const { return m_map ? m_map->ZoomReal() : 1.0; }
 int OPMapBackendWidget::CurrentZoomLevel() const { return m_map ? m_map->CurrentZoomLevel() : 1; }
+QSize OPMapBackendWidget::ViewportPixelSize() const
+{
+    return m_map && m_map->viewport() ? m_map->viewport()->size() : QSize();
+}
 MapGeoBounds OPMapBackendWidget::VisibleTileExtent() const
 {
     if (!m_map) {
@@ -133,6 +137,52 @@ void OPMapBackendWidget::ClearMovingBase()
 {
     if (m_map) {
         m_map->clearMovingBase();
+    }
+}
+void OPMapBackendWidget::SetPropagationRaster(
+    const QImage &image, const MapGeoBounds &bounds)
+{
+    if (m_map) {
+        m_map->setPropagationRaster(image, bounds);
+    }
+}
+void OPMapBackendWidget::ClearPropagationRaster()
+{
+    if (m_map) {
+        m_map->clearPropagationRaster();
+    }
+}
+void OPMapBackendWidget::SetPropagationContour(
+    const MapOverlayPolyline &contour)
+{
+    if (m_map) {
+        m_map->setPropagationContour(contour);
+    }
+}
+void OPMapBackendWidget::ClearPropagationContour()
+{
+    if (m_map) {
+        m_map->clearPropagationContour();
+    }
+}
+void OPMapBackendWidget::SetPropagationRings(
+    const QVector<MapOverlayPolyline> &rings)
+{
+    if (m_map) {
+        m_map->setPropagationRings(rings);
+    }
+}
+void OPMapBackendWidget::ClearPropagationRings()
+{
+    if (m_map) {
+        m_map->clearPropagationRings();
+    }
+}
+void OPMapBackendWidget::SetPropagationStatus(
+    const QString &legend, const QString &status)
+{
+    if (m_map) {
+        m_map->setPropagationStatus(legend, status);
     }
 }
 void OPMapBackendWidget::SetMissionPlanningEnabled(bool enabled) { if (m_map) m_map->setMissionPlanningEnabled(enabled); }

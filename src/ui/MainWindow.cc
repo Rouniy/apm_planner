@@ -53,6 +53,9 @@ This file is part of the QGROUNDCONTROL project
 #include "FollowMeWindow.h"
 #include "MovingBaseWindow.h"
 #include "MissionPlannerToolsMenu.h"
+#include "tools/PropagationSettingsWindow.h"
+#include "tools/PropagationOverlayController.h"
+#include "tools/PropagationTelemetrySource.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
 #include "QGCWaypointListMulti.h"
@@ -646,6 +649,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { SpectrogramWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionMavlinkDeviceOperations"),
                     [this]() { DeviceOperationsWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionPropagationSettings"),
+                    [this]() {
+        PropagationSettingsWindow::OpenWindow(this);
+    });
     handlers.insert(QStringLiteral("actionMapTileCache"),
                     [this]() { MapCacheView::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionTerrain3D"),
@@ -1538,6 +1545,21 @@ void MainWindow::buildCommonWidgets()
     flightDataViewModel->setObjectName(QStringLiteral("FlightDataViewModel"));
     flightDataViewModel->attachHud(pilotHud);
     LinkManager *const linkManager = LinkManager::instance();
+    auto *propagationTelemetry = new PropagationTelemetrySource(
+        linkManager->vehicleTargetManager(), {}, this);
+    propagationTelemetry->setObjectName(
+        QStringLiteral("PropagationTelemetrySource"));
+    connect(linkManager, &LinkManager::messageReceived,
+            propagationTelemetry,
+            [propagationTelemetry](LinkInterface *link,
+                                   const mavlink_message_t &message) {
+        if (link) {
+            propagationTelemetry->observeMessage(link->getId(), message);
+        }
+    });
+    connect(linkManager, &LinkManager::linkRemoved,
+            propagationTelemetry,
+            &PropagationTelemetrySource::observeLinkDisconnected);
     auto *speechTelemetry = new SpeechTelemetrySource(
         linkManager->vehicleTargetManager(), {}, flightDataViewModel);
     speechTelemetry->setObjectName(QStringLiteral("SpeechTelemetrySource"));
@@ -1565,6 +1587,87 @@ void MainWindow::buildCommonWidgets()
         linkManager->movingBasePositionStore(),
         linkManager->vehicleTargetManager(), pilotMap);
     movingBaseMapController->attachMap(pilotMap->mapWidget());
+    const QPointer<PropagationTelemetrySource> guardedPropagationTelemetry(
+        propagationTelemetry);
+    ElevationSourceService *const propagationElevation =
+        ElevationSourceService::instance();
+    const PropagationCore::TerrainProvider propagationTerrain =
+        [propagationElevation](double latitude, double longitude) {
+        double altitude = 0.0;
+        if (!propagationElevation
+            || !propagationElevation->sampleAltitudeCached(
+                latitude, longitude, &altitude)) {
+            if (propagationElevation) {
+                propagationElevation->requestSrtmTile(latitude, longitude);
+            }
+            return PropagationCore::TerrainSample::missing();
+        }
+        return qFuzzyIsNull(altitude)
+            ? PropagationCore::TerrainSample::ocean()
+            : PropagationCore::TerrainSample::valid(altitude);
+    };
+    auto *dataPropagation = new PropagationOverlayController(
+        pilotMap->mapWidget(),
+        [guardedPropagationTelemetry]() {
+            PropagationMapState state;
+            if (!guardedPropagationTelemetry) {
+                return state;
+            }
+            state.telemetry = guardedPropagationTelemetry->snapshot();
+            state.homeValid = state.telemetry.homeValid;
+            state.home = {
+                state.telemetry.homeLatitude,
+                state.telemetry.homeLongitude,
+                state.telemetry.homeAltitudeAmslM};
+            return state;
+        },
+        propagationTerrain, PropagationSettingsStore::instance(), pilotMap);
+    const QPointer<FlightPlannerViewModel> guardedPlannerViewModel(
+        plannerViewModel);
+    auto *planPropagation = new PropagationOverlayController(
+        plannerMapTool->mapWidget(),
+        [guardedPropagationTelemetry, guardedPlannerViewModel]() {
+            PropagationMapState state;
+            if (guardedPropagationTelemetry) {
+                state.telemetry = guardedPropagationTelemetry->snapshot();
+            }
+            if (guardedPlannerViewModel
+                && guardedPlannerViewModel->HomeValid()) {
+                state.homeValid = true;
+                state.home = {
+                    guardedPlannerViewModel->HomeLat(),
+                    guardedPlannerViewModel->HomeLng(),
+                    guardedPlannerViewModel->HomeAlt()};
+            }
+            return state;
+        },
+        propagationTerrain, PropagationSettingsStore::instance(),
+        plannerMapTool);
+    for (PropagationOverlayController *controller
+         : {dataPropagation, planPropagation}) {
+        connect(propagationTelemetry,
+                &PropagationTelemetrySource::snapshotChanged,
+                controller, &PropagationOverlayController::refresh);
+        connect(propagationTelemetry,
+                &PropagationTelemetrySource::telemetryEpochChanged,
+                controller, [controller](qulonglong) {
+            controller->invalidateTerrain();
+        });
+        connect(propagationElevation,
+                &ElevationSourceService::srtmTileAvailable,
+                controller, [controller](const QString &) {
+            controller->invalidateTerrain();
+        });
+        connect(propagationElevation,
+                &ElevationSourceService::nativeRastersChanged,
+                controller, &PropagationOverlayController::invalidateTerrain);
+    }
+    connect(pilotMap, &QGCMapTool::visibilityChanged,
+            dataPropagation, &PropagationOverlayController::setActive);
+    connect(plannerMapTool, &QGCMapTool::visibilityChanged,
+            planPropagation, &PropagationOverlayController::setActive);
+    dataPropagation->setActive(pilotMap->isVisible());
+    planPropagation->setActive(plannerMapTool->isVisible());
     if (pilotView->setMapWidget(pilotMap)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,
                               FlightDataView::mapPanelId(),

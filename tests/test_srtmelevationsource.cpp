@@ -17,7 +17,10 @@
 #include <quazipnewinfo.h>
 
 #include <cmath>
+#include <atomic>
 #include <limits>
+#include <thread>
+#include <vector>
 
 namespace {
 bool writeSample(QFile *file, int size, int row, int column, qint16 value)
@@ -78,6 +81,8 @@ private slots:
     void samplesSrtm3UsingBigEndianBilinearInterpolation();
     void acceptsSrtm1AndRejectsCorruptOrVoidTiles();
     void localCacheSamplingDoesNotRequireNetwork();
+    void cacheOnlyMissNeverSchedulesNetwork();
+    void requestAdmissionIsDeduplicatedBoundedAndThreadSafe();
     void downloadsAndAtomicallyInstallsArchive();
 };
 
@@ -165,6 +170,65 @@ void SrtmElevationSourceTest::localCacheSamplingDoesNotRequireNetwork()
     QVERIFY(source.SampleAltitude(35.4995, 33.5005, &altitude));
     QVERIFY(qAbs(altitude - 280.0) < 0.001);
     source.Shutdown();
+}
+
+void SrtmElevationSourceTest::cacheOnlyMissNeverSchedulesNetwork()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    const QString root = QStringLiteral("http://127.0.0.1:%1/")
+        .arg(server.serverPort());
+    SrtmElevationSource source(
+        nullptr, directory.path(), QStringList{root});
+    source.SetAutoDownloadEnabled(true);
+
+    double altitude = 0.0;
+    QVERIFY(!source.SampleAltitudeCached(35.5, 33.5, &altitude));
+    QTest::qWait(50);
+    QVERIFY(!server.hasPendingConnections());
+    source.Shutdown();
+}
+
+void SrtmElevationSourceTest::
+requestAdmissionIsDeduplicatedBoundedAndThreadSafe()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    SrtmElevationSource source(
+        nullptr, directory.path(),
+        QStringList{QStringLiteral("http://127.0.0.1:9/")});
+    source.SetAutoDownloadEnabled(true);
+
+    int admitted = 0;
+    for (int index = 0;
+         index < SrtmElevationSource::MaximumPendingTiles * 2; ++index) {
+        admitted += source.RequestTileForCoordinate(
+            -70.5 + index, 10.5) ? 1 : 0;
+    }
+    QCOMPARE(admitted, SrtmElevationSource::MaximumPendingTiles);
+    QVERIFY(!source.RequestTileForCoordinate(-70.5, 10.5));
+    source.Shutdown();
+
+    SrtmElevationSource threaded(
+        nullptr, directory.path(),
+        QStringList{QStringLiteral("http://127.0.0.1:9/")});
+    threaded.SetAutoDownloadEnabled(true);
+    std::atomic_int parallelAdmissions{0};
+    std::vector<std::thread> workers;
+    for (int index = 0; index < 16; ++index) {
+        workers.emplace_back([&]() {
+            if (threaded.RequestTileForCoordinate(35.5, 33.5)) {
+                ++parallelAdmissions;
+            }
+        });
+    }
+    for (std::thread &worker : workers) {
+        worker.join();
+    }
+    QCOMPARE(parallelAdmissions.load(), 1);
+    threaded.Shutdown();
 }
 
 void SrtmElevationSourceTest::downloadsAndAtomicallyInstallsArchive()

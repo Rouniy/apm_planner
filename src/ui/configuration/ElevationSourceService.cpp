@@ -1444,6 +1444,16 @@ bool ElevationSourceService::sampleAltitude(double latitude,
                                             double longitude,
                                             double *altitude) const
 {
+    if (sampleAltitudeCached(latitude, longitude, altitude)) {
+        return true;
+    }
+    requestSrtmTile(latitude, longitude);
+    return false;
+}
+
+bool ElevationSourceService::sampleAltitudeCached(
+    double latitude, double longitude, double *altitude) const
+{
     if (!altitude || !std::isfinite(latitude) || !std::isfinite(longitude)
         || latitude < -90.0 || latitude > 90.0
         || longitude < -180.0 || longitude > 180.0) {
@@ -1459,8 +1469,15 @@ bool ElevationSourceService::sampleAltitude(double latitude,
             return true;
         }
     }
-    return d->srtm && d->srtm->SampleAltitude(
+    return d->srtm && d->srtm->SampleAltitudeCached(
         latitude, longitude, altitude);
+}
+
+bool ElevationSourceService::requestSrtmTile(
+    double latitude, double longitude) const
+{
+    return d->srtm
+        && d->srtm->RequestTileForCoordinate(latitude, longitude);
 }
 
 QString ElevationSourceService::srtmCacheDirectory() const

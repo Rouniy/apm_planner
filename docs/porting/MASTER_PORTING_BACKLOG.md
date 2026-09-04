@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided и Follow Me-срезов:
+Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base и RF Propagation-срезов:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 166 из 166 тестов;
+- проходят 171 из 171 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -21,19 +21,19 @@
 - DATA/PLAN используют фиксированные `QWidget`/`QSplitter`, а не плавающие
   `QDockWidget` или KDDockWidgets.
 
-Это не означает готовность продукта. В реестре 128 поверхностей:
+Это не означает готовность продукта. В реестре 129 поверхностей:
 
 | Область | in-progress | partial | not-started | Всего |
 |---|---:|---:|---:|---:|
 | SHELL | 1 | 3 | 0 | 4 |
 | DATA | 2 | 3 | 0 | 5 |
 | PLAN | 5 | 2 | 4 | 11 |
-| SETUP | 28 | 17 | 11 | 56 |
+| SETUP | 29 | 16 | 11 | 56 |
 | CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 12 | 2 | 16 | 30 |
+| TOOLS | 14 | 2 | 15 | 31 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **57** | **38** | **33** | **128** |
+| **Итого** | **60** | **37** | **32** | **129** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -55,10 +55,11 @@
 совпадения других страниц.
 
 Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
-Spectrogram, 3D Terrain View, External Guided и Follow Me; текущий пользовательский приоритет — продолжать основные Tools,
-после чего перейти к Settings/CONFIG и их функциональным vertical slices.
-Оставшиеся специализированные Tools сохраняются в точном меню, но включаются
-только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
+Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base и RF
+Propagation. Далее идут пять safety-critical Swarm workflows и OSD Video,
+после чего приоритет переходит к Settings/CONFIG и их функциональным vertical
+slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
+включаются только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
 Qt Widgets и доверенный QML API можно сочетать по назначению.
 
 1. Убрать пустую полосу у правой границы PLAN и зафиксировать геометрию при
@@ -379,7 +380,7 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 Gate: изменение параметров всегда проходит typed metadata validation и ACK,
 dirty state никогда не переносится на новый target.
 
-### Wave 7 — TOOLS, 30 поверхностей
+### Wave 7 — TOOLS, 31 поверхность
 
 #### Основные инструменты P1
 
@@ -403,6 +404,12 @@ dirty state никогда не переносится на новый target.
   exact-target service и cyan `BASE` marker срез сделан и доступен из
   TOOLS/SETUP Advanced; остаются Rally mission transaction, relative-altitude
   home source, TCP reconnect, physical/network/live-marker и native evidence;
+- RF Propagation: основной modeless settings/exact-target/worker-safe срез
+  сделан; DATA и PLAN получают независимые elevation/terrain, RF-contour и
+  battery-distance overlays через backend-neutral map contract. SRTM admission
+  ограничен восемью уникальными tiles до GUI dispatch; остаются raster
+  dateline splitting, ещё один production map backend, representative live
+  terrain/vehicle, reference screenshot и native-platform evidence;
 - Device Operations: основной modeless/exact-target срез сделан; остаются
   hardware/native evidence и визуальная полировка;
 - QML Plugin Manager: широкая документация и API coverage.

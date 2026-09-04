@@ -32,6 +32,7 @@ public:
     int MaxZoom() const override;
     double ZoomReal() const override;
     int CurrentZoomLevel() const override;
+    QSize ViewportPixelSize() const override;
     MapGeoBounds VisibleTileExtent() const override;
     MapCoordinate CurrentPosition() const override;
     core::MapType::Types CurrentMapType() const override;
@@ -57,6 +58,17 @@ public:
     void SetMovingBase(const MapCoordinate &position,
                        const QString &tag) override;
     void ClearMovingBase() override;
+    void SetPropagationRaster(const QImage &image,
+                              const MapGeoBounds &bounds) override;
+    void ClearPropagationRaster() override;
+    void SetPropagationContour(
+        const MapOverlayPolyline &contour) override;
+    void ClearPropagationContour() override;
+    void SetPropagationRings(
+        const QVector<MapOverlayPolyline> &rings) override;
+    void ClearPropagationRings() override;
+    void SetPropagationStatus(const QString &legend,
+                              const QString &status) override;
     void SetMissionPlanningEnabled(bool enabled) override;
     void SetPlannerRows(
         const QVector<WpRowData> &rows,

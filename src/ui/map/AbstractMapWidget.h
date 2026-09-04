@@ -6,7 +6,11 @@
 #include "ui/flightplanner/WpRow.h"
 
 #include <QObject>
+#include <QColor>
+#include <QImage>
 #include <QPoint>
+#include <QSize>
+#include <QString>
 #include <QVector>
 
 #include <cmath>
@@ -59,6 +63,14 @@ struct MapCoordinate
     }
 };
 
+struct MapOverlayPolyline
+{
+    QVector<MapCoordinate> points;
+    QColor color = Qt::white;
+    qreal width = 1.0;
+    bool dashed = false;
+};
+
 // Backend-neutral contract used by PLAN, DATA and SIMULATION. A backend owns
 // the rendering QWidget but exposes Mission Planner map behavior here so the
 // shell never needs to know whether OPMap or a Qt Quick backend is active.
@@ -81,6 +93,7 @@ public:
     virtual int MaxZoom() const = 0;
     virtual double ZoomReal() const = 0;
     virtual int CurrentZoomLevel() const = 0;
+    virtual QSize ViewportPixelSize() const = 0;
     virtual MapGeoBounds VisibleTileExtent() const = 0;
     virtual MapCoordinate CurrentPosition() const = 0;
     virtual core::MapType::Types CurrentMapType() const = 0;
@@ -111,6 +124,24 @@ public:
         Q_UNUSED(tag)
     }
     virtual void ClearMovingBase() {}
+    virtual void SetPropagationRaster(const QImage &image,
+                                      const MapGeoBounds &bounds) = 0;
+    virtual void ClearPropagationRaster() = 0;
+    virtual void SetPropagationContour(
+        const MapOverlayPolyline &contour) = 0;
+    virtual void ClearPropagationContour() = 0;
+    virtual void SetPropagationRings(
+        const QVector<MapOverlayPolyline> &rings) = 0;
+    virtual void ClearPropagationRings() = 0;
+    virtual void SetPropagationStatus(const QString &legend,
+                                      const QString &status) = 0;
+    void ClearPropagationOverlay()
+    {
+        ClearPropagationRaster();
+        ClearPropagationContour();
+        ClearPropagationRings();
+        SetPropagationStatus({}, {});
+    }
 
     virtual void SetMissionPlanningEnabled(bool enabled) = 0;
     virtual void SetPlannerRows(

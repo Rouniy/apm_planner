@@ -89,6 +89,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     int followMeOpenCount = 0;
     int movingBaseOpenCount = 0;
     int deviceOperationsOpenCount = 0;
+    int propagationOpenCount = 0;
     MissionPlannerToolsMenu::HandlerMap handlers;
     handlers.insert(QStringLiteral("actionMavlinkInspector"),
                     [&inspectorOpenCount]() { ++inspectorOpenCount; });
@@ -116,6 +117,10 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
                     [&deviceOperationsOpenCount]() {
         ++deviceOperationsOpenCount;
     });
+    handlers.insert(QStringLiteral("actionPropagationSettings"),
+                    [&propagationOpenCount]() {
+        ++propagationOpenCount;
+    });
 
     MissionPlannerToolsMenu::Populate(&menu, &context, handlers);
     QCOMPARE(menu.title(), QStringLiteral("TOOLS"));
@@ -138,6 +143,8 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
             || action->objectName() == QStringLiteral("actionFollowMe")
             || action->objectName() == QStringLiteral("actionMovingBase")
             || action->objectName()
+                == QStringLiteral("actionPropagationSettings")
+            || action->objectName()
                 == QStringLiteral("actionMavlinkDeviceOperations")) {
             QVERIFY(action->isEnabled());
             action->trigger();
@@ -158,6 +165,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     QCOMPARE(followMeOpenCount, 1);
     QCOMPARE(movingBaseOpenCount, 1);
     QCOMPARE(deviceOperationsOpenCount, 1);
+    QCOMPARE(propagationOpenCount, 1);
 }
 
 QTEST_MAIN(MissionPlannerToolsMenuTest)

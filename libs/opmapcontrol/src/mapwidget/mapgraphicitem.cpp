@@ -96,9 +96,12 @@ namespace mapcontrol
         {
             if (GraphicsItem* w = dynamic_cast<GraphicsItem*>(i))
                 w->RefreshPos();
-
-            emit mapChanged();
         }
+        // Consumers rebuild planner and application overlays from this
+        // notification. Emit only after the child snapshot has been fully
+        // traversed; emitting inside the loop allowed a handler to delete a
+        // later item and left the foreach snapshot holding a dangling pointer.
+        emit mapChanged();
     }
     void MapGraphicItem::ConstructLastImage(int const& zoomdiff)
     {

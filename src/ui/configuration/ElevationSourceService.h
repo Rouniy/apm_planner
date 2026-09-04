@@ -110,6 +110,9 @@ public:
     virtual bool isNativeGdalAvailable() const;
     virtual bool sampleAltitude(double latitude, double longitude,
                                 double *altitude) const;
+    virtual bool sampleAltitudeCached(double latitude, double longitude,
+                                      double *altitude) const;
+    virtual bool requestSrtmTile(double latitude, double longitude) const;
     virtual QString srtmCacheDirectory() const;
     virtual bool srtmAutoDownloadEnabled() const;
     virtual void setSrtmAutoDownloadEnabled(bool enabled);

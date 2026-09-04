@@ -13,7 +13,12 @@
 #include "WaypointNavigation.h"
 #include <QContextMenuEvent>
 #include <QGraphicsPathItem>
+#include <QGraphicsPixmapItem>
+#include <QGraphicsRectItem>
+#include <QGraphicsSimpleTextItem>
 #include <QInputDialog>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QtMath>
 
 #include <algorithm>
@@ -68,6 +73,12 @@ QGCMapWidget::QGCMapWidget(const QString &settingsGroup,
             this, &QGCMapWidget::redrawPlannerMeasurement);
     connect(map, &mapcontrol::MapGraphicItem::mapChanged,
             this, &QGCMapWidget::refreshMovingBaseMarker);
+    connect(map, &mapcontrol::MapGraphicItem::mapChanged,
+            this, &QGCMapWidget::redrawPropagationRaster);
+    connect(map, &mapcontrol::MapGraphicItem::mapChanged,
+            this, &QGCMapWidget::redrawPropagationVectors);
+    connect(map, &mapcontrol::MapGraphicItem::mapChanged,
+            this, &QGCMapWidget::redrawPropagationStatus);
     offlineMode = true;
     // Widget is inactive until shown
     defaultGuidedRelativeAlt = 100.0; // Default set to 100m
@@ -626,6 +637,213 @@ void QGCMapWidget::clearMovingBase()
     m_movingBaseMarker = nullptr;
     m_movingBaseCoordinate = {};
     m_movingBaseTag.clear();
+}
+
+void QGCMapWidget::setPropagationRaster(
+    const QImage &image, const MapGeoBounds &bounds)
+{
+    m_propagationRaster = image;
+    m_propagationRasterBounds = bounds;
+    redrawPropagationRaster();
+}
+
+void QGCMapWidget::clearPropagationRaster()
+{
+    m_propagationRaster = {};
+    m_propagationRasterBounds = {};
+    delete m_propagationRasterItem;
+    m_propagationRasterItem = nullptr;
+}
+
+void QGCMapWidget::setPropagationContour(
+    const MapOverlayPolyline &contour)
+{
+    m_propagationContour = contour;
+    redrawPropagationVectors();
+}
+
+void QGCMapWidget::clearPropagationContour()
+{
+    m_propagationContour = {};
+    delete m_propagationContourGroup;
+    m_propagationContourGroup = nullptr;
+}
+
+void QGCMapWidget::setPropagationRings(
+    const QVector<MapOverlayPolyline> &rings)
+{
+    m_propagationRings = rings;
+    redrawPropagationVectors();
+}
+
+void QGCMapWidget::clearPropagationRings()
+{
+    m_propagationRings.clear();
+    delete m_propagationRingGroup;
+    m_propagationRingGroup = nullptr;
+}
+
+void QGCMapWidget::setPropagationStatus(
+    const QString &legend, const QString &status)
+{
+    m_propagationLegend = legend.simplified();
+    m_propagationStatus = status.simplified();
+    redrawPropagationStatus();
+}
+
+void QGCMapWidget::redrawPropagationRaster()
+{
+    if (!map) {
+        return;
+    }
+
+    delete m_propagationRasterItem;
+    m_propagationRasterItem = nullptr;
+    if (!m_propagationRaster.isNull()
+        && m_propagationRasterBounds.IsValid()
+        && !m_propagationRasterBounds.CrossesDateLine()) {
+        const core::Point northWest = map->FromLatLngToLocal(
+            internals::PointLatLng(m_propagationRasterBounds.top,
+                                   m_propagationRasterBounds.left));
+        const core::Point southEast = map->FromLatLngToLocal(
+            internals::PointLatLng(m_propagationRasterBounds.bottom,
+                                   m_propagationRasterBounds.right));
+        const double width = southEast.X() - northWest.X();
+        const double height = southEast.Y() - northWest.Y();
+        if (qIsFinite(width) && qIsFinite(height)
+            && width > 0.0 && height > 0.0) {
+            m_propagationRasterItem = new QGraphicsPixmapItem(
+                QPixmap::fromImage(m_propagationRaster), map);
+            m_propagationRasterItem->setData(
+                0, QStringLiteral("PropagationRaster"));
+            m_propagationRasterItem->setPos(
+                northWest.X(), northWest.Y());
+            m_propagationRasterItem->setScale(1.0);
+            QTransform transform;
+            transform.scale(
+                width / m_propagationRaster.width(),
+                height / m_propagationRaster.height());
+            m_propagationRasterItem->setTransform(transform);
+            m_propagationRasterItem->setZValue(0.5);
+            m_propagationRasterItem->setAcceptedMouseButtons(Qt::NoButton);
+        }
+    }
+
+}
+
+void QGCMapWidget::redrawPropagationVectors()
+{
+    if (!map) {
+        return;
+    }
+    const auto rebuild = [this](QGraphicsItemGroup *&group,
+                                const QVector<MapOverlayPolyline> &lines,
+                                const QString &name, qreal zValue) {
+        delete group;
+        group = new QGraphicsItemGroup(map);
+        group->setData(0, name);
+        group->setZValue(zValue);
+        for (const MapOverlayPolyline &polyline : lines) {
+            QPainterPath path;
+            bool started = false;
+            bool hasLine = false;
+            double previousLongitude = 0.0;
+            for (const MapCoordinate &coordinate : polyline.points) {
+                if (!coordinate.IsValid()) {
+                    started = false;
+                    continue;
+                }
+                const core::Point local = map->FromLatLngToLocal(
+                    internals::PointLatLng(coordinate.latitude,
+                                           coordinate.longitude));
+                const QPointF point(local.X(), local.Y());
+                // Wrapped geodesic rings and RF contours must not acquire a
+                // false line across the whole world at the antimeridian.
+                if (!started
+                    || std::abs(coordinate.longitude - previousLongitude)
+                        > 180.0) {
+                    path.moveTo(point);
+                    started = true;
+                } else {
+                    path.lineTo(point);
+                    hasLine = true;
+                }
+                previousLongitude = coordinate.longitude;
+            }
+            if (!hasLine) {
+                continue;
+            }
+            auto *item = new QGraphicsPathItem(path, group);
+            QPen pen(polyline.color);
+            pen.setWidthF(qMax<qreal>(0.5, polyline.width));
+            pen.setCosmetic(true);
+            if (polyline.dashed) {
+                pen.setStyle(Qt::DashLine);
+            }
+            item->setPen(pen);
+            item->setBrush(Qt::NoBrush);
+            item->setAcceptedMouseButtons(Qt::NoButton);
+        }
+    };
+    const QVector<MapOverlayPolyline> contours =
+        m_propagationContour.points.isEmpty()
+            ? QVector<MapOverlayPolyline>()
+            : QVector<MapOverlayPolyline>{m_propagationContour};
+    rebuild(m_propagationContourGroup, contours,
+            QStringLiteral("PropagationContour"), 0.7);
+    rebuild(m_propagationRingGroup, m_propagationRings,
+            QStringLiteral("PropagationRings"), 0.8);
+}
+
+void QGCMapWidget::redrawPropagationStatus()
+{
+    if (!map) {
+        return;
+    }
+    delete m_propagationStatusGroup;
+    m_propagationStatusGroup = new QGraphicsItemGroup(map);
+    m_propagationStatusGroup->setData(
+        0, QStringLiteral("PropagationStatus"));
+    m_propagationStatusGroup->setZValue(20.0);
+    const MapGeoBounds visible = {
+        VisibleTileExtent().Left(), VisibleTileExtent().Top(),
+        VisibleTileExtent().Right(), VisibleTileExtent().Bottom()};
+    if (visible.IsValid() && !visible.CrossesDateLine()
+        && (!m_propagationLegend.isEmpty()
+            || !m_propagationStatus.isEmpty())) {
+        const core::Point anchor = map->FromLatLngToLocal(
+            internals::PointLatLng(visible.top, visible.left));
+        qreal y = anchor.Y() + 12.0;
+        const auto addLabel = [this, anchor, &y](
+                const QString &text, const QColor &foreground,
+                const QColor &background) {
+            if (text.isEmpty()) {
+                return;
+            }
+            auto *label = new QGraphicsSimpleTextItem(
+                text, m_propagationStatusGroup);
+            QFont font = label->font();
+            font.setPixelSize(11);
+            label->setFont(font);
+            label->setBrush(foreground);
+            label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+            label->setPos(anchor.X() + 12.0, y);
+            auto *backgroundItem = new QGraphicsRectItem(
+                label->boundingRect().adjusted(-5.0, -3.0, 5.0, 3.0),
+                m_propagationStatusGroup);
+            backgroundItem->setBrush(background);
+            backgroundItem->setPen(Qt::NoPen);
+            backgroundItem->setFlag(
+                QGraphicsItem::ItemIgnoresTransformations, true);
+            backgroundItem->setPos(label->pos());
+            backgroundItem->setZValue(-1.0);
+            y += label->boundingRect().height() + 9.0;
+        };
+        addLabel(m_propagationLegend, Qt::white,
+                 QColor(0, 0, 0, 145));
+        addLabel(m_propagationStatus, QColor(255, 225, 120),
+                 QColor(0, 0, 0, 180));
+    }
 }
 
 QString QGCMapWidget::movingBaseLabel() const

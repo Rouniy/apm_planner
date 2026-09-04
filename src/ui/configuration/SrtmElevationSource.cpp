@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QMutexLocker>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
@@ -224,32 +225,40 @@ QString SrtmElevationSource::CacheDirectory() const
 
 bool SrtmElevationSource::AutoDownloadEnabled() const
 {
+    QMutexLocker locker(&m_requestGate);
     return m_autoDownload;
 }
 
 void SrtmElevationSource::SetAutoDownloadEnabled(bool enabled)
 {
-    if (m_autoDownload == enabled) {
-        return;
+    {
+        QMutexLocker locker(&m_requestGate);
+        if (m_autoDownload == enabled) {
+            return;
+        }
+        m_autoDownload = enabled;
     }
-    m_autoDownload = enabled;
     QSettings settings;
     settings.setFallbacksEnabled(false);
     settings.setValue(QString::fromLatin1(AutoDownloadSettingsKey), enabled);
     settings.sync();
 }
 
-bool SrtmElevationSource::SampleAltitude(
-    double latitude, double longitude, double *altitude)
+bool SrtmElevationSource::SampleAltitudeCached(
+    double latitude, double longitude, double *altitude) const
 {
-    const QString tileName = TileName(latitude, longitude);
+    // WGS84 permits +180 while degree tiles use the equivalent -180 edge.
+    const double normalizedLongitude = longitude == 180.0
+        ? -180.0 : longitude;
+    const QString tileName = TileName(latitude, normalizedLongitude);
     if (tileName.isEmpty() || !altitude) {
         return false;
     }
     const QString tilePath = TilePath(tileName);
     if (QFileInfo::exists(tilePath)) {
         if (validHgtFile(tilePath)) {
-            return SampleHgtFile(tilePath, latitude, longitude, altitude);
+            return SampleHgtFile(
+                tilePath, latitude, normalizedLongitude, altitude);
         }
         QFile::remove(tilePath);
     }
@@ -259,23 +268,67 @@ bool SrtmElevationSource::SampleAltitude(
         return true;
     }
     QFile::remove(markerPath);
-    if (m_autoDownload && !m_shuttingDown) {
-        if (QThread::currentThread() == thread()) {
-            RequestTile(tileName);
-        } else {
-            QMetaObject::invokeMethod(
-                this, [this, tileName]() { RequestTile(tileName); },
-                Qt::QueuedConnection);
-        }
+    return false;
+}
+
+bool SrtmElevationSource::RequestTileForCoordinate(
+    double latitude, double longitude)
+{
+    const double normalizedLongitude = longitude == 180.0
+        ? -180.0 : longitude;
+    const QString tileName = TileName(latitude, normalizedLongitude);
+    if (tileName.isEmpty()) {
+        return false;
     }
+    {
+        // Admission and de-duplication happen before a worker can enqueue a
+        // GUI-thread meta-call. A full-world raster can therefore create no
+        // more than MaximumPendingTiles events or network jobs.
+        QMutexLocker locker(&m_requestGate);
+        if (!m_autoDownload || m_shuttingDown
+            || m_reservedTiles.contains(tileName)
+            || m_reservedTiles.size() >= MaximumPendingTiles) {
+            return false;
+        }
+        m_reservedTiles.insert(tileName);
+    }
+
+    if (QThread::currentThread() == thread()) {
+        RequestTile(tileName);
+        return true;
+    }
+    const bool queued = QMetaObject::invokeMethod(
+        this, [this, tileName]() { RequestTile(tileName); },
+        Qt::QueuedConnection);
+    if (!queued) {
+        ReleaseTileReservation(tileName);
+    }
+    return queued;
+}
+
+bool SrtmElevationSource::SampleAltitude(
+    double latitude, double longitude, double *altitude)
+{
+    if (SampleAltitudeCached(latitude, longitude, altitude)) {
+        return true;
+    }
+    RequestTileForCoordinate(latitude, longitude);
     return false;
 }
 
 void SrtmElevationSource::RequestTile(const QString &tileName)
 {
-    if (m_shuttingDown || m_pendingTiles.contains(tileName)
+    {
+        QMutexLocker locker(&m_requestGate);
+        if (m_shuttingDown) {
+            m_reservedTiles.remove(tileName);
+            return;
+        }
+    }
+    if (m_pendingTiles.contains(tileName)
         || validHgtFile(TilePath(tileName))
         || validOceanMarker(OceanMarkerPath(tileName))) {
+        ReleaseTileReservation(tileName);
         return;
     }
     if (!m_network) {
@@ -284,6 +337,12 @@ void SrtmElevationSource::RequestTile(const QString &tileName)
     m_pendingTiles.insert(tileName);
     m_downloadQueue.enqueue(tileName);
     StartNextTile();
+}
+
+void SrtmElevationSource::ReleaseTileReservation(const QString &tileName)
+{
+    QMutexLocker locker(&m_requestGate);
+    m_reservedTiles.remove(tileName);
 }
 
 void SrtmElevationSource::StartNextTile()
@@ -332,6 +391,7 @@ void SrtmElevationSource::StartCandidate(
             return;
         }
         m_pendingTiles.remove(tileName);
+        ReleaseTileReservation(tileName);
         ScheduleNextTile();
         emit TileAvailable(tileName);
         return;
@@ -380,6 +440,7 @@ void SrtmElevationSource::FinishCandidate(
         QString error;
         if (InstallArchive(tileName, payload, &error)) {
             m_pendingTiles.remove(tileName);
+            ReleaseTileReservation(tileName);
             ScheduleNextTile();
             emit TileAvailable(tileName);
         } else {
@@ -492,6 +553,7 @@ void SrtmElevationSource::FinishFailure(
     const QString &tileName, const QString &error)
 {
     m_pendingTiles.remove(tileName);
+    ReleaseTileReservation(tileName);
     if (m_activeTile == tileName) {
         ScheduleNextTile();
     }
@@ -500,10 +562,14 @@ void SrtmElevationSource::FinishFailure(
 
 void SrtmElevationSource::Shutdown()
 {
-    if (m_shuttingDown) {
-        return;
+    {
+        QMutexLocker locker(&m_requestGate);
+        if (m_shuttingDown) {
+            return;
+        }
+        m_shuttingDown = true;
+        m_reservedTiles.clear();
     }
-    m_shuttingDown = true;
     m_pendingTiles.clear();
     m_downloadQueue.clear();
     m_activeTile.clear();

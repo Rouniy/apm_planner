@@ -656,6 +656,18 @@ set(SOURCES
     src/ui/terrain/Terrain3DTelemetrySource.h
     src/ui/tools/ExternalGuidedFile.cpp
     src/ui/tools/ExternalGuidedFile.h
+    src/ui/tools/PropagationCore.cpp
+    src/ui/tools/PropagationCore.h
+    src/ui/tools/PropagationDistanceEstimator.cpp
+    src/ui/tools/PropagationDistanceEstimator.h
+    src/ui/tools/PropagationOverlayController.cpp
+    src/ui/tools/PropagationOverlayController.h
+    src/ui/tools/PropagationSettingsStore.cpp
+    src/ui/tools/PropagationSettingsStore.h
+    src/ui/tools/PropagationSettingsWindow.cpp
+    src/ui/tools/PropagationSettingsWindow.h
+    src/ui/tools/PropagationTelemetrySource.cpp
+    src/ui/tools/PropagationTelemetrySource.h
     src/ui/QGCMAVLinkLogPlayer.cc
     src/ui/QGCMAVLinkLogPlayer.h
     src/ui/QGCMAVLinkLogPlayer.ui
@@ -2772,6 +2784,108 @@ if(BUILD_TESTING)
     )
     add_test(NAME terrain3dtelemetrysource_tests
              COMMAND terrain3dtelemetrysource_tests)
+
+    add_executable(propagationcore_tests
+        tests/test_propagationcore.cpp
+        src/ui/tools/PropagationCore.cpp
+        src/ui/tools/PropagationCore.h
+    )
+    target_include_directories(propagationcore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(propagationcore_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME propagationcore_tests COMMAND propagationcore_tests)
+
+    add_executable(propagationdistanceestimator_tests
+        tests/test_propagationdistanceestimator.cpp
+        src/ui/tools/PropagationDistanceEstimator.cpp
+        src/ui/tools/PropagationDistanceEstimator.h
+    )
+    target_include_directories(propagationdistanceestimator_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(propagationdistanceestimator_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME propagationdistanceestimator_tests
+             COMMAND propagationdistanceestimator_tests)
+
+    add_executable(propagationtelemetrysource_tests
+        tests/test_propagationtelemetrysource.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/tools/PropagationDistanceEstimator.cpp
+        src/ui/tools/PropagationDistanceEstimator.h
+        src/ui/tools/PropagationTelemetrySource.cpp
+        src/ui/tools/PropagationTelemetrySource.h
+    )
+    target_include_directories(propagationtelemetrysource_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(propagationtelemetrysource_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME propagationtelemetrysource_tests
+             COMMAND propagationtelemetrysource_tests)
+
+    add_executable(propagationoverlaycontroller_tests
+        tests/test_propagationoverlaycontroller.cpp
+        src/ui/map/AbstractMapWidget.h
+        src/ui/tools/PropagationCore.cpp
+        src/ui/tools/PropagationCore.h
+        src/ui/tools/PropagationOverlayController.cpp
+        src/ui/tools/PropagationOverlayController.h
+        src/ui/tools/PropagationSettingsStore.cpp
+        src/ui/tools/PropagationSettingsStore.h
+    )
+    target_include_directories(propagationoverlaycontroller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(propagationoverlaycontroller_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME propagationoverlaycontroller_tests
+             COMMAND propagationoverlaycontroller_tests)
+    set_tests_properties(propagationoverlaycontroller_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(propagationsettingswindow_tests
+        tests/test_propagationsettingswindow.cpp
+        src/ui/tools/PropagationSettingsStore.cpp
+        src/ui/tools/PropagationSettingsStore.h
+        src/ui/tools/PropagationSettingsWindow.cpp
+        src/ui/tools/PropagationSettingsWindow.h
+    )
+    target_include_directories(propagationsettingswindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(propagationsettingswindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME propagationsettingswindow_tests
+             COMMAND propagationsettingswindow_tests)
+    set_tests_properties(propagationsettingswindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(terrain3dwindow_tests
         tests/test_terrain3dwindow.cpp

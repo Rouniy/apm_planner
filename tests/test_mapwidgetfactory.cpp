@@ -31,6 +31,7 @@ public:
     int MaxZoom() const override { return 21; }
     double ZoomReal() const override { return 7.0; }
     int CurrentZoomLevel() const override { return 7; }
+    QSize ViewportPixelSize() const override { return QSize(); }
     MapGeoBounds VisibleTileExtent() const override { return {}; }
     MapCoordinate CurrentPosition() const override { return {}; }
     core::MapType::Types CurrentMapType() const override
@@ -54,6 +55,14 @@ public:
     void LastPosition() override {}
     void CacheVisibleRegion() override {}
     void UpdateHomePosition(double, double, double) override {}
+    void SetPropagationRaster(const QImage &, const MapGeoBounds &) override {}
+    void ClearPropagationRaster() override {}
+    void SetPropagationContour(const MapOverlayPolyline &) override {}
+    void ClearPropagationContour() override {}
+    void SetPropagationRings(
+        const QVector<MapOverlayPolyline> &) override {}
+    void ClearPropagationRings() override {}
+    void SetPropagationStatus(const QString &, const QString &) override {}
     void SetMissionPlanningEnabled(bool) override {}
     void SetPlannerRows(
         const QVector<WpRowData> &,

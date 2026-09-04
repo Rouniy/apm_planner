@@ -15,6 +15,8 @@ class UASWaypointManager;
 class Waypoint;
 class QContextMenuEvent;
 class MovingBaseMapMarkerItem;
+class QGraphicsItemGroup;
+class QGraphicsPixmapItem;
 typedef mapcontrol::WayPointItem WayPointItem;
 
 /**
@@ -116,6 +118,15 @@ public slots:
     void updateHomePosition(double latitude, double longitude, double altitude);
     void setMovingBase(const MapCoordinate &position, const QString &tag);
     void clearMovingBase();
+    void setPropagationRaster(const QImage &image,
+                              const MapGeoBounds &bounds);
+    void clearPropagationRaster();
+    void setPropagationContour(const MapOverlayPolyline &contour);
+    void clearPropagationContour();
+    void setPropagationRings(const QVector<MapOverlayPolyline> &rings);
+    void clearPropagationRings();
+    void setPropagationStatus(const QString &legend,
+                              const QString &status);
     /** @brief Set update rate limit */
     void setUpdateRateLimit(float seconds);
     /** @brief Cache visible region to harddisk */
@@ -179,6 +190,9 @@ private:
     int plannerWaypointSequenceAt(const QPoint &viewportPosition) const;
     void updateLegacyWaypointVisibility();
     void refreshMovingBaseMarker();
+    void redrawPropagationRaster();
+    void redrawPropagationVectors();
+    void redrawPropagationStatus();
     QColor plannerColor() const;
 
     void shiftOtherSelectedWaypoints(mapcontrol::WayPointItem* selectedWaypoint,
@@ -253,6 +267,16 @@ protected:
     MovingBaseMapMarkerItem *m_movingBaseMarker = nullptr;
     MapCoordinate m_movingBaseCoordinate;
     QString m_movingBaseTag;
+    QGraphicsPixmapItem *m_propagationRasterItem = nullptr;
+    QGraphicsItemGroup *m_propagationContourGroup = nullptr;
+    QGraphicsItemGroup *m_propagationRingGroup = nullptr;
+    QGraphicsItemGroup *m_propagationStatusGroup = nullptr;
+    QImage m_propagationRaster;
+    MapGeoBounds m_propagationRasterBounds;
+    MapOverlayPolyline m_propagationContour;
+    QVector<MapOverlayPolyline> m_propagationRings;
+    QString m_propagationLegend;
+    QString m_propagationStatus;
     QString m_settingsGroup;
 
 };
