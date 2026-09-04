@@ -39,8 +39,17 @@ public:
     SendResult sendMessage(
         int linkId, quint8 localSystemId, quint8 localComponentId,
         mavlink_message_t message);
+    SendResult sendCommandAck(
+        int linkId, quint8 localSystemId, quint8 localComponentId,
+        quint16 command, quint8 result,
+        quint8 targetSystem, quint8 targetComponent,
+        quint8 progress = 255, qint32 resultParam2 = 0);
 
     void setOutboundVersion(int linkId, unsigned int version);
+    unsigned int outboundVersion(int linkId) const;
+    bool supportsTargetedCommandAck(int linkId) const;
+    void setMotorStopLinkEligible(int linkId, bool eligible);
+    bool motorStopLinkEligible(int linkId) const;
     void forgetLink(int linkId);
 
 private:
@@ -48,6 +57,7 @@ private:
 
     const FrameWriter m_frameWriter;
     QHash<int, mavlink_status_t> m_transmitStates;
+    QHash<int, bool> m_motorStopLinkEligibility;
 };
 
 #endif // EXACTLINKTRANSMITTER_H

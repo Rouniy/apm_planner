@@ -14,6 +14,7 @@
 #include "ConfigAntennaTrackerView.h"
 #include "ConfigBatteryMonitoring2View.h"
 #include "ConfigCompassView.h"
+#include "ConfigCompassMotView.h"
 #include "ConfigDefaultSettingsView.h"
 #include "DisplayViewProfile.h"
 #include "CompassConfig.h"
@@ -92,6 +93,7 @@ const QString kDefaultSettings = QStringLiteral("ConfigDefaultSettingsView");
 const QString kAccelCalibration = QStringLiteral("ConfigAccelCalibrationView");
 const QString kCompass = QStringLiteral("ConfigCompassView");
 const QString kCompassLegacy = QStringLiteral("ConfigCompassLegacyView");
+const QString kCompassMotor = QStringLiteral("ConfigCompassMotView");
 const QString kRadioInput = QStringLiteral("ConfigRadioInputView");
 const QString kRadioOutput = QStringLiteral("ConfigRadioOutputView");
 const QString kSerialPorts = QStringLiteral("ConfigSerialView");
@@ -230,6 +232,66 @@ SetupView::SetupView(QWidget *parent)
 
     m_backstage->setAutomaticSelectionEnabled(false);
     buildPages();
+    LinkManager *const linkManager = LinkManager::instance();
+    if (CompassCalibrationService *const calibration = linkManager
+            ? linkManager->compassCalibrationService() : nullptr) {
+        connect(calibration,
+                &CompassCalibrationService::motorSafetyWarning,
+                this, [this](const QString &message) {
+            auto *warning = new QMessageBox(
+                QMessageBox::Critical,
+                tr("Compass/Motor Stop Unconfirmed"),
+                tr("%1\n\nDo not approach the vehicle. Disconnect its "
+                   "power safely before continuing.").arg(message),
+                QMessageBox::Ok, window());
+            warning->setObjectName(
+                QStringLiteral("compassMotCriticalWarning"));
+            warning->setAttribute(Qt::WA_DeleteOnClose);
+            warning->setModal(false);
+            warning->show();
+            warning->raise();
+        });
+        connect(calibration, &CompassCalibrationService::changed,
+                this, [this, calibration, linkManager]() {
+            refreshPageVisibility();
+            if (calibration->motorMayBeActive()
+                || calibration->isBusy() || !linkManager) {
+                return;
+            }
+            const VehicleTargetLease owned = calibration->activeTarget();
+            const VehicleTargetLease current = linkManager
+                ->vehicleTargetManager()->acquireTarget();
+            if (owned.isValid() && current.isValid()
+                && owned.generation == current.generation
+                && owned.endpoint.sameIdentity(current.endpoint)) {
+                return;
+            }
+            // A target switch during CompassMot keeps the old page pinned
+            // through its stop/drain lifecycle. Recreate it only after the
+            // application-owned service reaches a terminal safe state.
+            QTimer::singleShot(0, this, [this, calibration]() {
+                if (!calibration->motorMayBeActive()
+                    && !calibration->isBusy()) {
+                    m_backstage->resetPage(kCompassMotor);
+                }
+            });
+        });
+        if (VehicleTargetManager *const targets =
+                linkManager->vehicleTargetManager()) {
+            connect(targets,
+                    &VehicleTargetManager::targetGenerationSettled,
+                    this, [this, calibration](qulonglong) {
+                // The legacy UAS pointer does not change when two exact
+                // endpoints share a sysid. Recreate the cached page directly
+                // from target generation so it cannot retain the old link.
+                if (!calibration->motorMayBeActive()
+                    && !calibration->isBusy()) {
+                    m_backstage->resetPage(kCompassMotor);
+                    refreshPageVisibility();
+                }
+            });
+        }
+    }
     connect(m_backstage, &BackstageView::pageActivated,
             this, [](const QString &id, QWidget *page) {
         if (id == kDefaultSettings) {
@@ -265,6 +327,11 @@ SetupView::SetupView(QWidget *parent)
         } else if (id == kESP8266) {
             if (auto *esp = qobject_cast<ConfigHWESP8266View *>(page)) {
                 esp->deactivate();
+            }
+        } else if (id == kCompassMotor) {
+            if (auto *compassMotor =
+                    qobject_cast<ConfigCompassMotView *>(page)) {
+                compassMotor->deactivate();
             }
         } else if (id == kAntennaTrackerSerial || id == kAntennaTrackerLive) {
             if (auto *tracker = qobject_cast<AntennaTrackerUIView *>(page)) {
@@ -322,6 +389,7 @@ SetupView::~SetupView()
     m_backstage->resetPage(kDefaultSettings);
     m_backstage->resetPage(kADSB);
     m_backstage->resetPage(kESP8266);
+    m_backstage->resetPage(kCompassMotor);
 }
 
 void SetupView::buildPages()
@@ -476,6 +544,31 @@ void SetupView::buildPages()
         return createBatteryMonitoring2Page(parent);
     };
     m_backstage->addPage(batteryMonitor2);
+    BackstagePage droneCan;
+    droneCan.id = kDroneCAN;
+    droneCan.header = tr("DroneCAN/UAVCAN");
+    droneCan.isSub = true;
+    droneCan.requiresConnection = false;
+    droneCan.allowsPartialParameters = true;
+    droneCan.factory = [this](QWidget *parent) {
+        return createDroneCanPage(parent);
+    };
+    m_backstage->addPage(droneCan);
+    BackstagePage compassMotor;
+    compassMotor.id = kCompassMotor;
+    compassMotor.header = tr("Compass/Motor Calib");
+    compassMotor.isSub = true;
+    // Keep an already-created page alive across disconnect so its pinned
+    // critical motor state remains visible. Normal offline visibility is
+    // still controlled explicitly in refreshPageVisibility().
+    compassMotor.requiresConnection = false;
+    // Once a start frame has been sent, Finish must remain reachable even if
+    // a parameter refresh temporarily makes the snapshot incomplete.
+    compassMotor.allowsPartialParameters = true;
+    compassMotor.factory = [this](QWidget *parent) {
+        return createCompassMotPage(parent);
+    };
+    m_backstage->addPage(compassMotor);
     m_backstage->addPage(makeBackstagePage<RangeFinderConfig>(
         kRangeFinder, tr("Range Finder"), true, true));
     m_backstage->addPage(makeBackstagePage<AirspeedConfig>(
@@ -555,16 +648,6 @@ void SetupView::buildPages()
         return createAntennaTrackerLivePage(parent);
     };
     m_backstage->addPage(trackerLive);
-    BackstagePage droneCan;
-    droneCan.id = kDroneCAN;
-    droneCan.header = tr("DroneCAN/UAVCAN");
-    droneCan.isSub = true;
-    droneCan.requiresConnection = false;
-    droneCan.allowsPartialParameters = true;
-    droneCan.factory = [this](QWidget *parent) {
-        return createDroneCanPage(parent);
-    };
-    m_backstage->addPage(droneCan);
     BackstagePage hwCan;
     hwCan.id = kHWCAN;
     hwCan.header = tr("HW CAN");
@@ -674,6 +757,11 @@ void SetupView::activeUASSet(UASInterface *uas)
         m_backstage->resetPage(kHeliSetup4);
         m_backstage->resetPage(kDroneCAN);
         m_backstage->resetPage(kMotorTest);
+        CompassCalibrationService *const calibration =
+            LinkManager::instance()->compassCalibrationService();
+        if (!calibration || !calibration->motorMayBeActive()) {
+            m_backstage->resetPage(kCompassMotor);
+        }
         if (m_droneCanTransport
             && m_droneCanTransport->pinnedUas() == m_uas) {
             m_droneCanTransport->unbindEndpoint(true);
@@ -1008,6 +1096,14 @@ void SetupView::refreshPageVisibility()
         kBatteryMonitor, m_connected && profile.displayBattMonitor);
     m_backstage->setPageVisible(
         kBatteryMonitor2, m_connected && profile.displayBattMonitor);
+    CompassCalibrationService *const compassCalibration =
+        LinkManager::instance()
+        ? LinkManager::instance()->compassCalibrationService() : nullptr;
+    const bool compassMotorDanger = compassCalibration
+        && compassCalibration->motorMayBeActive();
+    m_backstage->setPageVisible(
+        kCompassMotor, compassMotorDanger
+            || (m_connected && profile.displayCompassMotorCalib));
     m_backstage->setPageVisible(
         kRangeFinder, m_connected && profile.displayRangeFinder);
     m_backstage->setPageVisible(
@@ -1176,6 +1272,12 @@ void SetupView::resetConnectionPages(bool restoreSelection)
         if (m_backstage->pageDefinition(pageId).requiresConnection) {
             m_backstage->resetPage(pageId);
         }
+    }
+    CompassCalibrationService *const calibration =
+        LinkManager::instance()
+        ? LinkManager::instance()->compassCalibrationService() : nullptr;
+    if (!calibration || !calibration->motorMayBeActive()) {
+        m_backstage->resetPage(kCompassMotor);
     }
     m_backstage->setAutomaticSelectionEnabled(true);
     if (restoreSelection && m_connected
@@ -3268,6 +3370,108 @@ QWidget *SetupView::createCompassPage(QWidget *parent)
                 &QGCUASParamManager::parameterListLoadCanceled,
                 page, &ConfigCompassView::refreshCanceled);
     }
+    return page;
+}
+
+QWidget *SetupView::createCompassMotPage(QWidget *parent)
+{
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    CompassCalibrationService *const calibration = links
+        ? links->compassCalibrationService() : nullptr;
+    const VehicleTargetLease expectedTarget = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const QPointer<UASInterface> expectedUas(m_uas);
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+    const QPointer<LinkInterface> expectedLink(
+        links && expectedTarget.isValid()
+            ? links->getLink(expectedTarget.endpoint.linkId) : nullptr);
+
+    auto *page = new ConfigCompassMotView(parent);
+    page->setCalibrationContext(calibration, expectedTarget);
+    page->setArmed(expectedUas && expectedUas->isArmed());
+    page->setParameterSnapshotReady(
+        expectedManager && expectedManager->parameterListReady());
+
+    const bool supported = expectedUas
+        && firmwareFamily(expectedUas) == ParameterFirmwareFamily::ArduCopter
+        && expectedUas->getSystemType() != MAV_TYPE_HELICOPTER;
+    page->setSupportedVehicle(
+        supported,
+        supported ? QString() : tr(
+            "Compass/Motor calibration is available only for ArduCopter "
+            "multirotors; Rover uses param6 for a different calibration and "
+            "traditional helicopters are unsupported."));
+
+    const auto targetIsCurrent =
+        [this, targets, expectedTarget, expectedUas,
+         expectedManager, expectedLink]() {
+        return expectedTarget.isValid() && targets && expectedUas
+            && expectedManager && expectedLink
+            && m_uas == expectedUas
+            && m_parameterManager == expectedManager
+            && expectedUas->getUASID()
+                == expectedTarget.endpoint.systemId
+            && targets->isCurrentTarget(
+                expectedTarget.endpoint.linkId,
+                expectedTarget.endpoint.systemId,
+                expectedTarget.endpoint.componentId,
+                expectedTarget.generation);
+    };
+    const auto syncConnected = [page, targetIsCurrent, expectedLink]() {
+        page->setConnected(targetIsCurrent() && expectedLink
+                           && expectedLink->isConnected());
+    };
+    syncConnected();
+
+    connect(this, &SetupView::connectionStateChanged,
+            page, [syncConnected](bool) { syncConnected(); });
+    if (expectedLink) {
+        connect(expectedLink,
+                QOverload<bool>::of(&LinkInterface::connected),
+                page, [syncConnected](bool) { syncConnected(); });
+    }
+    if (expectedUas) {
+        connect(expectedUas,
+                QOverload<bool>::of(&UASInterface::armingChanged),
+                page, &ConfigCompassMotView::setArmed);
+    }
+    if (expectedManager) {
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page, &ConfigCompassMotView::setParameterSnapshotReady);
+    }
+
+    connect(page, &ConfigCompassMotView::calibrationFinished,
+            page,
+            [targetIsCurrent, expectedManager, expectedComponent =
+                 expectedTarget.endpoint.componentId](
+                    const VehicleTargetLease &) {
+        if (!targetIsCurrent() || !expectedManager) {
+            return;
+        }
+        const QStringList savedParameters = {
+            QStringLiteral("COMPASS_MOTCT"),
+            QStringLiteral("COMPASS_MOT_X"),
+            QStringLiteral("COMPASS_MOT_Y"),
+            QStringLiteral("COMPASS_MOT_Z"),
+            QStringLiteral("COMPASS_MOT2_X"),
+            QStringLiteral("COMPASS_MOT2_Y"),
+            QStringLiteral("COMPASS_MOT2_Z"),
+            QStringLiteral("COMPASS_MOT3_X"),
+            QStringLiteral("COMPASS_MOT3_Y"),
+            QStringLiteral("COMPASS_MOT3_Z")
+        };
+        const QList<QString> available =
+            expectedManager->getParameterNames(expectedComponent);
+        for (const QString &name : savedParameters) {
+            if (available.contains(name)) {
+                expectedManager->requestParameterUpdate(
+                    expectedComponent, name);
+            }
+        }
+    });
     return page;
 }
 

@@ -19,6 +19,7 @@
 #include "GAudioOutput.h"
 #include "QGCMAVLink.h"
 #include "LinkManager.h"
+#include "comm/CompassCalibrationService.h"
 #include "MainWindow.h"
 #include"QGCJSBSimLink.h"
 
@@ -2231,6 +2232,14 @@ void UAS::sendHeartbeat()
 void UAS::sendMessage(LinkInterface* link, mavlink_message_t message)
 {
     if(!link) return;
+    CompassCalibrationService *const compass = LinkManager::instance()
+        ? LinkManager::instance()->compassCalibrationService() : nullptr;
+    if (compass
+        && compass->blocksLegacyCalibrationMessage(link->getId(), message)) {
+        QLOG_ERROR() << "Blocked legacy calibration traffic on a link owned "
+                        "by active Compass/Motor calibration:" << message.msgid;
+        return;
+    }
     // Create buffer
     uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
     // Write message into buffer, prepending start sign

@@ -165,7 +165,8 @@ struct CalibrationHarness {
           frames.append(bytes);
           return true;
         }),
-        commands(&targets, &transmitter), service(&targets, &commands) {
+        commands(&targets, &transmitter),
+        service(&targets, &commands, &transmitter) {
     targets.observeEndpoint(calibrationEndpoint(), true);
   }
 

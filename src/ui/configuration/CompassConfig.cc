@@ -56,8 +56,8 @@ CompassConfig::CompassConfig(QWidget *parent) : AP2ConfigWidget(parent),
 
     const QString calibrationUnavailable = tr(
         "Unavailable in the legacy page: this calibration path is not "
-        "isolated to the selected vehicle. Use the forthcoming native "
-        "Compass page.");
+        "isolated to the selected vehicle. Use the native Compass or "
+        "Compass/Motor Calib page in Setup.");
     ui.liveCalibrationButton->setEnabled(false);
     ui.liveCalibrationButton->setToolTip(calibrationUnavailable);
     ui.onboardCalibrationButton->setEnabled(false);

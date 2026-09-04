@@ -19,29 +19,29 @@ sections.
 |---|---:|---:|---:|---:|
 | Ungrouped | 4 | 1 | 0 | 0 |
 | Mandatory Hardware | 16 | 16 | 1 | 1 |
-| Optional Hardware | 26 | 19 | 1 | 1 |
+| Optional Hardware | 26 | 20 | 1 | 1 |
 | Advanced | 7 | 6 | 1 | 1 |
-| **Total** | **53** | **42** | **3** | **3** |
+| **Total** | **53** | **43** | **3** | **3** |
 
 Thus MP10 registers 56 potential navigation entries when group headings are
-included. Qt registers 45: 42 page factories plus the same three group
+included. Qt registers 46: 43 page factories plus the same three group
 headings. Every current Qt page registration has a concrete factory. Counts
 alone do not imply parity because several factories still wrap legacy APM
 Planner widgets rather than the corresponding MP10 implementation.
 
 ## Missing MP10 pages
 
-Qt is missing 12 direct MP10 pages:
+Qt is missing 11 direct MP10 pages:
 
 - Ungrouped: `Install Firmware Legacy`, `Secure`, and
   `Secure (Bootloader Keys)`.
-- Optional Hardware: `CubeID Update`, `NV Modem`, `Joystick`,
-  `Compass/Motor Calib`, `PX4Flow`, `Antenna Tracker`, and `FFT Setup`.
+- Optional Hardware: `CubeID Update`, `NV Modem`, `Joystick`, `PX4Flow`,
+  `Antenna Tracker`, and `FFT Setup`.
 - Advanced: `Onboard Lua REPL` and `Local Script REPL`.
 
 Qt also has one intentional additional page, `QML Plugins`. It is the useful
 user-facing manager for the fresh port's trusted QML extension system and must
-remain. The arithmetic is therefore `53 - 12 + 1 = 42` Qt pages.
+remain. The arithmetic is therefore `53 - 11 + 1 = 43` Qt pages.
 
 ## Retained useful legacy modules
 
@@ -69,15 +69,24 @@ an application-owned pinned-target onboard and Large Vehicle calibration
 service. Start/Accept/Cancel/fixed-yaw are ACK-gated, multi-compass completion
 waits for the stable reported mask, and ambiguous command outcomes cannot be
 retried on the same generation. `Calibrate from Log` alone stays explicitly
-disabled until the separate OfflineMagFit workflow is ported. Range Finder
+disabled until the separate OfflineMagFit workflow is ported. The dedicated
+`Compass/Motor Calib` route now replaces the disabled legacy dialog with an
+application-owned exact-target state machine. It matches the MP10 start and
+two-frame Finish wire protocol, keeps Finish reachable while firmware has the
+motor outputs armed, filters values and logs by pinned physical link and
+endpoint, and adds ordered point-to-point transport, single-autopilot,
+disarmed, vehicle-family and default-Cancel propeller safety gates. Listening
+UDP, UDP client, simulation and unknown transports are rejected; MAVLink 1 is
+supported on a dedicated Serial/TCP link, with terminal firmware text required
+because its ACK has no target extensions. Range Finder
 supports one old `RNGFND_*` instance, Airspeed
 exposes only the old enable/use/pin choices, Optical Flow is only a
 `FLOW_ENABLE` checkbox, and Camera Gimbal is the old single `MNT_*` surface.
 Those four pages use parameter families that are obsolete on many modern 4.x
 vehicles, so they should be explicitly labelled `(Legacy)` and shown only when
-their legacy parameters exist. Existing Joystick and Compass/Motor code may
-seed the missing direct routes after ownership and lifecycle review, but the
-old CompassMot dialog is not an active SETUP route or a safe substitute.
+their legacy parameters exist. Existing Joystick code may seed its missing
+direct route after ownership and lifecycle review. The old CompassMot dialog
+remains inactive source and is not a safe substitute for the native page.
 
 Retention does not permit a misleading replacement. A legacy module may be an
 additional clearly named route, or a temporary partial implementation of the
@@ -100,15 +109,16 @@ MP10's `IsHeli()` checks the obsolete `H_SWASH_TYPE` even for this 4.0+ page,
 which would hide it from current-only vehicles and collide with the separate
 legacy CONFIG editor.
 
-Among pages common to both applications, the active inversion is
-`DroneCAN/UAVCAN`:
-MP10 places it immediately after `Battery Monitor 2`, while Qt places it after
-both Antenna Tracker pages. The tracker pages correctly precede `HW CAN` in
-both. Qt now has one shared JSON `DisplayViewProfileService`. It preserves all
-35 MP10 SETUP feature flags; 30 currently gate corresponding existing
-factories, including the independent CONFIG `displayOSD` versus SETUP
-`displayOsd` distinction, CAN, tracker and Terminal flags. The five dormant
-flags belong to the missing Compass/Motor, FFT, Joystick, PX4Flow and REPL
+Among pages common to both applications, `DroneCAN/UAVCAN` now follows
+`Battery Monitor 2`, and the new `Compass/Motor Calib` route follows DroneCAN
+and precedes `Range Finder`; this preserves their MP10 relative order while
+the intervening Joystick route remains missing. The tracker pages correctly
+precede `HW CAN` in both. Qt now has one shared JSON
+`DisplayViewProfileService`. It preserves all 35 MP10 SETUP feature flags; 31
+currently gate corresponding existing factories, including the newly active
+`displayCompassMotorCalib` and the independent CONFIG `displayOSD` versus SETUP
+`displayOsd` distinction, CAN, tracker and Terminal flags. The four dormant
+flags belong to the missing FFT, Joystick, PX4Flow and REPL
 routes. Active gates compose with connection and conservative vehicle-family
 checks; they never make a missing page appear.
 Useful Qt-only `QML Plugins` and Advanced utilities without a reference feature
@@ -129,7 +139,7 @@ navigation case the SETUP click/reset test must expose.
 
 The required navigation regression test must lock:
 
-- the 42 Qt page IDs and three group IDs in production order;
+- the 43 Qt page IDs and three group IDs in production order;
 - a non-null concrete widget after activating every visible page;
 - offline, connected, partial-parameter and advanced-mode visibility;
 - Copter, Plane, Rover, Heli and tracker profile transitions;

@@ -4,6 +4,8 @@
 #include "VehicleEndpoint.h"
 
 #include <QList>
+#include <QElapsedTimer>
+#include <QHash>
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
@@ -49,6 +51,13 @@ public:
     bool contains(int linkId, int systemId, int componentId) const;
     bool observeEndpoint(const VehicleEndpoint &endpoint,
                          bool selectIfUnset = false);
+    void observeHeartbeat(const VehicleEndpoint &endpoint, bool armed,
+                          int autopilot, int vehicleType);
+    bool hasFreshHeartbeat(const VehicleTargetLease &lease,
+                           int maximumAgeMs) const;
+    bool heartbeatArmed(const VehicleTargetLease &lease) const;
+    int heartbeatAutopilot(const VehicleTargetLease &lease) const;
+    int heartbeatVehicleType(const VehicleTargetLease &lease) const;
     bool removeLink(int linkId);
     void clear();
 
@@ -79,6 +88,14 @@ private:
     void notifyTargetChanged();
 
     QList<VehicleEndpoint> m_endpoints;
+    struct HeartbeatSnapshot {
+        qint64 observedMs = 0;
+        bool armed = false;
+        int autopilot = -1;
+        int vehicleType = -1;
+    };
+    QHash<VehicleEndpoint, HeartbeatSnapshot> m_heartbeats;
+    QElapsedTimer m_monotonicClock;
     VehicleEndpoint m_currentIdentity;
     quint64 m_revision = 0;
     quint64 m_targetGeneration = 0;

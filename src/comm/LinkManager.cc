@@ -120,7 +120,8 @@ LinkManager::LinkManager(QObject *parent) :
     m_vehicleCommandService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
     m_compassCalibrationService = new CompassCalibrationService(
-        m_vehicleTargetManager, m_vehicleCommandService, this);
+        m_vehicleTargetManager, m_vehicleCommandService,
+        m_exactLinkTransmitter, this);
     m_compassCalibrationService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
     m_parameterService = new ParameterService(
@@ -654,6 +655,17 @@ void LinkManager::addLink(LinkInterface *link)
         return;
     }
     m_connectionMap.insert(link->getId(),link);
+    // UDPLink is a known listening/broadcast transport: every outgoing
+    // datagram is copied to every configured or learned peer. CompassMot's
+    // stop ACK is not target-filtered by ArduCopter, so it is never eligible.
+    // Ordered Serial/TCP streams are merely eligible: the safety UI separately
+    // requires the operator to confirm this instance is a dedicated direct
+    // connection rather than a router or radio network.
+    const LinkInterface::LinkType linkType = link->getLinkType();
+    m_exactLinkTransmitter->setMotorStopLinkEligible(
+        link->getId(),
+        linkType == LinkInterface::SERIAL_LINK
+            || linkType == LinkInterface::TCP_LINK);
     emit newLink(link->getId());
 //    saveSettings();
 }
@@ -698,23 +710,17 @@ void LinkManager::removeLink(int linkId)
     if (!link) {
         return;
     }
-    // Give MAVFTP one bounded best-effort Terminate/Reset while the exact
-    // target and physical-link lookup are still valid.
-    m_mavFtpService->forgetLink(linkId);
-    m_compassCalibrationService->forgetLink(linkId);
+    // Give active exact-target services their final bounded write opportunity
+    // while the physical-link lookup is still valid, then invalidate every
+    // session before the link object can be reused or destroyed.
+    invalidateLinkSession(linkId);
 
     // Fail exact-link lookups and detach ingress before the worker begins
     // shutting down. Deleting a still-running QThread is undefined and was a
     // second shutdown-crash path when a connection was removed at runtime.
     m_connectionMap.remove(linkId);
     m_startupUdpLinkIds.remove(linkId);
-    m_vehicleTargetManager->removeLink(linkId);
-    m_vehicleCommandService->forgetLink(linkId);
-    m_parameterService->forgetLink(linkId);
-    m_exactLinkTransmitter->forgetLink(linkId);
-    m_radioStatusMonitor->forgetLink(linkId);
     if (m_mavlinkProtocol) {
-        m_mavlinkProtocol->forgetLink(linkId);
         disconnect(link,
                    SIGNAL(bytesReceived(LinkInterface*,QByteArray)),
                    m_mavlinkProtocol.data(),
@@ -873,6 +879,14 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
         // port. Globally we only do so while no explicit target exists.
         m_vehicleTargetManager->observeEndpoint(
             endpoint, message.compid != MAV_COMP_ID_MISSIONPLANNER);
+        if (message.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
+            mavlink_heartbeat_t heartbeat{};
+            mavlink_msg_heartbeat_decode(&message, &heartbeat);
+            m_vehicleTargetManager->observeHeartbeat(
+                endpoint,
+                (heartbeat.base_mode & MAV_MODE_FLAG_SAFETY_ARMED) != 0,
+                heartbeat.autopilot, heartbeat.type);
+        }
     }
     emit messageReceived(link,message);
 }
@@ -1045,13 +1059,46 @@ void LinkManager::protocolStatusMessageRec(QString title,QString text)
 
 void LinkManager::linkConnected(LinkInterface* link)
 {
+    if (!link || m_connectionMap.value(link->getId(), nullptr) != link) {
+        return;
+    }
+    const LinkInterface::LinkType linkType = link->getLinkType();
+    m_exactLinkTransmitter->setMotorStopLinkEligible(
+        link->getId(), linkType == LinkInterface::SERIAL_LINK
+            || linkType == LinkInterface::TCP_LINK);
     emit linkChanged(link->getId());
 }
 
 void LinkManager::linkDisonnected(LinkInterface* link)
 {
+    if (!link) {
+        return;
+    }
     QLOG_DEBUG() << "LinkManager::linkDisonnected: " << link->getName() << link->getId();
+    if (m_connectionMap.value(link->getId(), nullptr) == link) {
+        // A live LinkInterface may reconnect under the same integer id. Treat
+        // every physical disconnect as an epoch boundary immediately: an old
+        // heartbeat/lease must never authorize commands to the next peer.
+        invalidateLinkSession(link->getId());
+    }
     emit linkChanged(link->getId());
+}
+
+void LinkManager::invalidateLinkSession(int linkId)
+{
+    if (linkId < 0) {
+        return;
+    }
+    m_mavFtpService->forgetLink(linkId);
+    m_compassCalibrationService->forgetLink(linkId);
+    m_vehicleTargetManager->removeLink(linkId);
+    m_vehicleCommandService->forgetLink(linkId);
+    m_parameterService->forgetLink(linkId);
+    m_exactLinkTransmitter->forgetLink(linkId);
+    m_radioStatusMonitor->forgetLink(linkId);
+    if (m_mavlinkProtocol) {
+        m_mavlinkProtocol->forgetLink(linkId);
+    }
 }
 
 void LinkManager::linkErrorRec(LinkInterface *link,QString errorstring)

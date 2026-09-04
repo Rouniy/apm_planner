@@ -811,6 +811,8 @@ set(SOURCES
     src/ui/configuration/ConfigCompassView.h
     src/ui/configuration/ConfigCompassViewModel.cpp
     src/ui/configuration/ConfigCompassViewModel.h
+    src/ui/configuration/ConfigCompassMotView.cpp
+    src/ui/configuration/ConfigCompassMotView.h
     src/ui/configuration/ConfigFrameClassTypeView.cpp
     src/ui/configuration/ConfigFrameClassTypeView.h
     src/ui/configuration/ConfigFrameClassTypeViewModel.cpp
@@ -2560,6 +2562,45 @@ if(BUILD_TESTING)
     )
     add_test(NAME configcompassview_tests COMMAND configcompassview_tests)
     set_tests_properties(configcompassview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configcompassmotview_tests
+        tests/test_configcompassmotview.cpp
+        src/comm/CompassCalibrationService.cpp
+        src/comm/CompassCalibrationService.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/configuration/ConfigCompassMotView.cpp
+        src/ui/configuration/ConfigCompassMotView.h
+        src/ui/qcustomplot.cpp
+        src/ui/qcustomplot.h
+    )
+    target_include_directories(configcompassmotview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(configcompassmotview_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::PrintSupport
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configcompassmotview_tests
+        COMMAND configcompassmotview_tests)
+    set_tests_properties(configcompassmotview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

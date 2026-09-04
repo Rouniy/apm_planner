@@ -158,6 +158,7 @@ private slots:
 private:
     void loadSettings();
     void saveSettings();
+    void invalidateLinkSession(int linkId);
     void syncActiveUasToTarget();
     void syncTargetToActiveUas(UASInterface *uas);
 

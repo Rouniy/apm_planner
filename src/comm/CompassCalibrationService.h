@@ -7,7 +7,9 @@
 #include <QPointer>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
+#include <QVector>
 
 #include <array>
 
@@ -15,6 +17,7 @@
 
 class VehicleCommandService;
 class VehicleTargetManager;
+class ExactLinkTransmitter;
 
 /**
  * Exact-target onboard compass-calibration state machine.
@@ -28,6 +31,15 @@ class CompassCalibrationService final : public QObject
     Q_OBJECT
 
 public:
+    struct MotorSample {
+        double throttlePercent = 0.0;
+        double currentAmps = 0.0;
+        int interferencePercent = 0;
+        double compensationX = 0.0;
+        double compensationY = 0.0;
+        double compensationZ = 0.0;
+    };
+
     enum class State {
         Idle,
         StartPending,
@@ -38,6 +50,14 @@ public:
         FixedYawPending,
         CompletedNeedsReboot,
         FixedYawCompleted,
+        MotorStartPending,
+        MotorRunning,
+        MotorStopPending,
+        MotorStopSettling,
+        MotorSucceeded,
+        MotorFailed,
+        MotorCompletedUnverified,
+        MotorOutcomeUncertain,
         Failed,
         OutcomeUncertain
     };
@@ -48,6 +68,10 @@ public:
         Busy,
         InvalidTarget,
         Armed,
+        UnsupportedVehicle,
+        HeartbeatStale,
+        UnsafeTransport,
+        SharedLinkUnsafe,
         InvalidHeading,
         RebootRequired,
         InvalidState,
@@ -60,9 +84,15 @@ public:
     static constexpr int DefaultCommandTimeoutMs = 10000;
     static constexpr int DefaultActivityTimeoutMs = 30000;
     static constexpr int DefaultTotalTimeoutMs = 10 * 60 * 1000;
+    static constexpr int DefaultMotorActivityTimeoutMs = 3000;
+    static constexpr int DefaultMotorHeartbeatTimeoutMs = 3000;
+    static constexpr int DefaultMotorTotalTimeoutMs = 10 * 60 * 1000;
+    static constexpr int DefaultMotorSettleTimeoutMs = 1500;
+    static constexpr int MaximumMotorSamples = 600;
 
     CompassCalibrationService(VehicleTargetManager *targetManager,
                               VehicleCommandService *commandService,
+                              ExactLinkTransmitter *transmitter,
                               QObject *parent = nullptr);
     ~CompassCalibrationService() override;
 
@@ -70,6 +100,10 @@ public:
     void setTimeoutsForTesting(int commandTimeoutMs,
                                int activityTimeoutMs,
                                int totalTimeoutMs);
+    void setMotorTimeoutsForTesting(int activityTimeoutMs,
+                                    int totalTimeoutMs,
+                                    int settleTimeoutMs);
+    void setMotorHeartbeatTimeoutForTesting(int timeoutMs);
 
     State state() const { return m_state; }
     int progress(int compassIndex) const;
@@ -84,12 +118,27 @@ public:
     bool isOnboardActive() const;
     bool canCancel() const;
     bool isBusy() const;
+    bool isMotorActive() const;
+    bool canStopMotor() const;
+    bool canAcknowledgeMotorPowerDisconnected() const;
+    bool motorMayBeActive() const { return m_motorMayBeActive; }
+    bool motorHasSample() const { return !m_motorSamples.isEmpty(); }
+    MotorSample latestMotorSample() const;
+    QVector<MotorSample> motorSamples() const { return m_motorSamples; }
+    QString motorLog() const { return m_motorLog.join(QLatin1Char('\n')); }
+    bool supportsMotorCalibration(const VehicleTargetLease &lease) const;
+    bool blocksLegacyCalibrationMessage(
+        int linkId, const mavlink_message_t &message) const;
 
     RequestResult start(const VehicleTargetLease &lease, bool armed);
     RequestResult accept(bool armed);
     RequestResult cancel();
     RequestResult fixedYaw(const VehicleTargetLease &lease,
                            double headingDegrees, bool armed);
+    RequestResult startMotor(const VehicleTargetLease &lease,
+                             bool armed, bool dedicatedLinkConfirmed);
+    RequestResult stopMotor();
+    RequestResult acknowledgeMotorPowerDisconnected();
 
     void observeMessage(int linkId, const mavlink_message_t &message);
     void forgetLink(int linkId);
@@ -100,6 +149,8 @@ public:
 signals:
     /** Any getter-visible state changed. Safe for a UI to refresh atomically. */
     void changed();
+    /** Application-level warning: a CompassMot stop could not be proven. */
+    void motorSafetyWarning(const QString &message);
 
 private:
     enum class CommandPurpose {
@@ -129,6 +180,29 @@ private:
     void handleActivityTimeout();
     void handleTotalTimeout();
     void handleTargetGenerationChanged(qulonglong generation);
+    void handleEndpointRegistryChanged();
+    void handleMotorMessage(int linkId, const mavlink_message_t &message);
+    void handleMotorAck(const mavlink_message_t &message);
+    void handleMotorStatus(const mavlink_message_t &message);
+    void handleMotorStatusText(const mavlink_message_t &message);
+    RequestResult beginMotorStop(const QString &reason);
+    bool sendMotorStopFrame();
+    void attemptTeardownMotorStop();
+    void scheduleSecondMotorStopFrame(quint64 token);
+    void handleMotorActivityTimeout();
+    void handleMotorTotalTimeout();
+    void handleMotorSettleTimeout();
+    void finishMotorFromEvidence(bool allowMissingFinalAck = false);
+    void finishMotorUnverified();
+    void transitionMotorToUncertain(const QString &reason);
+    void appendMotorLog(const QString &line);
+    bool acceptMotorEnvelope(int linkId,
+                             const mavlink_message_t &message) const;
+    bool linkHasSingleAutopilotTarget(
+        const VehicleTargetLease &lease) const;
+    bool hasSupportedMotorHeartbeat(
+        const VehicleTargetLease &lease) const;
+    static bool isMotorState(State state);
     void transitionToFailed(const QString &reason,
                             bool preserveOnboardRecovery = false);
     void transitionToUncertain(const QString &reason);
@@ -142,6 +216,7 @@ private:
 
     QPointer<VehicleTargetManager> m_targetManager;
     QPointer<VehicleCommandService> m_commandService;
+    QPointer<ExactLinkTransmitter> m_transmitter;
     VehicleTargetLease m_lease;
     State m_state = State::Idle;
     State m_stateBeforeCommand = State::Idle;
@@ -161,15 +236,34 @@ private:
     QTimer m_commandTimer;
     QTimer m_activityTimer;
     QTimer m_totalTimer;
+    QTimer m_motorSettleTimer;
     int m_commandTimeoutMs = DefaultCommandTimeoutMs;
     int m_activityTimeoutMs = DefaultActivityTimeoutMs;
     int m_totalTimeoutMs = DefaultTotalTimeoutMs;
+    int m_motorActivityTimeoutMs = DefaultMotorActivityTimeoutMs;
+    int m_motorHeartbeatTimeoutMs = DefaultMotorHeartbeatTimeoutMs;
+    int m_motorTotalTimeoutMs = DefaultMotorTotalTimeoutMs;
+    int m_motorSettleTimeoutMs = DefaultMotorSettleTimeoutMs;
     bool m_startTelemetryBoundary = false;
     bool m_onboardRecoveryAvailable = false;
     bool m_cancelAttempted = false;
     bool m_shuttingDown = false;
+    QVector<MotorSample> m_motorSamples;
+    QStringList m_motorLog;
+    bool m_motorMayBeActive = false;
+    bool m_motorStartAckSeen = false;
+    bool m_motorStartWireAckSeen = false;
+    bool m_motorStatusSeen = false;
+    bool m_motorStopAttempted = false;
+    bool m_motorSecondStopPending = false;
+    bool m_motorAnyStopFrameSent = false;
+    bool m_motorRejectedStopAckSeen = false;
+    bool m_motorFinalAckSeen = false;
+    int m_motorTerminalEvidence = -1;
+    QString m_motorTerminalLine;
     QSet<VehicleEndpoint> m_rebootTargets;
-    QSet<quint64> m_poisonedGenerations;
+    QSet<VehicleEndpoint> m_poisonedEndpoints;
+    QSet<VehicleEndpoint> m_motorEpochPoisonedEndpoints;
 };
 
 Q_DECLARE_METATYPE(CompassCalibrationService::State)

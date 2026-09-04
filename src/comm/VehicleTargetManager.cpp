@@ -5,8 +5,55 @@
 VehicleTargetManager::VehicleTargetManager(QObject *parent)
     : QObject(parent)
 {
+    m_monotonicClock.start();
     qRegisterMetaType<VehicleEndpoint>("VehicleEndpoint");
     qRegisterMetaType<VehicleTargetLease>("VehicleTargetLease");
+}
+
+void VehicleTargetManager::observeHeartbeat(
+    const VehicleEndpoint &endpoint, bool armed,
+    int autopilot, int vehicleType)
+{
+    if (endpoint.isValid()) {
+        m_heartbeats.insert(endpoint,
+                            HeartbeatSnapshot{m_monotonicClock.elapsed(), armed,
+                                              autopilot, vehicleType});
+    }
+}
+
+bool VehicleTargetManager::hasFreshHeartbeat(
+    const VehicleTargetLease &lease, int maximumAgeMs) const
+{
+    if (!lease.isValid() || maximumAgeMs < 1) {
+        return false;
+    }
+    const auto observed = m_heartbeats.constFind(lease.endpoint);
+    return observed != m_heartbeats.constEnd()
+        && m_monotonicClock.elapsed() - observed->observedMs <= maximumAgeMs;
+}
+
+bool VehicleTargetManager::heartbeatArmed(
+    const VehicleTargetLease &lease) const
+{
+    const auto observed = m_heartbeats.constFind(lease.endpoint);
+    return lease.isValid() && observed != m_heartbeats.constEnd()
+        && observed->armed;
+}
+
+int VehicleTargetManager::heartbeatAutopilot(
+    const VehicleTargetLease &lease) const
+{
+    const auto observed = m_heartbeats.constFind(lease.endpoint);
+    return lease.isValid() && observed != m_heartbeats.constEnd()
+        ? observed->autopilot : -1;
+}
+
+int VehicleTargetManager::heartbeatVehicleType(
+    const VehicleTargetLease &lease) const
+{
+    const auto observed = m_heartbeats.constFind(lease.endpoint);
+    return lease.isValid() && observed != m_heartbeats.constEnd()
+        ? observed->vehicleType : -1;
 }
 
 bool VehicleTargetManager::isVisibleDiscoveryMessage(
@@ -119,6 +166,7 @@ bool VehicleTargetManager::removeLink(int linkId)
         selectedRemoved = selectedRemoved
             || m_currentIdentity.sameIdentity(m_endpoints.at(index));
         removed.prepend(m_endpoints.at(index));
+        m_heartbeats.remove(m_endpoints.at(index));
         m_endpoints.removeAt(index);
         anyRemoved = true;
     }
@@ -152,6 +200,7 @@ void VehicleTargetManager::clear()
     }
     if (!m_endpoints.isEmpty()) {
         m_endpoints.clear();
+        m_heartbeats.clear();
         ++m_revision;
         emit revisionChanged();
         emit endpointsReset();

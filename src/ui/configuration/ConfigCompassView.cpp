@@ -694,6 +694,22 @@ QString ConfigCompassView::calibrationStateText(int value) {
     return tr("Calibration saved; reboot required");
   case State::FixedYawCompleted:
     return tr("Fixed-yaw calibration complete");
+  case State::MotorStartPending:
+    return tr("Compass/Motor start pending — motor outputs may be active");
+  case State::MotorRunning:
+    return tr("Compass/Motor running — motor outputs are active");
+  case State::MotorStopPending:
+    return tr("Compass/Motor stop pending");
+  case State::MotorStopSettling:
+    return tr("Compass/Motor stopped; draining terminal messages");
+  case State::MotorSucceeded:
+    return tr("Compass/Motor calibration succeeded");
+  case State::MotorFailed:
+    return tr("Compass/Motor calibration failed");
+  case State::MotorCompletedUnverified:
+    return tr("Compass/Motor completion is unverified");
+  case State::MotorOutcomeUncertain:
+    return tr("CRITICAL: Compass/Motor stop unconfirmed");
   case State::Failed:
     return tr("Calibration failed");
   case State::OutcomeUncertain:
@@ -722,8 +738,21 @@ void ConfigCompassView::syncCalibrationState() {
     targetText = tr("No exact vehicle target is selected.");
   }
 
+  const bool globalMotorDanger = m_calibrationService &&
+                                 m_calibrationService->motorMayBeActive();
   if (!m_calibrationService) {
     targetText += tr(" Compass calibration service is unavailable.");
+  } else if (globalMotorDanger) {
+    const VehicleTargetLease motorTarget =
+        m_calibrationService->activeTarget();
+    targetText += tr(" CRITICAL: Compass/Motor owns link %1, system %2, "
+                     "component %3; motor outputs may still be active. State: "
+                     "%4.")
+                      .arg(motorTarget.endpoint.linkId)
+                      .arg(motorTarget.endpoint.systemId)
+                      .arg(motorTarget.endpoint.componentId)
+                      .arg(calibrationStateText(
+                          static_cast<int>(m_calibrationService->state())));
   } else if (!targetMatches) {
     targetText +=
         tr(" The calibration service is bound to a different exact target.");
@@ -777,7 +806,7 @@ void ConfigCompassView::syncCalibrationState() {
   }
 
   QString result;
-  if (showServiceState) {
+  if (showServiceState || globalMotorDanger) {
     result = m_calibrationService->resultText();
   }
   if (!m_calibrationRequestOutcome.isEmpty()) {

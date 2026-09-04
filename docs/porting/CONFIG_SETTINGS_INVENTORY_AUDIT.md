@@ -37,6 +37,22 @@ Copter-only legacy editor. Existing APM
 Planner pages remain only where they provide a non-empty same-domain workflow;
 their Legacy/partial classification is not a parity claim.
 
+Factory coverage is therefore 15/15, but functional parity is not. The current
+truthful route policy deliberately narrows `Standard Params` and `Advanced
+Params` to Copter/Heli/Plane/Rover, `GeoFence` to Copter/Heli and `Extended
+Tuning` to Copter/Heli because those retained factories do not implement the
+broader MP10 vehicle surfaces. The Plane route would be named `QP Extended
+Tuning` by `ConfigRouteProfile`, but the production factory is still the
+hard-coded Copter `Extended Tuning` widget and is hidden for Plane. These are
+recorded implementation gaps, not missing navigation factories.
+
+The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
+all 16 MP10 actions are present, six open working shared tools and ten are
+visibly disabled. In particular, `Warning Manager`, `FFT` and `Spectrogram`
+are not yet ported; `FFT Setup` is also still a missing direct SETUP page. They
+must not be counted as working merely because every direct CONFIG route has a
+factory.
+
 The legacy `Heli Setup` route is capability-gated by the exact MP10
 `H_SWASH_TYPE` marker; current `H_SW_TYPE` vehicles use the separate native
 SETUP `Heli Setup (4.0+)` page and are never collapsed into the binary CCPM/H1
@@ -86,11 +102,19 @@ file paths and seven-rate telemetry editor remain reachable through an
 explicitly named Legacy dialog; dead reconnect/donate/titlebar/low-power and
 split-brain MAVLink identity controls are hidden there.
 
+The next CONFIG vertical slice is the native `Flight Modes` page. The retained
+legacy page has six selectors and PWM highlighting, but Plane/Rover mode 6 is
+disabled, Copter exposes only `SIMPLE`, the change detector compares the mode-1
+parameter against the SIMPLE bitmask, and MP10's current mode, numeric current
+PWM, `SUPER_SIMPLE` controls and help route are absent. The replacement should
+use the application exact-target parameter service and retain the useful old
+page only until the six-mode/Simple/Super Simple/live-PWM workflow is complete.
+
 ## SETUP cross-check
 
 The separate `SETUP_INVENTORY_AUDIT.md` remains the count baseline: both
 applications have four logical sections (ungrouped plus three named groups).
 Mission Planner 10 registers 53 pages plus three group headings, or 56
-navigation entries. Qt registers 42 concrete pages plus the same three group
-headings, or 45 entries. Qt is missing 12 reference pages and intentionally
+navigation entries. Qt registers 43 concrete pages plus the same three group
+headings, or 46 entries. Qt is missing 11 reference pages and intentionally
 keeps one useful extra page, `QML Plugins`.

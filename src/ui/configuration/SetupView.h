@@ -15,6 +15,7 @@
 class AntennaTrackerUIViewModel;
 class BackstageView;
 class ConfigCompassView;
+class ConfigCompassMotView;
 class ConfigGpsInjectView;
 class ConfigDroneCanView;
 class DroneCanMavlinkTransport;
@@ -86,6 +87,7 @@ private:
     QWidget *createEscCalibrationPage(QWidget *parent);
     QWidget *createHeliSetup4Page(QWidget *parent);
     QWidget *createCompassPage(QWidget *parent);
+    QWidget *createCompassMotPage(QWidget *parent);
     QWidget *createFrameClassTypePage(QWidget *parent);
     QWidget *createFrameTypeLegacyPage(QWidget *parent);
     QWidget *createRadioOutputPage(QWidget *parent);
