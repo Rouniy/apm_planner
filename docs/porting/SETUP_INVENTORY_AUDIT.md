@@ -18,31 +18,30 @@ sections.
 | Logical section | MP10 pages | Qt pages | MP10 group heading | Qt group heading |
 |---|---:|---:|---:|---:|
 | Ungrouped | 4 | 1 | 0 | 0 |
-| Mandatory Hardware | 16 | 15 | 1 | 1 |
+| Mandatory Hardware | 16 | 16 | 1 | 1 |
 | Optional Hardware | 26 | 19 | 1 | 1 |
 | Advanced | 7 | 6 | 1 | 1 |
-| **Total** | **53** | **41** | **3** | **3** |
+| **Total** | **53** | **42** | **3** | **3** |
 
 Thus MP10 registers 56 potential navigation entries when group headings are
-included. Qt registers 44: 41 page factories plus the same three group
+included. Qt registers 45: 42 page factories plus the same three group
 headings. Every current Qt page registration has a concrete factory. Counts
 alone do not imply parity because several factories still wrap legacy APM
 Planner widgets rather than the corresponding MP10 implementation.
 
 ## Missing MP10 pages
 
-Qt is missing 13 direct MP10 pages:
+Qt is missing 12 direct MP10 pages:
 
 - Ungrouped: `Install Firmware Legacy`, `Secure`, and
   `Secure (Bootloader Keys)`.
-- Mandatory Hardware: the current `Compass` page.
 - Optional Hardware: `CubeID Update`, `NV Modem`, `Joystick`,
   `Compass/Motor Calib`, `PX4Flow`, `Antenna Tracker`, and `FFT Setup`.
 - Advanced: `Onboard Lua REPL` and `Local Script REPL`.
 
 Qt also has one intentional additional page, `QML Plugins`. It is the useful
 user-facing manager for the fresh port's trusted QML extension system and must
-remain. The arithmetic is therefore `53 - 13 + 1 = 41` Qt pages.
+remain. The arithmetic is therefore `53 - 12 + 1 = 42` Qt pages.
 
 ## Retained useful legacy modules
 
@@ -64,8 +63,10 @@ not an MP10 SETUP page. The old compass page is now called
 Its useful basic fields remain, while Live, Onboard and CompassMot calibration
 actions are disabled: the inherited dialogs bind the global active vehicle/link,
 the live path can zero more offsets than it reconstructs, and the onboard path
-can accept a failed result. The modern `Compass` page therefore remains a
-visible inventory gap rather than being claimed by this widget. Range Finder
+can accept a failed result. The separate native `Compass` route now supplies
+the current parameter/discovery/priority workflow with exact-target writes;
+its onboard, large-vehicle and from-log calibration surface stays present but
+explicitly disabled until a pinned-link calibration service is ported. Range Finder
 supports one old `RNGFND_*` instance, Airspeed
 exposes only the old enable/use/pin choices, Optical Flow is only a
 `FLOW_ENABLE` checkbox, and Camera Gimbal is the old single `MNT_*` surface.
@@ -87,7 +88,9 @@ legacy SETUP hardware pages remain available.
 Qt preserves the three broad groups but not the complete MP10 order. Among
 the completed direct routes, `Heli Setup (4.0+)` is now the first child of
 Mandatory Hardware before the native `Frame Type`, `Frame Type (Legacy)` and
-`Default Settings` sequence. Its five sections retain the exact
+`Default Settings` sequence. The current `Compass` route follows Accel
+Calibration and precedes the retained `Compass (Legacy)` route, matching MP10.
+The helicopter page's five sections retain the exact
 8x5 servo, 13 swashplate, 12 rotor-speed, nine governor and nine miscellaneous
 bindings. The route deliberately checks the current `H_SW_TYPE` capability;
 MP10's `IsHeli()` checks the obsolete `H_SWASH_TYPE` even for this 4.0+ page,
@@ -123,7 +126,7 @@ navigation case the SETUP click/reset test must expose.
 
 The required navigation regression test must lock:
 
-- the 41 Qt page IDs and three group IDs in production order;
+- the 42 Qt page IDs and three group IDs in production order;
 - a non-null concrete widget after activating every visible page;
 - offline, connected, partial-parameter and advanced-mode visibility;
 - Copter, Plane, Rover, Heli and tracker profile transitions;

@@ -805,6 +805,10 @@ set(SOURCES
     src/ui/configuration/ConfigTradHeli4View.h
     src/ui/configuration/ConfigTradHeli4ViewModel.cpp
     src/ui/configuration/ConfigTradHeli4ViewModel.h
+    src/ui/configuration/ConfigCompassView.cpp
+    src/ui/configuration/ConfigCompassView.h
+    src/ui/configuration/ConfigCompassViewModel.cpp
+    src/ui/configuration/ConfigCompassViewModel.h
     src/ui/configuration/ConfigFrameClassTypeView.cpp
     src/ui/configuration/ConfigFrameClassTypeView.h
     src/ui/configuration/ConfigFrameClassTypeViewModel.cpp
@@ -2485,6 +2489,65 @@ if(BUILD_TESTING)
     )
     add_test(NAME configframeviews_tests COMMAND configframeviews_tests)
     set_tests_properties(configframeviews_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configcompassviewmodel_tests
+        tests/test_configcompassviewmodel.cpp
+        src/ui/configuration/ConfigCompassViewModel.cpp
+        src/ui/configuration/ConfigCompassViewModel.h
+        src/ui/configuration/ConfigHWIDViewModel.cpp
+        src/ui/configuration/ConfigHWIDViewModel.h
+        src/ui/configuration/DeveloperToolParsers.cpp
+        src/ui/configuration/DeveloperToolParsers.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configcompassviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(configcompassviewmodel_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configcompassviewmodel_tests
+        COMMAND configcompassviewmodel_tests)
+    set_tests_properties(configcompassviewmodel_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configcompassview_tests
+        tests/test_configcompassview.cpp
+        src/ui/configuration/ConfigCompassView.cpp
+        src/ui/configuration/ConfigCompassView.h
+        src/ui/configuration/ConfigCompassViewModel.cpp
+        src/ui/configuration/ConfigCompassViewModel.h
+        src/ui/configuration/ConfigHWIDViewModel.cpp
+        src/ui/configuration/ConfigHWIDViewModel.h
+        src/ui/configuration/DeveloperToolParsers.cpp
+        src/ui/configuration/DeveloperToolParsers.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configcompassview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(configcompassview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configcompassview_tests COMMAND configcompassview_tests)
+    set_tests_properties(configcompassview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

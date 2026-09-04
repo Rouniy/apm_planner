@@ -14,6 +14,7 @@
 
 class AntennaTrackerUIViewModel;
 class BackstageView;
+class ConfigCompassView;
 class ConfigGpsInjectView;
 class ConfigDroneCanView;
 class DroneCanMavlinkTransport;
@@ -84,6 +85,7 @@ private:
     QWidget *createHWCANPage(QWidget *parent);
     QWidget *createEscCalibrationPage(QWidget *parent);
     QWidget *createHeliSetup4Page(QWidget *parent);
+    QWidget *createCompassPage(QWidget *parent);
     QWidget *createFrameClassTypePage(QWidget *parent);
     QWidget *createFrameTypeLegacyPage(QWidget *parent);
     QWidget *createRadioOutputPage(QWidget *parent);
@@ -96,6 +98,7 @@ private:
 
     BackstageView *m_backstage = nullptr;
     QPointer<ConfigGpsInjectView> m_gpsInjectPage;
+    QPointer<ConfigCompassView> m_compassPage;
     QPointer<ConfigDroneCanView> m_droneCanPage;
     QPointer<DroneCanForwardingBroker> m_droneCanBroker;
     QPointer<DroneCanMavlinkTransport> m_droneCanTransport;

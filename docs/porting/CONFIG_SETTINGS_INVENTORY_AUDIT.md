@@ -91,6 +91,6 @@ split-brain MAVLink identity controls are hidden there.
 The separate `SETUP_INVENTORY_AUDIT.md` remains the count baseline: both
 applications have four logical sections (ungrouped plus three named groups).
 Mission Planner 10 registers 53 pages plus three group headings, or 56
-navigation entries. Qt registers 41 concrete pages plus the same three group
-headings, or 44 entries. Qt is missing 13 reference pages and intentionally
+navigation entries. Qt registers 42 concrete pages plus the same three group
+headings, or 45 entries. Qt is missing 12 reference pages and intentionally
 keeps one useful extra page, `QML Plugins`.

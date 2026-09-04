@@ -13,6 +13,7 @@
 #include "ConfigADSBView.h"
 #include "ConfigAntennaTrackerView.h"
 #include "ConfigBatteryMonitoring2View.h"
+#include "ConfigCompassView.h"
 #include "ConfigDefaultSettingsView.h"
 #include "DisplayViewProfile.h"
 #include "CompassConfig.h"
@@ -45,6 +46,7 @@
 #include "comm/DroneCanMavlinkTransport.h"
 #include "comm/ExactLinkTransmitter.h"
 #include "comm/Esp8266ParameterClient.h"
+#include "comm/VehicleCommandService.h"
 #include "comm/VehicleTargetManager.h"
 #include "FailSafeConfig.h"
 #include "FlightModeConfig.h"
@@ -87,6 +89,7 @@ const QString kFrameType = QStringLiteral("ConfigFrameClassTypeView");
 const QString kFrameTypeLegacy = QStringLiteral("ConfigFrameTypeView");
 const QString kDefaultSettings = QStringLiteral("ConfigDefaultSettingsView");
 const QString kAccelCalibration = QStringLiteral("ConfigAccelCalibrationView");
+const QString kCompass = QStringLiteral("ConfigCompassView");
 const QString kCompassLegacy = QStringLiteral("ConfigCompassLegacyView");
 const QString kRadioInput = QStringLiteral("ConfigRadioInputView");
 const QString kRadioOutput = QStringLiteral("ConfigRadioOutputView");
@@ -365,6 +368,15 @@ void SetupView::buildPages()
     m_backstage->addPage(defaultSettings);
     m_backstage->addPage(makeBackstagePage<AccelCalibrationConfig>(
         kAccelCalibration, tr("Accel Calibration"), true, true));
+    BackstagePage compass;
+    compass.id = kCompass;
+    compass.header = tr("Compass");
+    compass.isSub = true;
+    compass.requiresConnection = true;
+    compass.factory = [this](QWidget *parent) {
+        return createCompassPage(parent);
+    };
+    m_backstage->addPage(compass);
     m_backstage->addPage(makeBackstagePage<CompassConfig>(
         kCompassLegacy, tr("Compass (Legacy)"), true, true));
     m_backstage->addPage(makeBackstagePage<RadioCalibrationConfig>(
@@ -893,6 +905,16 @@ void SetupView::firmwareVersionDetected(const QString &versionText)
     m_firmwareVersion = normalized;
     m_officialFirmware = official;
 
+    if (m_compassPage) {
+        const ParameterFirmwareFamily family = firmwareFamily(m_uas);
+        const QString catalogVersion = m_officialFirmware
+            ? m_firmwareVersion : QString();
+        m_compassPage->setCatalog(
+            m_metadataRepository->catalog(family, catalogVersion),
+            m_metadataRepository->catalogMatchesFirmwareVersion(
+                family, catalogVersion));
+    }
+
     const QString selectedPage = m_backstage->currentPageId();
     m_backstage->resetPage(kEscCalibration);
     m_backstage->resetPage(kDefaultSettings);
@@ -945,6 +967,9 @@ void SetupView::refreshPageVisibility()
         kDefaultSettings, copter && profile.displayFrameType);
     m_backstage->setPageVisible(
         kAccelCalibration, m_connected && profile.displayAccelCalibration);
+    m_backstage->setPageVisible(
+        kCompass,
+        m_connected && profile.displayCompassConfiguration);
     m_backstage->setPageVisible(
         kCompassLegacy,
         m_connected && profile.displayCompassConfiguration);
@@ -2948,6 +2973,296 @@ QWidget *SetupView::createEscCalibrationPage(QWidget *parent)
         connect(m_parameterManager,
                 &QGCUASParamManager::parameterListLoadCanceled,
                 page, &ConfigESCCalibrationView::refreshCanceled);
+    }
+    return page;
+}
+
+QWidget *SetupView::createCompassPage(QWidget *parent)
+{
+    const ParameterFirmwareFamily family = firmwareFamily(m_uas);
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    VehicleCommandService *const commands = links
+        ? links->vehicleCommandService() : nullptr;
+    const VehicleTargetLease expectedTarget = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const int expectedComponent = expectedTarget.isValid()
+        ? expectedTarget.endpoint.componentId : MAV_COMP_ID_AUTOPILOT1;
+    const QPointer<UASInterface> expectedUas(m_uas);
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+    const QPointer<LinkInterface> expectedLink(
+        expectedTarget.isValid() && links
+            ? links->getLink(expectedTarget.endpoint.linkId) : nullptr);
+
+    auto *page = new ConfigCompassView(parent);
+    m_compassPage = page;
+    page->setCatalog(catalog, enforceMetadataRanges);
+    page->setParameterSnapshot(
+        parameterSnapshot(expectedComponent), expectedComponent,
+        expectedManager && expectedManager->parameterListReady());
+    page->setArmed(expectedUas && expectedUas->isArmed());
+
+    const auto targetIsCurrent =
+        [this, targets, expectedTarget, expectedUas,
+         expectedManager, expectedLink]() {
+        return expectedTarget.isValid() && targets && expectedUas
+            && expectedManager && expectedLink
+            && m_uas == expectedUas
+            && m_parameterManager == expectedManager
+            && expectedUas->getUASID()
+                == expectedTarget.endpoint.systemId
+            && targets->isCurrentTarget(
+                expectedTarget.endpoint.linkId,
+                expectedTarget.endpoint.systemId,
+                expectedTarget.endpoint.componentId,
+                expectedTarget.generation);
+    };
+    const auto connectionIsCurrent =
+        [targetIsCurrent, expectedLink]() {
+        return targetIsCurrent() && expectedLink
+            && expectedLink->isConnected();
+    };
+    const auto syncConnected = [page, connectionIsCurrent]() {
+        page->setConnected(connectionIsCurrent());
+    };
+    syncConnected();
+
+    const auto pendingReboot = std::make_shared<quint64>(0);
+    const auto cancelPendingReboot =
+        [page, pendingReboot](const QString &reason) {
+        if (*pendingReboot == 0) {
+            return;
+        }
+        page->rebootCancelled(*pendingReboot, reason);
+        *pendingReboot = 0;
+    };
+
+    connect(this, &SetupView::connectionStateChanged,
+            page, [syncConnected, connectionIsCurrent,
+                   cancelPendingReboot](bool) {
+        if (!connectionIsCurrent()) {
+            cancelPendingReboot(
+                tr("connection lost before reboot acknowledgement"));
+        }
+        syncConnected();
+    });
+    if (expectedLink) {
+        connect(expectedLink,
+                QOverload<bool>::of(&LinkInterface::connected),
+                page, [syncConnected, connectionIsCurrent,
+                       cancelPendingReboot](bool) {
+            if (!connectionIsCurrent()) {
+                cancelPendingReboot(
+                    tr("connection lost before reboot acknowledgement"));
+            }
+            syncConnected();
+        });
+    }
+    if (expectedUas) {
+        connect(expectedUas,
+                QOverload<bool>::of(&UASInterface::armingChanged),
+                page, &ConfigCompassView::setArmed);
+    }
+
+    connect(page, &ConfigCompassView::refreshRequested,
+            page,
+            [this, page, targetIsCurrent, expectedManager,
+             expectedComponent](int componentId) {
+        if (!targetIsCurrent() || !expectedManager
+            || componentId != expectedComponent) {
+            page->refreshFailed(
+                tr("not connected to the selected target"));
+            return;
+        }
+        if (m_uas && m_uas->isArmed()
+            && QMessageBox::question(
+                   this, tr("Refresh Params"),
+                   tr("The vehicle is armed. Refreshing the complete parameter "
+                      "list can consume telemetry bandwidth. Continue?"),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) != QMessageBox::Yes) {
+            page->refreshCanceled();
+            return;
+        }
+        if (expectedManager->parameterListInProgress()) {
+            page->refreshFailed(
+                tr("parameter refresh already in progress"));
+            return;
+        }
+        expectedManager->requestParameterList();
+    });
+
+    connect(page, &ConfigCompassView::writeRequested,
+            page,
+            [page, targetIsCurrent, expectedManager, expectedLink,
+             expectedComponent](quint64 requestId, int componentId,
+                                const QVariantList &changes) {
+        if (!targetIsCurrent() || !expectedManager || !expectedLink
+            || !expectedLink->isConnected()
+            || componentId != expectedComponent) {
+            page->parameterWriteSubmissionFailed(
+                requestId,
+                tr("not connected to the selected target"));
+            return;
+        }
+        const QList<QString> available =
+            expectedManager->getParameterNames(componentId);
+        for (const QVariant &item : changes) {
+            const QString name = item.toMap()
+                .value(QStringLiteral("name")).toString();
+            if (!available.contains(name)) {
+                page->parameterWriteSubmissionFailed(
+                    requestId, tr("parameter unavailable: %1").arg(name));
+                return;
+            }
+        }
+        const qulonglong batchId = expectedManager->writeParameters(
+            componentId, changes, true);
+        if (batchId == 0) {
+            page->parameterWriteSubmissionFailed(
+                requestId,
+                tr("write was rejected for the selected target"));
+            return;
+        }
+        page->parameterWriteSubmitted(requestId, batchId);
+    });
+
+    connect(page, &ConfigCompassView::rebootRequested,
+            page,
+            [page, targetIsCurrent, expectedTarget, expectedUas,
+             expectedLink, commands, pendingReboot](quint64 requestId) {
+        const auto fail = [page, requestId, pendingReboot](
+                              const QString &reason) {
+            page->rebootSubmissionFailed(requestId, reason);
+            if (*pendingReboot == requestId) {
+                *pendingReboot = 0;
+            }
+        };
+        if (!targetIsCurrent() || !expectedUas || !expectedLink
+            || !expectedLink->isConnected() || !commands) {
+            fail(tr("not connected to the selected target"));
+            return;
+        }
+        if (expectedUas->isArmed()) {
+            fail(tr("disarm the vehicle before rebooting"));
+            return;
+        }
+        *pendingReboot = requestId;
+        const VehicleCommandService::SendResult result =
+            commands->sendCommandLong(
+                expectedTarget, 255, MAV_COMP_ID_MISSIONPLANNER,
+                MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, 0,
+                1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+        if (result != VehicleCommandService::SendResult::Sent) {
+            fail(tr("reboot command could not be sent to the selected target"));
+            return;
+        }
+        page->rebootSubmitted(requestId);
+    });
+
+    if (commands) {
+        connect(commands, &VehicleCommandService::commandAckReceived,
+                page,
+                [page, targetIsCurrent, expectedTarget, pendingReboot](
+                    qulonglong generation, int linkId, int systemId,
+                    int componentId, int command, int result, int,
+                    int, int, int) {
+            if (*pendingReboot == 0 || !targetIsCurrent()
+                || generation != expectedTarget.generation
+                || linkId != expectedTarget.endpoint.linkId
+                || systemId != expectedTarget.endpoint.systemId
+                || componentId != expectedTarget.endpoint.componentId
+                || command != MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN) {
+                return;
+            }
+            if (result == MAV_RESULT_IN_PROGRESS) {
+                return;
+            }
+            const quint64 requestId = *pendingReboot;
+            *pendingReboot = 0;
+            page->rebootAcknowledged(
+                requestId, result == MAV_RESULT_ACCEPTED,
+                result == MAV_RESULT_ACCEPTED
+                    ? QString()
+                    : tr("reboot rejected (MAV_RESULT %1)").arg(result));
+        });
+    }
+
+    if (expectedManager) {
+        connect(expectedManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    int componentId, const QString &name,
+                    const QVariant &value) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterChanged(componentId, name, value);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteFailed,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong batchId, int componentId,
+                    const QString &name, int, const QString &reason) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterWriteFailed(
+                    batchId, componentId, name, reason);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteCancelled,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong batchId, int componentId,
+                    const QString &name) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterWriteCancelled(
+                    batchId, componentId, name);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterBatchCompleted,
+                page,
+                [page](qulonglong batchId, int succeeded, int failed) {
+            page->parameterBatchCompleted(batchId, succeeded, failed);
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page,
+                [this, page, targetIsCurrent, expectedManager,
+                 expectedComponent](bool ready) {
+            if (!targetIsCurrent() || !expectedManager) {
+                return;
+            }
+            if (!ready) {
+                page->setParameterSnapshot(
+                    parameterSnapshot(expectedComponent),
+                    expectedComponent, false);
+                return;
+            }
+            if (!page->viewModel()->HasPendingWrites()) {
+                page->setParameterSnapshot(
+                    parameterSnapshot(expectedComponent),
+                    expectedComponent, true);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListLoadFailed,
+                page, &ConfigCompassView::refreshFailed);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListLoadCanceled,
+                page, &ConfigCompassView::refreshCanceled);
     }
     return page;
 }
