@@ -11,6 +11,7 @@
 class QSettings;
 class HudDisplaySettings;
 class SpeechSettings;
+class StatusMessageSettings;
 
 /**
  * Settings-owned, transport-free state for the native Planner page.
@@ -42,6 +43,7 @@ public:
     }
     bool betaUpdatesEnabled() const { return m_betaUpdates; }
     bool hudOverlayEnabled() const;
+    int messageSeverity() const;
     bool speechEnabled() const;
     bool speechArmedOnly() const;
     bool speechWaypointEnabled() const;
@@ -77,6 +79,7 @@ public:
     bool setStartupUdpOptions(const PlannerStartupUdpOptions &options);
     bool setBetaUpdatesEnabled(bool enabled);
     bool setHudOverlayEnabled(bool enabled);
+    bool setMessageSeverity(int severity);
     bool setSpeechEnabled(bool enabled);
     bool setSpeechArmedOnly(bool enabled);
     bool setSpeechWaypointEnabled(bool enabled);
@@ -120,6 +123,7 @@ private:
     DisplayViewProfileService *m_profiles = nullptr;
     HudDisplaySettings *m_hudSettings = nullptr;
     SpeechSettings *m_speechSettings = nullptr;
+    StatusMessageSettings *m_statusMessageSettings = nullptr;
     QString m_altitudeUnits = QStringLiteral("Meters");
     QString m_distanceUnits = QStringLiteral("Meters");
     PlannerStartupUdpOptions m_startupUdp;

@@ -2,6 +2,7 @@
 
 #include "services/HudDisplaySettings.h"
 #include "services/SpeechSettings.h"
+#include "services/StatusMessageSettings.h"
 
 #include <QCoreApplication>
 #include <QSettings>
@@ -21,11 +22,13 @@ ConfigPlannerViewModel::ConfigPlannerViewModel(
         m_settings = settings;
         m_hudSettings = new HudDisplaySettings(settings, this);
         m_speechSettings = new SpeechSettings(settings, this);
+        m_statusMessageSettings = new StatusMessageSettings(settings, this);
     } else {
         m_ownedSettings.reset(new QSettings);
         m_settings = m_ownedSettings.get();
         m_hudSettings = HudDisplaySettings::instance();
         m_speechSettings = SpeechSettings::instance();
+        m_statusMessageSettings = StatusMessageSettings::instance();
     }
     m_settings->setFallbacksEnabled(false);
     connect(m_profiles, &DisplayViewProfileService::changed,
@@ -40,6 +43,9 @@ ConfigPlannerViewModel::ConfigPlannerViewModel(
         emit speechEnabledChanged(enabled);
     });
     connect(m_speechSettings, &SpeechSettings::policyChanged,
+            this, &ConfigPlannerViewModel::stateChanged);
+    connect(m_statusMessageSettings,
+            &StatusMessageSettings::severityChanged,
             this, &ConfigPlannerViewModel::stateChanged);
     reload();
 }
@@ -89,6 +95,12 @@ DisplayViewProfile ConfigPlannerViewModel::displayProfile() const
 bool ConfigPlannerViewModel::hudOverlayEnabled() const
 {
     return m_hudSettings && m_hudSettings->overlayEnabled();
+}
+
+int ConfigPlannerViewModel::messageSeverity() const
+{
+    return m_statusMessageSettings
+        ? m_statusMessageSettings->severity() : 4;
 }
 
 bool ConfigPlannerViewModel::speechEnabled() const
@@ -243,6 +255,7 @@ void ConfigPlannerViewModel::reload()
     m_settings->sync();
     m_hudSettings->reload();
     m_speechSettings->reload();
+    m_statusMessageSettings->reload();
     m_altitudeUnits = canonicalLinearUnits(m_settings->value(
         QStringLiteral("altunits"), QStringLiteral("Meters")).toString());
     if (m_altitudeUnits.isEmpty()) {
@@ -361,6 +374,17 @@ bool ConfigPlannerViewModel::setHudOverlayEnabled(bool enabled)
     m_hudSettings->setOverlayEnabled(enabled);
     m_lastError.clear();
     return m_hudSettings->overlayEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setMessageSeverity(int severity)
+{
+    if (!m_statusMessageSettings
+        || !m_statusMessageSettings->setSeverity(severity)) {
+        m_lastError = tr("Could not save the message severity threshold.");
+        return false;
+    }
+    m_lastError.clear();
+    return true;
 }
 
 bool ConfigPlannerViewModel::setSpeechEnabled(bool enabled)

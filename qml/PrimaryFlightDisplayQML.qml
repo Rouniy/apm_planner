@@ -49,13 +49,17 @@ Rectangle {
         //Code to make display show a lack of connection here.
     }
 
+    function restartStatusMessageTimer() {
+        statusMessageTimer.restart()
+    }
+
     onShowStatusMessageChanged: {
         statusMessageTimer.start()
     }
 
     Timer{
         id: statusMessageTimer
-        interval: 5000;
+        interval: 10000;
         repeat: false;
         onTriggered: showStatusMessage = false
     }

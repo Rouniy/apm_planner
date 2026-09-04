@@ -35,6 +35,7 @@ private slots:
     void acceptsACompleteTelemetrySnapshot();
     void rendersAttitudeAndInstruments();
     void aoaDoesNotDarkenTranslucentSideTapes();
+    void rendersHighMessageAtMissionPlannerSeverityColors();
     void preservesSelectableAspectRatio();
 };
 
@@ -117,7 +118,8 @@ void HudControlTest::exposesMissionPlannerTelemetryProperties()
         QStringLiteral("TurnRate"), QStringLiteral("WpDist"),
         QStringLiteral("WpNo"), QStringLiteral("ThrottlePercent"),
         QStringLiteral("Failsafe"), QStringLiteral("SafetyActive"),
-        QStringLiteral("LinkQuality")
+        QStringLiteral("LinkQuality"), QStringLiteral("StatusMessage"),
+        QStringLiteral("StatusMessageSeverity")
     };
     for (const QString &property : properties) {
         QVERIFY2(meta->indexOfProperty(property.toLatin1().constData()) >= 0,
@@ -236,6 +238,50 @@ void HudControlTest::aoaDoesNotDarkenTranslucentSideTapes()
         }
     }
     QCOMPARE(changedPixels, 0);
+}
+
+void HudControlTest::rendersHighMessageAtMissionPlannerSeverityColors()
+{
+    HudControl hud;
+    hud.resize(640, 480);
+    hud.setOverlayEnabled(true);
+    QImage black(hud.size(), QImage::Format_ARGB32_Premultiplied);
+    black.fill(Qt::black);
+    hud.setVideoBackground(black);
+    hud.setBatteryRemaining(100);
+    hud.setStatusMessage(QStringLiteral("STATUS MESSAGE"));
+
+    auto countColor = [](const QImage &image, int severity) {
+        int pixels = 0;
+        for (int y = 300; y < 380; ++y) {
+            for (int x = 80; x < image.width() - 80; ++x) {
+                const QColor color = image.pixelColor(x, y);
+                const bool match = severity <= 3
+                    ? color.red() > 170 && color.green() < 100
+                        && color.blue() < 100
+                    : severity <= 4
+                        ? color.red() > 150 && color.green() > 150
+                            && color.blue() < 120
+                        : color.red() > 160 && color.green() > 160
+                            && color.blue() > 160;
+                if (match) ++pixels;
+            }
+        }
+        return pixels;
+    };
+
+    hud.setStatusMessageSeverity(3);
+    const QImage red = renderHud(hud);
+    QVERIFY(countColor(red, 3) > 20);
+    hud.setStatusMessageSeverity(4);
+    const QImage yellow = renderHud(hud);
+    QVERIFY(countColor(yellow, 4) > 20);
+    hud.setStatusMessageSeverity(5);
+    const QImage white = renderHud(hud);
+    QVERIFY(countColor(white, 5) > 20);
+
+    hud.setStatusMessage(QString());
+    QCOMPARE(hud.statusMessage(), QString());
 }
 
 void HudControlTest::preservesSelectableAspectRatio()

@@ -50,6 +50,9 @@ class FlightDataViewModel final : public QObject
     Q_PROPERTY(bool Failsafe READ failsafe NOTIFY telemetryChanged)
     Q_PROPERTY(bool SafetyActive READ safetyActive NOTIFY telemetryChanged)
     Q_PROPERTY(double LinkQuality READ linkQuality NOTIFY telemetryChanged)
+    Q_PROPERTY(QString StatusMessage READ statusMessage NOTIFY telemetryChanged)
+    Q_PROPERTY(int StatusMessageSeverity READ statusMessageSeverity
+               NOTIFY telemetryChanged)
 
 public:
     explicit FlightDataViewModel(QObject *parent = nullptr, bool bindToUasManager = true);
@@ -95,6 +98,8 @@ public:
     bool failsafe() const { return m_failsafe; }
     bool safetyActive() const { return m_safetyActive; }
     double linkQuality() const { return m_linkQuality; }
+    QString statusMessage() const { return m_statusMessage; }
+    int statusMessageSeverity() const { return m_statusMessageSeverity; }
 
 public slots:
     void setActiveUAS(UASInterface *uas);
@@ -127,6 +132,7 @@ public slots:
     void updateHeartbeatTimeout(bool timeout, unsigned int milliseconds);
     void updateWaypoint(quint16 sequence);
     void updateWaypointDistance(double distance);
+    void setStatusMessage(const QString &message, int severity);
 
 signals:
     void telemetryChanged();
@@ -186,6 +192,8 @@ private:
     bool m_failsafe = false;
     bool m_safetyActive = false;
     double m_linkQuality = 0.0;
+    QString m_statusMessage;
+    int m_statusMessageSeverity = 0;
 };
 
 #endif

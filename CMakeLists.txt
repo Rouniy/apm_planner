@@ -231,6 +231,10 @@ set(SOURCES
     src/services/SpeechAnnouncer.h
     src/services/SpeechTelemetrySource.cpp
     src/services/SpeechTelemetrySource.h
+    src/services/StatusMessageSettings.cpp
+    src/services/StatusMessageSettings.h
+    src/services/StatusTextPolicy.cpp
+    src/services/StatusTextPolicy.h
     src/services/HudDisplaySettings.cpp
     src/services/HudDisplaySettings.h
     src/services/SpeechSettings.cpp
@@ -1502,6 +1506,27 @@ if(BUILD_TESTING)
     add_test(NAME speechsettings_tests
         COMMAND speechsettings_tests)
 
+    add_executable(statusmessagesettings_tests
+        tests/test_statusmessagesettings.cpp
+        src/services/StatusMessageSettings.cpp
+        src/services/StatusMessageSettings.h
+        src/services/StatusTextPolicy.cpp
+        src/services/StatusTextPolicy.h
+        src/uas/APMFirmwareVersion.cpp
+        src/uas/APMFirmwareVersion.h
+    )
+    target_include_directories(statusmessagesettings_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(statusmessagesettings_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME statusmessagesettings_tests
+        COMMAND statusmessagesettings_tests)
+
     add_executable(speechannouncer_tests
         tests/test_speechannouncer.cpp
         src/comm/VehicleEndpoint.cpp
@@ -1514,6 +1539,12 @@ if(BUILD_TESTING)
         src/services/SpeechSettings.h
         src/services/SpeechTelemetrySource.cpp
         src/services/SpeechTelemetrySource.h
+        src/services/StatusMessageSettings.cpp
+        src/services/StatusMessageSettings.h
+        src/services/StatusTextPolicy.cpp
+        src/services/StatusTextPolicy.h
+        src/uas/APMFirmwareVersion.cpp
+        src/uas/APMFirmwareVersion.h
         src/ui/configuration/BatteryMonitorInstanceModel.cpp
         src/ui/configuration/BatteryMonitorInstanceModel.h
     )
@@ -1541,6 +1572,10 @@ if(BUILD_TESTING)
         src/comm/VehicleTargetManager.h
         src/services/SpeechTelemetrySource.cpp
         src/services/SpeechTelemetrySource.h
+        src/services/StatusTextPolicy.cpp
+        src/services/StatusTextPolicy.h
+        src/uas/APMFirmwareVersion.cpp
+        src/uas/APMFirmwareVersion.h
     )
     target_include_directories(speechtelemetrysource_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -2101,6 +2136,12 @@ if(BUILD_TESTING)
         src/services/HudDisplaySettings.h
         src/services/SpeechSettings.cpp
         src/services/SpeechSettings.h
+        src/services/StatusMessageSettings.cpp
+        src/services/StatusMessageSettings.h
+        src/services/StatusTextPolicy.cpp
+        src/services/StatusTextPolicy.h
+        src/uas/APMFirmwareVersion.cpp
+        src/uas/APMFirmwareVersion.h
         src/ui/configuration/ConfigPlannerView.cpp
         src/ui/configuration/ConfigPlannerView.h
         src/ui/configuration/ConfigPlannerViewModel.cpp
@@ -2113,6 +2154,8 @@ if(BUILD_TESTING)
     target_include_directories(configplannerview_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(configplannerview_tests PRIVATE
         Qt::Core

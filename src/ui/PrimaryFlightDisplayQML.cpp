@@ -22,6 +22,7 @@ This file is part of the APM_PLANNER project
 
 #include "logging.h"
 #include "PrimaryFlightDisplayQML.h"
+#include "services/StatusMessageSettings.h"
 #include "configuration.h"
 #include "UASManager.h"
 #include "LinkManager.h"
@@ -74,6 +75,14 @@ void PrimaryFlightDisplayQML::setActiveUAS(UASInterface *uas)
     }
     mp_uasInterface = uas;
 
+    if (QObject *root = m_ptrDeclarativeView->rootObject()) {
+        root->setProperty("showStatusMessage", false);
+        root->setProperty("statusMessage", QString());
+        if (!mp_uasInterface) {
+            QMetaObject::invokeMethod(root, "activeUasUnset");
+        }
+    }
+
     if (mp_uasInterface != nullptr) {
         connect(uas,SIGNAL(textMessageReceived(int,int,int,QString)),
                 this,SLOT(uasTextMessage(int,int,int,QString)));
@@ -120,21 +129,19 @@ void PrimaryFlightDisplayQML::setActiveUAS(UASInterface *uas)
 
 void PrimaryFlightDisplayQML::uasTextMessage(int uasid, int componentid, int severity, const QString &text)
 {
-    Q_UNUSED(uasid);
     Q_UNUSED(componentid);
     QObject *root = m_ptrDeclarativeView->rootObject();
-    if (!root) {
+    if (!root || !mp_uasInterface || uasid != mp_uasInterface->getUASID()) {
         return;
     }
-    if (text.contains("PreArm") || severity <= MAV_SEVERITY_CRITICAL)
-    {
+    if (StatusMessageSettings::instance()->shouldPromote(text, severity)) {
         root->setProperty("statusMessage", text);
         root->setProperty("showStatusMessage", true);
-        root->setProperty("statusMessageColor", "red");
-    } else if (severity <= MAV_SEVERITY_INFO ){
-        root->setProperty("statusMessage", text);
-        root->setProperty("showStatusMessage", true);
-        root->setProperty("statusMessageColor", "darkgreen");
+        root->setProperty(
+            "statusMessageColor",
+            severity <= MAV_SEVERITY_ERROR ? "red"
+            : severity <= MAV_SEVERITY_WARNING ? "yellow" : "white");
+        QMetaObject::invokeMethod(root, "restartStatusMessageTimer");
     }
 
 }

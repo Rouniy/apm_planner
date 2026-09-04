@@ -127,6 +127,7 @@ private:
 
     bool preArmCheckFailure;
     QString preArmCheckMessage;
+    int preArmCheckSeverity;
     QTimer *preArmMessageTimer;
 
     bool didReceivePrimaryAltitude;

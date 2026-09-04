@@ -22,6 +22,7 @@ This file is part of the QGROUNDCONTROL project
 ======================================================================*/
 #include "logging.h"
 #include "QGCToolBar.h"
+#include "services/StatusMessageSettings.h"
 #include "UASManager.h"
 #include "LinkManager.h"
 
@@ -305,8 +306,7 @@ void QGCToolBar::advancedActivityTriggered(QAction* action)
 
 void QGCToolBar::setActiveUAS(UASInterface* active)
 {
-    // Do nothing if system is the same or NULL
-    if ((active == NULL) || mav == active) return;
+    if (mav == active) return;
 
     if (mav)
     {
@@ -319,7 +319,7 @@ void QGCToolBar::setActiveUAS(UASInterface* active)
         disconnect(mav, SIGNAL(batteryChanged(UASInterface*, double, double, double,int)), this, SLOT(updateBatteryRemaining(UASInterface*, double, double, double, int)));
         disconnect(mav, SIGNAL(armingChanged(bool)), this, SLOT(updateArmingState(bool)));
         disconnect(mav, SIGNAL(heartbeatTimeout(bool, unsigned int)), this, SLOT(heartbeatTimeout(bool,unsigned int)));
-        disconnect(active, SIGNAL(globalPositionChanged(UASInterface*,double,double,double,quint64)), this, SLOT(globalPositionChanged(UASInterface*,double,double,double,quint64)));
+        disconnect(mav, SIGNAL(globalPositionChanged(UASInterface*,double,double,double,quint64)), this, SLOT(globalPositionChanged(UASInterface*,double,double,double,quint64)));
         if (mav->getWaypointManager())
         {
             disconnect(mav->getWaypointManager(), SIGNAL(currentWaypointChanged(quint16)), this, SLOT(updateCurrentWaypoint(quint16)));
@@ -329,6 +329,10 @@ void QGCToolBar::setActiveUAS(UASInterface* active)
 
     // Connect new system
     mav = active;
+    lastSystemMessage.clear();
+    lastSystemMessageTimeMs = 0;
+    changed = true;
+    if (!active) return;
     connect(active, SIGNAL(statusChanged(UASInterface*,QString,QString)), this, SLOT(updateState(UASInterface*, QString,QString)));
     connect(active, SIGNAL(modeChanged(int,QString,QString)), this, SLOT(updateMode(int,QString,QString)));
     connect(active, SIGNAL(nameChanged(QString)), this, SLOT(updateName(QString)));
@@ -373,6 +377,11 @@ void QGCToolBar::updateArmingState(bool armed)
 
 void QGCToolBar::updateView()
 {
+    if (!lastSystemMessage.isEmpty()
+        && QGC::groundTimeMilliseconds() - lastSystemMessageTimeMs >= 10000) {
+        lastSystemMessage.clear();
+        changed = true;
+    }
     if (!changed) return;
     //toolBarDistLabel->setText(tr("%1 m").arg(wpDistance, 6, 'f', 2, '0'));
     // XXX add also rel altitude
@@ -389,8 +398,8 @@ void QGCToolBar::updateView()
     toolBarStateLabel->setText(tr("%1").arg(state));
     toolBarModeLabel->setText(tr("%1").arg(mode));
     toolBarNameLabel->setText(systemName);
-    // expire after 15 seconds
-    if (QGC::groundTimeMilliseconds() - lastSystemMessageTimeMs < 15000) {
+    // Match Mission Planner's ten-second high-message lifetime.
+    if (!lastSystemMessage.isEmpty()) {
         toolBarMessageLabel->setText(tr("%1").arg(lastSystemMessage));
     } else {
         toolBarMessageLabel->setText(tr("%1").arg(""));
@@ -538,8 +547,10 @@ void QGCToolBar::receiveTextMessage(int uasid, int componentid, int severity, QS
 {
     Q_UNUSED(uasid);
     Q_UNUSED(componentid);
-    Q_UNUSED(severity);
-    if (lastSystemMessage != text) changed = true;
+    if (!StatusMessageSettings::instance()->shouldPromote(text, severity)) {
+        return;
+    }
+    changed = true;
     lastSystemMessage = text;
     lastSystemMessageTimeMs = QGC::groundTimeMilliseconds();
 }

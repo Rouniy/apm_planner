@@ -3,10 +3,28 @@
 #include "GAudioOutput.h"
 #include "services/SpeechAnnouncer.h"
 #include "services/SpeechSettings.h"
+#include "services/StatusMessageSettings.h"
 #include "ui/flightdata/FlightDataViewModel.h"
 
 #include <QSettings>
 #include <QTemporaryDir>
+
+namespace {
+ExactStatusText statusEvent(const SpeechAnnouncer::VehicleState &vehicle,
+                            int severity, const QString &text, qint64 now)
+{
+    ExactStatusText event;
+    event.lease.endpoint.linkId = vehicle.linkId;
+    event.lease.endpoint.systemId = vehicle.systemId;
+    event.lease.endpoint.componentId = vehicle.componentId;
+    event.lease.generation = vehicle.generation;
+    event.rawSeverity = quint8(severity);
+    event.severity = quint8(severity);
+    event.text = text;
+    event.completedAtMs = now;
+    return event;
+}
+}
 
 // The injectable constructor does not use these production dependencies.
 // Small definitions keep this unit test isolated from the full vehicle/audio
@@ -46,9 +64,12 @@ private slots:
     void formatsExactTelemetryInSelectedDisplayUnits();
     void periodicCustomHonoursCadenceReadinessAndGeneration();
     void noDataUsesStrictGraceAgeAndRepeatBoundaries();
+    void noDataBannerDoesNotDependOnSpeechMaster();
     void altitudeWarningRequiresAThresholdCrossing();
     void altitudeStateTracksWhileSpeechCannotRun();
     void lowSpeedUsesCanonicalSiAndAirspeedPriority();
+    void highStatusUsesThresholdExactLeaseAndTenSecondLifetime();
+    void highStatusRetriesAndRoutesSpecialSpeechOnce();
 };
 
 void SpeechAnnouncerTest::eventsUsePolicyTemplatesAndCurrentVehicle()
@@ -317,6 +338,42 @@ void SpeechAnnouncerTest::noDataUsesStrictGraceAgeAndRepeatBoundaries()
     QCOMPARE(spoken.size(), 2);
 }
 
+void SpeechAnnouncerTest::noDataBannerDoesNotDependOnSpeechMaster()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings store(directory.filePath(QStringLiteral("nodata-muted.ini")),
+                    QSettings::IniFormat);
+    SpeechSettings settings(&store);
+
+    QStringList spoken;
+    qint64 now = 0;
+    SpeechAnnouncer::VehicleState vehicle;
+    vehicle.systemId = 5;
+    vehicle.armed = true;
+    vehicle.valid = true;
+    vehicle.generation = 1;
+    vehicle.connectedSinceMs = 0;
+    vehicle.lastPacketMs = 0;
+    SpeechAnnouncer announcer(
+        &settings,
+        [&spoken](const QString &message) {
+            spoken.append(message);
+            return true;
+        },
+        [&vehicle]() { return vehicle; },
+        [&now]() { return now; });
+
+    announcer.tick();
+    now = 30001;
+    announcer.tick();
+    QCOMPARE(announcer.highMessage(),
+             QStringLiteral("WARNING No Data for 30 Seconds"));
+    QCOMPARE(announcer.highMessageSeverity(),
+             int(MAV_SEVERITY_EMERGENCY));
+    QVERIFY(spoken.isEmpty());
+}
+
 void SpeechAnnouncerTest::altitudeWarningRequiresAThresholdCrossing()
 {
     QTemporaryDir directory;
@@ -476,6 +533,168 @@ void SpeechAnnouncerTest::lowSpeedUsesCanonicalSiAndAirspeedPriority()
     now = 20002;
     announcer.tick();
     QCOMPARE(spoken.last(), QStringLiteral("Ground 4"));
+}
+
+void SpeechAnnouncerTest::highStatusUsesThresholdExactLeaseAndTenSecondLifetime()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings store(directory.filePath(QStringLiteral("high.ini")),
+                    QSettings::IniFormat);
+    SpeechSettings settings(&store);
+    StatusMessageSettings statusSettings(&store);
+    settings.setEnabled(true);
+
+    QStringList spoken;
+    qint64 now = 0;
+    SpeechAnnouncer::VehicleState vehicle;
+    vehicle.systemId = 42;
+    vehicle.componentId = 1;
+    vehicle.linkId = 7;
+    vehicle.generation = 3;
+    vehicle.armed = true;
+    vehicle.valid = true;
+    SpeechAnnouncer announcer(
+        &settings,
+        [&spoken](const QString &message) {
+            spoken.append(message);
+            return true;
+        },
+        [&vehicle]() { return vehicle; },
+        [&now]() { return now; }, nullptr, []() { return true; }, {},
+        &statusSettings);
+    QSignalSpy high(&announcer, &SpeechAnnouncer::highMessageChanged);
+
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_NOTICE, QStringLiteral("ordinary notice"), now));
+    QVERIFY(announcer.highMessage().isEmpty());
+    QVERIFY(spoken.isEmpty());
+
+    ExactStatusText stale = statusEvent(
+        vehicle, MAV_SEVERITY_WARNING, QStringLiteral("wrong link"), now);
+    stale.lease.endpoint.linkId = 8;
+    announcer.enqueueStatusText(stale);
+    stale = statusEvent(
+        vehicle, MAV_SEVERITY_WARNING, QStringLiteral("wrong generation"), now);
+    ++stale.lease.generation;
+    announcer.enqueueStatusText(stale);
+    QVERIFY(announcer.highMessage().isEmpty());
+
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_WARNING, QStringLiteral("Battery low"), now));
+    QCOMPARE(announcer.highMessage(), QStringLiteral("Battery low"));
+    QCOMPARE(announcer.highMessageSeverity(), int(MAV_SEVERITY_WARNING));
+    QVERIFY(spoken.isEmpty());
+    QCOMPARE(high.count(), 1);
+    announcer.tick();
+    QCOMPARE(spoken, QStringList{QStringLiteral("Battery low")});
+
+    now = 5000;
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_WARNING, QStringLiteral("Battery low"), now));
+    QCOMPARE(spoken.size(), 1);
+    QCOMPARE(high.count(), 1);
+    now = 15000;
+    announcer.tick();
+    QCOMPARE(announcer.highMessage(), QStringLiteral("Battery low"));
+    now = 15001;
+    announcer.tick();
+    QVERIFY(announcer.highMessage().isEmpty());
+    QCOMPARE(high.count(), 2);
+
+    ExactStatusText expired = statusEvent(
+        vehicle, MAV_SEVERITY_ERROR, QStringLiteral("too old"), 0);
+    announcer.enqueueStatusText(expired);
+    QVERIFY(announcer.highMessage().isEmpty());
+}
+
+void SpeechAnnouncerTest::highStatusRetriesAndRoutesSpecialSpeechOnce()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings store(directory.filePath(QStringLiteral("high-retry.ini")),
+                    QSettings::IniFormat);
+    SpeechSettings settings(&store);
+    StatusMessageSettings statusSettings(&store);
+    settings.setEnabled(true);
+    settings.setArmedOnly(true);
+
+    QStringList attempted;
+    bool succeeds = false;
+    qint64 now = 10;
+    SpeechAnnouncer::VehicleState vehicle;
+    vehicle.systemId = 42;
+    vehicle.componentId = 1;
+    vehicle.linkId = 7;
+    vehicle.generation = 1;
+    vehicle.valid = true;
+    vehicle.armed = false;
+    SpeechAnnouncer announcer(
+        &settings,
+        [&attempted, &succeeds](const QString &message) {
+            attempted.append(message);
+            return succeeds;
+        },
+        [&vehicle]() { return vehicle; },
+        [&now]() { return now; }, nullptr, []() { return true; }, {},
+        &statusSettings);
+
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_ERROR, QStringLiteral("Motor error"), now));
+    QVERIFY(attempted.isEmpty());
+    vehicle.armed = true;
+    announcer.tick();
+    QCOMPARE(attempted, QStringList{QStringLiteral("Motor error")});
+    succeeds = true;
+    announcer.tick();
+    QCOMPARE(attempted.size(), 2);
+    announcer.tick();
+    QCOMPARE(attempted.size(), 2);
+
+    ++now;
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_DEBUG, QStringLiteral("PreArm: compass"), now));
+    announcer.tick();
+    QCOMPARE(attempted.last(), QStringLiteral("Pre-arm check: compass"));
+    const int afterPreArm = attempted.size();
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_DEBUG, QStringLiteral("PreArm: compass"), now));
+    announcer.tick();
+    QCOMPARE(attempted.size(), afterPreArm);
+
+    ++now;
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_DEBUG, QStringLiteral("Arm: denied"), now));
+    announcer.tick();
+    QCOMPARE(attempted.last(), QStringLiteral("Arm check: denied"));
+
+    ++now;
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_DEBUG, QStringLiteral("#audio: alert"), now));
+    QCOMPARE(announcer.highMessage(), QStringLiteral("Audio message: alert"));
+    announcer.tick();
+    QCOMPARE(attempted.last(), QStringLiteral("alert"));
+
+    ++now;
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_ERROR, QStringLiteral("PX4v2 board"), now));
+    const int beforePx4Tick = attempted.size();
+    announcer.tick();
+    QCOMPARE(attempted.size(), beforePx4Tick);
+    QCOMPARE(announcer.highMessage(), QStringLiteral("PX4v2 board"));
+
+    ++now;
+    announcer.enqueueStatusText(statusEvent(
+        vehicle, MAV_SEVERITY_DEBUG, QStringLiteral("Tuning: pitch"), now));
+    const int beforeTuningTick = attempted.size();
+    announcer.tick();
+    QCOMPARE(attempted.size(), beforeTuningTick + 1);
+    QCOMPARE(attempted.last(), QStringLiteral("Tuning: pitch"));
+
+    vehicle.generation = 2;
+    now += 1;
+    announcer.tick();
+    QVERIFY(announcer.highMessage().isEmpty());
 }
 
 QTEST_APPLESS_MAIN(SpeechAnnouncerTest)

@@ -1,5 +1,7 @@
 #include "ConfigPlannerView.h"
 
+#include "services/StatusMessageSettings.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFileDialog>
@@ -80,9 +82,17 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     m_hudOverlay = new QCheckBox(tr("Enable HUD Overlay"), display);
     m_hudOverlay->setObjectName(QStringLiteral("CHK_hudshow"));
     displayForm->addRow(tr("HUD / OSD"), m_hudOverlay);
+    m_messageSeverity = new QComboBox(display);
+    m_messageSeverity->setObjectName(QStringLiteral("CMB_severity"));
+    const QStringList severityNames =
+        StatusMessageSettings::severityNames();
+    for (int severity = 0; severity < severityNames.size(); ++severity) {
+        m_messageSeverity->addItem(severityNames.at(severity), severity);
+    }
+    displayForm->addRow(tr("Message Severity"), m_messageSeverity);
     auto *displayMissing = new QLabel(
-        tr("UI language, speed units, OSD color and message severity do not "
-           "yet have complete Qt consumers."), display);
+        tr("UI language, speed units and OSD color do not yet have complete "
+           "Qt consumers."), display);
     displayMissing->setObjectName(QStringLiteral("DisplayPendingNote"));
     displayMissing->setProperty("portingUnavailable", true);
     displayMissing->setWordWrap(true);
@@ -347,6 +357,15 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
             syncFromModel();
         }
     });
+    connect(m_messageSeverity,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int index) {
+        if (!m_viewModel || index < 0) return;
+        if (!m_viewModel->setMessageSeverity(
+                m_messageSeverity->itemData(index).toInt())) {
+            syncFromModel();
+        }
+    });
     connect(m_speechEnabled, &QCheckBox::toggled,
             this, [this](bool enabled) {
         if (!m_viewModel) return;
@@ -540,6 +559,7 @@ void ConfigPlannerView::syncFromModel()
         const QSignalBlocker blocker(m_hudOverlay);
         m_hudOverlay->setChecked(m_viewModel->hudOverlayEnabled());
     }
+    setComboData(m_messageSeverity, m_viewModel->messageSeverity());
     {
         const QSignalBlocker blocker(m_speechEnabled);
         m_speechEnabled->setChecked(m_viewModel->speechEnabled());

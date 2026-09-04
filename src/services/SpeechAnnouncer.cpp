@@ -3,6 +3,8 @@
 #include "GAudioOutput.h"
 #include "SpeechSettings.h"
 #include "SpeechTelemetrySource.h"
+#include "StatusMessageSettings.h"
+#include "StatusTextPolicy.h"
 #include "UASInterface.h"
 #include "ui/configuration/BatteryMonitorInstanceModel.h"
 #include "ui/flightdata/FlightDataViewModel.h"
@@ -22,6 +24,7 @@ constexpr qint64 kAltitudeWarningIntervalMs = 10000;
 constexpr qint64 kNoDataConnectionGraceMs = 30000;
 constexpr qint64 kNoDataPacketAgeMs = 3000;
 constexpr qint64 kNoDataRepeatMs = 5000;
+constexpr qint64 kHighMessageLifetimeMs = 10000;
 
 struct DisplayUnits
 {
@@ -70,6 +73,7 @@ SpeechAnnouncer::SpeechAnnouncer(
     , m_flightData(flightData)
     , m_telemetrySource(telemetrySource)
     , m_settings(SpeechSettings::instance())
+    , m_statusSettings(StatusMessageSettings::instance())
     , m_speaker([](const QString &message) {
         return GAudioOutput::instance()->say(message);
     })
@@ -115,16 +119,12 @@ SpeechAnnouncer::SpeechAnnouncer(
         m_targetGeneration =
             m_telemetrySource->snapshot().lease.generation;
         connect(m_telemetrySource,
-                &SpeechTelemetrySource::batteryTelemetryChanged,
-                this, &SpeechAnnouncer::handleBatteryTelemetry);
+                &SpeechTelemetrySource::exactSpeechTelemetry,
+                this, &SpeechAnnouncer::enqueueExactTelemetry,
+                Qt::QueuedConnection);
         connect(m_telemetrySource,
-                &SpeechTelemetrySource::flightModeChanged,
-                this, &SpeechAnnouncer::announceFlightMode);
-        connect(m_telemetrySource,
-                &SpeechTelemetrySource::waypointChanged,
-                this, &SpeechAnnouncer::announceWaypoint);
-        connect(m_telemetrySource, &SpeechTelemetrySource::armedChanged,
-                this, &SpeechAnnouncer::announceArmState);
+                &SpeechTelemetrySource::statusTextCompleted,
+                this, &SpeechAnnouncer::enqueueStatusText);
         connect(m_telemetrySource,
                 &SpeechTelemetrySource::targetEpochChanged,
                 this, [this]() {
@@ -133,6 +133,7 @@ SpeechAnnouncer::SpeechAnnouncer(
             GAudioOutput::instance()->stopSpeech();
             m_targetGeneration = m_telemetrySource
                 ? m_telemetrySource->snapshot().lease.generation : 0;
+            clearHighMessage();
             resetCountdowns();
         });
     } else {
@@ -151,6 +152,16 @@ SpeechAnnouncer::SpeechAnnouncer(
     m_timer->setInterval(1000);
     connect(m_timer, &QTimer::timeout, this, &SpeechAnnouncer::tick);
     m_timer->start();
+    m_highMessageTimer = new QTimer(this);
+    m_highMessageTimer->setSingleShot(true);
+    connect(m_highMessageTimer, &QTimer::timeout, this, [this]() {
+        const qint64 remaining = m_highMessageExpiresMs - nowMs();
+        if (remaining >= 0) {
+            m_highMessageTimer->start(int(qMax<qint64>(1, remaining + 1)));
+            return;
+        }
+        clearHighMessage();
+    });
     resetCountdowns(m_flightData->activeUAS());
 }
 
@@ -161,9 +172,12 @@ SpeechAnnouncer::SpeechAnnouncer(
     Clock clock,
     QObject *parent,
     ReadyProvider readyProvider,
-    UnitProvider unitProvider)
+    UnitProvider unitProvider,
+    StatusMessageSettings *statusSettings)
     : QObject(parent)
     , m_settings(settings)
+    , m_statusSettings(statusSettings ? statusSettings
+                                      : StatusMessageSettings::instance())
     , m_speaker(std::move(speaker))
     , m_vehicleStateProvider(std::move(vehicleStateProvider))
     , m_clock(std::move(clock))
@@ -295,20 +309,84 @@ void SpeechAnnouncer::handleBatteryTelemetry(
     }
 }
 
+void SpeechAnnouncer::enqueueStatusText(ExactStatusText event)
+{
+    const VehicleState vehicle = currentVehicle();
+    const bool promoted = m_statusSettings
+        && m_statusSettings->shouldPromote(event.text, event.severity);
+    const QString speechText = StatusTextPolicy::speechText(
+        event.text, promoted);
+    if (!m_statusSettings || !eventMatchesCurrentVehicle(event, vehicle)
+        || event.completedAtMs < 0
+        || nowMs() > event.completedAtMs + kHighMessageLifetimeMs
+        || (!promoted && speechText.isEmpty())) {
+        return;
+    }
+
+    if (m_targetGeneration != event.lease.generation) {
+        m_targetGeneration = event.lease.generation;
+        clearHighMessage();
+        resetPeriodicCountdowns(nowMs());
+    }
+
+    QString displayText = event.text;
+    if (displayText.startsWith(QStringLiteral("#audio:"))) {
+        displayText = QStringLiteral("Audio message: ")
+            + displayText.mid(QStringLiteral("#audio:").size()).trimmed();
+    }
+    setHighMessage(displayText, event.severity,
+                   event.completedAtMs + kHighMessageLifetimeMs,
+                   speechText);
+}
+
+void SpeechAnnouncer::enqueueExactTelemetry(ExactSpeechTelemetryEvent event)
+{
+    if (!m_telemetrySource
+        || !m_telemetrySource->isCurrentLease(event.lease)) {
+        return;
+    }
+    const VehicleState vehicle = currentVehicle();
+    if (!leaseMatchesCurrentVehicle(event.lease, vehicle)) {
+        return;
+    }
+
+    switch (event.kind) {
+    case ExactSpeechTelemetryEvent::Armed:
+        announceArmState(event.armed);
+        break;
+    case ExactSpeechTelemetryEvent::FlightMode:
+        announceFlightMode(event.mode);
+        break;
+    case ExactSpeechTelemetryEvent::Waypoint:
+        announceWaypoint(event.waypoint);
+        break;
+    case ExactSpeechTelemetryEvent::Battery:
+        handleBatteryTelemetry(event.batteryVoltage,
+                               event.batteryRemainingPercent);
+        break;
+    }
+}
+
 void SpeechAnnouncer::tick()
 {
     if (!m_settings) {
         return;
     }
 
+    const qint64 now = nowMs();
+    if (!m_highMessage.isEmpty() && m_highMessageExpiresMs >= 0
+        && now > m_highMessageExpiresMs) {
+        clearHighMessage();
+    }
+
     const VehicleState vehicle = currentVehicle();
     if (!vehicle.valid) {
         return;
     }
-    const qint64 now = nowMs();
     if (vehicle.generation != 0
         && vehicle.generation != m_targetGeneration) {
         m_targetGeneration = vehicle.generation;
+        clearHighMessage();
         resetPeriodicCountdowns(now);
         return;
     }
@@ -316,6 +394,22 @@ void SpeechAnnouncer::tick()
     if (vehicle.armed && vehicle.altitudeValid) {
         m_altitudeMaximumMeters = qMax(
             m_altitudeMaximumMeters, vehicle.altitudeMeters);
+    }
+    const bool noDataWarning = vehicle.armed
+        && vehicle.connectedSinceMs >= 0
+        && vehicle.lastPacketMs >= 0
+        && now > vehicle.connectedSinceMs + kNoDataConnectionGraceMs
+        && now > vehicle.lastPacketMs + kNoDataPacketAgeMs
+        && now > m_lastNoDataMs + kNoDataRepeatMs;
+    if (noDataWarning) {
+        const qint64 silentSeconds =
+            qMax<qint64>(0, (now - vehicle.lastPacketMs) / 1000);
+        setHighMessage(
+            QStringLiteral("WARNING No Data for %1 Seconds")
+                .arg(silentSeconds),
+            MAV_SEVERITY_EMERGENCY, now + kHighMessageLifetimeMs,
+            QStringLiteral("WARNING No Data for %1 Seconds")
+                .arg(silentSeconds));
     }
     if (!m_settings->isEnabled()) {
         return;
@@ -328,19 +422,22 @@ void SpeechAnnouncer::tick()
         return;
     }
 
-    if (vehicle.armed
-        && vehicle.connectedSinceMs >= 0
-        && vehicle.lastPacketMs >= 0
-        && now > vehicle.connectedSinceMs + kNoDataConnectionGraceMs
-        && now > vehicle.lastPacketMs + kNoDataPacketAgeMs
-        && now > m_lastNoDataMs + kNoDataRepeatMs) {
-        const qint64 silentSeconds =
-            qMax<qint64>(0, (now - vehicle.lastPacketMs) / 1000);
-        if (speak(QStringLiteral("WARNING No Data for %1 Seconds")
-                      .arg(silentSeconds))) {
+    if (noDataWarning) {
+        if (trySpeakHighMessage(vehicle)) {
             m_lastNoDataMs = now;
         }
         return;
+    }
+
+    if (!m_highMessage.isEmpty() && !m_highMessageSpoken) {
+        if (trySpeakHighMessage(vehicle)) {
+            return;
+        }
+        // Keep a promoted message ahead of periodic chatter until the speech
+        // backend accepts it or its display lifetime expires.
+        if (!m_highMessageSpeechText.isEmpty()) {
+            return;
+        }
     }
 
     const DisplayUnitState units = m_unitProvider
@@ -402,6 +499,7 @@ void SpeechAnnouncer::resetCountdowns(UASInterface *uas)
     // after the connection has been alive for one full alert interval.
     const qint64 now = nowMs();
     m_nextBatteryAlertMs = now + kBatteryAlertIntervalMs;
+    clearHighMessage();
     resetPeriodicCountdowns(now);
 }
 
@@ -412,6 +510,7 @@ SpeechAnnouncer::VehicleState SpeechAnnouncer::currentVehicle() const
             m_telemetrySource->snapshot();
         VehicleState state;
         state.systemId = snapshot.lease.endpoint.systemId;
+        state.linkId = snapshot.lease.endpoint.linkId;
         state.armed = snapshot.heartbeatValid && snapshot.armed;
         state.valid = snapshot.isValid();
         state.generation = snapshot.lease.generation;
@@ -468,4 +567,86 @@ void SpeechAnnouncer::resetPeriodicCountdowns(qint64 now)
     m_altitudeMaximumMeters = 0.0;
     m_armStateObserved = false;
     m_lastArmed = false;
+}
+
+void SpeechAnnouncer::setHighMessage(const QString &message, int severity,
+                                     qint64 expiresAtMs,
+                                     const QString &speechText)
+{
+    if (message.trimmed().isEmpty()) {
+        return;
+    }
+
+    const bool sameMessage = m_highMessage == message;
+    const bool severityChanged = m_highMessageSeverity != severity;
+    // MP10 refreshes the ten-second lifetime for a repeated message while
+    // speech remains deduplicated within this selected-target epoch.
+    m_highMessageExpiresMs = expiresAtMs;
+    m_highMessageSeverity = severity;
+    m_highMessageSpeechText = speechText;
+    if (m_highMessageTimer) {
+        const qint64 remaining = expiresAtMs - nowMs();
+        m_highMessageTimer->start(int(qMax<qint64>(1, remaining + 1)));
+    }
+    if (!sameMessage) {
+        m_highMessage = message;
+        m_highMessageSpoken = false;
+    }
+    if (!sameMessage || severityChanged) {
+        emit highMessageChanged(m_highMessage, m_highMessageSeverity);
+    }
+}
+
+void SpeechAnnouncer::clearHighMessage()
+{
+    const bool hadMessage = !m_highMessage.isEmpty();
+    m_highMessage.clear();
+    m_highMessageSeverity = MAV_SEVERITY_EMERGENCY;
+    m_highMessageExpiresMs = -1;
+    m_highMessageSpoken = false;
+    m_highMessageSpeechText.clear();
+    if (m_highMessageTimer) {
+        m_highMessageTimer->stop();
+    }
+    if (hadMessage) {
+        emit highMessageChanged(QString(), m_highMessageSeverity);
+    }
+}
+
+bool SpeechAnnouncer::trySpeakHighMessage(const VehicleState &vehicle)
+{
+    if (m_highMessage.isEmpty() || m_highMessageSpoken
+        || m_highMessageExpiresMs < 0 || nowMs() > m_highMessageExpiresMs) {
+        return false;
+    }
+    if (m_highMessageSpeechText.isEmpty()) {
+        m_highMessageSpoken = true;
+        return false;
+    }
+    if (!m_settings || !m_settings->isEnabled() || !vehicle.valid
+        || (m_settings->armedOnly() && !vehicle.armed)
+        || (m_readyProvider && !m_readyProvider())) {
+        return false;
+    }
+    if (!speak(m_highMessageSpeechText)) {
+        return false;
+    }
+    m_highMessageSpoken = true;
+    return true;
+}
+
+bool SpeechAnnouncer::eventMatchesCurrentVehicle(
+    const ExactStatusText &event, const VehicleState &vehicle) const
+{
+    return leaseMatchesCurrentVehicle(event.lease, vehicle);
+}
+
+bool SpeechAnnouncer::leaseMatchesCurrentVehicle(
+    const VehicleTargetLease &lease, const VehicleState &vehicle) const
+{
+    return vehicle.valid && lease.isValid()
+        && vehicle.linkId == lease.endpoint.linkId
+        && vehicle.systemId == lease.endpoint.systemId
+        && vehicle.componentId == lease.endpoint.componentId
+        && vehicle.generation == lease.generation;
 }

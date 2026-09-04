@@ -152,6 +152,8 @@ void ConfigPlannerViewTest::constructionDoesNotPersistDefaults()
              QList<int>({14550, 14551}));
     QVERIFY(!model.betaUpdatesEnabled());
     QVERIFY(model.hudOverlayEnabled());
+    QCOMPARE(model.messageSeverity(), 4);
+    QVERIFY(!settings.contains(QStringLiteral("severity")));
     QVERIFY(!model.speechEnabled());
     QVERIFY(!model.speechCustomEnabled());
     QVERIFY(!model.speechAltWarningEnabled());
@@ -276,6 +278,10 @@ void ConfigPlannerViewTest::hudAndSpeechControlsPersistAndSynchronize()
         QStringLiteral("CHK_speechenable"));
     auto *secondSpeech = second.findChild<QCheckBox *>(
         QStringLiteral("CHK_speechenable"));
+    auto *firstSeverity = first.findChild<QComboBox *>(
+        QStringLiteral("CMB_severity"));
+    auto *secondSeverity = second.findChild<QComboBox *>(
+        QStringLiteral("CMB_severity"));
     auto *testSpeech = first.findChild<QPushButton *>(
         QStringLiteral("SpeechTest"));
     auto *status = first.findChild<QLabel *>(
@@ -284,10 +290,16 @@ void ConfigPlannerViewTest::hudAndSpeechControlsPersistAndSynchronize()
     QVERIFY(secondHud);
     QVERIFY(firstSpeech);
     QVERIFY(secondSpeech);
+    QVERIFY(firstSeverity);
+    QVERIFY(secondSeverity);
     QVERIFY(testSpeech);
     QVERIFY(status);
     QVERIFY(firstHud->isChecked());
     QVERIFY(!firstSpeech->isChecked());
+    QCOMPARE(firstSeverity->count(), 8);
+    QCOMPARE(firstSeverity->itemText(0), QStringLiteral("Emergency"));
+    QCOMPARE(firstSeverity->itemText(7), QStringLiteral("Debug"));
+    QCOMPARE(firstSeverity->currentData().toInt(), 4);
 
     QSignalSpy hudChanged(&model,
                           &ConfigPlannerViewModel::hudOverlayEnabledChanged);
@@ -297,12 +309,15 @@ void ConfigPlannerViewTest::hudAndSpeechControlsPersistAndSynchronize()
                              &ConfigPlannerView::speechTestRequested);
     firstHud->setChecked(false);
     firstSpeech->setChecked(true);
+    firstSeverity->setCurrentIndex(firstSeverity->findData(6));
     QCOMPARE(hudChanged.count(), 1);
     QCOMPARE(speechChanged.count(), 1);
     QVERIFY(!secondHud->isChecked());
     QVERIFY(secondSpeech->isChecked());
     QCOMPARE(settings.value(QStringLiteral("CHK_hudshow")).toBool(), false);
     QCOMPARE(settings.value(QStringLiteral("speechenable")).toBool(), true);
+    QCOMPARE(settings.value(QStringLiteral("severity")).toInt(), 6);
+    QCOMPARE(secondSeverity->currentData().toInt(), 6);
 
     testSpeech->click();
     QCOMPARE(testRequested.count(), 1);
@@ -311,12 +326,15 @@ void ConfigPlannerViewTest::hudAndSpeechControlsPersistAndSynchronize()
 
     settings.setValue(QStringLiteral("CHK_hudshow"), true);
     settings.setValue(QStringLiteral("speechenable"), false);
+    settings.setValue(QStringLiteral("severity"), 2);
     settings.sync();
     model.reload();
     QVERIFY(firstHud->isChecked());
     QVERIFY(!firstSpeech->isChecked());
     QVERIFY(secondHud->isChecked());
     QVERIFY(!secondSpeech->isChecked());
+    QCOMPARE(firstSeverity->currentData().toInt(), 2);
+    QCOMPARE(secondSeverity->currentData().toInt(), 2);
 }
 
 void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()

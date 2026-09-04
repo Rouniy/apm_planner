@@ -92,10 +92,10 @@ logging, DataFlash/tlog directories, beta update channel and system proxy.
 The two production entry points share one application-owned model, so one
 open page cannot overwrite stale UDP/beta state from another.
 
-The three live slices add eleven direct MP10 controls, bringing the working
-native-equivalent count to 20 of 64: `Enable HUD Overlay`, `Enable Speech`,
+The four live slices add twelve direct MP10 controls, bringing the working
+native-equivalent count to 21 of 64: `Enable HUD Overlay`, `Enable Speech`,
 `Test Speech`, `Armed Only`, `Waypoint`, `Mode`, `Custom`, `Battery`,
-`Alt Warning`, `Arm/Disarm` and `Low Speed`.
+`Alt Warning`, `Arm/Disarm`, `Low Speed` and `Message Severity`.
 HUD visibility now has one application-owned `CHK_hudshow` service shared with
 the HUD context menu, so either surface updates the other immediately. The
 speech master uses the canonical `speechenable` key and gates all TTS without
@@ -110,13 +110,28 @@ lease, so an equal sysid on another physical link cannot drive a phrase. The
 TTS adapter serializes a current phrase plus four pending phrases, coalesces
 duplicates, bounds text length, waits for the backend's actual Ready state
 after a watchdog stop and clears stale speech on target changes. Retained Qt
-PreArm/Arm, `#audio` and legacy battery phrases preserve the originating exact
-endpoint and share the master and Armed Only policy without invented per-event
-switches. Legacy link-state and object-detection speech is withheld until
+PreArm/Arm and `#audio` phrases now use the same complete MAVLink 2 assembly,
+exact endpoint, one-shot queue, master and Armed Only policy instead of the
+old direct packet-fragment path; legacy battery phrases preserve their exact
+endpoint through their existing path. Legacy link-state and object-detection speech is withheld until
 those producers preserve physical-link identity.
+As a retained Qt audio directive, a non-empty `#audio:` message bypasses the
+severity threshold and is shown without the raw prefix. Chunk completion
+follows MAVLink's null-terminator contract, so a text whose length is an exact
+multiple of 50 bytes requires the specified terminating empty chunk.
+
+`Message Severity` stores the exact MP10 `severity` key with default Warning
+(`4`) and all eight MAV severity names in order. The high-message source
+assembles complete UTF-8 STATUSTEXT chunks, applies the legacy ArduPilot
+severity compatibility thresholds, rechecks the immutable target lease after
+reentrant callbacks and promotes severity-at-or-above-threshold plus
+`Tuning:`, `PreArm:` and `Arm:` prefixes. The DATA HUD shows one line for ten
+seconds at two-thirds height with MP10 red/yellow/white severity colors; No
+Data updates the same banner even when TTS is disabled. Repeated identical
+messages refresh display lifetime without repeating speech.
 
 The useful Qt audio-mute control remains an extension and is not included in
-the 20-control parity count. The first real-X11 production-route run toggles
+the 21-control parity count. The first real-X11 production-route run toggles
 HUD and the speech master, verifies their exact keys and observes the DATA HUD
 disappear live (`/tmp/apm-planner-live-smoke.3anzjo`). The follow-up run
 completes the real Mode and Battery prompts, verifies their exact MP10 keys,
@@ -127,10 +142,13 @@ persists the master key and exits cleanly
 (`/tmp/apm-planner-speech-c2.Jz91ZI/planner-eight-controls.png`). Prompt
 cancellation is transactional: an event is enabled only after every required
 value is accepted, so cancellation cannot leave a half-configured policy.
+The current severity run uses one live synthetic exact UDP endpoint, renders
+`Message Severity = Info` on the production Planner route, then switches to
+DATA and renders its error STATUSTEXT on the native HUD before a clean exit
+(`/tmp/apm-status-smoke.Ucj2NV`).
 
 The remaining MP10 controls are not represented as fake toggles. Language,
-speed/OSD-color/severity, speech level, high-priority status-message speech
-and the vario consumer,
+speed/OSD color, speech level and the vario consumer,
 safety-confirmed flight shortcuts,
 connect policies, the five target-safe telemetry rates and GCS identity, map
 vectors/overlays/cache/external ADS-B, and the remaining advanced policies are

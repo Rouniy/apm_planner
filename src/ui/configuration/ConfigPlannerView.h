@@ -87,6 +87,7 @@ private:
     QComboBox *m_layout = nullptr;
     QLabel *m_layoutStatus = nullptr;
     QCheckBox *m_hudOverlay = nullptr;
+    QComboBox *m_messageSeverity = nullptr;
     QCheckBox *m_speechEnabled = nullptr;
     QPushButton *m_speechTest = nullptr;
     QLabel *m_speechBackendStatus = nullptr;

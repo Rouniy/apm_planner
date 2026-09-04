@@ -1,7 +1,9 @@
 #include "SpeechTelemetrySource.h"
 
 #include "comm/VehicleTargetManager.h"
+#include "services/StatusTextPolicy.h"
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
 #include <limits>
@@ -60,6 +62,8 @@ SpeechTelemetrySource::SpeechTelemetrySource(
     , m_targets(targets)
     , m_clock(std::move(clock))
 {
+    qRegisterMetaType<ExactStatusText>();
+    qRegisterMetaType<ExactSpeechTelemetryEvent>();
     m_elapsedClock.start();
     if (!m_targets) {
         return;
@@ -78,6 +82,7 @@ void SpeechTelemetrySource::observeMessage(
         return;
     }
 
+    const VehicleTargetLease capturedLease = m_snapshot.lease;
     const qint64 observedMs = nowMs();
     bool changed = m_snapshot.lastPacketMs != observedMs;
     m_snapshot.lastPacketMs = observedMs;
@@ -85,6 +90,8 @@ void SpeechTelemetrySource::observeMessage(
     bool modeEvent = false;
     bool waypointEvent = false;
     bool batteryEvent = false;
+    bool statusTextEvent = false;
+    ExactStatusText completedStatusText;
 
     switch (message.msgid) {
     case MAVLINK_MSG_ID_HEARTBEAT: {
@@ -106,6 +113,11 @@ void SpeechTelemetrySource::observeMessage(
         m_snapshot.modeValid = true;
         m_snapshot.customMode = heartbeat.custom_mode;
         m_snapshot.mode = mode;
+        m_autopilot = heartbeat.autopilot;
+        m_vehicleType = heartbeat.type;
+        if (m_flightVersionSeen) {
+            updateFirmwareCompatibility();
+        }
         break;
     }
     case MAVLINK_MSG_ID_GLOBAL_POSITION_INT: {
@@ -198,6 +210,21 @@ void SpeechTelemetrySource::observeMessage(
         m_snapshot.batteryRemainingPercent = remaining;
         break;
     }
+    case MAVLINK_MSG_ID_AUTOPILOT_VERSION: {
+        mavlink_autopilot_version_t version{};
+        mavlink_msg_autopilot_version_decode(&message, &version);
+        m_flightSwVersion = version.flight_sw_version;
+        m_flightCustomVersion = QByteArray(
+            reinterpret_cast<const char *>(version.flight_custom_version),
+            int(sizeof(version.flight_custom_version)));
+        m_flightVersionSeen = m_flightSwVersion != 0;
+        updateFirmwareCompatibility();
+        break;
+    }
+    case MAVLINK_MSG_ID_STATUSTEXT:
+        statusTextEvent = observeStatusText(
+            capturedLease, message, observedMs, &completedStatusText);
+        break;
     default:
         break;
     }
@@ -205,14 +232,50 @@ void SpeechTelemetrySource::observeMessage(
     if (changed) {
         emit snapshotChanged();
     }
+    if (!isCurrentLease(capturedLease)) {
+        return;
+    }
     if (armedEvent) {
         emit armedChanged(m_snapshot.armed);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
+        ExactSpeechTelemetryEvent event;
+        event.lease = capturedLease;
+        event.kind = ExactSpeechTelemetryEvent::Armed;
+        event.armed = m_snapshot.armed;
+        emit exactSpeechTelemetry(event);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
     }
     if (modeEvent) {
         emit flightModeChanged(m_snapshot.mode);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
+        ExactSpeechTelemetryEvent event;
+        event.lease = capturedLease;
+        event.kind = ExactSpeechTelemetryEvent::FlightMode;
+        event.mode = m_snapshot.mode;
+        emit exactSpeechTelemetry(event);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
     }
     if (waypointEvent) {
         emit waypointChanged(m_snapshot.waypointNumber);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
+        ExactSpeechTelemetryEvent event;
+        event.lease = capturedLease;
+        event.kind = ExactSpeechTelemetryEvent::Waypoint;
+        event.waypoint = m_snapshot.waypointNumber;
+        emit exactSpeechTelemetry(event);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
     }
     if (batteryEvent) {
         emit batteryTelemetryChanged(
@@ -220,6 +283,26 @@ void SpeechTelemetrySource::observeMessage(
                 ? m_snapshot.batteryVoltage : 0.0,
             m_snapshot.batteryRemainingValid
                 ? m_snapshot.batteryRemainingPercent : 0.0);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
+        ExactSpeechTelemetryEvent event;
+        event.lease = capturedLease;
+        event.kind = ExactSpeechTelemetryEvent::Battery;
+        event.batteryVoltage = m_snapshot.batteryVoltageValid
+            ? m_snapshot.batteryVoltage : 0.0;
+        event.batteryRemainingPercent = m_snapshot.batteryRemainingValid
+            ? m_snapshot.batteryRemainingPercent : 0.0;
+        emit exactSpeechTelemetry(event);
+        if (!isCurrentLease(capturedLease)) {
+            return;
+        }
+    }
+    // A snapshot listener may synchronously select another target. The event
+    // still carries the captured lease, and both producer and consumer check
+    // it again so connection order cannot leak a stale vehicle message.
+    if (statusTextEvent && isCurrentLease(completedStatusText.lease)) {
+        emit statusTextCompleted(completedStatusText);
     }
 }
 
@@ -304,12 +387,14 @@ QString SpeechTelemetrySource::modeText(
 
 void SpeechTelemetrySource::invalidateTargetEpoch()
 {
+    clearStatusTextState();
     m_snapshot = Snapshot();
     emit snapshotChanged();
 }
 
 void SpeechTelemetrySource::resetTargetEpoch()
 {
+    clearStatusTextState();
     Snapshot next;
     if (m_targets) {
         next.lease = m_targets->acquireTarget();
@@ -333,6 +418,150 @@ bool SpeechTelemetrySource::accepts(
         && m_targets->isCurrentTarget(
             lease.endpoint.linkId, lease.endpoint.systemId,
             lease.endpoint.componentId, lease.generation);
+}
+
+bool SpeechTelemetrySource::isCurrentLease(
+    const VehicleTargetLease &lease) const
+{
+    return m_targets && lease.isValid() && m_snapshot.lease.isValid()
+        && lease.generation == m_snapshot.lease.generation
+        && lease.endpoint.sameIdentity(m_snapshot.lease.endpoint)
+        && m_targets->isCurrentTarget(
+            lease.endpoint.linkId, lease.endpoint.systemId,
+            lease.endpoint.componentId, lease.generation);
+}
+
+bool SpeechTelemetrySource::observeStatusText(
+    const VehicleTargetLease &lease, const mavlink_message_t &message,
+    qint64 observedMs, ExactStatusText *completed)
+{
+    if (!completed) {
+        return false;
+    }
+
+    constexpr qint64 kAssemblyTimeoutMs = 5000;
+    constexpr int kMaximumAssemblies = 8;
+    constexpr int kMaximumMessageBytes = 512;
+
+    for (auto it = m_statusAssemblies.begin();
+         it != m_statusAssemblies.end();) {
+        if (it->updatedAtMs >= 0
+            && observedMs > it->updatedAtMs + kAssemblyTimeoutMs) {
+            it = m_statusAssemblies.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    mavlink_statustext_t status{};
+    mavlink_msg_statustext_decode(&message, &status);
+    QByteArray chunk(reinterpret_cast<const char *>(status.text),
+                     MAVLINK_MSG_STATUSTEXT_FIELD_TEXT_LEN);
+    const int terminator = chunk.indexOf('\0');
+    const bool terminal = terminator >= 0;
+    if (terminal) {
+        chunk.resize(terminator);
+    }
+
+    QByteArray utf8;
+    const quint16 id = status.id;
+    if (id == 0) {
+        if (status.chunk_seq != 0) {
+            return false;
+        }
+        utf8 = chunk;
+    } else if (status.chunk_seq == 0) {
+        if (!m_statusAssemblies.contains(id)
+            && m_statusAssemblies.size() >= kMaximumAssemblies) {
+            auto oldest = m_statusAssemblies.begin();
+            for (auto it = m_statusAssemblies.begin();
+                 it != m_statusAssemblies.end(); ++it) {
+                if (it->updatedAtMs < oldest->updatedAtMs) {
+                    oldest = it;
+                }
+            }
+            m_statusAssemblies.erase(oldest);
+        }
+        if (terminal) {
+            m_statusAssemblies.remove(id);
+            utf8 = chunk;
+        } else {
+            StatusAssembly assembly;
+            assembly.rawSeverity = status.severity;
+            assembly.nextChunk = 1;
+            assembly.utf8 = chunk;
+            assembly.updatedAtMs = observedMs;
+            m_statusAssemblies.insert(id, assembly);
+            return false;
+        }
+    } else {
+        auto it = m_statusAssemblies.find(id);
+        if (it == m_statusAssemblies.end()) {
+            return false;
+        }
+        if (it->rawSeverity != status.severity
+            || it->nextChunk != status.chunk_seq
+            || it->utf8.size() + chunk.size() > kMaximumMessageBytes) {
+            m_statusAssemblies.erase(it);
+            return false;
+        }
+        it->utf8.append(chunk);
+        it->updatedAtMs = observedMs;
+        if (!terminal) {
+            ++it->nextChunk;
+            return false;
+        }
+        utf8 = it->utf8;
+        m_statusAssemblies.erase(it);
+    }
+
+    const QString text = QString::fromUtf8(utf8.constData(), utf8.size());
+    if (m_autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA) {
+        m_firmwareVersion.parseVersion(text);
+        m_legacySeverityCompatibility =
+            StatusTextPolicy::requiresLegacySeverityCompatibility(
+                m_firmwareVersion);
+    }
+    const int normalizedSeverity = m_legacySeverityCompatibility
+        ? StatusTextPolicy::normalizeLegacySeverity(status.severity)
+        : int(status.severity);
+
+    completed->lease = lease;
+    completed->rawSeverity = status.severity;
+    completed->severity = static_cast<quint8>(normalizedSeverity);
+    completed->messageId = id;
+    completed->text = text;
+    completed->completedAtMs = observedMs;
+    return true;
+}
+
+void SpeechTelemetrySource::updateFirmwareCompatibility()
+{
+    if (!m_flightVersionSeen) {
+        return;
+    }
+    APMFirmwareVersion version;
+    version.parseFlightSwVersion(
+        m_flightSwVersion, m_flightCustomVersion,
+        m_autopilot == MAV_AUTOPILOT_ARDUPILOTMEGA
+            ? StatusTextPolicy::firmwareVehicleType(m_vehicleType)
+            : QString());
+    m_firmwareVersion = version;
+    m_legacySeverityCompatibility =
+        StatusTextPolicy::requiresLegacySeverityCompatibility(
+            m_firmwareVersion);
+}
+
+void SpeechTelemetrySource::clearStatusTextState()
+{
+    m_statusAssemblies.clear();
+    m_firmwareVersion = APMFirmwareVersion();
+    m_flightCustomVersion.clear();
+    m_flightSwVersion = 0;
+    m_autopilot = MAV_AUTOPILOT_GENERIC;
+    m_vehicleType = MAV_TYPE_GENERIC;
+    m_flightVersionSeen = false;
+    m_legacySeverityCompatibility = false;
 }
 
 qint64 SpeechTelemetrySource::nowMs() const

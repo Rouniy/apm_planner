@@ -1,4 +1,5 @@
 #include "PrimaryFlightDisplay.h"
+#include "services/StatusMessageSettings.h"
 #include "UASManager.h"
 
 //#include "ui_primaryflightdisplay.h"
@@ -168,6 +169,7 @@ PrimaryFlightDisplay::PrimaryFlightDisplay(int width, int height, QWidget *paren
 
     preArmCheckFailure = false;
     preArmCheckMessage = "";
+    preArmCheckSeverity = MAV_SEVERITY_WARNING;
     preArmMessageTimer = new QTimer(this);
     connect(preArmMessageTimer,SIGNAL(timeout()),this,SLOT(preArmMessageTimeout()));
 
@@ -281,6 +283,8 @@ void PrimaryFlightDisplay::forgetUAS(UASInterface* uas)
                    this, SLOT(updateGPSAltitude(UASInterface*, double, quint64)));
         disconnect(this->uas, SIGNAL(navigationControllerErrorsChanged(UASInterface*, double, double, double)),
                    this, SLOT(updateNavigationControllerErrors(UASInterface*, double, double, double)));
+        disconnect(this->uas, SIGNAL(textMessageReceived(int,int,int,QString)),
+                   this, SLOT(uasTextMessage(int,int,int,QString)));
 
         //disconnect(this->uas, SIGNAL(batteryChanged(UASInterface*, double, double, double, int)), this, SLOT(updateBattery(UASInterface*, double, double, double, int)));
         //disconnect(this->uas, SIGNAL(statusChanged(UASInterface*,QString,QString)), this, SLOT(updateState(UASInterface*,QString)));
@@ -289,6 +293,11 @@ void PrimaryFlightDisplay::forgetUAS(UASInterface* uas)
         //disconnect(this->uas, SIGNAL(armingChanged(bool)), this, SLOT(updateArmed(bool)));
         //disconnect(this->uas, SIGNAL(satelliteCountChanged(double, QString)), this, SLOT(updateSatelliteCount(double, QString)));
         //disconnect(this->uas, SIGNAL(localizationChanged(UASInterface* uas, int fix)), this, SLOT(updateGPSFixType(UASInterface*,int)));
+        this->uas = nullptr;
+        preArmMessageTimer->stop();
+        preArmCheckFailure = false;
+        preArmCheckMessage.clear();
+        update();
     }
 }
 
@@ -337,15 +346,18 @@ void PrimaryFlightDisplay::setActiveUAS(UASInterface* uas)
 void PrimaryFlightDisplay::uasTextMessage(int uasid, int componentid, int severity, QString text)
 {
     Q_UNUSED(componentid);
-    if (text.contains("PreArm") || severity <= MAV_SEVERITY_CRITICAL)
+    if (uas && uasid == uas->getUASID()
+        && StatusMessageSettings::instance()->shouldPromote(text, severity))
     {
         if (preArmMessageTimer->isActive())
         {
             preArmMessageTimer->stop();
         }
         preArmCheckMessage =  QString("M%1:%2").arg(uasid).arg(text);
+        preArmCheckSeverity = severity;
         preArmCheckFailure = true;
-        preArmMessageTimer->start(4000);
+        preArmMessageTimer->start(10000);
+        update();
     }
 }
 
@@ -1532,7 +1544,11 @@ void PrimaryFlightDisplay::doPaint() {
     {
         //Paint it across the whole screen
         QPen pen = p2.pen();
-        pen.setColor(QColor::fromRgb(200,0,0));
+        const QColor messageColor = preArmCheckSeverity <= MAV_SEVERITY_ERROR
+            ? QColor(Qt::red)
+            : preArmCheckSeverity <= MAV_SEVERITY_WARNING
+                ? QColor(Qt::yellow) : QColor(Qt::white);
+        pen.setColor(messageColor);
         pen.setWidth(5);
         p2.setPen(pen);
         p2.drawRect(0,0,width(),height());
@@ -1550,7 +1566,7 @@ void PrimaryFlightDisplay::preArmMessageTimeout()
 {
     preArmMessageTimer->stop();
     preArmCheckFailure = false;
-
+    update();
 }
 
 void PrimaryFlightDisplay:: createActions() {}

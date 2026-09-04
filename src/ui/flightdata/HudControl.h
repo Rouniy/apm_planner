@@ -72,6 +72,9 @@ class HudControl final : public QWidget
     HUD_PROPERTY(bool, Failsafe, failsafe, setFailsafe)
     HUD_PROPERTY(bool, SafetyActive, safetyActive, setSafetyActive)
     HUD_PROPERTY(double, LinkQuality, linkQuality, setLinkQuality)
+    HUD_PROPERTY(QString, StatusMessage, statusMessage, setStatusMessage)
+    HUD_PROPERTY(int, StatusMessageSeverity, statusMessageSeverity,
+                 setStatusMessageSeverity)
 #undef HUD_PROPERTY
 
 public:
@@ -131,6 +134,8 @@ public:
     bool failsafe() const { return m_failsafe; }
     bool safetyActive() const { return m_safetyActive; }
     double linkQuality() const { return m_linkQuality; }
+    QString statusMessage() const { return m_statusMessage; }
+    int statusMessageSeverity() const { return m_statusMessageSeverity; }
 
     void setVideoBackground(const QImage &image);
     QImage videoBackground() const { return m_videoBackground; }
@@ -191,6 +196,8 @@ public slots:
     void setFailsafe(bool value);
     void setSafetyActive(bool value);
     void setLinkQuality(double value);
+    void setStatusMessage(const QString &value);
+    void setStatusMessageSeverity(int value);
     void snapToValues();
 
 signals:
@@ -275,6 +282,8 @@ private:
     bool m_failsafe = false;
     bool m_safetyActive = false;
     double m_linkQuality = 0.0;
+    QString m_statusMessage;
+    int m_statusMessageSeverity = 0;
     QImage m_videoBackground;
 
     double m_easedRoll = 0.0;

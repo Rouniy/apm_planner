@@ -1540,6 +1540,8 @@ void MainWindow::buildCommonWidgets()
     auto *speechAnnouncer = new SpeechAnnouncer(
         flightDataViewModel, speechTelemetry, flightDataViewModel);
     speechAnnouncer->setObjectName(QStringLiteral("SpeechAnnouncer"));
+    connect(speechAnnouncer, &SpeechAnnouncer::highMessageChanged,
+            flightDataViewModel, &FlightDataViewModel::setStatusMessage);
     if (pilotView->setHudWidget(pilotHudHost)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,
                               FlightDataView::hudPanelId(),

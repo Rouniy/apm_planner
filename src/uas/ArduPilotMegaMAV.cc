@@ -29,6 +29,7 @@ This file is part of the QGROUNDCONTROL project
  */
 
 #include "ArduPilotMegaMAV.h"
+#include "services/StatusTextPolicy.h"
 #include "logging.h"
 #include "LinkManager.h"
 
@@ -38,40 +39,6 @@ This file is part of the QGROUNDCONTROL project
 #include <QDesktopServices>
 #include <QSettings>
 #include <QSqlRecord>
-
-namespace {
-QString firmwareVehicleType(int mavType)
-{
-    switch (mavType) {
-    case MAV_TYPE_FIXED_WING:
-    case MAV_TYPE_VTOL_DUOROTOR:
-    case MAV_TYPE_VTOL_QUADROTOR:
-    case MAV_TYPE_VTOL_TILTROTOR:
-    case MAV_TYPE_VTOL_RESERVED2:
-    case MAV_TYPE_VTOL_RESERVED3:
-    case MAV_TYPE_VTOL_RESERVED4:
-    case MAV_TYPE_VTOL_RESERVED5:
-        return QStringLiteral("ArduPlane");
-    case MAV_TYPE_GROUND_ROVER:
-    case MAV_TYPE_SURFACE_BOAT:
-        return QStringLiteral("ArduRover");
-    case MAV_TYPE_SUBMARINE:
-        return QStringLiteral("ArduSub");
-    case MAV_TYPE_TRICOPTER:
-    case MAV_TYPE_QUADROTOR:
-    case MAV_TYPE_COAXIAL:
-    case MAV_TYPE_HELICOPTER:
-    case MAV_TYPE_HEXAROTOR:
-    case MAV_TYPE_OCTOROTOR:
-    case MAV_TYPE_DODECAROTOR:
-    case MAV_TYPE_DECAROTOR:
-        return QStringLiteral("ArduCopter");
-    default:
-        return {};
-    }
-}
-}
-
 
 ArduPilotMegaMAV::ArduPilotMegaMAV(MAVLinkProtocol* mavlink, int id) :
     UAS(mavlink, id),
@@ -250,7 +217,7 @@ void ArduPilotMegaMAV::receiveMessage(LinkInterface* link, mavlink_message_t mes
                 QByteArray(reinterpret_cast<const char *>(
                                version.flight_custom_version),
                            int(sizeof(version.flight_custom_version))),
-                firmwareVehicleType(getSystemType()));
+                StatusTextPolicy::firmwareVehicleType(getSystemType()));
             if (m_firmwareVersion.isValid()) {
                 m_severityCompatibilityMode =
                     _isTextSeverityAdjustmentNeeded(m_firmwareVersion);
@@ -314,52 +281,16 @@ void ArduPilotMegaMAV::adjustSeverity(mavlink_message_t* message) const
     // SEVERITY_HIGH    =3 MAV_SEVERITY_CRITICAL= 2
     // SEVERITY_USER_RESPONSE =5 MAV_SEVERITY_CRITICAL= 2
 
-    switch(statusText.severity) {
-    case 1:     /* gcs_severity::SEVERITY_LOW according to old codes */
-        statusText.severity = MAV_SEVERITY_WARNING;
-        break;
-    case 2:     /* gcs_severity::SEVERITY_MEDIUM according to old codes  */
-        statusText.severity = MAV_SEVERITY_ALERT;
-        break;
-    case 3:     /* gcs_severity::SEVERITY_HIGH  according to old codes */
-        statusText.severity = MAV_SEVERITY_CRITICAL;
-        break;
-    case 5: /*gcs_severity::SEVERITY_USER_RESPONSE according to old codes*/
-        statusText.severity = MAV_SEVERITY_CRITICAL;
-        break;
-    default:
-        statusText.severity = MAV_SEVERITY_INFO;
-    }
+    statusText.severity = static_cast<quint8>(
+        StatusTextPolicy::normalizeLegacySeverity(statusText.severity));
 
     mavlink_msg_statustext_encode(message->sysid, message->compid, message, &statusText);
 }
 
 bool ArduPilotMegaMAV::_isTextSeverityAdjustmentNeeded(const APMFirmwareVersion& firmwareVersion)
 {
-    if (!firmwareVersion.isValid()) {
-        return false;
-    }
-
-    bool adjustmentNeeded = false;
-    if (firmwareVersion.vehicleType().contains(APM_COPTER_REXP)) {
-        if (firmwareVersion < APMFirmwareVersion(MIN_COPTER_VERSION_WITH_CORRECT_SEVERITY_MSGS)) {
-            adjustmentNeeded = true;
-        }
-    } else if (firmwareVersion.vehicleType().contains(APM_PLANE_REXP)) {
-        if (firmwareVersion < APMFirmwareVersion(MIN_PLANE_VERSION_WITH_CORRECT_SEVERITY_MSGS)) {
-            adjustmentNeeded = true;
-        }
-    } else if (firmwareVersion.vehicleType().contains(APM_ROVER_REXP)) {
-        if (firmwareVersion < APMFirmwareVersion(MIN_ROVER_VERSION_WITH_CORRECT_SEVERITY_MSGS)) {
-            adjustmentNeeded = true;
-        }
-    } else if (firmwareVersion.vehicleType().contains(APM_SUB_REXP)) {
-        if (firmwareVersion < APMFirmwareVersion(MIN_SUB_VERSION_WITH_CORRECT_SEVERITY_MSGS)) {
-            adjustmentNeeded = true;
-        }
-    }
-
-    return adjustmentNeeded;
+    return StatusTextPolicy::requiresLegacySeverityCompatibility(
+        firmwareVersion);
 }
 
 void ArduPilotMegaMAV::setMountConfigure(unsigned char mode, bool stabilize_roll,bool stabilize_pitch,bool stabilize_yaw)

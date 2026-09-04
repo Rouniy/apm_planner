@@ -106,6 +106,8 @@ void FlightDataViewModel::resetTelemetry()
     m_failsafe = false;
     m_safetyActive = false;
     m_linkQuality = 0.0;
+    m_statusMessage.clear();
+    m_statusMessageSeverity = 0;
 }
 
 void FlightDataViewModel::setActiveUAS(UASInterface *uas)
@@ -308,6 +310,19 @@ void FlightDataViewModel::applyToHud()
     m_hud->setFailsafe(m_failsafe);
     m_hud->setSafetyActive(m_safetyActive);
     m_hud->setLinkQuality(m_linkQuality);
+    m_hud->setStatusMessage(m_statusMessage);
+    m_hud->setStatusMessageSeverity(m_statusMessageSeverity);
+}
+
+void FlightDataViewModel::setStatusMessage(const QString &message,
+                                           int severity)
+{
+    if (m_statusMessage == message && m_statusMessageSeverity == severity) {
+        return;
+    }
+    m_statusMessage = message;
+    m_statusMessageSeverity = severity;
+    publish();
 }
 
 void FlightDataViewModel::updateAttitude(UASInterface *uas, double roll,

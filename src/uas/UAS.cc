@@ -1168,26 +1168,10 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             {
                 text.remove("#audio:");
                 emit textMessageReceived(uasId, message.compid, severity, QString("Audio message: ") + text);
-                GAudioOutput::instance()->sayForVehicle(
-                    text, link ? link->getId() : -1,
-                    message.sysid, message.compid, severity);
             }
             else
             {
                 emit textMessageReceived(uasId, message.compid, severity, text);
-                if (text.startsWith(QStringLiteral("PreArm:"))) {
-                    const QString spoken = QStringLiteral("Pre-arm check:")
-                        + text.mid(QStringLiteral("PreArm:").size());
-                    GAudioOutput::instance()->sayForVehicle(
-                        spoken, link ? link->getId() : -1,
-                        message.sysid, message.compid, severity);
-                } else if (text.startsWith(QStringLiteral("Arm:"))) {
-                    const QString spoken = QStringLiteral("Arm check:")
-                        + text.mid(QStringLiteral("Arm:").size());
-                    GAudioOutput::instance()->sayForVehicle(
-                        spoken, link ? link->getId() : -1,
-                        message.sysid, message.compid, severity);
-                }
             }
         }
             break;

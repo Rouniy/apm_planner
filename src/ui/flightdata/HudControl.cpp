@@ -174,6 +174,7 @@ DEFINE_DOUBLE_SETTER(setThrottlePercent, m_throttlePercent)
 DEFINE_BOOL_SETTER(setFailsafe, m_failsafe)
 DEFINE_BOOL_SETTER(setSafetyActive, m_safetyActive)
 DEFINE_DOUBLE_SETTER(setLinkQuality, m_linkQuality)
+DEFINE_INT_SETTER(setStatusMessageSeverity, m_statusMessageSeverity)
 
 #undef DEFINE_DOUBLE_SETTER
 #undef DEFINE_INT_SETTER
@@ -210,6 +211,15 @@ void HudControl::setCustomItemsText(const QString &value)
         return;
     }
     m_customItemsText = value;
+    changed();
+}
+
+void HudControl::setStatusMessage(const QString &value)
+{
+    if (m_statusMessage == value) {
+        return;
+    }
+    m_statusMessage = value;
     changed();
 }
 
@@ -790,6 +800,37 @@ void HudControl::paintEvent(QPaintEvent *event)
         drawHaloText(painter, QPointF(centerX, headHeight + 4),
                      tr("Wind %1° %2").arg(qRound(normalizedHeading(m_windDir)))
                          .arg(m_windVel, 0, 'f', 1), Qt::white, fontSize,
+                     Qt::AlignHCenter);
+    }
+
+    // Draw the MP high-message banner at its original location. Safety and
+    // failsafe warnings are painted afterwards so they stay legible when a
+    // very small HUD forces the two regions to overlap.
+    if (!m_statusMessage.isEmpty()) {
+        const QColor messageColor = m_statusMessageSeverity <= 3
+            ? QColor(Qt::red)
+            : m_statusMessageSeverity <= 4
+                ? QColor(Qt::yellow) : QColor(Qt::white);
+        const double availableWidth = qMax(40.0, width - 100.0);
+        double messageFontSize = fontSize + 10.0;
+        QFont messageFont = painter.font();
+        messageFont.setBold(true);
+        messageFont.setPixelSize(qMax(8, qRound(messageFontSize)));
+        double messageWidth = QFontMetricsF(messageFont)
+            .horizontalAdvance(m_statusMessage);
+        if (messageWidth > availableWidth && messageWidth > 0.0) {
+            messageFontSize = qMax(
+                8.0, messageFontSize * availableWidth / messageWidth);
+            messageFont.setPixelSize(qMax(8, qRound(messageFontSize)));
+        }
+        QString displayed = m_statusMessage;
+        const QFontMetricsF messageMetrics(messageFont);
+        if (messageMetrics.horizontalAdvance(displayed) > availableWidth) {
+            displayed = messageMetrics.elidedText(
+                displayed, Qt::ElideRight, qRound(availableWidth));
+        }
+        drawHaloText(painter, QPointF(centerX, height * 2.0 / 3.0),
+                     displayed, messageColor, messageFontSize,
                      Qt::AlignHCenter);
     }
 
