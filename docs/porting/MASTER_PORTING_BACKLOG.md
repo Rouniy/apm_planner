@@ -58,7 +58,8 @@
 Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base, RF
 Propagation, OSD Video, полезный offline Swarm Sequence editor, Formation,
 Follow Path и Follow Leader. Для Waypoint Leader готовы exact mission cache,
-центральный COMMAND_ACK arbiter и safety-critical core; далее идут его
+центральный COMMAND_ACK arbiter, safety-critical core и bounded native
+altitude/profile control; далее идут его
 production window/all-or-nothing executor и общий Sequence command runner,
 после чего приоритет переходит к Settings/CONFIG и их функциональным vertical
 slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
@@ -436,9 +437,10 @@ dirty state никогда не переносится на новый target.
   сделаны; остаются подключение exact mission/current-navigation snapshot,
   bulk commands через центральный ACK arbiter и live/reference/native evidence;
 - Swarm Waypoint Leader: exact mission cache/coordinator, центральный exact
-  endpoint/COMMAND_ACK arbiter и transport-free staged-flight/collision core
-  сделаны и проходят полный suite; пункт TOOLS остаётся disabled до настоящего
-  окна, ParameterService adapter и all-or-nothing intent executor;
+  endpoint/COMMAND_ACK arbiter, transport-free staged-flight/collision core и
+  bounded native altitude/profile control сделаны; пункт TOOLS остаётся
+  disabled до настоящего окна, ParameterService adapter и all-or-nothing
+  intent executor;
 - QML Plugin Manager: широкая документация и API coverage.
 
 #### Отсутствующие инструменты P2
