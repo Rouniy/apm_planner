@@ -148,6 +148,9 @@ public:
         WriteSucceeded,
         WriteSkipped,
         Rejected,
+        ReadCancelled,
+        WriteCancelled,
+        WriteCancelledOutcomeUncertain,
         ReadTimedOut,
         ReadTransportFailure,
         ReadLeaseRetired,
@@ -198,6 +201,10 @@ public:
         QString *error = nullptr);
     bool releaseExactReservation(
         const ExactReservationToken &reservation);
+    bool cancelExactOperation(
+        const ExactReservationToken &reservation,
+        const ExactOperationToken &operation,
+        const QString &reason = QString());
     ExactSubmitResult submitExactRead(
         const ExactReservationToken &reservation,
         const SwarmVehicleInstanceLease &lease,

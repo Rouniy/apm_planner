@@ -308,6 +308,62 @@ bool ParameterService::releaseExactReservation(
     return true;
 }
 
+bool ParameterService::cancelExactOperation(
+    const ExactReservationToken &reservation,
+    const ExactOperationToken &operation,
+    const QString &reason)
+{
+    const auto reserved = m_exactReservations.constFind(
+        reservation.reservationId);
+    if (!operation.isValid() || reservation.reservationId == 0
+        || reservation.owner.isNull()
+        || reserved == m_exactReservations.constEnd()
+        || reserved->owner != reservation.owner
+        || reserved->leases != reservation.leases
+        || operation.reservationId != reservation.reservationId
+        || !m_exactOperationActive
+        || m_exactOperation.token.operationId != operation.operationId
+        || m_exactOperation.token.reservationId != operation.reservationId
+        || m_exactOperation.token.kind != operation.kind
+        || m_exactOperation.token.name != operation.name
+        || m_exactOperation.token.type != operation.type
+        || m_exactOperation.token.normalizedValue
+            != operation.normalizedValue
+        || !m_exactOperation.token.lease.sameInstance(operation.lease)) {
+        return false;
+    }
+
+    const bool write = m_exactOperation.token.kind
+        == ExactOperationKind::Write;
+    const bool outcomeUncertain = write && m_exactOperation.frameAttempted;
+    QString description = reason.trimmed();
+    if (description.isEmpty()) {
+        if (!write) {
+            description = QStringLiteral(
+                "The exact parameter read was cancelled.");
+        } else if (outcomeUncertain) {
+            description = QStringLiteral(
+                "The exact parameter write was cancelled after transmission; outcome is uncertain.");
+        } else {
+            description = QStringLiteral(
+                "The exact parameter write was cancelled before transmission.");
+        }
+    } else if (outcomeUncertain) {
+        description += QStringLiteral(
+            " The write may already have reached the vehicle; outcome is uncertain.");
+    }
+
+    finishExactOperation(
+        !write
+            ? ExactTerminalResult::ReadCancelled
+            : (outcomeUncertain
+                   ? ExactTerminalResult::WriteCancelledOutcomeUncertain
+                   : ExactTerminalResult::WriteCancelled),
+        QVariant(), ParameterType::Unknown, description,
+        outcomeUncertain);
+    return true;
+}
+
 ParameterService::ExactSubmitResult ParameterService::submitExactRead(
     const ExactReservationToken &reservation,
     const SwarmVehicleInstanceLease &lease,

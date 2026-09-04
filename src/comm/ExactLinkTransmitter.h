@@ -38,7 +38,8 @@ public:
 
     SendResult sendMessage(
         int linkId, quint8 localSystemId, quint8 localComponentId,
-        mavlink_message_t message);
+        mavlink_message_t message,
+        bool *frameWriterInvoked = nullptr);
     SendResult sendCommandAck(
         int linkId, quint8 localSystemId, quint8 localComponentId,
         quint16 command, quint8 result,

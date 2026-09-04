@@ -257,7 +257,7 @@ private slots:
     void urgentDispatchWhileNormalSlotIsPending();
     void urgentDispatchAdvancesNormalDeadline();
     void urgentPartialReportIdentifiesEveryTargetExactly();
-    void secondTransportFailureReportsPartialBatch();
+    void transportReportsPreWriteAndAttemptedFailures();
     void synchronousCancellationCannotInterleaveNewSession();
     void routeCancellationCannotLeakPhysicalFrame();
     void guidedModeLossDuringRouteValidationCannotLeakPhysicalFrame();
@@ -934,7 +934,8 @@ urgentPartialReportIdentifiesEveryTargetExactly()
     QCOMPARE(fixture.frames.at(0).linkId, 3);
 }
 
-void SwarmCommandServiceTest::secondTransportFailureReportsPartialBatch()
+void SwarmCommandServiceTest::
+transportReportsPreWriteAndAttemptedFailures()
 {
     Fixture fixture;
     const SwarmVehicleInstanceLease first = fixture.addVehicle(3, 31);
@@ -962,21 +963,68 @@ void SwarmCommandServiceTest::secondTransportFailureReportsPartialBatch()
     const SwarmCommandService::BatchReport report =
         fixture.service.sendPositionTargets(
             token, {firstTarget, secondTarget, thirdTarget});
-    QCOMPARE(report.result, SwarmCommandService::Result::PartialSend);
+    QCOMPARE(report.result,
+             SwarmCommandService::Result::TransportOutcomeUncertain);
     QCOMPARE(report.members.size(), 3);
     QCOMPARE(report.members.at(0).slotId, 1);
     QCOMPARE(report.members.at(0).result,
              SwarmCommandService::Result::SentAll);
+    QCOMPARE(report.members.at(0).framesAttempted, 1);
+    QCOMPARE(report.members.at(0).framesSent, 1);
     QCOMPARE(report.members.at(1).slotId, 2);
     QCOMPARE(report.members.at(1).result,
-             SwarmCommandService::Result::TransportUnavailable);
+             SwarmCommandService::Result::TransportOutcomeUncertain);
+    QCOMPARE(report.members.at(1).framesAttempted, 1);
+    QCOMPARE(report.members.at(1).framesSent, 0);
     QCOMPARE(report.members.at(2).slotId, 3);
     QCOMPARE(report.members.at(2).result,
              SwarmCommandService::Result::RejectedBeforeSend);
+    QCOMPARE(report.members.at(2).framesAttempted, 0);
+    QCOMPARE(report.members.at(2).framesSent, 0);
+    QVERIFY(report.detail.contains(
+        QStringLiteral("uncertain"), Qt::CaseInsensitive));
     QCOMPARE(fixture.writeAttempts, 2);
     QCOMPARE(fixture.frames.size(), 2);
     QCOMPARE(fixture.frames.at(0).linkId, 3);
     QCOMPARE(fixture.frames.at(1).linkId, 6);
+
+    QCOMPARE(fixture.service.release(token),
+             SwarmCommandService::Result::Cancelled);
+    int preWriteRouteCalls = 0;
+    QPointer<ExactLinkTransmitter> disappearingTransmitter =
+        new ExactLinkTransmitter(
+            [](int, const QByteArray &) { return true; });
+    SwarmCommandService noTransportService(
+        &fixture.registry, disappearingTransmitter.data(),
+        [&preWriteRouteCalls, &disappearingTransmitter](
+            const SwarmVehicleInstanceLease &, QString *error) {
+            if (error) {
+                error->clear();
+            }
+            ++preWriteRouteCalls;
+            // Reserve and whole-group validation are calls one and two. Drop
+            // the transmitter at the per-member route boundary immediately
+            // before the physical writer would be invoked.
+            if (preWriteRouteCalls == 3) {
+                delete disappearingTransmitter.data();
+            }
+            return true;
+        });
+    QObject noTransportOwner;
+    SwarmCommandSessionToken noTransportToken;
+    QCOMPARE(noTransportService.reserve(
+                 &noTransportOwner, {member(1, first)}, 10,
+                 &noTransportToken),
+             SwarmCommandService::Result::Reserved);
+    const SwarmCommandService::BatchReport unavailable =
+        noTransportService.sendPositionTargets(
+            noTransportToken, {firstTarget});
+    QCOMPARE(unavailable.result,
+             SwarmCommandService::Result::TransportUnavailable);
+    QCOMPARE(unavailable.members.size(), 1);
+    QCOMPARE(unavailable.members.at(0).framesAttempted, 0);
+    QCOMPARE(unavailable.members.at(0).framesSent, 0);
+    QVERIFY(!disappearingTransmitter);
 }
 
 void SwarmCommandServiceTest::

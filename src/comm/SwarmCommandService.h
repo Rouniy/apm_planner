@@ -100,6 +100,7 @@ public:
         InvalidPayload,
         RateLimited,
         TransportUnavailable,
+        TransportOutcomeUncertain,
         Cancelled
     };
     Q_ENUM(Result)
@@ -110,6 +111,7 @@ public:
         SwarmVehicleInstanceLease lease;
         Result result = Result::RejectedBeforeSend;
         int framesPlanned = 0;
+        int framesAttempted = 0;
         int framesSent = 0;
         QString detail;
     };

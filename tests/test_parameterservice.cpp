@@ -167,6 +167,7 @@ private slots:
     void exactTransportFailureClassifiesReadAndWriteSafely();
     void exactReadRetriesHaveDefiniteBoundedTimeout();
     void exactWriteRetriesStopAtAbsoluteDeadlineAndQuarantine();
+    void exactCancellationStopsReadAndWriteRetries();
     void exactWriteDeadlineIsRecheckedAfterRouteCallback();
     void exactReservationValidatesRouteAndExcludesLegacyOperations();
     void exactValidatorCallbacksCanDeleteService();
@@ -2184,6 +2185,105 @@ exactWriteRetriesStopAtAbsoluteDeadlineAndQuarantine()
                  secondReservation, lease, write),
              ParameterService::ExactSubmitResult::Quarantined);
     QVERIFY(service.releaseExactReservation(secondReservation));
+}
+
+void ParameterServiceTest::exactCancellationStopsReadAndWriteRetries()
+{
+    VehicleTargetManager targets;
+    int transmissions = 0;
+    ExactLinkTransmitter transmitter(
+        [&transmissions](int, const QByteArray &) {
+            ++transmissions;
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(15, 20, 15, 20, 500, 250);
+    const SwarmVehicleInstanceLease lease = swarmLease(52, 74, 1, 14, 21);
+    const QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(&owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    QSignalSpy retried(
+        &service, &ParameterService::exactOperationRetried);
+    QSignalSpy released(
+        &service, &ParameterService::exactReservationReleased);
+
+    ParameterService::ExactReadRequest read;
+    read.name = QStringLiteral("CANCEL_READ");
+    ParameterService::ExactOperationToken readToken;
+    QCOMPARE(service.submitExactRead(
+                 reservation, lease, read, &readToken),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(transmissions, 1);
+    ParameterService::ExactOperationToken wrongToken = readToken;
+    ++wrongToken.operationId;
+    QVERIFY(!service.cancelExactOperation(
+        reservation, wrongToken, QStringLiteral("wrong token")));
+    QCOMPARE(finished.count(), 0);
+    QVERIFY(service.cancelExactOperation(
+        reservation, readToken, QStringLiteral("operator stop")));
+    QCOMPARE(finished.count(), 1);
+    const ParameterService::ExactOperationReport readReport =
+        exactReportAt(finished, 0);
+    QCOMPARE(readReport.terminalResult,
+             ParameterService::ExactTerminalResult::ReadCancelled);
+    QCOMPARE(readReport.attempts, 1);
+    QVERIFY(readReport.frameAttempted);
+    QVERIFY(readReport.description.contains(
+        QStringLiteral("operator stop")));
+    QTest::qWait(60);
+    QCOMPARE(transmissions, 1);
+    QCOMPARE(retried.count(), 0);
+
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("CANCEL_WRITE");
+    write.value = qint32(23);
+    write.type = ParameterType::Int32;
+    write.force = true;
+    ParameterService::ExactOperationToken writeToken;
+    QCOMPARE(service.submitExactWrite(
+                 reservation, lease, write, &writeToken),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(transmissions, 2);
+    QVERIFY(service.cancelExactOperation(reservation, writeToken));
+    QCOMPARE(finished.count(), 2);
+    const ParameterService::ExactOperationReport writeReport =
+        exactReportAt(finished, 1);
+    QCOMPARE(writeReport.terminalResult,
+             ParameterService::ExactTerminalResult::
+                 WriteCancelledOutcomeUncertain);
+    QCOMPARE(writeReport.attempts, 1);
+    QVERIFY(writeReport.frameAttempted);
+    QVERIFY(writeReport.description.contains(
+        QStringLiteral("uncertain"), Qt::CaseInsensitive));
+    QVERIFY(service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+    QTest::qWait(60);
+    QCOMPARE(transmissions, 2);
+    QCOMPARE(retried.count(), 0);
+
+    service.observeMessage(
+        lease.endpoint.linkId,
+        parameterValue(
+            lease.endpoint.systemId, lease.endpoint.componentId,
+            write.name, write.value, write.type));
+    QVERIFY(!service.store()->snapshot(lease.endpoint)
+                 .contains(lease.endpoint.componentId, write.name));
+
+    QVERIFY(service.releaseExactReservation(reservation));
+    QCOMPARE(released.count(), 1);
+    QVERIFY(!service.cancelExactOperation(reservation, writeToken));
 }
 
 void ParameterServiceTest::

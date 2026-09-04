@@ -14,8 +14,11 @@ ExactLinkTransmitter::ExactLinkTransmitter(
 
 ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
     int linkId, quint8 localSystemId, quint8 localComponentId,
-    mavlink_message_t message)
+    mavlink_message_t message, bool *frameWriterInvoked)
 {
+    if (frameWriterInvoked) {
+        *frameWriterInvoked = false;
+    }
     if (linkId < 0) {
         return SendResult::InvalidLink;
     }
@@ -64,6 +67,9 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
     quint8 buffer[MAVLINK_MAX_PACKET_LEN]{};
     const quint16 frameLength =
         mavlink_msg_to_send_buffer(buffer, &message);
+    if (frameWriterInvoked) {
+        *frameWriterInvoked = true;
+    }
     if (!m_frameWriter(
             linkId,
             QByteArray(reinterpret_cast<const char *>(buffer), frameLength))) {

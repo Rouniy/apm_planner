@@ -973,19 +973,32 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
                 QStringLiteral("Exact MAVLink transmission is unavailable."));
             break;
         }
+        bool frameWriterInvoked = false;
         const ExactLinkTransmitter::SendResult sent =
             transmitter->sendMessage(
                 member.lease.endpoint.linkId,
                 localSystemId, localComponentId,
-                messages.at(index).second);
+                messages.at(index).second,
+                &frameWriterInvoked);
+        if (frameWriterInvoked) {
+            ++item->framesAttempted;
+        }
         if (sent != ExactLinkTransmitter::SendResult::Sent) {
-            item->result = item->framesSent == 0
-                ? Result::TransportUnavailable : Result::PartialSend;
-            item->detail = QStringLiteral(
-                "Transport failed while sending to %1.")
-                .arg(endpointLabel(member.lease));
-            report.result = sentCount == 0
-                ? Result::TransportUnavailable : Result::PartialSend;
+            if (frameWriterInvoked) {
+                item->result = Result::TransportOutcomeUncertain;
+                item->detail = QStringLiteral(
+                    "The physical writer could not confirm delivery to %1; outcome is uncertain.")
+                    .arg(endpointLabel(member.lease));
+                report.result = Result::TransportOutcomeUncertain;
+            } else {
+                item->result = item->framesSent == 0
+                    ? Result::TransportUnavailable : Result::PartialSend;
+                item->detail = QStringLiteral(
+                    "Transport became unavailable before writing to %1.")
+                    .arg(endpointLabel(member.lease));
+                report.result = sentCount == 0
+                    ? Result::TransportUnavailable : Result::PartialSend;
+            }
             report.detail = item->detail;
             break;
         }
@@ -1006,6 +1019,9 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
         report.detail = QStringLiteral("Queued for every exact swarm member.");
     } else {
         for (MemberReport &item : report.members) {
+            if (item.result == Result::TransportOutcomeUncertain) {
+                continue;
+            }
             if (item.framesSent == item.framesPlanned) {
                 item.result = Result::SentAll;
             } else if (item.framesSent > 0) {

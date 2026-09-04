@@ -159,14 +159,20 @@ void ExactLinkTransmitterTest::invalidAndV2OnlyMessagesDoNotConsumeV1Sequence()
 
     mavlink_message_t unknown{};
     unknown.msgid = 0x00ffffffU;
-    QCOMPARE(transmitter.sendMessage(7, 250, 190, unknown),
+    bool frameWriterInvoked = true;
+    QCOMPARE(transmitter.sendMessage(
+                 7, 250, 190, unknown, &frameWriterInvoked),
              ExactLinkTransmitter::SendResult::InvalidMessage);
+    QVERIFY(!frameWriterInvoked);
 
     mavlink_message_t v2Only{};
     mavlink_msg_param_ext_request_list_pack(
         250, 190, &v2Only, 42, 1);
-    QCOMPARE(transmitter.sendMessage(7, 250, 190, v2Only),
+    frameWriterInvoked = true;
+    QCOMPARE(transmitter.sendMessage(
+                 7, 250, 190, v2Only, &frameWriterInvoked),
              ExactLinkTransmitter::SendResult::IncompatibleVersion);
+    QVERIFY(!frameWriterInvoked);
     QCOMPARE(frames.size(), 0);
 
     QCOMPARE(transmitter.sendMessage(
@@ -186,13 +192,19 @@ void ExactLinkTransmitterTest::writerFailureConsumesSequence()
             return succeed;
         });
 
+    bool frameWriterInvoked = false;
     QCOMPARE(transmitter.sendMessage(
-                 3, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+                 3, 250, 190, commandMessage(MAV_CMD_MISSION_START),
+                 &frameWriterInvoked),
              ExactLinkTransmitter::SendResult::TransportUnavailable);
+    QVERIFY(frameWriterInvoked);
     succeed = true;
+    frameWriterInvoked = false;
     QCOMPARE(transmitter.sendMessage(
-                 3, 250, 190, commandMessage(MAV_CMD_DO_CHANGE_SPEED)),
+                 3, 250, 190, commandMessage(MAV_CMD_DO_CHANGE_SPEED),
+                 &frameWriterInvoked),
              ExactLinkTransmitter::SendResult::Sent);
+    QVERIFY(frameWriterInvoked);
 
     QCOMPARE(frames.size(), 2);
     QCOMPARE(decodeFrame(frames.at(0).bytes).seq, quint8(0));
