@@ -153,6 +153,19 @@ void ConfigPlannerViewTest::constructionDoesNotPersistDefaults()
     QVERIFY(!model.betaUpdatesEnabled());
     QVERIFY(model.hudOverlayEnabled());
     QVERIFY(!model.speechEnabled());
+    QVERIFY(!model.speechCustomEnabled());
+    QVERIFY(!model.speechAltWarningEnabled());
+    QVERIFY(!model.speechLowSpeedEnabled());
+    QCOMPARE(model.speechCustomTemplate(), QStringLiteral(
+        "Heading to Waypoint {wpn}, altitude is {alt}, Ground speed is {gsp} "));
+    QCOMPARE(model.speechAltWarningTemplate(),
+             QStringLiteral("WARNING, low altitude {alt}"));
+    QCOMPARE(model.speechAltWarningHeightMeters(), 2.0);
+    QVERIFY(!model.speechAltWarningHeightConfigured());
+    QCOMPARE(model.speechLowGroundSpeedTemplate(),
+             QStringLiteral("Low Ground Speed {gsp}"));
+    QCOMPARE(model.speechLowAirSpeedTemplate(),
+             QStringLiteral("Low Air Speed {asp}"));
 }
 
 void ConfigPlannerViewTest::modelPersistsOwnedSettingsAndEmitsLiveUnitRequests()
@@ -173,6 +186,9 @@ void ConfigPlannerViewTest::modelPersistsOwnedSettingsAndEmitsLiveUnitRequests()
     QVERIFY(model.setDistanceUnits(QStringLiteral("FEET")));
     QCOMPARE(altitude.count(), 1);
     QCOMPARE(distance.count(), 1);
+    QCOMPARE(model.altitudeUnitLabel(), QStringLiteral("ft"));
+    QVERIFY(qAbs(model.altitudeFromMeters(0.3048) - 1.0) < 1.0e-12);
+    QVERIFY(qAbs(model.altitudeToMeters(1.0) - 0.3048) < 1.0e-12);
     QVERIFY(!settings.contains(QStringLiteral("altunits")));
     QVERIFY(!settings.contains(QStringLiteral("distunits")));
     QVERIFY(!model.setAltitudeUnits(QStringLiteral("yards")));
@@ -325,27 +341,57 @@ void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()
         QStringLiteral("CHK_speechwaypoint"));
     auto *mode = first.findChild<QCheckBox *>(
         QStringLiteral("CHK_speechmode"));
+    auto *custom = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechcustom"));
     auto *battery = first.findChild<QCheckBox *>(
         QStringLiteral("CHK_speechbattery"));
+    auto *altWarning = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechaltwarning"));
     auto *arm = first.findChild<QCheckBox *>(
         QStringLiteral("CHK_speecharmdisarm"));
+    auto *lowSpeed = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechlowspeed"));
     QVERIFY(master);
     QVERIFY(subOptions);
     QVERIFY(armedOnly);
     QVERIFY(waypoint);
     QVERIFY(mode);
+    QVERIFY(custom);
     QVERIFY(battery);
+    QVERIFY(altWarning);
     QVERIFY(arm);
+    QVERIFY(lowSpeed);
     QVERIFY(subOptions->isHidden());
+
+    QStringList speechOrder;
+    for (QCheckBox *option : subOptions->findChildren<QCheckBox *>(
+             QString(), Qt::FindDirectChildrenOnly)) {
+        speechOrder.append(option->objectName());
+    }
+    QCOMPARE(speechOrder,
+             QStringList({QStringLiteral("CHK_speech_armed_only"),
+                          QStringLiteral("CHK_speechwaypoint"),
+                          QStringLiteral("CHK_speechmode"),
+                          QStringLiteral("CHK_speechcustom"),
+                          QStringLiteral("CHK_speechbattery"),
+                          QStringLiteral("CHK_speechaltwarning"),
+                          QStringLiteral("CHK_speecharmdisarm"),
+                          QStringLiteral("CHK_speechlowspeed")}));
 
     QSignalSpy waypointPrompt(
         &first, &ConfigPlannerView::speechWaypointConfigurationRequested);
     QSignalSpy modePrompt(
         &first, &ConfigPlannerView::speechModeConfigurationRequested);
+    QSignalSpy customPrompt(
+        &first, &ConfigPlannerView::speechCustomConfigurationRequested);
     QSignalSpy batteryPrompt(
         &first, &ConfigPlannerView::speechBatteryConfigurationRequested);
+    QSignalSpy altWarningPrompt(
+        &first, &ConfigPlannerView::speechAltWarningConfigurationRequested);
     QSignalSpy armPrompt(
         &first, &ConfigPlannerView::speechArmConfigurationRequested);
+    QSignalSpy lowSpeedPrompt(
+        &first, &ConfigPlannerView::speechLowSpeedConfigurationRequested);
 
     master->setChecked(true);
     QVERIFY(!subOptions->isHidden());
@@ -358,6 +404,11 @@ void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()
     QVERIFY(!waypoint->isChecked());
     QVERIFY(!settings.contains(QStringLiteral("speechwaypointenabled")));
     QVERIFY(!settings.contains(QStringLiteral("speechwaypoint")));
+    custom->setChecked(true);
+    QCOMPARE(customPrompt.count(), 1);
+    QVERIFY(!custom->isChecked());
+    QVERIFY(!settings.contains(QStringLiteral("speechcustomenabled")));
+    QVERIFY(!settings.contains(QStringLiteral("speechcustom")));
 
     connect(&first,
             &ConfigPlannerView::speechWaypointConfigurationRequested,
@@ -371,6 +422,12 @@ void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()
         model.setSpeechModeTemplate(QStringLiteral("Mode changed to {mode}"));
         model.setSpeechModeEnabled(true);
     });
+    connect(&first, &ConfigPlannerView::speechCustomConfigurationRequested,
+            &model, [&model]() {
+        model.setSpeechCustomTemplate(QStringLiteral(
+            "Heading to Waypoint {wpn}, altitude is {alt}, Ground speed is {gsp} "));
+        model.setSpeechCustomEnabled(true);
+    });
     connect(&first, &ConfigPlannerView::speechBatteryConfigurationRequested,
             &model, [&model]() {
         model.setSpeechBatteryTemplate(QStringLiteral(
@@ -379,21 +436,45 @@ void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()
         model.setSpeechBatteryWarningPercent(20.0);
         model.setSpeechBatteryEnabled(true);
     });
+    connect(&first,
+            &ConfigPlannerView::speechAltWarningConfigurationRequested,
+            &model, [&model]() {
+        model.setSpeechAltWarningTemplate(
+            QStringLiteral("WARNING, low altitude {alt}"));
+        model.setSpeechAltWarningHeightMeters(15.0);
+        model.setSpeechAltWarningEnabled(true);
+    });
     connect(&first, &ConfigPlannerView::speechArmConfigurationRequested,
             &model, [&model]() {
         model.setSpeechArmTemplate(QStringLiteral("Armed"));
         model.setSpeechDisarmTemplate(QStringLiteral("Disarmed"));
         model.setSpeechArmDisarmEnabled(true);
     });
+    connect(&first, &ConfigPlannerView::speechLowSpeedConfigurationRequested,
+            &model, [&model]() {
+        model.setSpeechLowGroundSpeedTemplate(
+            QStringLiteral("Low Ground Speed {gsp}"));
+        model.setSpeechLowGroundSpeedTriggerMps(3.0);
+        model.setSpeechLowAirSpeedTemplate(
+            QStringLiteral("Low Air Speed {asp}"));
+        model.setSpeechLowAirSpeedTriggerMps(5.0);
+        model.setSpeechLowSpeedEnabled(true);
+    });
 
     waypoint->setChecked(true);
     mode->setChecked(true);
+    custom->setChecked(true);
     battery->setChecked(true);
+    altWarning->setChecked(true);
     arm->setChecked(true);
+    lowSpeed->setChecked(true);
     QCOMPARE(waypointPrompt.count(), 2);
     QCOMPARE(modePrompt.count(), 1);
+    QCOMPARE(customPrompt.count(), 2);
     QCOMPARE(batteryPrompt.count(), 1);
+    QCOMPARE(altWarningPrompt.count(), 1);
     QCOMPARE(armPrompt.count(), 1);
+    QCOMPARE(lowSpeedPrompt.count(), 1);
 
     QCOMPARE(settings.value(QStringLiteral("speech_armed_only")).toBool(),
              true);
@@ -401,14 +482,23 @@ void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()
              true);
     QCOMPARE(settings.value(QStringLiteral("speechmodeenabled")).toBool(),
              true);
+    QCOMPARE(settings.value(QStringLiteral("speechcustomenabled")).toBool(),
+             true);
     QCOMPARE(settings.value(QStringLiteral("speechbatteryenabled")).toBool(),
              true);
+    QCOMPARE(settings.value(QStringLiteral("speechaltenabled")).toBool(),
+             true);
     QCOMPARE(settings.value(QStringLiteral("speecharmenabled")).toBool(),
+             true);
+    QCOMPARE(settings.value(QStringLiteral("speechlowspeedenabled")).toBool(),
              true);
     QCOMPARE(settings.value(QStringLiteral("speechwaypoint")).toString(),
              QStringLiteral("Heading to Waypoint {wpn}"));
     QCOMPARE(settings.value(QStringLiteral("speechmode")).toString(),
              QStringLiteral("Mode changed to {mode}"));
+    QCOMPARE(settings.value(QStringLiteral("speechcustom")).toString(),
+             QStringLiteral(
+                 "Heading to Waypoint {wpn}, altitude is {alt}, Ground speed is {gsp} "));
     QCOMPARE(settings.value(QStringLiteral("speecharm")).toString(),
              QStringLiteral("Armed"));
     QCOMPARE(settings.value(QStringLiteral("speechdisarm")).toString(),
@@ -417,40 +507,83 @@ void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()
              9.6);
     QCOMPARE(settings.value(QStringLiteral("speechbatterypercent")).toDouble(),
              20.0);
+    QCOMPARE(settings.value(QStringLiteral("speechalt")).toString(),
+             QStringLiteral("WARNING, low altitude {alt}"));
+    QCOMPARE(settings.value(QStringLiteral("speechaltheight")).toDouble(),
+             15.0);
+    QCOMPARE(settings.value(QStringLiteral("speechlowgroundspeed")).toString(),
+             QStringLiteral("Low Ground Speed {gsp}"));
+    QCOMPARE(settings.value(
+                 QStringLiteral("speechlowgroundspeedtrigger")).toDouble(),
+             3.0);
+    QCOMPARE(settings.value(QStringLiteral("speechlowairspeed")).toString(),
+             QStringLiteral("Low Air Speed {asp}"));
+    QCOMPARE(settings.value(
+                 QStringLiteral("speechlowairspeedtrigger")).toDouble(),
+             5.0);
 
     auto *secondMode = second.findChild<QCheckBox *>(
         QStringLiteral("CHK_speechmode"));
     auto *secondArm = second.findChild<QCheckBox *>(
         QStringLiteral("CHK_speecharmdisarm"));
+    auto *secondCustom = second.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechcustom"));
+    auto *secondAltWarning = second.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechaltwarning"));
+    auto *secondLowSpeed = second.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechlowspeed"));
     auto *secondSubOptions = second.findChild<QWidget *>(
         QStringLiteral("SpeechSubOptions"));
     QVERIFY(secondMode);
     QVERIFY(secondArm);
+    QVERIFY(secondCustom);
+    QVERIFY(secondAltWarning);
+    QVERIFY(secondLowSpeed);
     QVERIFY(secondSubOptions);
     QVERIFY(!secondSubOptions->isHidden());
     QVERIFY(secondMode->isChecked());
     QVERIFY(secondArm->isChecked());
+    QVERIFY(secondCustom->isChecked());
+    QVERIFY(secondAltWarning->isChecked());
+    QVERIFY(secondLowSpeed->isChecked());
 
     QVERIFY(model.setSpeechModeTemplate(QStringLiteral("Now {mode}")));
     QVERIFY(model.setSpeechWaypointTemplate(QStringLiteral("WP {wpn}")));
+    QVERIFY(model.setSpeechCustomTemplate(QStringLiteral("Status {alt}")));
     QVERIFY(model.setSpeechArmTemplate(QStringLiteral("Vehicle armed")));
     QVERIFY(model.setSpeechDisarmTemplate(QStringLiteral("Vehicle safe")));
     QVERIFY(model.setSpeechBatteryTemplate(QStringLiteral("Battery {batp}")));
     QVERIFY(model.setSpeechBatteryWarningVoltage(10.5));
     QVERIFY(model.setSpeechBatteryWarningPercent(25.0));
+    QVERIFY(model.setSpeechAltWarningTemplate(QStringLiteral("Alt {alt}")));
+    QVERIFY(model.setSpeechAltWarningHeightMeters(25.0));
+    QVERIFY(model.setSpeechLowGroundSpeedTemplate(QStringLiteral("GS {gsp}")));
+    QVERIFY(model.setSpeechLowGroundSpeedTriggerMps(4.0));
+    QVERIFY(model.setSpeechLowAirSpeedTemplate(QStringLiteral("AS {asp}")));
+    QVERIFY(model.setSpeechLowAirSpeedTriggerMps(6.0));
     QCOMPARE(model.speechModeTemplate(), QStringLiteral("Now {mode}"));
     QCOMPARE(model.speechWaypointTemplate(), QStringLiteral("WP {wpn}"));
+    QCOMPARE(model.speechCustomTemplate(), QStringLiteral("Status {alt}"));
     QCOMPARE(model.speechArmTemplate(), QStringLiteral("Vehicle armed"));
     QCOMPARE(model.speechDisarmTemplate(), QStringLiteral("Vehicle safe"));
     QCOMPARE(model.speechBatteryTemplate(), QStringLiteral("Battery {batp}"));
     QCOMPARE(model.speechBatteryWarningVoltage(), 10.5);
     QCOMPARE(model.speechBatteryWarningPercent(), 25.0);
+    QCOMPARE(model.speechAltWarningTemplate(), QStringLiteral("Alt {alt}"));
+    QCOMPARE(model.speechAltWarningHeightMeters(), 25.0);
+    QCOMPARE(model.speechLowGroundSpeedTemplate(), QStringLiteral("GS {gsp}"));
+    QCOMPARE(model.speechLowGroundSpeedTriggerMps(), 4.0);
+    QCOMPARE(model.speechLowAirSpeedTemplate(), QStringLiteral("AS {asp}"));
+    QCOMPARE(model.speechLowAirSpeedTriggerMps(), 6.0);
 
     master->setChecked(false);
     QVERIFY(subOptions->isHidden());
     QVERIFY(secondSubOptions->isHidden());
     QVERIFY(model.speechModeEnabled());
     QVERIFY(model.speechArmDisarmEnabled());
+    QVERIFY(model.speechCustomEnabled());
+    QVERIFY(model.speechAltWarningEnabled());
+    QVERIFY(model.speechLowSpeedEnabled());
 }
 
 void ConfigPlannerViewTest::mapAndLegacyRequestsStayOutsideTheView()

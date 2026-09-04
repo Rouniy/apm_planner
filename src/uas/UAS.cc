@@ -275,9 +275,6 @@ void UAS::updateState()
     {
         connectionLost = true;
         receivedMode = false;
-        QString audiostring = QString("Link lost to system %1").arg(this->getUASID());
-        GAudioOutput::instance()->sayForVehicle(
-            audiostring.toLower(), isArmed());
     }
 
     // Update connection loss time on each iteration
@@ -290,9 +287,6 @@ void UAS::updateState()
     // Connection gained
     if (connectionLost && (heartbeatInterval < timeoutIntervalHeartbeat))
     {
-        QString audiostring = QString("Link regained to system %1 after %2 seconds").arg(this->getUASID()).arg((int)(connectionLossTime/1000000));
-        GAudioOutput::instance()->sayForVehicle(
-            audiostring.toLower(), isArmed());
         connectionLost = false;
         connectionLossTime = 0;
         emit heartbeatTimeout(false, 0);
@@ -564,7 +558,8 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
                 GAudioOutput::instance()->sayForVehicle(
                     QString("voltage warning: %1 volts").arg(
                         lpVoltage, 0, 'f', 1, QChar(' ')),
-                    isArmed());
+                    link ? link->getId() : -1,
+                    message.sysid, message.compid);
                 lastVoltageWarning = QGC::groundTimeUsecs();
                 lastTickVoltageValue = tickLowpassVoltage;
             }
@@ -747,8 +742,10 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             }
 //            setAltitudeAMSL(hud.alt);
 //            setGroundSpeed(hud.groundspeed);
-            if (!qIsNaN(hud.airspeed))
+            if (!wrongComponent && !qIsNaN(hud.airspeed)) {
                 setAirSpeed(hud.airspeed);
+                emit speedChanged(this, groundSpeed, airSpeed, time);
+            }
 
 //            speedZ = -hud.climb;
 //            if (!globalEstimatorActive)
@@ -1172,11 +1169,25 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
                 text.remove("#audio:");
                 emit textMessageReceived(uasId, message.compid, severity, QString("Audio message: ") + text);
                 GAudioOutput::instance()->sayForVehicle(
-                    text, isArmed(), severity);
+                    text, link ? link->getId() : -1,
+                    message.sysid, message.compid, severity);
             }
             else
             {
                 emit textMessageReceived(uasId, message.compid, severity, text);
+                if (text.startsWith(QStringLiteral("PreArm:"))) {
+                    const QString spoken = QStringLiteral("Pre-arm check:")
+                        + text.mid(QStringLiteral("PreArm:").size());
+                    GAudioOutput::instance()->sayForVehicle(
+                        spoken, link ? link->getId() : -1,
+                        message.sysid, message.compid, severity);
+                } else if (text.startsWith(QStringLiteral("Arm:"))) {
+                    const QString spoken = QStringLiteral("Arm check:")
+                        + text.mid(QStringLiteral("Arm:").size());
+                    GAudioOutput::instance()->sayForVehicle(
+                        spoken, link ? link->getId() : -1,
+                        message.sysid, message.compid, severity);
+                }
             }
         }
             break;
@@ -4163,11 +4174,9 @@ void UAS::startLowBattAlarm()
     if (!lowBattAlarm)
     {
         // Keep the legacy audible alarm independent from the speech master,
-        // but route its spoken phrase through the common vehicle policy.
+        // but do not manufacture a speech identity after the triggering
+        // receive context has been discarded.
         GAudioOutput::instance()->beep();
-        GAudioOutput::instance()->sayForVehicle(
-            tr("system %1 has low battery").arg(getUASName()),
-            isArmed(), 2);
         QTimer::singleShot(3000, GAudioOutput::instance(), SLOT(startEmergency()));
         lowBattAlarm = true;
     }

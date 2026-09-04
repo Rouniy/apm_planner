@@ -229,6 +229,8 @@ set(SOURCES
     src/Settings.h
     src/services/SpeechAnnouncer.cpp
     src/services/SpeechAnnouncer.h
+    src/services/SpeechTelemetrySource.cpp
+    src/services/SpeechTelemetrySource.h
     src/services/HudDisplaySettings.cpp
     src/services/HudDisplaySettings.h
     src/services/SpeechSettings.cpp
@@ -237,6 +239,8 @@ set(SOURCES
     src/Waypoint.h
     src/audio/QtAudioOutput.cpp
     src/audio/QtAudioOutput.h
+    src/audio/QueuedSpeechController.cpp
+    src/audio/QueuedSpeechController.h
     src/comm/AbsPositionOverview.cc
     src/comm/AbsPositionOverview.h
     src/comm/DroneCanForwardingBroker.cpp
@@ -1468,6 +1472,21 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(queuedspeechcontroller_tests
+        tests/test_queuedspeechcontroller.cpp
+        src/audio/QueuedSpeechController.cpp
+        src/audio/QueuedSpeechController.h
+    )
+    target_include_directories(queuedspeechcontroller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(queuedspeechcontroller_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME queuedspeechcontroller_tests
+        COMMAND queuedspeechcontroller_tests)
+
     add_executable(speechsettings_tests
         tests/test_speechsettings.cpp
         src/services/SpeechSettings.cpp
@@ -1485,10 +1504,16 @@ if(BUILD_TESTING)
 
     add_executable(speechannouncer_tests
         tests/test_speechannouncer.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
         src/services/SpeechAnnouncer.cpp
         src/services/SpeechAnnouncer.h
         src/services/SpeechSettings.cpp
         src/services/SpeechSettings.h
+        src/services/SpeechTelemetrySource.cpp
+        src/services/SpeechTelemetrySource.h
         src/ui/configuration/BatteryMonitorInstanceModel.cpp
         src/ui/configuration/BatteryMonitorInstanceModel.h
     )
@@ -1507,6 +1532,27 @@ if(BUILD_TESTING)
     )
     add_test(NAME speechannouncer_tests
         COMMAND speechannouncer_tests)
+
+    add_executable(speechtelemetrysource_tests
+        tests/test_speechtelemetrysource.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/services/SpeechTelemetrySource.cpp
+        src/services/SpeechTelemetrySource.h
+    )
+    target_include_directories(speechtelemetrysource_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(speechtelemetrysource_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME speechtelemetrysource_tests
+        COMMAND speechtelemetrysource_tests)
 
     add_executable(applicationidentity_tests
         tests/test_applicationidentity.cpp

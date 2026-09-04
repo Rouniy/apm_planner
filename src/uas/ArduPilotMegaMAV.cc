@@ -30,7 +30,6 @@ This file is part of the QGROUNDCONTROL project
 
 #include "ArduPilotMegaMAV.h"
 #include "logging.h"
-#include "GAudioOutput.h"
 #include "LinkManager.h"
 
 
@@ -462,19 +461,13 @@ QString ArduPilotMegaMAV::getCustomModeAudioText()
     return returnString + getCustomModeText();
 }
 
-void ArduPilotMegaMAV::textMessageReceived(int /*uasid*/, int /*componentid*/, int severity, QString text)
+void ArduPilotMegaMAV::textMessageReceived(int /*uasid*/, int /*componentid*/,
+                                           int severity, QString text)
 {
     QLOG_DEBUG() << "APM: Text Message rx'd" << text;
-    if (text.startsWith("PreArm:")) {
-        // Speak the PreArm warning
-        QString audioString = "Pre-arm check:" + text.remove("PreArm:");
-        GAudioOutput::instance()->sayForVehicle(
-            audioString, isArmed(), severity);
-    } else if (text.startsWith("Arm:")){
-        QString audioString = "Arm check:" + text.remove("Arm:");
-        GAudioOutput::instance()->sayForVehicle(
-            audioString, isArmed(), severity);
-    }
+    Q_UNUSED(severity)
+    // Exact-target PreArm/Arm speech is handled in UAS::receiveMessage while
+    // the originating physical link and component are still available.
 }
 
 void ArduPilotMegaMAV::heartbeatTimeout(bool timeout, unsigned int /*ms*/)

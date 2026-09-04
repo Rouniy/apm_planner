@@ -146,6 +146,21 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
         }
     });
     QObject::connect(
+        view, &ConfigPlannerView::speechCustomConfigurationRequested,
+        view, [guardedView, promptTemplate]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        const QPointer<ConfigPlannerViewModel> model = guardedView->viewModel();
+        QString speechTemplate;
+        if (!promptTemplate(QObject::tr("Custom"),
+                            model->speechCustomTemplate(), &speechTemplate)
+            || !model) {
+            return;
+        }
+        if (model->setSpeechCustomTemplate(speechTemplate)) {
+            model->setSpeechCustomEnabled(true);
+        }
+    });
+    QObject::connect(
         view, &ConfigPlannerView::speechBatteryConfigurationRequested,
         view, [guardedView, promptTemplate]() {
         if (!guardedView || !guardedView->viewModel()) return;
@@ -181,6 +196,40 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
         model->setSpeechBatteryEnabled(true);
     });
     QObject::connect(
+        view, &ConfigPlannerView::speechAltWarningConfigurationRequested,
+        view, [guardedView, promptTemplate]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        const QPointer<ConfigPlannerViewModel> model = guardedView->viewModel();
+        QString speechTemplate;
+        if (!promptTemplate(QObject::tr("Altitude Warning"),
+                            model->speechAltWarningTemplate(),
+                            &speechTemplate)
+            || !guardedView || !model) {
+            return;
+        }
+
+        const double currentHeight = model->speechAltWarningHeightConfigured()
+            ? model->altitudeFromMeters(
+                  model->speechAltWarningHeightMeters())
+            : 2.0;
+        bool accepted = false;
+        const double displayHeight = QInputDialog::getDouble(
+            guardedView, QObject::tr("Altitude Warning"),
+            QObject::tr("What altitude do you want to warn at (%1)?")
+                .arg(model->altitudeUnitLabel()),
+            currentHeight, 0.0, 1000000000.0, 2, &accepted);
+        if (!guardedView || !model || !accepted) return;
+        const double heightMeters = model->altitudeToMeters(displayHeight);
+
+        // The policy flag is always the final write. Cancelling either prompt
+        // leaves the prior configuration and enable state untouched.
+        if (!model->setSpeechAltWarningTemplate(speechTemplate)
+            || !model->setSpeechAltWarningHeightMeters(heightMeters)) {
+            return;
+        }
+        model->setSpeechAltWarningEnabled(true);
+    });
+    QObject::connect(
         view, &ConfigPlannerView::speechArmConfigurationRequested,
         view, [guardedView, promptTemplate]() {
         if (!guardedView || !guardedView->viewModel()) return;
@@ -203,6 +252,49 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
             return;
         }
         model->setSpeechArmDisarmEnabled(true);
+    });
+    QObject::connect(
+        view, &ConfigPlannerView::speechLowSpeedConfigurationRequested,
+        view, [guardedView, promptTemplate]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        const QPointer<ConfigPlannerViewModel> model = guardedView->viewModel();
+        QString groundTemplate;
+        if (!promptTemplate(QObject::tr("Ground Speed"),
+                            model->speechLowGroundSpeedTemplate(),
+                            &groundTemplate)
+            || !guardedView || !model) {
+            return;
+        }
+
+        bool accepted = false;
+        const double groundTrigger = QInputDialog::getDouble(
+            guardedView, QObject::tr("Speed trigger"),
+            QObject::tr("What speed do you want to warn at (m/s)?"),
+            model->speechLowGroundSpeedTriggerMps(),
+            0.0, 1000000000.0, 2, &accepted);
+        if (!guardedView || !model || !accepted) return;
+
+        QString airTemplate;
+        if (!promptTemplate(QObject::tr("Air Speed"),
+                            model->speechLowAirSpeedTemplate(),
+                            &airTemplate)
+            || !guardedView || !model) {
+            return;
+        }
+        const double airTrigger = QInputDialog::getDouble(
+            guardedView, QObject::tr("Speed trigger"),
+            QObject::tr("What speed do you want to warn at (m/s)?"),
+            model->speechLowAirSpeedTriggerMps(),
+            0.0, 1000000000.0, 2, &accepted);
+        if (!guardedView || !model || !accepted) return;
+
+        if (!model->setSpeechLowGroundSpeedTemplate(groundTemplate)
+            || !model->setSpeechLowGroundSpeedTriggerMps(groundTrigger)
+            || !model->setSpeechLowAirSpeedTemplate(airTemplate)
+            || !model->setSpeechLowAirSpeedTriggerMps(airTrigger)) {
+            return;
+        }
+        model->setSpeechLowSpeedEnabled(true);
     });
     QObject::connect(view, &ConfigPlannerView::heartbeatChanged,
                      mainWindow, &MainWindow::enableHeartbeat);

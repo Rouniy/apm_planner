@@ -23,10 +23,12 @@ public:
     bool isMuted() const;
     bool isSpeechEnabled() const;
     bool isSpeechReady() const;
+    bool isSpeechIdle() const;
 
 public slots:
     bool say(QString text, int severity = 1);
-    bool sayForVehicle(QString text, bool vehicleArmed, int severity = 1);
+    bool sayForVehicle(QString text, int linkId, int systemId,
+                       int componentId, int severity = 1);
     bool alert(QString text);
     bool startEmergency();
     bool stopEmergency();
@@ -37,6 +39,7 @@ public slots:
     void notifyNegative();
     void mute(bool mute);
     void setSpeechEnabled(bool enabled);
+    void stopSpeech();
 
 signals:
     void mutedChanged(bool muted);

@@ -92,33 +92,45 @@ logging, DataFlash/tlog directories, beta update channel and system proxy.
 The two production entry points share one application-owned model, so one
 open page cannot overwrite stale UDP/beta state from another.
 
-The two live slices add eight direct MP10 controls, bringing the working
-native-equivalent count to 17 of 64: `Enable HUD Overlay`, `Enable Speech`,
-`Test Speech`, `Armed Only`, `Waypoint`, `Mode`, `Battery` and `Arm/Disarm`.
+The three live slices add eleven direct MP10 controls, bringing the working
+native-equivalent count to 20 of 64: `Enable HUD Overlay`, `Enable Speech`,
+`Test Speech`, `Armed Only`, `Waypoint`, `Mode`, `Custom`, `Battery`,
+`Alt Warning`, `Arm/Disarm` and `Low Speed`.
 HUD visibility now has one application-owned `CHK_hudshow` service shared with
 the HUD context menu, so either surface updates the other immediately. The
 speech master uses the canonical `speechenable` key and gates all TTS without
 disabling WAV alerts or beeps; Test Speech reports disabled, muted, ready and
 unavailable-backend states instead of failing silently. The central announcer
 applies MP10 event keys, templates, token substitution and current-vehicle
-gates for waypoint, mode, battery and arm state; `speech_armed_only` gates all
-except the arm/disarm transition itself. Retained Qt link, PreArm/Arm, `#audio`,
-legacy battery and object-detection phrases share the master and Armed Only
-policy but deliberately retain no invented per-event switch.
+gates for waypoint, mode, custom status, battery, altitude, arm state and low
+speed; `speech_armed_only` gates all except the arm/disarm transition itself.
+The one-second policy loop also implements MP10's armed No Data warning. Its
+telemetry comes from one immutable `(link, system, component, generation)`
+lease, so an equal sysid on another physical link cannot drive a phrase. The
+TTS adapter serializes a current phrase plus four pending phrases, coalesces
+duplicates, bounds text length, waits for the backend's actual Ready state
+after a watchdog stop and clears stale speech on target changes. Retained Qt
+PreArm/Arm, `#audio` and legacy battery phrases preserve the originating exact
+endpoint and share the master and Armed Only policy without invented per-event
+switches. Legacy link-state and object-detection speech is withheld until
+those producers preserve physical-link identity.
 
 The useful Qt audio-mute control remains an extension and is not included in
-the 17-control parity count. The first real-X11 production-route run toggles
+the 20-control parity count. The first real-X11 production-route run toggles
 HUD and the speech master, verifies their exact keys and observes the DATA HUD
 disappear live (`/tmp/apm-planner-live-smoke.3anzjo`). The follow-up run
 completes the real Mode and Battery prompts, verifies their exact MP10 keys,
 templates and thresholds, confirms Battery-off does not disable the master,
-and exits cleanly (`/tmp/apm-planner-speech-smoke.PE5xfb`). Prompt cancellation
-is transactional: an event is enabled only after every required value is
-accepted, so cancellation cannot leave a half-configured policy.
+and exits cleanly (`/tmp/apm-planner-speech-smoke.PE5xfb`). A current follow-up
+real-X11 run shows all eight MP10 speech sub-controls in their reference order,
+persists the master key and exits cleanly
+(`/tmp/apm-planner-speech-c2.Jz91ZI/planner-eight-controls.png`). Prompt
+cancellation is transactional: an event is enabled only after every required
+value is accepted, so cancellation cannot leave a half-configured policy.
 
 The remaining MP10 controls are not represented as fake toggles. Language,
-speed/OSD-color/severity, the remaining speech level plus periodic Custom,
-Alt Warning, Low Speed and No Data/vario consumers,
+speed/OSD-color/severity, speech level, high-priority status-message speech
+and the vario consumer,
 safety-confirmed flight shortcuts,
 connect policies, the five target-safe telemetry rates and GCS identity, map
 vectors/overlays/cache/external ADS-B, and the remaining advanced policies are

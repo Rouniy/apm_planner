@@ -46,15 +46,29 @@ public:
     bool speechArmedOnly() const;
     bool speechWaypointEnabled() const;
     bool speechModeEnabled() const;
+    bool speechCustomEnabled() const;
     bool speechBatteryEnabled() const;
+    bool speechAltWarningEnabled() const;
     bool speechArmDisarmEnabled() const;
+    bool speechLowSpeedEnabled() const;
     QString speechWaypointTemplate() const;
     QString speechModeTemplate() const;
+    QString speechCustomTemplate() const;
     QString speechBatteryTemplate() const;
+    QString speechAltWarningTemplate() const;
     QString speechArmTemplate() const;
     QString speechDisarmTemplate() const;
+    QString speechLowGroundSpeedTemplate() const;
+    QString speechLowAirSpeedTemplate() const;
     double speechBatteryWarningVoltage() const;
     double speechBatteryWarningPercent() const;
+    double speechAltWarningHeightMeters() const;
+    bool speechAltWarningHeightConfigured() const;
+    double speechLowGroundSpeedTriggerMps() const;
+    double speechLowAirSpeedTriggerMps() const;
+    QString altitudeUnitLabel() const;
+    double altitudeFromMeters(double meters) const;
+    double altitudeToMeters(double displayValue) const;
     QString lastError() const { return m_lastError; }
 
     bool setAltitudeUnits(const QString &units);
@@ -67,15 +81,25 @@ public:
     bool setSpeechArmedOnly(bool enabled);
     bool setSpeechWaypointEnabled(bool enabled);
     bool setSpeechModeEnabled(bool enabled);
+    bool setSpeechCustomEnabled(bool enabled);
     bool setSpeechBatteryEnabled(bool enabled);
+    bool setSpeechAltWarningEnabled(bool enabled);
     bool setSpeechArmDisarmEnabled(bool enabled);
+    bool setSpeechLowSpeedEnabled(bool enabled);
     bool setSpeechWaypointTemplate(const QString &text);
     bool setSpeechModeTemplate(const QString &text);
+    bool setSpeechCustomTemplate(const QString &text);
     bool setSpeechBatteryTemplate(const QString &text);
+    bool setSpeechAltWarningTemplate(const QString &text);
     bool setSpeechArmTemplate(const QString &text);
     bool setSpeechDisarmTemplate(const QString &text);
+    bool setSpeechLowGroundSpeedTemplate(const QString &text);
+    bool setSpeechLowAirSpeedTemplate(const QString &text);
     bool setSpeechBatteryWarningVoltage(double voltage);
     bool setSpeechBatteryWarningPercent(double percent);
+    bool setSpeechAltWarningHeightMeters(double heightMeters);
+    bool setSpeechLowGroundSpeedTriggerMps(double triggerMps);
+    bool setSpeechLowAirSpeedTriggerMps(double triggerMps);
 
 public slots:
     void reload();

@@ -60,8 +60,11 @@ signals:
     void speechTestRequested();
     void speechWaypointConfigurationRequested();
     void speechModeConfigurationRequested();
+    void speechCustomConfigurationRequested();
     void speechBatteryConfigurationRequested();
+    void speechAltWarningConfigurationRequested();
     void speechArmConfigurationRequested();
+    void speechLowSpeedConfigurationRequested();
     void legacyOptionsRequested();
     void legacyTelemetryOptionsRequested();
 
@@ -91,8 +94,11 @@ private:
     QCheckBox *m_speechArmedOnly = nullptr;
     QCheckBox *m_speechWaypoint = nullptr;
     QCheckBox *m_speechMode = nullptr;
+    QCheckBox *m_speechCustom = nullptr;
     QCheckBox *m_speechBattery = nullptr;
+    QCheckBox *m_speechAltWarning = nullptr;
     QCheckBox *m_speechArmDisarm = nullptr;
+    QCheckBox *m_speechLowSpeed = nullptr;
     QCheckBox *m_audioMute = nullptr;
     QCheckBox *m_heartbeat = nullptr;
     QCheckBox *m_startupUdpEnabled = nullptr;

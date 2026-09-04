@@ -34,6 +34,7 @@ This file is part of the QGROUNDCONTROL project
 #include "CommConfigurationWindow.h"
 #include "GAudioOutput.h"
 #include "services/SpeechAnnouncer.h"
+#include "services/SpeechTelemetrySource.h"
 #include "QGCToolWidget.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCTabbedInfoView.h"
@@ -1524,8 +1525,20 @@ void MainWindow::buildCommonWidgets()
     auto *flightDataViewModel = new FlightDataViewModel(pilotHud);
     flightDataViewModel->setObjectName(QStringLiteral("FlightDataViewModel"));
     flightDataViewModel->attachHud(pilotHud);
+    LinkManager *const linkManager = LinkManager::instance();
+    auto *speechTelemetry = new SpeechTelemetrySource(
+        linkManager->vehicleTargetManager(), {}, flightDataViewModel);
+    speechTelemetry->setObjectName(QStringLiteral("SpeechTelemetrySource"));
+    connect(linkManager, &LinkManager::messageReceived,
+            speechTelemetry,
+            [speechTelemetry](LinkInterface *link,
+                              const mavlink_message_t &message) {
+        if (link) {
+            speechTelemetry->observeMessage(link->getId(), message);
+        }
+    });
     auto *speechAnnouncer = new SpeechAnnouncer(
-        flightDataViewModel, flightDataViewModel);
+        flightDataViewModel, speechTelemetry, flightDataViewModel);
     speechAnnouncer->setObjectName(QStringLiteral("SpeechAnnouncer"));
     if (pilotView->setHudWidget(pilotHudHost)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,

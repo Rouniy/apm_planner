@@ -125,10 +125,16 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
         tr("Waypoint"), QStringLiteral("CHK_speechwaypoint"));
     m_speechMode = addSpeechOption(
         tr("Mode"), QStringLiteral("CHK_speechmode"));
+    m_speechCustom = addSpeechOption(
+        tr("Custom"), QStringLiteral("CHK_speechcustom"));
     m_speechBattery = addSpeechOption(
         tr("Battery"), QStringLiteral("CHK_speechbattery"));
+    m_speechAltWarning = addSpeechOption(
+        tr("Alt Warning"), QStringLiteral("CHK_speechaltwarning"));
     m_speechArmDisarm = addSpeechOption(
         tr("Arm/Disarm"), QStringLiteral("CHK_speecharmdisarm"));
+    m_speechLowSpeed = addSpeechOption(
+        tr("Low Speed"), QStringLiteral("CHK_speechlowspeed"));
     speechSubOptionsLayout->addStretch(1);
     speechLayout->addWidget(m_speechSubOptions);
     m_audioMute = new QCheckBox(
@@ -137,12 +143,17 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     speechLayout->addWidget(m_audioMute);
     addUnavailableNote(
         speechLayout,
-        tr("Waypoint, Mode, Battery and Arm/Disarm use their MP10 event gates "
-           "and configuration prompts. Armed Only also gates retained Qt "
-           "vehicle speech such as link, PreArm/Arm, #audio, legacy battery "
-           "and object-detection messages; those extensions have no separate "
-           "event switches. Speech level, Custom, Alt Warning, Low Speed and "
-           "Vario remain unavailable until their complete consumers are ported."),
+        tr("The MP10 speech event policies and configuration prompts are "
+           "active here, including periodic Custom, Alt Warning and Low "
+           "Speed announcements. Armed Only also gates retained Qt "
+           "exact-target PreArm/Arm, #audio and legacy battery messages; "
+           "those extensions have no separate event switches. Legacy link "
+           "and object-detection speech stays withheld until its producer "
+           "preserves physical-link identity. Custom templates support "
+           "{sysid}, {compid}, "
+           "{wpn}, {mode}, {alt}, {asp}, {gsp}, {batv}, {batp}, {altunit} "
+           "and {speedunit}. Speech level and Vario remain unavailable until "
+           "their complete consumers are ported."),
         QStringLiteral("SpeechPendingNote"));
 
     QGroupBox *shortcuts = addSection(
@@ -373,6 +384,16 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
             m_viewModel->setSpeechModeEnabled(false);
         }
     });
+    connect(m_speechCustom, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (enabled) {
+            emit speechCustomConfigurationRequested();
+            syncFromModel();
+        } else {
+            m_viewModel->setSpeechCustomEnabled(false);
+        }
+    });
     connect(m_speechBattery, &QCheckBox::toggled,
             this, [this](bool enabled) {
         if (!m_viewModel) return;
@@ -383,6 +404,16 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
             m_viewModel->setSpeechBatteryEnabled(false);
         }
     });
+    connect(m_speechAltWarning, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (enabled) {
+            emit speechAltWarningConfigurationRequested();
+            syncFromModel();
+        } else {
+            m_viewModel->setSpeechAltWarningEnabled(false);
+        }
+    });
     connect(m_speechArmDisarm, &QCheckBox::toggled,
             this, [this](bool enabled) {
         if (!m_viewModel) return;
@@ -391,6 +422,16 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
             syncFromModel();
         } else {
             m_viewModel->setSpeechArmDisarmEnabled(false);
+        }
+    });
+    connect(m_speechLowSpeed, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (enabled) {
+            emit speechLowSpeedConfigurationRequested();
+            syncFromModel();
+        } else {
+            m_viewModel->setSpeechLowSpeedEnabled(false);
         }
     });
     connect(m_startupUdpEnabled, &QCheckBox::toggled,
@@ -517,13 +558,26 @@ void ConfigPlannerView::syncFromModel()
         m_speechMode->setChecked(m_viewModel->speechModeEnabled());
     }
     {
+        const QSignalBlocker blocker(m_speechCustom);
+        m_speechCustom->setChecked(m_viewModel->speechCustomEnabled());
+    }
+    {
         const QSignalBlocker blocker(m_speechBattery);
         m_speechBattery->setChecked(m_viewModel->speechBatteryEnabled());
+    }
+    {
+        const QSignalBlocker blocker(m_speechAltWarning);
+        m_speechAltWarning->setChecked(
+            m_viewModel->speechAltWarningEnabled());
     }
     {
         const QSignalBlocker blocker(m_speechArmDisarm);
         m_speechArmDisarm->setChecked(
             m_viewModel->speechArmDisarmEnabled());
+    }
+    {
+        const QSignalBlocker blocker(m_speechLowSpeed);
+        m_speechLowSpeed->setChecked(m_viewModel->speechLowSpeedEnabled());
     }
 }
 

@@ -1,5 +1,7 @@
 #include "QtAudioOutput.h"
 
+#include "QueuedSpeechController.h"
+
 #include <QFileInfo>
 #include <QUrl>
 #include <QtGlobal>
@@ -34,8 +36,44 @@ QtAudioOutput::QtAudioOutput(QObject *parent)
             });
 #endif
 
+    m_speechQueue = new QueuedSpeechController(
+        [this](const QString &text) {
+#ifdef APM_HAS_QT_TEXT_TO_SPEECH
+            if (m_speech) {
+                m_speech->say(text);
+            }
+#else
+            Q_UNUSED(text)
+#endif
+        },
+        [this]() {
+#ifdef APM_HAS_QT_TEXT_TO_SPEECH
+            if (m_speech) {
+                m_speech->stop();
+            }
+#endif
+        },
+        QueuedSpeechController::UtteranceTimeoutMs, this);
+
 #ifdef APM_HAS_QT_TEXT_TO_SPEECH
     m_speech = new QTextToSpeech(this);
+    const auto updateSpeechState = [this](QTextToSpeech::State state) {
+        QueuedSpeechController::BackendState queueState =
+            QueuedSpeechController::BackendState::Busy;
+        if (state == QTextToSpeech::Ready) {
+            queueState = QueuedSpeechController::BackendState::Ready;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        } else if (state == QTextToSpeech::Error) {
+#else
+        } else if (state == QTextToSpeech::BackendError) {
+#endif
+            queueState = QueuedSpeechController::BackendState::Error;
+        }
+        m_speechQueue->backendStateChanged(queueState);
+    };
+    connect(m_speech, &QTextToSpeech::stateChanged,
+            this, updateSpeechState);
+    updateSpeechState(m_speech->state());
 #endif
 }
 
@@ -77,34 +115,24 @@ void QtAudioOutput::playNextFile()
 
 bool QtAudioOutput::speak(const QString &text)
 {
-#ifdef APM_HAS_QT_TEXT_TO_SPEECH
-    if (!isSpeechReady() || text.trimmed().isEmpty()) {
-        return false;
-    }
-    m_speech->say(text);
-    return true;
-#else
-    Q_UNUSED(text)
-    return false;
-#endif
+    const QueuedSpeechController::SubmitResult result =
+        m_speechQueue->submit(text);
+    return result != QueuedSpeechController::SubmitResult::Rejected;
 }
 
 void QtAudioOutput::stopSpeech()
 {
-#ifdef APM_HAS_QT_TEXT_TO_SPEECH
-    if (m_speech) {
-        m_speech->stop();
-    }
-#endif
+    m_speechQueue->stop();
 }
 
 bool QtAudioOutput::isSpeechReady() const
 {
-#ifdef APM_HAS_QT_TEXT_TO_SPEECH
-    return m_speech && m_speech->state() == QTextToSpeech::Ready;
-#else
-    return false;
-#endif
+    return m_speechQueue->isAvailable();
+}
+
+bool QtAudioOutput::isSpeechIdle() const
+{
+    return m_speechQueue->isIdle();
 }
 
 QStringList QtAudioOutput::availableVoices() const

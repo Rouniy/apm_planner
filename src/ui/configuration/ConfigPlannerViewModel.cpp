@@ -8,6 +8,10 @@
 
 #include <cmath>
 
+namespace {
+constexpr double kFeetPerMeter = 3.280839895013123;
+}
+
 ConfigPlannerViewModel::ConfigPlannerViewModel(
     QSettings *settings, DisplayViewProfileService *profiles, QObject *parent)
     : QObject(parent),
@@ -107,14 +111,29 @@ bool ConfigPlannerViewModel::speechModeEnabled() const
     return m_speechSettings && m_speechSettings->modeEnabled();
 }
 
+bool ConfigPlannerViewModel::speechCustomEnabled() const
+{
+    return m_speechSettings && m_speechSettings->customEnabled();
+}
+
 bool ConfigPlannerViewModel::speechBatteryEnabled() const
 {
     return m_speechSettings && m_speechSettings->batteryEnabled();
 }
 
+bool ConfigPlannerViewModel::speechAltWarningEnabled() const
+{
+    return m_speechSettings && m_speechSettings->altWarningEnabled();
+}
+
 bool ConfigPlannerViewModel::speechArmDisarmEnabled() const
 {
     return m_speechSettings && m_speechSettings->armDisarmEnabled();
+}
+
+bool ConfigPlannerViewModel::speechLowSpeedEnabled() const
+{
+    return m_speechSettings && m_speechSettings->lowSpeedEnabled();
 }
 
 QString ConfigPlannerViewModel::speechWaypointTemplate() const
@@ -127,9 +146,20 @@ QString ConfigPlannerViewModel::speechModeTemplate() const
     return m_speechSettings ? m_speechSettings->modeTemplate() : QString();
 }
 
+QString ConfigPlannerViewModel::speechCustomTemplate() const
+{
+    return m_speechSettings ? m_speechSettings->customTemplate() : QString();
+}
+
 QString ConfigPlannerViewModel::speechBatteryTemplate() const
 {
     return m_speechSettings ? m_speechSettings->batteryTemplate() : QString();
+}
+
+QString ConfigPlannerViewModel::speechAltWarningTemplate() const
+{
+    return m_speechSettings
+        ? m_speechSettings->altWarningTemplate() : QString();
 }
 
 QString ConfigPlannerViewModel::speechArmTemplate() const
@@ -142,6 +172,18 @@ QString ConfigPlannerViewModel::speechDisarmTemplate() const
     return m_speechSettings ? m_speechSettings->disarmTemplate() : QString();
 }
 
+QString ConfigPlannerViewModel::speechLowGroundSpeedTemplate() const
+{
+    return m_speechSettings
+        ? m_speechSettings->lowGroundSpeedTemplate() : QString();
+}
+
+QString ConfigPlannerViewModel::speechLowAirSpeedTemplate() const
+{
+    return m_speechSettings
+        ? m_speechSettings->lowAirSpeedTemplate() : QString();
+}
+
 double ConfigPlannerViewModel::speechBatteryWarningVoltage() const
 {
     return m_speechSettings
@@ -152,6 +194,48 @@ double ConfigPlannerViewModel::speechBatteryWarningPercent() const
 {
     return m_speechSettings
         ? m_speechSettings->batteryWarningPercent() : 20.0;
+}
+
+double ConfigPlannerViewModel::speechAltWarningHeightMeters() const
+{
+    return m_speechSettings
+        ? m_speechSettings->altWarningHeightMeters() : 2.0;
+}
+
+bool ConfigPlannerViewModel::speechAltWarningHeightConfigured() const
+{
+    return m_speechSettings
+        && m_speechSettings->altWarningHeightConfigured();
+}
+
+double ConfigPlannerViewModel::speechLowGroundSpeedTriggerMps() const
+{
+    return m_speechSettings
+        ? m_speechSettings->lowGroundSpeedTriggerMps() : 0.0;
+}
+
+double ConfigPlannerViewModel::speechLowAirSpeedTriggerMps() const
+{
+    return m_speechSettings
+        ? m_speechSettings->lowAirSpeedTriggerMps() : 0.0;
+}
+
+QString ConfigPlannerViewModel::altitudeUnitLabel() const
+{
+    return m_altitudeUnits == QStringLiteral("Feet")
+        ? QStringLiteral("ft") : QStringLiteral("m");
+}
+
+double ConfigPlannerViewModel::altitudeFromMeters(double meters) const
+{
+    return m_altitudeUnits == QStringLiteral("Feet")
+        ? meters * kFeetPerMeter : meters;
+}
+
+double ConfigPlannerViewModel::altitudeToMeters(double displayValue) const
+{
+    return m_altitudeUnits == QStringLiteral("Feet")
+        ? displayValue / kFeetPerMeter : displayValue;
 }
 
 void ConfigPlannerViewModel::reload()
@@ -311,6 +395,13 @@ bool ConfigPlannerViewModel::setSpeechModeEnabled(bool enabled)
     return m_speechSettings->modeEnabled() == enabled;
 }
 
+bool ConfigPlannerViewModel::setSpeechCustomEnabled(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setCustomEnabled(enabled);
+    return m_speechSettings->customEnabled() == enabled;
+}
+
 bool ConfigPlannerViewModel::setSpeechBatteryEnabled(bool enabled)
 {
     if (!m_speechSettings) return false;
@@ -318,11 +409,25 @@ bool ConfigPlannerViewModel::setSpeechBatteryEnabled(bool enabled)
     return m_speechSettings->batteryEnabled() == enabled;
 }
 
+bool ConfigPlannerViewModel::setSpeechAltWarningEnabled(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setAltWarningEnabled(enabled);
+    return m_speechSettings->altWarningEnabled() == enabled;
+}
+
 bool ConfigPlannerViewModel::setSpeechArmDisarmEnabled(bool enabled)
 {
     if (!m_speechSettings) return false;
     m_speechSettings->setArmDisarmEnabled(enabled);
     return m_speechSettings->armDisarmEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechLowSpeedEnabled(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setLowSpeedEnabled(enabled);
+    return m_speechSettings->lowSpeedEnabled() == enabled;
 }
 
 bool ConfigPlannerViewModel::setSpeechWaypointTemplate(const QString &text)
@@ -339,11 +444,25 @@ bool ConfigPlannerViewModel::setSpeechModeTemplate(const QString &text)
     return m_speechSettings->modeTemplate() == text;
 }
 
+bool ConfigPlannerViewModel::setSpeechCustomTemplate(const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setCustomTemplate(text);
+    return m_speechSettings->customTemplate() == text;
+}
+
 bool ConfigPlannerViewModel::setSpeechBatteryTemplate(const QString &text)
 {
     if (!m_speechSettings || text.isEmpty()) return false;
     m_speechSettings->setBatteryTemplate(text);
     return m_speechSettings->batteryTemplate() == text;
+}
+
+bool ConfigPlannerViewModel::setSpeechAltWarningTemplate(const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setAltWarningTemplate(text);
+    return m_speechSettings->altWarningTemplate() == text;
 }
 
 bool ConfigPlannerViewModel::setSpeechArmTemplate(const QString &text)
@@ -360,9 +479,27 @@ bool ConfigPlannerViewModel::setSpeechDisarmTemplate(const QString &text)
     return m_speechSettings->disarmTemplate() == text;
 }
 
+bool ConfigPlannerViewModel::setSpeechLowGroundSpeedTemplate(
+    const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setLowGroundSpeedTemplate(text);
+    return m_speechSettings->lowGroundSpeedTemplate() == text;
+}
+
+bool ConfigPlannerViewModel::setSpeechLowAirSpeedTemplate(
+    const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setLowAirSpeedTemplate(text);
+    return m_speechSettings->lowAirSpeedTemplate() == text;
+}
+
 bool ConfigPlannerViewModel::setSpeechBatteryWarningVoltage(double voltage)
 {
-    if (!m_speechSettings || !std::isfinite(voltage)) return false;
+    if (!m_speechSettings || !std::isfinite(voltage) || voltage < 0.0) {
+        return false;
+    }
     m_speechSettings->setBatteryWarningVoltage(voltage);
     return qFuzzyCompare(
         m_speechSettings->batteryWarningVoltage() + 1.0, voltage + 1.0);
@@ -370,8 +507,49 @@ bool ConfigPlannerViewModel::setSpeechBatteryWarningVoltage(double voltage)
 
 bool ConfigPlannerViewModel::setSpeechBatteryWarningPercent(double percent)
 {
-    if (!m_speechSettings || !std::isfinite(percent)) return false;
+    if (!m_speechSettings || !std::isfinite(percent) || percent < 0.0) {
+        return false;
+    }
     m_speechSettings->setBatteryWarningPercent(percent);
     return qFuzzyCompare(
         m_speechSettings->batteryWarningPercent() + 1.0, percent + 1.0);
+}
+
+bool ConfigPlannerViewModel::setSpeechAltWarningHeightMeters(
+    double heightMeters)
+{
+    if (!m_speechSettings || !std::isfinite(heightMeters)
+        || heightMeters < 0.0) {
+        return false;
+    }
+    m_speechSettings->setAltWarningHeightMeters(heightMeters);
+    return qFuzzyCompare(
+        m_speechSettings->altWarningHeightMeters() + 1.0,
+        heightMeters + 1.0);
+}
+
+bool ConfigPlannerViewModel::setSpeechLowGroundSpeedTriggerMps(
+    double triggerMps)
+{
+    if (!m_speechSettings || !std::isfinite(triggerMps)
+        || triggerMps < 0.0) {
+        return false;
+    }
+    m_speechSettings->setLowGroundSpeedTriggerMps(triggerMps);
+    return qFuzzyCompare(
+        m_speechSettings->lowGroundSpeedTriggerMps() + 1.0,
+        triggerMps + 1.0);
+}
+
+bool ConfigPlannerViewModel::setSpeechLowAirSpeedTriggerMps(
+    double triggerMps)
+{
+    if (!m_speechSettings || !std::isfinite(triggerMps)
+        || triggerMps < 0.0) {
+        return false;
+    }
+    m_speechSettings->setLowAirSpeedTriggerMps(triggerMps);
+    return qFuzzyCompare(
+        m_speechSettings->lowAirSpeedTriggerMps() + 1.0,
+        triggerMps + 1.0);
 }

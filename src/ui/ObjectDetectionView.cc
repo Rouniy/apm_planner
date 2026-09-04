@@ -35,7 +35,6 @@ This file is part of the PIXHAWK project
 #include "ObjectDetectionView.h"
 #include "ui_ObjectDetectionView.h"
 #include "UASManager.h"
-#include "GAudioOutput.h"
 
 #include <QMap>
 
@@ -97,14 +96,6 @@ void ObjectDetectionView::newPattern(int uasId, QString patternPath, float confi
 {
     if (detected) {
         if (!patternList.contains(patternPath)) {
-            // Emit audio message on detection
-            GAudioOutput::instance()->sayForVehicle(
-                "System " + QString::number(uasId) + " detected pattern "
-                    + QString(patternPath.split(
-                          QLatin1Char('/'), SPLITBEHAVIOUR).last())
-                          .split(QLatin1Char('.'), SPLITBEHAVIOUR).first(),
-                uas && uas->getUASID() == uasId && uas->isArmed());
-
             patternList.insert(patternPath, Pattern(patternPath, confidence));
         } else {
             Pattern pattern = patternList.value(patternPath);
@@ -145,12 +136,6 @@ void ObjectDetectionView::newLetter(int uasId, QString letter, float confidence,
 
     if (detected) {
         if (!letterList.contains(letter)) {
-            // Emit audio message on detection
-            GAudioOutput::instance()->sayForVehicle(
-                "System " + QString::number(uasId)
-                    + " detected letter " + letter,
-                uas && uas->getUASID() == uasId && uas->isArmed());
-
             letterList.insert(letter, Pattern(letter, 0));
         } else {
             Pattern pattern = letterList.value(letter);

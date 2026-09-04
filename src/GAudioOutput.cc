@@ -1,7 +1,9 @@
 #include "GAudioOutput.h"
 
 #include "audio/QtAudioOutput.h"
+#include "comm/VehicleTargetManager.h"
 #include "configuration.h"
+#include "LinkManager.h"
 #include "logging.h"
 #include "services/SpeechSettings.h"
 
@@ -84,10 +86,23 @@ void GAudioOutput::setSpeechEnabled(bool enabled)
     }
 }
 
+void GAudioOutput::stopSpeech()
+{
+    if (audioBackend) {
+        audioBackend->stopSpeech();
+    }
+}
+
 bool GAudioOutput::isSpeechReady() const
 {
     return isSpeechEnabled() && !muted && !emergency && audioBackend
         && audioBackend->isSpeechReady();
+}
+
+bool GAudioOutput::isSpeechIdle() const
+{
+    return isSpeechEnabled() && !muted && !emergency && audioBackend
+        && audioBackend->isSpeechIdle();
 }
 
 bool GAudioOutput::say(QString text, int severity)
@@ -99,10 +114,22 @@ bool GAudioOutput::say(QString text, int severity)
     return audioBackend->speak(text);
 }
 
-bool GAudioOutput::sayForVehicle(QString text, bool vehicleArmed, int severity)
+bool GAudioOutput::sayForVehicle(QString text, int linkId, int systemId,
+                                 int componentId, int severity)
 {
+    VehicleTargetManager *const targets =
+        LinkManager::instance()->vehicleTargetManager();
+    const VehicleTargetLease lease = targets
+        ? targets->acquireTarget() : VehicleTargetLease();
     if (!speechSettings || !speechSettings->isEnabled()
-        || (speechSettings->armedOnly() && !vehicleArmed)) {
+        || !targets || !lease.isValid()
+        || lease.endpoint.linkId != linkId
+        || lease.endpoint.systemId != systemId
+        || lease.endpoint.componentId != componentId
+        || !targets->isCurrentTarget(linkId, systemId, componentId,
+                                     lease.generation)
+        || (speechSettings->armedOnly()
+            && !targets->heartbeatArmed(lease))) {
         return false;
     }
     return say(text, severity);
