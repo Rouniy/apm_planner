@@ -11,7 +11,7 @@
 Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided и Follow Me-срезов:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 160 из 160 тестов;
+- проходят 165 из 165 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -399,9 +399,10 @@ dirty state никогда не переносится на новый target.
 - Follow Me: основной modeless/manual+serial-NMEA/exact-target/ACK-gated срез
   сделан и доступен из TOOLS/SETUP Advanced; остаются physical-serial/vehicle,
   older-autopilot, reference screenshot и native-platform evidence;
-- Moving Base: endpoint-aware store и общий cyan `BASE` map marker созданы как
-  foundation; action остаётся выключенным до input transports,
-  persistence, bounded diagnostics и Flight Data wiring;
+- Moving Base: основной modeless Serial/TCP/UDP, bounded-log,
+  exact-target service и cyan `BASE` marker срез сделан и доступен из
+  TOOLS/SETUP Advanced; остаются Rally mission transaction, relative-altitude
+  home source, TCP reconnect, physical/network/live-marker и native evidence;
 - Device Operations: основной modeless/exact-target срез сделан; остаются
   hardware/native evidence и визуальная полировка;
 - QML Plugin Manager: широкая документация и API coverage.
@@ -412,7 +413,6 @@ dirty state никогда не переносится на новый target.
 - Offline Mag Fit;
 - Photo/video GeoRef;
 - Terrain Maker;
-- Moving Base (foundation без включённого action);
 - Formation Control и четыре swarm workflow;
 - MAVLink Serial/TCP Bridge;
 - OSD Video Overlay;

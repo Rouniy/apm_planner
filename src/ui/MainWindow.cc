@@ -51,6 +51,7 @@ This file is part of the QGROUNDCONTROL project
 #include "DeviceOperationsWindow.h"
 #include "ExternalGuidedWindow.h"
 #include "FollowMeWindow.h"
+#include "MovingBaseWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
@@ -74,6 +75,7 @@ This file is part of the QGROUNDCONTROL project
 
 #include "FlightDataView.h"
 #include "flightdata/FlightDataViewModel.h"
+#include "flightdata/MovingBaseMapController.h"
 #include "flightdata/HudControl.h"
 #include "flightdata/ProximityWindow.h"
 #include "map/MapCacheView.h"
@@ -656,6 +658,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { ExternalGuidedWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionFollowMe"),
                     [this]() { FollowMeWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionMovingBase"),
+                    [this]() { MovingBaseWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),
                     [this]() { LinkStatsWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionConnectionOptions"),
@@ -1561,6 +1565,10 @@ void MainWindow::buildCommonWidgets()
     }
     auto *pilotMap = new QGCMapTool(this);
     pilotMap->setFlightDataViewModel(flightDataViewModel);
+    auto *movingBaseMapController = new MovingBaseMapController(
+        linkManager->movingBasePositionStore(),
+        linkManager->vehicleTargetManager(), pilotMap);
+    movingBaseMapController->attachMap(pilotMap->mapWidget());
     if (pilotView->setMapWidget(pilotMap)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,
                               FlightDataView::mapPanelId(),

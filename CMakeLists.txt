@@ -269,8 +269,14 @@ set(SOURCES
     src/comm/GuidedTargetService.h
     src/comm/FollowMeGpsInput.cpp
     src/comm/FollowMeGpsInput.h
+    src/comm/MovingBaseInputTransport.cpp
+    src/comm/MovingBaseInputTransport.h
+    src/comm/MovingBaseNmeaLog.cpp
+    src/comm/MovingBaseNmeaLog.h
     src/comm/MovingBasePositionStore.cpp
     src/comm/MovingBasePositionStore.h
+    src/comm/MovingBaseService.cpp
+    src/comm/MovingBaseService.h
     src/comm/MavFtpProtocol.cpp
     src/comm/MavFtpProtocol.h
     src/comm/MavFtpService.cpp
@@ -455,6 +461,8 @@ set(SOURCES
     src/ui/flightdata/FlightDataViewModel.h
     src/ui/flightdata/FlightDataMapOverlay.cpp
     src/ui/flightdata/FlightDataMapOverlay.h
+    src/ui/flightdata/MovingBaseMapController.cpp
+    src/ui/flightdata/MovingBaseMapController.h
     src/ui/flightdata/FlightDataMissionProgress.cpp
     src/ui/flightdata/FlightDataMissionProgress.h
     src/ui/flightdata/HudControl.cpp
@@ -634,6 +642,9 @@ set(SOURCES
     src/ui/FollowMeWindow.cpp
     src/ui/FollowMeWindow.h
     src/ui/FollowMeWindowIntegration.cpp
+    src/ui/MovingBaseWindow.cpp
+    src/ui/MovingBaseWindow.h
+    src/ui/MovingBaseWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/Terrain3DWindow.cpp
@@ -2471,6 +2482,124 @@ if(BUILD_TESTING)
     )
     add_test(NAME movingbasemapmarker_tests COMMAND movingbasemapmarker_tests)
     set_tests_properties(movingbasemapmarker_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(movingbaseinputtransport_tests
+        tests/test_movingbaseinputtransport.cpp
+        src/comm/MovingBaseInputTransport.cpp
+        src/comm/MovingBaseInputTransport.h
+        src/comm/NmeaGgaParser.cpp
+        src/comm/NmeaGgaParser.h
+        src/comm/NmeaLineFramer.cpp
+        src/comm/NmeaLineFramer.h
+    )
+    target_include_directories(movingbaseinputtransport_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(movingbaseinputtransport_tests PRIVATE
+        Qt::Core
+        Qt::Network
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME movingbaseinputtransport_tests
+        COMMAND movingbaseinputtransport_tests)
+
+    add_executable(movingbasenmealog_tests
+        tests/test_movingbasenmealog.cpp
+        src/comm/MovingBaseNmeaLog.cpp
+        src/comm/MovingBaseNmeaLog.h
+    )
+    target_include_directories(movingbasenmealog_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(movingbasenmealog_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME movingbasenmealog_tests COMMAND movingbasenmealog_tests)
+
+    add_executable(movingbaseservice_tests
+        tests/test_movingbaseservice.cpp
+        src/comm/MovingBasePositionStore.cpp
+        src/comm/MovingBasePositionStore.h
+        src/comm/MovingBaseService.cpp
+        src/comm/MovingBaseService.h
+        src/comm/NmeaGgaParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(movingbaseservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(movingbaseservice_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME movingbaseservice_tests COMMAND movingbaseservice_tests)
+
+    add_executable(movingbasemapcontroller_tests
+        tests/test_movingbasemapcontroller.cpp
+        src/comm/MovingBasePositionStore.cpp
+        src/comm/MovingBasePositionStore.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/flightdata/MovingBaseMapController.cpp
+        src/ui/flightdata/MovingBaseMapController.h
+        src/ui/map/AbstractMapWidget.h
+    )
+    target_include_directories(movingbasemapcontroller_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(movingbasemapcontroller_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME movingbasemapcontroller_tests
+        COMMAND movingbasemapcontroller_tests)
+
+    add_executable(movingbasewindow_tests
+        tests/test_movingbasewindow.cpp
+        src/comm/MovingBaseInputTransport.cpp
+        src/comm/MovingBaseInputTransport.h
+        src/comm/MovingBaseNmeaLog.cpp
+        src/comm/MovingBaseNmeaLog.h
+        src/comm/MovingBasePositionStore.cpp
+        src/comm/MovingBasePositionStore.h
+        src/comm/MovingBaseService.cpp
+        src/comm/MovingBaseService.h
+        src/comm/NmeaGgaParser.cpp
+        src/comm/NmeaGgaParser.h
+        src/comm/NmeaLineFramer.cpp
+        src/comm/NmeaLineFramer.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/MovingBaseWindow.cpp
+        src/ui/MovingBaseWindow.h
+    )
+    target_include_directories(movingbasewindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(movingbasewindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Network
+        Qt::SerialPort
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME movingbasewindow_tests COMMAND movingbasewindow_tests)
+    set_tests_properties(movingbasewindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

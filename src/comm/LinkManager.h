@@ -56,6 +56,8 @@ This file is part of the APM_PLANNER project
 class VehicleTargetManager;
 class VehicleCommandService;
 class GuidedTargetService;
+class MovingBasePositionStore;
+class MovingBaseService;
 class CompassCalibrationService;
 class ExactLinkTransmitter;
 class RadioStatusMonitor;
@@ -86,6 +88,8 @@ public:
     RadioStatusMonitor *radioStatusMonitor() const;
     VehicleCommandService *vehicleCommandService() const;
     GuidedTargetService *guidedTargetService() const;
+    MovingBasePositionStore *movingBasePositionStore() const;
+    MovingBaseService *movingBaseService() const;
     CompassCalibrationService *compassCalibrationService() const;
     ParameterService *parameterService() const;
     MavFtpServiceInterface *mavFtpService() const;
@@ -179,6 +183,8 @@ private:
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;
     GuidedTargetService *m_guidedTargetService = nullptr;
+    MovingBasePositionStore *m_movingBasePositionStore = nullptr;
+    MovingBaseService *m_movingBaseService = nullptr;
     CompassCalibrationService *m_compassCalibrationService = nullptr;
     ParameterService *m_parameterService = nullptr;
     MavFtpService *m_mavFtpService = nullptr;

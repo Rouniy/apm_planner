@@ -45,6 +45,8 @@ This file is part of the APM_PLANNER project
 #include "ExactLinkTransmitter.h"
 #include "GuidedTargetService.h"
 #include "MavFtpService.h"
+#include "MovingBasePositionStore.h"
+#include "MovingBaseService.h"
 #include "ParameterService.h"
 #include "QGCUASParamManager.h"
 #include "VehicleCommandService.h"
@@ -124,6 +126,10 @@ LinkManager::LinkManager(QObject *parent) :
         m_vehicleTargetManager, m_vehicleCommandService, this);
     m_guidedTargetService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
+    m_movingBasePositionStore = new MovingBasePositionStore(
+        m_vehicleTargetManager, this);
+    m_movingBaseService = new MovingBaseService(
+        m_vehicleTargetManager, m_movingBasePositionStore, this);
     m_compassCalibrationService = new CompassCalibrationService(
         m_vehicleTargetManager, m_vehicleCommandService,
         m_exactLinkTransmitter, this);
@@ -331,6 +337,7 @@ void LinkManager::shutdown()
         LinkInterface *link = it.value();
         m_compassCalibrationService->forgetLink(linkId);
         m_guidedTargetService->forgetLink(linkId);
+        m_movingBaseService->forgetLink(linkId);
         m_vehicleTargetManager->removeLink(linkId);
         m_vehicleCommandService->forgetLink(linkId);
         m_parameterService->forgetLink(linkId);
@@ -612,6 +619,16 @@ VehicleCommandService *LinkManager::vehicleCommandService() const
 GuidedTargetService *LinkManager::guidedTargetService() const
 {
     return m_guidedTargetService;
+}
+
+MovingBasePositionStore *LinkManager::movingBasePositionStore() const
+{
+    return m_movingBasePositionStore;
+}
+
+MovingBaseService *LinkManager::movingBaseService() const
+{
+    return m_movingBaseService;
 }
 
 CompassCalibrationService *LinkManager::compassCalibrationService() const
@@ -1103,6 +1120,7 @@ void LinkManager::invalidateLinkSession(int linkId)
     m_mavFtpService->forgetLink(linkId);
     m_compassCalibrationService->forgetLink(linkId);
     m_guidedTargetService->forgetLink(linkId);
+    m_movingBaseService->forgetLink(linkId);
     m_vehicleTargetManager->removeLink(linkId);
     m_vehicleCommandService->forgetLink(linkId);
     m_parameterService->forgetLink(linkId);

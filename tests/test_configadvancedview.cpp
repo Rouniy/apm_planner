@@ -47,6 +47,8 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
         &actionSource, QStringLiteral("actionExternalGuided"));
     QAction *followMe = makeAction(
         &actionSource, QStringLiteral("actionFollowMe"));
+    QAction *movingBase = makeAction(
+        &actionSource, QStringLiteral("actionMovingBase"));
     QAction *proximity = makeAction(
         &actionSource, QStringLiteral("actionProximity"));
 
@@ -54,8 +56,8 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
-    QCOMPARE(view.ImplementedActionCount(), 9);
-    QVERIFY(view.Log().contains(QStringLiteral("9 of 16")));
+    QCOMPARE(view.ImplementedActionCount(), 10);
+    QVERIFY(view.Log().contains(QStringLiteral("10 of 16")));
 
     QSignalSpy inspectorSpy(inspector, &QAction::triggered);
     QSignalSpy mirrorSpy(mirror, &QAction::triggered);
@@ -65,6 +67,7 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QSignalSpy spectrogramSpy(spectrogram, &QAction::triggered);
     QSignalSpy externalGuidedSpy(externalGuided, &QAction::triggered);
     QSignalSpy followMeSpy(followMe, &QAction::triggered);
+    QSignalSpy movingBaseSpy(movingBase, &QAction::triggered);
     QSignalSpy proximitySpy(proximity, &QAction::triggered);
 
     auto *inspectorButton = view.findChild<QPushButton *>(
@@ -83,6 +86,8 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
         QStringLiteral("ExternalGuidedButton"));
     auto *followMeButton = view.findChild<QPushButton *>(
         QStringLiteral("FollowMeButton"));
+    auto *movingBaseButton = view.findChild<QPushButton *>(
+        QStringLiteral("MovingBaseButton"));
     auto *proximityButton = view.findChild<QPushButton *>(
         QStringLiteral("ProximityButton"));
     QVERIFY(inspectorButton && inspectorButton->isEnabled());
@@ -93,6 +98,7 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QVERIFY(spectrogramButton && spectrogramButton->isEnabled());
     QVERIFY(externalGuidedButton && externalGuidedButton->isEnabled());
     QVERIFY(followMeButton && followMeButton->isEnabled());
+    QVERIFY(movingBaseButton && movingBaseButton->isEnabled());
     QVERIFY(proximityButton && proximityButton->isEnabled());
 
     inspectorButton->click();
@@ -103,6 +109,7 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     spectrogramButton->click();
     externalGuidedButton->click();
     followMeButton->click();
+    movingBaseButton->click();
     proximityButton->click();
     QCOMPARE(inspectorSpy.count(), 1);
     QCOMPARE(mirrorSpy.count(), 1);
@@ -112,6 +119,7 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QCOMPARE(spectrogramSpy.count(), 1);
     QCOMPARE(externalGuidedSpy.count(), 1);
     QCOMPARE(followMeSpy.count(), 1);
+    QCOMPARE(movingBaseSpy.count(), 1);
     QCOMPARE(proximitySpy.count(), 1);
     QVERIFY(view.Log().contains(QStringLiteral("Opened MAVLink Inspector")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Mavlink Mirror")));
@@ -121,6 +129,7 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QVERIFY(view.Log().contains(QStringLiteral("Opened Spectrogram")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened External Guided")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Follow Me")));
+    QVERIFY(view.Log().contains(QStringLiteral("Opened Moving Base")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Proximity")));
 
     auto *anonLog = view.findChild<QPushButton *>(
@@ -145,6 +154,7 @@ void ConfigAdvancedViewTest::tracksSharedActionAvailability()
                QStringLiteral("actionDataFlashSpectrogram"));
     makeAction(&actionSource, QStringLiteral("actionExternalGuided"));
     makeAction(&actionSource, QStringLiteral("actionFollowMe"));
+    makeAction(&actionSource, QStringLiteral("actionMovingBase"));
     makeAction(&actionSource, QStringLiteral("actionProximity"));
 
     ConfigAdvancedView view(&actionSource);
