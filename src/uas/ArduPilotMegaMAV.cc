@@ -468,10 +468,12 @@ void ArduPilotMegaMAV::textMessageReceived(int /*uasid*/, int /*componentid*/, i
     if (text.startsWith("PreArm:")) {
         // Speak the PreArm warning
         QString audioString = "Pre-arm check:" + text.remove("PreArm:");
-        GAudioOutput::instance()->say(audioString, severity);
+        GAudioOutput::instance()->sayForVehicle(
+            audioString, isArmed(), severity);
     } else if (text.startsWith("Arm:")){
         QString audioString = "Arm check:" + text.remove("Arm:");
-        GAudioOutput::instance()->say(audioString, severity);
+        GAudioOutput::instance()->sayForVehicle(
+            audioString, isArmed(), severity);
     }
 }
 
@@ -487,23 +489,13 @@ void ArduPilotMegaMAV::heartbeatTimeout(bool timeout, unsigned int /*ms*/)
 
 void ArduPilotMegaMAV::playCustomModeChangedAudioMessage()
 {
-    QString phrase;
-
-    phrase = "Mode changed to " + getCustomModeText() + " for system " + QString::number(getUASID());
-    QLOG_DEBUG() << "APM say:" << phrase;
-    GAudioOutput::instance()->say(phrase.toLower());
+    // SpeechAnnouncer owns mode announcements and their policy.
 }
 
 void ArduPilotMegaMAV::playArmStateChangedAudioMessage(bool armedState)
 {
-    QString armedPhrase("disarmed");
-
-    if (armedState){
-        armedPhrase = "armed";
-    }
-
-    QLOG_DEBUG() << "APM say:" << armedPhrase;
-    GAudioOutput::instance()->say(QString("system %1 is %2").arg(QString::number(getUASID()),armedPhrase));
+    Q_UNUSED(armedState)
+    // SpeechAnnouncer owns arm/disarm announcements and their policy.
 }
 
 

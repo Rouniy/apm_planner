@@ -99,6 +99,15 @@ bool GAudioOutput::say(QString text, int severity)
     return audioBackend->speak(text);
 }
 
+bool GAudioOutput::sayForVehicle(QString text, bool vehicleArmed, int severity)
+{
+    if (!speechSettings || !speechSettings->isEnabled()
+        || (speechSettings->armedOnly() && !vehicleArmed)) {
+        return false;
+    }
+    return say(text, severity);
+}
+
 bool GAudioOutput::alert(QString text)
 {
     if (muted) {

@@ -43,6 +43,18 @@ public:
     bool betaUpdatesEnabled() const { return m_betaUpdates; }
     bool hudOverlayEnabled() const;
     bool speechEnabled() const;
+    bool speechArmedOnly() const;
+    bool speechWaypointEnabled() const;
+    bool speechModeEnabled() const;
+    bool speechBatteryEnabled() const;
+    bool speechArmDisarmEnabled() const;
+    QString speechWaypointTemplate() const;
+    QString speechModeTemplate() const;
+    QString speechBatteryTemplate() const;
+    QString speechArmTemplate() const;
+    QString speechDisarmTemplate() const;
+    double speechBatteryWarningVoltage() const;
+    double speechBatteryWarningPercent() const;
     QString lastError() const { return m_lastError; }
 
     bool setAltitudeUnits(const QString &units);
@@ -52,6 +64,18 @@ public:
     bool setBetaUpdatesEnabled(bool enabled);
     bool setHudOverlayEnabled(bool enabled);
     bool setSpeechEnabled(bool enabled);
+    bool setSpeechArmedOnly(bool enabled);
+    bool setSpeechWaypointEnabled(bool enabled);
+    bool setSpeechModeEnabled(bool enabled);
+    bool setSpeechBatteryEnabled(bool enabled);
+    bool setSpeechArmDisarmEnabled(bool enabled);
+    bool setSpeechWaypointTemplate(const QString &text);
+    bool setSpeechModeTemplate(const QString &text);
+    bool setSpeechBatteryTemplate(const QString &text);
+    bool setSpeechArmTemplate(const QString &text);
+    bool setSpeechDisarmTemplate(const QString &text);
+    bool setSpeechBatteryWarningVoltage(double voltage);
+    bool setSpeechBatteryWarningPercent(double percent);
 
 public slots:
     void reload();

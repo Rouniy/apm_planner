@@ -26,6 +26,7 @@ public:
 
 public slots:
     bool say(QString text, int severity = 1);
+    bool sayForVehicle(QString text, bool vehicleArmed, int severity = 1);
     bool alert(QString text);
     bool startEmergency();
     bool stopEmergency();

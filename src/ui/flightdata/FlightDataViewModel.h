@@ -131,6 +131,9 @@ public slots:
 signals:
     void telemetryChanged();
     void batteryTelemetryChanged(double voltage, double remainingPercent);
+    void armedStateChanged(bool armed);
+    void flightModeChanged(const QString &mode);
+    void currentWaypointChanged(int sequence);
     void activeUASChanged(UASInterface *uas);
 
 private:
@@ -158,6 +161,7 @@ private:
     bool m_armed = false;
     bool m_prearmOk = false;
     QString m_mode = QStringLiteral("UNKNOWN");
+    QString m_navigationModeText;
     double m_batteryVoltage = 0.0;
     int m_batteryRemaining = 0;
     double m_currentAmps = 0.0;

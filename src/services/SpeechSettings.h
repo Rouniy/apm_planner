@@ -9,7 +9,7 @@
 class QSettings;
 
 /**
- * Application-owned Mission Planner speech master setting.
+ * Application-owned Mission Planner speech policy.
  *
  * Production callers share instance(). Tests and isolated consumers may
  * inject their own QSettings object, which remains owned by its caller.
@@ -27,18 +27,63 @@ public:
     static QString settingsKey();
 
     bool isEnabled() const { return m_enabled; }
+    bool armedOnly() const { return m_armedOnly; }
+    bool waypointEnabled() const { return m_waypointEnabled; }
+    bool modeEnabled() const { return m_modeEnabled; }
+    bool batteryEnabled() const { return m_batteryEnabled; }
+    bool armDisarmEnabled() const { return m_armDisarmEnabled; }
+
+    QString waypointTemplate() const { return m_waypointTemplate; }
+    QString modeTemplate() const { return m_modeTemplate; }
+    QString batteryTemplate() const { return m_batteryTemplate; }
+    QString armTemplate() const { return m_armTemplate; }
+    QString disarmTemplate() const { return m_disarmTemplate; }
+    double batteryWarningVoltage() const { return m_batteryWarningVoltage; }
+    double batteryWarningPercent() const { return m_batteryWarningPercent; }
+
+    QString modeAnnouncement(const QString &mode, int sysid,
+                             bool armed) const;
+    QString waypointAnnouncement(int wpn, int sysid, bool armed) const;
+    QString armStateAnnouncement(bool armed, int sysid) const;
 
 public slots:
     void setEnabled(bool enabled);
+    void setArmedOnly(bool armedOnly);
+    void setWaypointEnabled(bool enabled);
+    void setModeEnabled(bool enabled);
+    void setBatteryEnabled(bool enabled);
+    void setArmDisarmEnabled(bool enabled);
+    void setWaypointTemplate(const QString &speechTemplate);
+    void setModeTemplate(const QString &speechTemplate);
+    void setBatteryTemplate(const QString &speechTemplate);
+    void setArmTemplate(const QString &speechTemplate);
+    void setDisarmTemplate(const QString &speechTemplate);
+    void setBatteryWarningVoltage(double voltage);
+    void setBatteryWarningPercent(double percent);
     void reload();
 
 signals:
     void enabledChanged(bool enabled);
+    void policyChanged();
 
 private:
+    void readSettings();
+
     std::unique_ptr<QSettings> m_ownedSettings;
     QSettings *m_settings = nullptr;
     bool m_enabled = false;
+    bool m_armedOnly = false;
+    bool m_waypointEnabled = false;
+    bool m_modeEnabled = false;
+    bool m_batteryEnabled = false;
+    bool m_armDisarmEnabled = false;
+    QString m_waypointTemplate;
+    QString m_modeTemplate;
+    QString m_batteryTemplate;
+    QString m_armTemplate;
+    QString m_disarmTemplate;
+    double m_batteryWarningVoltage = 9.6;
+    double m_batteryWarningPercent = 20.0;
 };
 
 #endif // SPEECHSETTINGS_H

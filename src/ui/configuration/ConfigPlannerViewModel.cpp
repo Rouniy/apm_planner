@@ -6,6 +6,8 @@
 #include <QCoreApplication>
 #include <QSettings>
 
+#include <cmath>
+
 ConfigPlannerViewModel::ConfigPlannerViewModel(
     QSettings *settings, DisplayViewProfileService *profiles, QObject *parent)
     : QObject(parent),
@@ -32,8 +34,9 @@ ConfigPlannerViewModel::ConfigPlannerViewModel(
     connect(m_speechSettings, &SpeechSettings::enabledChanged,
             this, [this](bool enabled) {
         emit speechEnabledChanged(enabled);
-        emit stateChanged();
     });
+    connect(m_speechSettings, &SpeechSettings::policyChanged,
+            this, &ConfigPlannerViewModel::stateChanged);
     reload();
 }
 
@@ -87,6 +90,68 @@ bool ConfigPlannerViewModel::hudOverlayEnabled() const
 bool ConfigPlannerViewModel::speechEnabled() const
 {
     return m_speechSettings && m_speechSettings->isEnabled();
+}
+
+bool ConfigPlannerViewModel::speechArmedOnly() const
+{
+    return m_speechSettings && m_speechSettings->armedOnly();
+}
+
+bool ConfigPlannerViewModel::speechWaypointEnabled() const
+{
+    return m_speechSettings && m_speechSettings->waypointEnabled();
+}
+
+bool ConfigPlannerViewModel::speechModeEnabled() const
+{
+    return m_speechSettings && m_speechSettings->modeEnabled();
+}
+
+bool ConfigPlannerViewModel::speechBatteryEnabled() const
+{
+    return m_speechSettings && m_speechSettings->batteryEnabled();
+}
+
+bool ConfigPlannerViewModel::speechArmDisarmEnabled() const
+{
+    return m_speechSettings && m_speechSettings->armDisarmEnabled();
+}
+
+QString ConfigPlannerViewModel::speechWaypointTemplate() const
+{
+    return m_speechSettings ? m_speechSettings->waypointTemplate() : QString();
+}
+
+QString ConfigPlannerViewModel::speechModeTemplate() const
+{
+    return m_speechSettings ? m_speechSettings->modeTemplate() : QString();
+}
+
+QString ConfigPlannerViewModel::speechBatteryTemplate() const
+{
+    return m_speechSettings ? m_speechSettings->batteryTemplate() : QString();
+}
+
+QString ConfigPlannerViewModel::speechArmTemplate() const
+{
+    return m_speechSettings ? m_speechSettings->armTemplate() : QString();
+}
+
+QString ConfigPlannerViewModel::speechDisarmTemplate() const
+{
+    return m_speechSettings ? m_speechSettings->disarmTemplate() : QString();
+}
+
+double ConfigPlannerViewModel::speechBatteryWarningVoltage() const
+{
+    return m_speechSettings
+        ? m_speechSettings->batteryWarningVoltage() : 9.6;
+}
+
+double ConfigPlannerViewModel::speechBatteryWarningPercent() const
+{
+    return m_speechSettings
+        ? m_speechSettings->batteryWarningPercent() : 20.0;
 }
 
 void ConfigPlannerViewModel::reload()
@@ -223,4 +288,90 @@ bool ConfigPlannerViewModel::setSpeechEnabled(bool enabled)
     m_speechSettings->setEnabled(enabled);
     m_lastError.clear();
     return m_speechSettings->isEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechArmedOnly(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setArmedOnly(enabled);
+    return m_speechSettings->armedOnly() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechWaypointEnabled(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setWaypointEnabled(enabled);
+    return m_speechSettings->waypointEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechModeEnabled(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setModeEnabled(enabled);
+    return m_speechSettings->modeEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechBatteryEnabled(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setBatteryEnabled(enabled);
+    return m_speechSettings->batteryEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechArmDisarmEnabled(bool enabled)
+{
+    if (!m_speechSettings) return false;
+    m_speechSettings->setArmDisarmEnabled(enabled);
+    return m_speechSettings->armDisarmEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechWaypointTemplate(const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setWaypointTemplate(text);
+    return m_speechSettings->waypointTemplate() == text;
+}
+
+bool ConfigPlannerViewModel::setSpeechModeTemplate(const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setModeTemplate(text);
+    return m_speechSettings->modeTemplate() == text;
+}
+
+bool ConfigPlannerViewModel::setSpeechBatteryTemplate(const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setBatteryTemplate(text);
+    return m_speechSettings->batteryTemplate() == text;
+}
+
+bool ConfigPlannerViewModel::setSpeechArmTemplate(const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setArmTemplate(text);
+    return m_speechSettings->armTemplate() == text;
+}
+
+bool ConfigPlannerViewModel::setSpeechDisarmTemplate(const QString &text)
+{
+    if (!m_speechSettings || text.isEmpty()) return false;
+    m_speechSettings->setDisarmTemplate(text);
+    return m_speechSettings->disarmTemplate() == text;
+}
+
+bool ConfigPlannerViewModel::setSpeechBatteryWarningVoltage(double voltage)
+{
+    if (!m_speechSettings || !std::isfinite(voltage)) return false;
+    m_speechSettings->setBatteryWarningVoltage(voltage);
+    return qFuzzyCompare(
+        m_speechSettings->batteryWarningVoltage() + 1.0, voltage + 1.0);
+}
+
+bool ConfigPlannerViewModel::setSpeechBatteryWarningPercent(double percent)
+{
+    if (!m_speechSettings || !std::isfinite(percent)) return false;
+    m_speechSettings->setBatteryWarningPercent(percent);
+    return qFuzzyCompare(
+        m_speechSettings->batteryWarningPercent() + 1.0, percent + 1.0);
 }

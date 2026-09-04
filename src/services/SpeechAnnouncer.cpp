@@ -6,75 +6,128 @@
 #include "ui/configuration/BatteryMonitorInstanceModel.h"
 #include "ui/flightdata/FlightDataViewModel.h"
 
-#include <QSettings>
-
-#include <cmath>
+#include <utility>
 
 namespace
 {
 constexpr qint64 kBatteryAlertIntervalMs = 30000;
-
-double finiteSetting(
-    const QSettings &settings, const QString &key, double fallback)
-{
-    bool ok = false;
-    const double value = settings.value(key, fallback).toDouble(&ok);
-    return ok && std::isfinite(value) ? value : fallback;
-}
 }
 
 SpeechAnnouncer::SpeechAnnouncer(
     FlightDataViewModel *flightData, QObject *parent)
     : QObject(parent)
     , m_flightData(flightData)
+    , m_settings(SpeechSettings::instance())
+    , m_speaker([](const QString &message) {
+        return GAudioOutput::instance()->say(message);
+    })
+    , m_vehicleStateProvider([flightData]() {
+        VehicleState state;
+        UASInterface *const uas = flightData->activeUAS();
+        if (!uas) {
+            return state;
+        }
+        state.systemId = uas->getUASID();
+        state.armed = flightData->armed();
+        state.valid = true;
+        return state;
+    })
 {
     Q_ASSERT(m_flightData);
-    connect(m_flightData, &FlightDataViewModel::activeUASChanged,
-            this, &SpeechAnnouncer::resetCountdowns);
-    connect(m_flightData, &FlightDataViewModel::batteryTelemetryChanged,
-            this, &SpeechAnnouncer::handleBatteryTelemetry);
+    m_elapsedClock.start();
+
+    // String-based connects keep the injectable announcer independent from
+    // FlightDataViewModel's meta-object in small unit-test targets.
+    connect(m_flightData, SIGNAL(activeUASChanged(UASInterface*)),
+            this, SLOT(resetCountdowns(UASInterface*)));
+    connect(m_flightData, SIGNAL(batteryTelemetryChanged(double,double)),
+            this, SLOT(handleBatteryTelemetry(double,double)));
+    connect(m_flightData, SIGNAL(flightModeChanged(QString)),
+            this, SLOT(announceFlightMode(QString)));
+    connect(m_flightData, SIGNAL(currentWaypointChanged(int)),
+            this, SLOT(announceWaypoint(int)));
+    connect(m_flightData, SIGNAL(armedStateChanged(bool)),
+            this, SLOT(announceArmState(bool)));
     resetCountdowns(m_flightData->activeUAS());
+}
+
+SpeechAnnouncer::SpeechAnnouncer(
+    SpeechSettings *settings,
+    Speaker speaker,
+    VehicleStateProvider vehicleStateProvider,
+    Clock clock,
+    QObject *parent)
+    : QObject(parent)
+    , m_settings(settings)
+    , m_speaker(std::move(speaker))
+    , m_vehicleStateProvider(std::move(vehicleStateProvider))
+    , m_clock(std::move(clock))
+{
+    Q_ASSERT(m_settings);
+    m_elapsedClock.start();
+    resetCountdowns();
+}
+
+void SpeechAnnouncer::announceFlightMode(const QString &mode)
+{
+    const VehicleState vehicle = currentVehicle();
+    if (!m_settings || !vehicle.valid
+        || (m_flightData && m_flightData->mode() != mode)) {
+        return;
+    }
+    speak(m_settings->modeAnnouncement(
+        mode, vehicle.systemId, vehicle.armed));
+}
+
+void SpeechAnnouncer::announceWaypoint(int sequence)
+{
+    const VehicleState vehicle = currentVehicle();
+    if (!m_settings || !vehicle.valid
+        || (m_flightData && m_flightData->wpNo() != sequence)) {
+        return;
+    }
+    speak(m_settings->waypointAnnouncement(
+        sequence, vehicle.systemId, vehicle.armed));
+}
+
+void SpeechAnnouncer::announceArmState(bool armed)
+{
+    const VehicleState vehicle = currentVehicle();
+    if (!m_settings || !vehicle.valid
+        || (m_flightData && m_flightData->armed() != armed)) {
+        return;
+    }
+    speak(m_settings->armStateAnnouncement(armed, vehicle.systemId));
 }
 
 void SpeechAnnouncer::handleBatteryTelemetry(
     double voltage, double remainingPercent)
 {
-    if (!m_flightData->activeUAS()) {
-        return;
-    }
-    const QSettings settings;
-    if (!SpeechSettings::instance()->isEnabled()
-        || !settings.value(
-                QStringLiteral("speechbatteryenabled"), false).toBool()
-        || (settings.value(
-                QStringLiteral("speech_armed_only"), false).toBool()
-            && !m_flightData->armed())) {
+    const VehicleState vehicle = currentVehicle();
+    if (!vehicle.valid || !m_settings
+        || !m_settings->isEnabled()
+        || !m_settings->batteryEnabled()
+        || (m_settings->armedOnly() && !vehicle.armed)) {
         return;
     }
 
-    if (!m_batteryAlertInterval.isValid()
-        || m_batteryAlertInterval.elapsed() <= kBatteryAlertIntervalMs) {
+    const qint64 now = nowMs();
+    if (now <= m_nextBatteryAlertMs) {
         return;
     }
-    const double warningVoltage = finiteSetting(
-        settings, QStringLiteral("speechbatteryvolt"), 9.6);
-    const double warningPercent = finiteSetting(
-        settings, QStringLiteral("speechbatterypercent"), 20.0);
     if (!BatteryMonitorInstanceModel::ShouldTriggerBatteryAlert(
             voltage, remainingPercent,
-            warningVoltage, warningPercent)) {
+            m_settings->batteryWarningVoltage(),
+            m_settings->batteryWarningPercent())) {
         return;
     }
 
-    const QString message = BatteryMonitorInstanceModel::FormatBatteryAlert(
-        settings.value(
-            QStringLiteral("speechbattery"),
-            QStringLiteral(
-                "WARNING, Battery at {batv} Volt, {batp} percent"))
-            .toString(),
-        voltage, remainingPercent);
-    if (GAudioOutput::instance()->say(message)) {
-        m_batteryAlertInterval.restart();
+    QString message = BatteryMonitorInstanceModel::FormatBatteryAlert(
+        m_settings->batteryTemplate(), voltage, remainingPercent);
+    message.replace(QStringLiteral("{sysid}"),
+                    QString::number(vehicle.systemId));
+    if (speak(message)) {
+        m_nextBatteryAlertMs = now + kBatteryAlertIntervalMs;
     }
 }
 
@@ -83,5 +136,22 @@ void SpeechAnnouncer::resetCountdowns(UASInterface *uas)
     Q_UNUSED(uas)
     // Match Mission Planner 10: the first periodic warning is eligible only
     // after the connection has been alive for one full alert interval.
-    m_batteryAlertInterval.start();
+    m_nextBatteryAlertMs = nowMs() + kBatteryAlertIntervalMs;
+}
+
+SpeechAnnouncer::VehicleState SpeechAnnouncer::currentVehicle() const
+{
+    return m_vehicleStateProvider
+        ? m_vehicleStateProvider() : VehicleState{};
+}
+
+bool SpeechAnnouncer::speak(const QString &message) const
+{
+    return !message.trimmed().isEmpty()
+        && m_speaker && m_speaker(message);
+}
+
+qint64 SpeechAnnouncer::nowMs() const
+{
+    return m_clock ? m_clock() : m_elapsedClock.elapsed();
 }

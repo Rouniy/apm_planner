@@ -58,6 +58,10 @@ signals:
     void dataFlashLogDirectorySelected(const QString &directory);
     void tlogDirectorySelected(const QString &directory);
     void speechTestRequested();
+    void speechWaypointConfigurationRequested();
+    void speechModeConfigurationRequested();
+    void speechBatteryConfigurationRequested();
+    void speechArmConfigurationRequested();
     void legacyOptionsRequested();
     void legacyTelemetryOptionsRequested();
 
@@ -83,6 +87,12 @@ private:
     QCheckBox *m_speechEnabled = nullptr;
     QPushButton *m_speechTest = nullptr;
     QLabel *m_speechBackendStatus = nullptr;
+    QWidget *m_speechSubOptions = nullptr;
+    QCheckBox *m_speechArmedOnly = nullptr;
+    QCheckBox *m_speechWaypoint = nullptr;
+    QCheckBox *m_speechMode = nullptr;
+    QCheckBox *m_speechBattery = nullptr;
+    QCheckBox *m_speechArmDisarm = nullptr;
     QCheckBox *m_audioMute = nullptr;
     QCheckBox *m_heartbeat = nullptr;
     QCheckBox *m_startupUdpEnabled = nullptr;

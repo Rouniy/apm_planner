@@ -107,14 +107,41 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
         QStringLiteral("SpeechBackendStatus"));
     m_speechBackendStatus->setWordWrap(true);
     speechLayout->addWidget(m_speechBackendStatus);
+    m_speechSubOptions = new QWidget(speech);
+    m_speechSubOptions->setObjectName(
+        QStringLiteral("SpeechSubOptions"));
+    auto *speechSubOptionsLayout = new QHBoxLayout(m_speechSubOptions);
+    speechSubOptionsLayout->setContentsMargins(0, 0, 0, 0);
+    const auto addSpeechOption = [this, speechSubOptionsLayout](
+            const QString &text, const QString &objectName) {
+        auto *option = new QCheckBox(text, m_speechSubOptions);
+        option->setObjectName(objectName);
+        speechSubOptionsLayout->addWidget(option);
+        return option;
+    };
+    m_speechArmedOnly = addSpeechOption(
+        tr("Armed Only"), QStringLiteral("CHK_speech_armed_only"));
+    m_speechWaypoint = addSpeechOption(
+        tr("Waypoint"), QStringLiteral("CHK_speechwaypoint"));
+    m_speechMode = addSpeechOption(
+        tr("Mode"), QStringLiteral("CHK_speechmode"));
+    m_speechBattery = addSpeechOption(
+        tr("Battery"), QStringLiteral("CHK_speechbattery"));
+    m_speechArmDisarm = addSpeechOption(
+        tr("Arm/Disarm"), QStringLiteral("CHK_speecharmdisarm"));
+    speechSubOptionsLayout->addStretch(1);
+    speechLayout->addWidget(m_speechSubOptions);
     m_audioMute = new QCheckBox(
         tr("Mute all audio output (useful legacy Qt control)"), speech);
     m_audioMute->setObjectName(QStringLiteral("CHK_audioMute"));
     speechLayout->addWidget(m_audioMute);
     addUnavailableNote(
         speechLayout,
-        tr("Enable Speech controls all current Qt vehicle announcements. "
-           "MP10 speech levels, per-event switches/templates, Armed Only and "
+        tr("Waypoint, Mode, Battery and Arm/Disarm use their MP10 event gates "
+           "and configuration prompts. Armed Only also gates retained Qt "
+           "vehicle speech such as link, PreArm/Arm, #audio, legacy battery "
+           "and object-detection messages; those extensions have no separate "
+           "event switches. Speech level, Custom, Alt Warning, Low Speed and "
            "Vario remain unavailable until their complete consumers are ported."),
         QStringLiteral("SpeechPendingNote"));
 
@@ -319,6 +346,53 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     });
     connect(m_speechTest, &QPushButton::clicked,
             this, &ConfigPlannerView::speechTestRequested);
+    connect(m_speechArmedOnly, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (m_viewModel) m_viewModel->setSpeechArmedOnly(enabled);
+    });
+    connect(m_speechWaypoint, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (enabled) {
+            emit speechWaypointConfigurationRequested();
+            // Configuration requests are synchronous in the application
+            // binding. A cancelled request leaves the model disabled, so
+            // restore this (and every other open view) from shared policy.
+            syncFromModel();
+        } else {
+            m_viewModel->setSpeechWaypointEnabled(false);
+        }
+    });
+    connect(m_speechMode, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (enabled) {
+            emit speechModeConfigurationRequested();
+            syncFromModel();
+        } else {
+            m_viewModel->setSpeechModeEnabled(false);
+        }
+    });
+    connect(m_speechBattery, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (enabled) {
+            emit speechBatteryConfigurationRequested();
+            syncFromModel();
+        } else {
+            m_viewModel->setSpeechBatteryEnabled(false);
+        }
+    });
+    connect(m_speechArmDisarm, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (enabled) {
+            emit speechArmConfigurationRequested();
+            syncFromModel();
+        } else {
+            m_viewModel->setSpeechArmDisarmEnabled(false);
+        }
+    });
     connect(m_startupUdpEnabled, &QCheckBox::toggled,
             this, &ConfigPlannerView::saveStartupUdpOptions);
     connect(m_startupUdpPrimary,
@@ -428,6 +502,28 @@ void ConfigPlannerView::syncFromModel()
     {
         const QSignalBlocker blocker(m_speechEnabled);
         m_speechEnabled->setChecked(m_viewModel->speechEnabled());
+    }
+    m_speechSubOptions->setVisible(m_viewModel->speechEnabled());
+    {
+        const QSignalBlocker blocker(m_speechArmedOnly);
+        m_speechArmedOnly->setChecked(m_viewModel->speechArmedOnly());
+    }
+    {
+        const QSignalBlocker blocker(m_speechWaypoint);
+        m_speechWaypoint->setChecked(m_viewModel->speechWaypointEnabled());
+    }
+    {
+        const QSignalBlocker blocker(m_speechMode);
+        m_speechMode->setChecked(m_viewModel->speechModeEnabled());
+    }
+    {
+        const QSignalBlocker blocker(m_speechBattery);
+        m_speechBattery->setChecked(m_viewModel->speechBatteryEnabled());
+    }
+    {
+        const QSignalBlocker blocker(m_speechArmDisarm);
+        m_speechArmDisarm->setChecked(
+            m_viewModel->speechArmDisarmEnabled());
     }
 }
 

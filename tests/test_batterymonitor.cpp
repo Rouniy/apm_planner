@@ -2,6 +2,7 @@
 #include "ui/configuration/ConfigBatteryMonitoring2View.h"
 #include "ui/configuration/ConfigBatteryMonitoring2ViewModel.h"
 #include "core/parameters/ParameterCodec.h"
+#include "services/SpeechSettings.h"
 
 #include <QBuffer>
 #include <QCheckBox>
@@ -348,6 +349,7 @@ void BatteryMonitorModelTest::viewUsesMetadataAndAuthoritativeSnapshots()
     settings.remove(QStringLiteral("speechbattery"));
     settings.remove(QStringLiteral("speechbatteryvolt"));
     settings.remove(QStringLiteral("speechbatterypercent"));
+    SpeechSettings::instance()->reload();
     QByteArray xml(R"xml(
       <paramfile><vehicles><parameters name="ArduCopter">
         <param name="ArduCopter:BATT2_MONITOR">
@@ -424,9 +426,19 @@ void BatteryMonitorModelTest::viewUsesMetadataAndAuthoritativeSnapshots()
     QVERIFY(alert);
     QVERIFY(!alert->isChecked());
     alert->setChecked(true);
+    QVERIFY(SpeechSettings::instance()->isEnabled());
+    QVERIFY(SpeechSettings::instance()->batteryEnabled());
     QVERIFY(QSettings().value(
         QStringLiteral("speechbatteryenabled")).toBool());
     QVERIFY(QSettings().contains(QStringLiteral("speechbattery")));
+
+    SpeechSettings::instance()->setEnabled(false);
+    QVERIFY(!alert->isChecked());
+    SpeechSettings::instance()->setEnabled(true);
+    QVERIFY(alert->isChecked());
+    alert->setChecked(false);
+    QVERIFY(!SpeechSettings::instance()->batteryEnabled());
+    QVERIFY(SpeechSettings::instance()->isEnabled());
 }
 
 QTEST_MAIN(BatteryMonitorModelTest)

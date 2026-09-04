@@ -12,7 +12,6 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QSignalBlocker>
-#include <QSettings>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -210,11 +209,14 @@ ConfigBatteryMonitoring2View::ConfigBatteryMonitoring2View(
         tr("MP Alert on Low Battery"), m_editorPanel);
     m_alertOnLowBattery->setObjectName(
         QStringLiteral("CHK_speechbattery"));
-    const QSettings settings;
-    m_alertOnLowBattery->setChecked(
-        settings.value(QStringLiteral("speechbatteryenabled"), false)
-            .toBool()
-        && settings.value(QStringLiteral("speechenable"), false).toBool());
+    SpeechSettings *const speechSettings = SpeechSettings::instance();
+    const auto syncBatterySpeech = [this, speechSettings]() {
+        const QSignalBlocker blocker(m_alertOnLowBattery);
+        m_alertOnLowBattery->setChecked(
+            speechSettings->isEnabled()
+            && speechSettings->batteryEnabled());
+    };
+    syncBatterySpeech();
     fields->addWidget(m_alertOnLowBattery, row++, 0, 1, 2);
 
     root->addWidget(m_editorPanel, 0, Qt::AlignLeft);
@@ -284,27 +286,14 @@ ConfigBatteryMonitoring2View::ConfigBatteryMonitoring2View(
         m_viewModel->ApplyCurrentCalibration(m_measuredCurrent->value());
     });
     connect(m_alertOnLowBattery, &QCheckBox::toggled,
-            this, [](bool enabled) {
-        QSettings settings;
-        settings.setValue(QStringLiteral("speechbatteryenabled"), enabled);
-        SpeechSettings::instance()->setEnabled(true);
+            this, [speechSettings](bool enabled) {
         if (enabled) {
-            if (!settings.contains(QStringLiteral("speechbattery"))) {
-                settings.setValue(
-                    QStringLiteral("speechbattery"),
-                    QStringLiteral(
-                        "WARNING, Battery at {batv} Volt, {batp} percent"));
-            }
-            if (!settings.contains(QStringLiteral("speechbatteryvolt"))) {
-                settings.setValue(
-                    QStringLiteral("speechbatteryvolt"), 9.6);
-            }
-            if (!settings.contains(QStringLiteral("speechbatterypercent"))) {
-                settings.setValue(
-                    QStringLiteral("speechbatterypercent"), 20);
-            }
+            speechSettings->setEnabled(true);
         }
+        speechSettings->setBatteryEnabled(enabled);
     });
+    connect(speechSettings, &SpeechSettings::policyChanged,
+            this, syncBatterySpeech);
 
     configureMetadataEditors();
     syncFields();

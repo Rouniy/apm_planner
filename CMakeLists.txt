@@ -1483,6 +1483,31 @@ if(BUILD_TESTING)
     add_test(NAME speechsettings_tests
         COMMAND speechsettings_tests)
 
+    add_executable(speechannouncer_tests
+        tests/test_speechannouncer.cpp
+        src/services/SpeechAnnouncer.cpp
+        src/services/SpeechAnnouncer.h
+        src/services/SpeechSettings.cpp
+        src/services/SpeechSettings.h
+        src/ui/configuration/BatteryMonitorInstanceModel.cpp
+        src/ui/configuration/BatteryMonitorInstanceModel.h
+    )
+    target_include_directories(speechannouncer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/uas
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(speechannouncer_tests PRIVATE
+        Qt::Core
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME speechannouncer_tests
+        COMMAND speechannouncer_tests)
+
     add_executable(applicationidentity_tests
         tests/test_applicationidentity.cpp
     )

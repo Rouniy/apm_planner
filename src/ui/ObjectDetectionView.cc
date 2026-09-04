@@ -98,7 +98,12 @@ void ObjectDetectionView::newPattern(int uasId, QString patternPath, float confi
     if (detected) {
         if (!patternList.contains(patternPath)) {
             // Emit audio message on detection
-            if (detected) GAudioOutput::instance()->say("System " + QString::number(uasId) + " detected pattern " + QString(patternPath.split(QLatin1Char('/'), SPLITBEHAVIOUR).last()).split(QLatin1Char('.'), SPLITBEHAVIOUR).first());
+            GAudioOutput::instance()->sayForVehicle(
+                "System " + QString::number(uasId) + " detected pattern "
+                    + QString(patternPath.split(
+                          QLatin1Char('/'), SPLITBEHAVIOUR).last())
+                          .split(QLatin1Char('.'), SPLITBEHAVIOUR).first(),
+                uas && uas->getUASID() == uasId && uas->isArmed());
 
             patternList.insert(patternPath, Pattern(patternPath, confidence));
         } else {
@@ -141,7 +146,10 @@ void ObjectDetectionView::newLetter(int uasId, QString letter, float confidence,
     if (detected) {
         if (!letterList.contains(letter)) {
             // Emit audio message on detection
-            if (detected) GAudioOutput::instance()->say("System " + QString::number(uasId) + " detected letter " + letter);
+            GAudioOutput::instance()->sayForVehicle(
+                "System " + QString::number(uasId)
+                    + " detected letter " + letter,
+                uas && uas->getUASID() == uasId && uas->isArmed());
 
             letterList.insert(letter, Pattern(letter, 0));
         } else {

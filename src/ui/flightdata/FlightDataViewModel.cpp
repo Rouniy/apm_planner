@@ -90,6 +90,7 @@ void FlightDataViewModel::resetTelemetry()
     m_armed = false;
     m_prearmOk = false;
     m_mode = QStringLiteral("UNKNOWN");
+    m_navigationModeText.clear();
     m_batteryVoltage = m_currentAmps = 0.0;
     m_batteryRemaining = 0;
     m_navBearing = m_targetAlt = m_targetSpeed = 0.0;
@@ -375,11 +376,15 @@ void FlightDataViewModel::updateThrust(UASInterface *uas, double thrust)
 
 void FlightDataViewModel::updateArmed(bool armed)
 {
+    if (m_armed == armed) {
+        return;
+    }
     m_armed = armed;
     if (armed) {
         m_prearmOk = true;
     }
     publish();
+    emit armedStateChanged(armed);
 }
 
 void FlightDataViewModel::updateMode(int uasId, const QString &mode,
@@ -395,8 +400,16 @@ void FlightDataViewModel::updateNavMode(int uasId, int mode, const QString &text
 {
     Q_UNUSED(mode)
     if (!m_uas || uasId != m_uas->getUASID() || text.isEmpty()) return;
+    const bool navigationModeChanged = m_navigationModeText != text;
+    m_navigationModeText = text;
+    const bool displayModeChanged = m_mode != text;
     m_mode = text;
-    publish();
+    if (displayModeChanged) {
+        publish();
+    }
+    if (navigationModeChanged) {
+        emit flightModeChanged(text);
+    }
 }
 
 void FlightDataViewModel::updateGpsFix(UASInterface *uas, int fix)
@@ -532,9 +545,13 @@ void FlightDataViewModel::updateHeartbeatTimeout(bool timeout, unsigned int mill
 
 void FlightDataViewModel::updateWaypoint(quint16 sequence)
 {
+    if (m_wpNo == sequence) {
+        return;
+    }
     m_wpNo = sequence;
     updateMissionProgress();
     publish();
+    emit currentWaypointChanged(sequence);
 }
 
 void FlightDataViewModel::updateWaypointDistance(double distance)

@@ -10,6 +10,8 @@
 #include "map/MapWidgetFactory.h"
 
 #include <QDialog>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QPointer>
 #include <QVBoxLayout>
 
@@ -88,7 +90,8 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
                      view, [guardedView, audio, refreshSpeech]() {
         if (!guardedView || !guardedView->viewModel()) return;
         if (!guardedView->viewModel()->speechEnabled()) {
-            refreshSpeech();
+            guardedView->setSpeechBackendStatus(QObject::tr(
+                "Enable Speech before running the test."));
             return;
         }
         if (audio->say(QStringLiteral(
@@ -98,6 +101,108 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
         } else {
             refreshSpeech();
         }
+    });
+    const auto promptTemplate = [guardedView](
+            const QString &title, const QString &current,
+            QString *configured) {
+        if (!guardedView || !configured) return false;
+        bool accepted = false;
+        const QString text = QInputDialog::getText(
+            guardedView, title, QObject::tr("What do you want it to say?"),
+            QLineEdit::Normal, current, &accepted);
+        if (!guardedView || !accepted || text.isEmpty()) return false;
+        *configured = text;
+        return true;
+    };
+    QObject::connect(
+        view, &ConfigPlannerView::speechWaypointConfigurationRequested,
+        view, [guardedView, promptTemplate]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        const QPointer<ConfigPlannerViewModel> model = guardedView->viewModel();
+        QString speechTemplate;
+        if (!promptTemplate(QObject::tr("Waypoint"),
+                            model->speechWaypointTemplate(),
+                            &speechTemplate)
+            || !model) {
+            return;
+        }
+        if (model->setSpeechWaypointTemplate(speechTemplate)) {
+            model->setSpeechWaypointEnabled(true);
+        }
+    });
+    QObject::connect(
+        view, &ConfigPlannerView::speechModeConfigurationRequested,
+        view, [guardedView, promptTemplate]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        const QPointer<ConfigPlannerViewModel> model = guardedView->viewModel();
+        QString speechTemplate;
+        if (!promptTemplate(QObject::tr("Mode"),
+                            model->speechModeTemplate(), &speechTemplate)
+            || !model) {
+            return;
+        }
+        if (model->setSpeechModeTemplate(speechTemplate)) {
+            model->setSpeechModeEnabled(true);
+        }
+    });
+    QObject::connect(
+        view, &ConfigPlannerView::speechBatteryConfigurationRequested,
+        view, [guardedView, promptTemplate]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        const QPointer<ConfigPlannerViewModel> model = guardedView->viewModel();
+        QString speechTemplate;
+        if (!promptTemplate(QObject::tr("Battery"),
+                            model->speechBatteryTemplate(),
+                            &speechTemplate)
+            || !guardedView || !model) {
+            return;
+        }
+        bool accepted = false;
+        const double voltage = QInputDialog::getDouble(
+            guardedView, QObject::tr("Battery Level"),
+            QObject::tr("What voltage do you want to warn at?"),
+            model->speechBatteryWarningVoltage(), 0.0, 1000.0, 2,
+            &accepted);
+        if (!guardedView || !model || !accepted) return;
+        const double percent = QInputDialog::getDouble(
+            guardedView, QObject::tr("Battery Level"),
+            QObject::tr("What percentage do you want to warn at?"),
+            model->speechBatteryWarningPercent(), 0.0, 100.0, 1,
+            &accepted);
+        if (!guardedView || !model || !accepted) return;
+
+        // Commit only after the complete configuration was accepted. This
+        // avoids an enabled battery policy with a half-confirmed prompt set.
+        if (!model->setSpeechBatteryTemplate(speechTemplate)
+            || !model->setSpeechBatteryWarningVoltage(voltage)
+            || !model->setSpeechBatteryWarningPercent(percent)) {
+            return;
+        }
+        model->setSpeechBatteryEnabled(true);
+    });
+    QObject::connect(
+        view, &ConfigPlannerView::speechArmConfigurationRequested,
+        view, [guardedView, promptTemplate]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        const QPointer<ConfigPlannerViewModel> model = guardedView->viewModel();
+        QString armTemplate;
+        if (!promptTemplate(QObject::tr("Arm"), model->speechArmTemplate(),
+                            &armTemplate)
+            || !guardedView || !model) {
+            return;
+        }
+        QString disarmTemplate;
+        if (!promptTemplate(QObject::tr("Disarmed"),
+                            model->speechDisarmTemplate(),
+                            &disarmTemplate)
+            || !guardedView || !model) {
+            return;
+        }
+        if (!model->setSpeechArmTemplate(armTemplate)
+            || !model->setSpeechDisarmTemplate(disarmTemplate)) {
+            return;
+        }
+        model->setSpeechArmDisarmEnabled(true);
     });
     QObject::connect(view, &ConfigPlannerView::heartbeatChanged,
                      mainWindow, &MainWindow::enableHeartbeat);

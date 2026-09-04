@@ -39,6 +39,7 @@ private slots:
     void defaultViewsShareApplicationModel();
     void modelPersistsOwnedSettingsAndEmitsLiveUnitRequests();
     void hudAndSpeechControlsPersistAndSynchronize();
+    void speechEventControlsPersistPromptAndSynchronize();
     void viewSynchronizesProfilesStartupAndRuntimeState();
     void mapAndLegacyRequestsStayOutsideTheView();
 
@@ -300,6 +301,156 @@ void ConfigPlannerViewTest::hudAndSpeechControlsPersistAndSynchronize()
     QVERIFY(!firstSpeech->isChecked());
     QVERIFY(secondHud->isChecked());
     QVERIFY(!secondSpeech->isChecked());
+}
+
+void ConfigPlannerViewTest::speechEventControlsPersistPromptAndSynchronize()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
+                       QSettings::IniFormat);
+    DisplayViewProfileService profiles(
+        &settings, directory.filePath(QStringLiteral("custom.displayview")));
+    ConfigPlannerViewModel model(&settings, &profiles);
+    ConfigPlannerView first(&model);
+    ConfigPlannerView second(&model);
+
+    auto *master = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechenable"));
+    auto *subOptions = first.findChild<QWidget *>(
+        QStringLiteral("SpeechSubOptions"));
+    auto *armedOnly = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speech_armed_only"));
+    auto *waypoint = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechwaypoint"));
+    auto *mode = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechmode"));
+    auto *battery = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechbattery"));
+    auto *arm = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speecharmdisarm"));
+    QVERIFY(master);
+    QVERIFY(subOptions);
+    QVERIFY(armedOnly);
+    QVERIFY(waypoint);
+    QVERIFY(mode);
+    QVERIFY(battery);
+    QVERIFY(arm);
+    QVERIFY(subOptions->isHidden());
+
+    QSignalSpy waypointPrompt(
+        &first, &ConfigPlannerView::speechWaypointConfigurationRequested);
+    QSignalSpy modePrompt(
+        &first, &ConfigPlannerView::speechModeConfigurationRequested);
+    QSignalSpy batteryPrompt(
+        &first, &ConfigPlannerView::speechBatteryConfigurationRequested);
+    QSignalSpy armPrompt(
+        &first, &ConfigPlannerView::speechArmConfigurationRequested);
+
+    master->setChecked(true);
+    QVERIFY(!subOptions->isHidden());
+    armedOnly->setChecked(true);
+
+    // Without a configuration handler, enabling is treated as cancelled:
+    // no event policy or fallback template is persisted.
+    waypoint->setChecked(true);
+    QCOMPARE(waypointPrompt.count(), 1);
+    QVERIFY(!waypoint->isChecked());
+    QVERIFY(!settings.contains(QStringLiteral("speechwaypointenabled")));
+    QVERIFY(!settings.contains(QStringLiteral("speechwaypoint")));
+
+    connect(&first,
+            &ConfigPlannerView::speechWaypointConfigurationRequested,
+            &model, [&model]() {
+        model.setSpeechWaypointTemplate(
+            QStringLiteral("Heading to Waypoint {wpn}"));
+        model.setSpeechWaypointEnabled(true);
+    });
+    connect(&first, &ConfigPlannerView::speechModeConfigurationRequested,
+            &model, [&model]() {
+        model.setSpeechModeTemplate(QStringLiteral("Mode changed to {mode}"));
+        model.setSpeechModeEnabled(true);
+    });
+    connect(&first, &ConfigPlannerView::speechBatteryConfigurationRequested,
+            &model, [&model]() {
+        model.setSpeechBatteryTemplate(QStringLiteral(
+            "WARNING, Battery at {batv} Volt, {batp} percent"));
+        model.setSpeechBatteryWarningVoltage(9.6);
+        model.setSpeechBatteryWarningPercent(20.0);
+        model.setSpeechBatteryEnabled(true);
+    });
+    connect(&first, &ConfigPlannerView::speechArmConfigurationRequested,
+            &model, [&model]() {
+        model.setSpeechArmTemplate(QStringLiteral("Armed"));
+        model.setSpeechDisarmTemplate(QStringLiteral("Disarmed"));
+        model.setSpeechArmDisarmEnabled(true);
+    });
+
+    waypoint->setChecked(true);
+    mode->setChecked(true);
+    battery->setChecked(true);
+    arm->setChecked(true);
+    QCOMPARE(waypointPrompt.count(), 2);
+    QCOMPARE(modePrompt.count(), 1);
+    QCOMPARE(batteryPrompt.count(), 1);
+    QCOMPARE(armPrompt.count(), 1);
+
+    QCOMPARE(settings.value(QStringLiteral("speech_armed_only")).toBool(),
+             true);
+    QCOMPARE(settings.value(QStringLiteral("speechwaypointenabled")).toBool(),
+             true);
+    QCOMPARE(settings.value(QStringLiteral("speechmodeenabled")).toBool(),
+             true);
+    QCOMPARE(settings.value(QStringLiteral("speechbatteryenabled")).toBool(),
+             true);
+    QCOMPARE(settings.value(QStringLiteral("speecharmenabled")).toBool(),
+             true);
+    QCOMPARE(settings.value(QStringLiteral("speechwaypoint")).toString(),
+             QStringLiteral("Heading to Waypoint {wpn}"));
+    QCOMPARE(settings.value(QStringLiteral("speechmode")).toString(),
+             QStringLiteral("Mode changed to {mode}"));
+    QCOMPARE(settings.value(QStringLiteral("speecharm")).toString(),
+             QStringLiteral("Armed"));
+    QCOMPARE(settings.value(QStringLiteral("speechdisarm")).toString(),
+             QStringLiteral("Disarmed"));
+    QCOMPARE(settings.value(QStringLiteral("speechbatteryvolt")).toDouble(),
+             9.6);
+    QCOMPARE(settings.value(QStringLiteral("speechbatterypercent")).toDouble(),
+             20.0);
+
+    auto *secondMode = second.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechmode"));
+    auto *secondArm = second.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speecharmdisarm"));
+    auto *secondSubOptions = second.findChild<QWidget *>(
+        QStringLiteral("SpeechSubOptions"));
+    QVERIFY(secondMode);
+    QVERIFY(secondArm);
+    QVERIFY(secondSubOptions);
+    QVERIFY(!secondSubOptions->isHidden());
+    QVERIFY(secondMode->isChecked());
+    QVERIFY(secondArm->isChecked());
+
+    QVERIFY(model.setSpeechModeTemplate(QStringLiteral("Now {mode}")));
+    QVERIFY(model.setSpeechWaypointTemplate(QStringLiteral("WP {wpn}")));
+    QVERIFY(model.setSpeechArmTemplate(QStringLiteral("Vehicle armed")));
+    QVERIFY(model.setSpeechDisarmTemplate(QStringLiteral("Vehicle safe")));
+    QVERIFY(model.setSpeechBatteryTemplate(QStringLiteral("Battery {batp}")));
+    QVERIFY(model.setSpeechBatteryWarningVoltage(10.5));
+    QVERIFY(model.setSpeechBatteryWarningPercent(25.0));
+    QCOMPARE(model.speechModeTemplate(), QStringLiteral("Now {mode}"));
+    QCOMPARE(model.speechWaypointTemplate(), QStringLiteral("WP {wpn}"));
+    QCOMPARE(model.speechArmTemplate(), QStringLiteral("Vehicle armed"));
+    QCOMPARE(model.speechDisarmTemplate(), QStringLiteral("Vehicle safe"));
+    QCOMPARE(model.speechBatteryTemplate(), QStringLiteral("Battery {batp}"));
+    QCOMPARE(model.speechBatteryWarningVoltage(), 10.5);
+    QCOMPARE(model.speechBatteryWarningPercent(), 25.0);
+
+    master->setChecked(false);
+    QVERIFY(subOptions->isHidden());
+    QVERIFY(secondSubOptions->isHidden());
+    QVERIFY(model.speechModeEnabled());
+    QVERIFY(model.speechArmDisarmEnabled());
 }
 
 void ConfigPlannerViewTest::mapAndLegacyRequestsStayOutsideTheView()

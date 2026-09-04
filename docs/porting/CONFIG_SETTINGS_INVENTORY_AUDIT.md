@@ -92,21 +92,33 @@ logging, DataFlash/tlog directories, beta update channel and system proxy.
 The two production entry points share one application-owned model, so one
 open page cannot overwrite stale UDP/beta state from another.
 
-The next live slice adds three direct MP10 controls, bringing the working
-native-equivalent count to 12 of 64: `Enable HUD Overlay`, `Enable Speech` and
-`Test Speech`. HUD visibility now has one application-owned `CHK_hudshow`
-service shared with the HUD context menu, so either surface updates the other
-immediately. The speech master uses the canonical `speechenable` key and gates
-all TTS without disabling WAV alerts or beeps; Test Speech reports disabled,
-muted, ready and unavailable-backend states instead of failing silently.
+The two live slices add eight direct MP10 controls, bringing the working
+native-equivalent count to 17 of 64: `Enable HUD Overlay`, `Enable Speech`,
+`Test Speech`, `Armed Only`, `Waypoint`, `Mode`, `Battery` and `Arm/Disarm`.
+HUD visibility now has one application-owned `CHK_hudshow` service shared with
+the HUD context menu, so either surface updates the other immediately. The
+speech master uses the canonical `speechenable` key and gates all TTS without
+disabling WAV alerts or beeps; Test Speech reports disabled, muted, ready and
+unavailable-backend states instead of failing silently. The central announcer
+applies MP10 event keys, templates, token substitution and current-vehicle
+gates for waypoint, mode, battery and arm state; `speech_armed_only` gates all
+except the arm/disarm transition itself. Retained Qt link, PreArm/Arm, `#audio`,
+legacy battery and object-detection phrases share the master and Armed Only
+policy but deliberately retain no invented per-event switch.
+
 The useful Qt audio-mute control remains an extension and is not included in
-the 12-control parity count. A real-X11 production-route run toggles both new
-switches, verifies their exact persisted keys, shows the unavailable TTS state
-and observes the existing DATA HUD disappear live without an application
-restart (`/tmp/apm-planner-live-smoke.3anzjo`).
+the 17-control parity count. The first real-X11 production-route run toggles
+HUD and the speech master, verifies their exact keys and observes the DATA HUD
+disappear live (`/tmp/apm-planner-live-smoke.3anzjo`). The follow-up run
+completes the real Mode and Battery prompts, verifies their exact MP10 keys,
+templates and thresholds, confirms Battery-off does not disable the master,
+and exits cleanly (`/tmp/apm-planner-speech-smoke.PE5xfb`). Prompt cancellation
+is transactional: an event is enabled only after every required value is
+accepted, so cancellation cannot leave a half-configured policy.
 
 The remaining MP10 controls are not represented as fake toggles. Language,
-speed/OSD-color/severity, speech levels/event policies/vario,
+speed/OSD-color/severity, the remaining speech level plus periodic Custom,
+Alt Warning, Low Speed and No Data/vario consumers,
 safety-confirmed flight shortcuts,
 connect policies, the five target-safe telemetry rates and GCS identity, map
 vectors/overlays/cache/external ADS-B, and the remaining advanced policies are

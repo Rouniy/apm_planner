@@ -20,6 +20,7 @@
 #include "QGCMAVLink.h"
 #include "LinkManager.h"
 #include "comm/CompassCalibrationService.h"
+#include "services/SpeechSettings.h"
 #include "MainWindow.h"
 #include"QGCJSBSimLink.h"
 
@@ -275,7 +276,8 @@ void UAS::updateState()
         connectionLost = true;
         receivedMode = false;
         QString audiostring = QString("Link lost to system %1").arg(this->getUASID());
-        GAudioOutput::instance()->say(audiostring.toLower());
+        GAudioOutput::instance()->sayForVehicle(
+            audiostring.toLower(), isArmed());
     }
 
     // Update connection loss time on each iteration
@@ -289,7 +291,8 @@ void UAS::updateState()
     if (connectionLost && (heartbeatInterval < timeoutIntervalHeartbeat))
     {
         QString audiostring = QString("Link regained to system %1 after %2 seconds").arg(this->getUASID()).arg((int)(connectionLossTime/1000000));
-        GAudioOutput::instance()->say(audiostring.toLower());
+        GAudioOutput::instance()->sayForVehicle(
+            audiostring.toLower(), isArmed());
         connectionLost = false;
         connectionLossTime = 0;
         emit heartbeatTimeout(false, 0);
@@ -482,10 +485,7 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
                 {
                     emit disarmed();
                 }
-                playArmStateChangedAudioMessage(systemIsArmed);
             }
-
-            bool customModeHasChanged = false;
 
             if ((state.system_status != static_cast<uint8_t>(this->status))) {
                 QLOG_DEBUG() << "UAS: new system_status" << state.system_status;
@@ -507,14 +507,8 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
 
             if (custom_mode != state.custom_mode) {
                 QLOG_DEBUG() << "UAS: new custom mode " << state.custom_mode;
-                customModeHasChanged = true;
                 custom_mode = state.custom_mode;
                 emit navModeChanged(uasId, state.custom_mode, getCustomModeText());
-            }
-
-            // AUDIO
-            if (/*modeHasChanged || stateHasChanged || */customModeHasChanged){
-                playCustomModeChangedAudioMessage(); // delegate audio to autopilot specializations
             }
 
             } break;
@@ -545,12 +539,10 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             currentVoltage = state.voltage_battery/1000.0;
             lpVoltage = filterVoltage(currentVoltage);
             tickLowpassVoltage = tickLowpassVoltage*0.8 + 0.2*currentVoltage;
-            const QSettings batterySpeechSettings;
+            const SpeechSettings *const speechPolicy =
+                SpeechSettings::instance();
             const bool missionPlannerBatterySpeech =
-                batterySpeechSettings.value(
-                    QStringLiteral("speechenable"), false).toBool()
-                && batterySpeechSettings.value(
-                    QStringLiteral("speechbatteryenabled"), false).toBool();
+                speechPolicy->isEnabled() && speechPolicy->batteryEnabled();
 
             // We don't want to tick above the threshold
             if (tickLowpassVoltage > tickVoltage)
@@ -569,7 +561,10 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
                     /* warn only every 12 seconds */
                     && (QGC::groundTimeUsecs() - lastVoltageWarning) > 12000000)
             {
-                GAudioOutput::instance()->say(QString("voltage warning: %1 volts").arg(lpVoltage, 0, 'f', 1, QChar(' ')));
+                GAudioOutput::instance()->sayForVehicle(
+                    QString("voltage warning: %1 volts").arg(
+                        lpVoltage, 0, 'f', 1, QChar(' ')),
+                    isArmed());
                 lastVoltageWarning = QGC::groundTimeUsecs();
                 lastTickVoltageValue = tickLowpassVoltage;
             }
@@ -1151,7 +1146,6 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             mavlink_msg_mission_item_reached_decode(&message, &wpr);
             waypointManager.handleWaypointReached(message.sysid, message.compid, &wpr);
             QString text = QString("%1 reached waypoint %2").arg(getUASName()).arg(wpr.seq);
-            GAudioOutput::instance()->say(text);
             emit textMessageReceived(message.sysid, message.compid, 0, text);
         }
             break;
@@ -1177,7 +1171,8 @@ void UAS::receiveMessage(LinkInterface* link, mavlink_message_t message)
             {
                 text.remove("#audio:");
                 emit textMessageReceived(uasId, message.compid, severity, QString("Audio message: ") + text);
-                GAudioOutput::instance()->say(text, severity);
+                GAudioOutput::instance()->sayForVehicle(
+                    text, isArmed(), severity);
             }
             else
             {
@@ -4167,7 +4162,12 @@ void UAS::startLowBattAlarm()
 {
     if (!lowBattAlarm)
     {
-        GAudioOutput::instance()->alert(tr("system %1 has low battery").arg(getUASName()));
+        // Keep the legacy audible alarm independent from the speech master,
+        // but route its spoken phrase through the common vehicle policy.
+        GAudioOutput::instance()->beep();
+        GAudioOutput::instance()->sayForVehicle(
+            tr("system %1 has low battery").arg(getUASName()),
+            isArmed(), 2);
         QTimer::singleShot(3000, GAudioOutput::instance(), SLOT(startEmergency()));
         lowBattAlarm = true;
     }
@@ -4250,16 +4250,13 @@ bool UAS::isGroundRover()
 
 void UAS::playCustomModeChangedAudioMessage()
 {
-    // Do nothing as its custom message only a autopilot will know the correct action
+    // SpeechAnnouncer owns mode announcements and their policy.
 }
 
 void UAS::playArmStateChangedAudioMessage(bool armedState)
 {
-    if (armedState){
-        GAudioOutput::instance()->say("armed");
-    } else {
-        GAudioOutput::instance()->say("disarmed");
-    }
+    Q_UNUSED(armedState)
+    // SpeechAnnouncer owns arm/disarm announcements and their policy.
 }
 void UAS::protocolStatusMessageRec(const QString& title, const QString& message)
 {
