@@ -52,6 +52,7 @@ This file is part of the QGROUNDCONTROL project
 #include "ExternalGuidedWindow.h"
 #include "FollowMeWindow.h"
 #include "MovingBaseWindow.h"
+#include "SwarmSequenceWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #ifdef APM_HAS_QT_MULTIMEDIA
 #include "OsdVideoOverlayWindow.h"
@@ -666,6 +667,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { FollowMeWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionMovingBase"),
                     [this]() { MovingBaseWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionSwarmSequence"),
+                    [this]() { SwarmSequenceWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),
                     [this]() { LinkStatsWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionConnectionOptions"),

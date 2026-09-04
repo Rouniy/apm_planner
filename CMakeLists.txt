@@ -651,6 +651,11 @@ set(SOURCES
     src/ui/MissionPlannerToolsMenu.h
     src/ui/OsdVideoOverlayWindow.cpp
     src/ui/OsdVideoOverlayWindow.h
+    src/ui/SequenceLayoutControl.cpp
+    src/ui/SequenceLayoutControl.h
+    src/ui/SwarmSequenceWindow.cpp
+    src/ui/SwarmSequenceWindow.h
+    src/ui/SwarmSequenceWindowIntegration.cpp
     src/ui/Terrain3DWindow.cpp
     src/ui/Terrain3DWindow.h
     src/ui/Terrain3DWindowIntegration.cpp
@@ -668,6 +673,8 @@ set(SOURCES
     src/ui/tools/OsdVideoOverlayCore.h
     src/ui/tools/PropagationCore.cpp
     src/ui/tools/PropagationCore.h
+    src/ui/tools/SwarmSequenceCore.cpp
+    src/ui/tools/SwarmSequenceCore.h
     src/ui/tools/PropagationDistanceEstimator.cpp
     src/ui/tools/PropagationDistanceEstimator.h
     src/ui/tools/PropagationOverlayController.cpp
@@ -2424,6 +2431,70 @@ if(BUILD_TESTING)
     )
     add_test(NAME swarmtelemetryregistry_tests
         COMMAND swarmtelemetryregistry_tests)
+
+    add_executable(swarmsequencecore_tests
+        tests/test_swarmsequencecore.cpp
+        src/ui/tools/SwarmSequenceCore.cpp
+        src/ui/tools/SwarmSequenceCore.h
+    )
+    target_include_directories(swarmsequencecore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(swarmsequencecore_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME swarmsequencecore_tests COMMAND swarmsequencecore_tests)
+
+    add_executable(sequencelayoutcontrol_tests
+        tests/test_sequencelayoutcontrol.cpp
+        src/ui/SequenceLayoutControl.cpp
+        src/ui/SequenceLayoutControl.h
+    )
+    target_include_directories(sequencelayoutcontrol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(sequencelayoutcontrol_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME sequencelayoutcontrol_tests
+        COMMAND sequencelayoutcontrol_tests)
+    set_tests_properties(sequencelayoutcontrol_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(swarmsequencewindow_tests
+        tests/test_swarmsequencewindow.cpp
+        src/ui/SwarmSequenceWindow.cpp
+        src/ui/SwarmSequenceWindow.h
+        src/ui/SequenceLayoutControl.cpp
+        src/ui/SequenceLayoutControl.h
+        src/ui/tools/SwarmSequenceCore.cpp
+        src/ui/tools/SwarmSequenceCore.h
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmsequencewindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmsequencewindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME swarmsequencewindow_tests
+        COMMAND swarmsequencewindow_tests)
+    set_tests_properties(swarmsequencewindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(nmeaggaparser_tests
         tests/test_nmeaggaparser.cpp

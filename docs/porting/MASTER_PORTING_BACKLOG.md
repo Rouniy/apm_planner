@@ -30,10 +30,10 @@
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 29 | 16 | 11 | 56 |
 | CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 15 | 2 | 14 | 31 |
+| TOOLS | 16 | 2 | 13 | 31 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **61** | **37** | **31** | **129** |
+| **Итого** | **62** | **37** | **30** | **129** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -56,7 +56,8 @@
 
 Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
 Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base, RF
-Propagation и OSD Video. Далее идут пять safety-critical Swarm workflows,
+Propagation, OSD Video и полезный offline Swarm Sequence editor. Далее идут четыре
+safety-critical command-driven Swarm workflows и общий Sequence command runner,
 после чего приоритет переходит к Settings/CONFIG и их функциональным vertical
 slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
 включаются только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
@@ -426,7 +427,8 @@ dirty state никогда не переносится на новый target.
 - Offline Mag Fit;
 - Photo/video GeoRef;
 - Terrain Maker;
-- Formation Control и четыре swarm workflow;
+- Formation Control, Swarm Follow Path, Follow Leader и Waypoint Leader;
+- exact multi-endpoint command runner для уже доступного offline Sequence editor;
 - MAVLink Serial/TCP Bridge;
 - Microdrone Downlink;
 - Translation Editor;

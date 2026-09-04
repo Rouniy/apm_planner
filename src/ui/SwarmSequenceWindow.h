@@ -1,0 +1,136 @@
+#ifndef SWARMSEQUENCEWINDOW_H
+#define SWARMSEQUENCEWINDOW_H
+
+#include "comm/SwarmTelemetryRegistry.h"
+#include "tools/SwarmSequenceCore.h"
+
+#include <QMap>
+#include <QPointer>
+#include <QVector>
+#include <QWidget>
+
+#include <functional>
+
+class QComboBox;
+class QLabel;
+class QListWidget;
+class QPushButton;
+class QSpinBox;
+class QTableWidget;
+class SequenceLayoutControl;
+
+/** Mission Planner 10 Tools > Swarm Sequence Layout Editor (Beta). */
+class SwarmSequenceWindow final : public QWidget
+{
+    Q_OBJECT
+
+public:
+    struct Dependencies
+    {
+        std::function<QString(QWidget *)> chooseLoadPath;
+        std::function<QString(QWidget *, const QString &)> chooseSavePath;
+        std::function<QString(QWidget *)> chooseBackgroundPath;
+        std::function<QString(QWidget *, const QString &)> requestLayoutName;
+    };
+
+    static constexpr int WindowWidth = 1380;
+    static constexpr int WindowHeight = 820;
+    static constexpr int MinimumWindowWidth = 1080;
+    static constexpr int MinimumWindowHeight = 680;
+    enum ItemDataRole {
+        LinkSessionEpochRole = Qt::UserRole + 1,
+        InstanceEpochRole = Qt::UserRole + 2
+    };
+
+    explicit SwarmSequenceWindow(QWidget *owner = nullptr);
+    SwarmSequenceWindow(SwarmTelemetryRegistry *registry,
+                        Dependencies dependencies,
+                        QWidget *owner = nullptr);
+    ~SwarmSequenceWindow() override;
+
+    /** Activates the single MP10-compatible modeless editor instance. */
+    static SwarmSequenceWindow *OpenWindow(QWidget *owner = nullptr);
+
+    const SwarmSequenceDocument &document() const noexcept;
+    QString statusText() const;
+    QString currentFilePath() const { return m_currentFilePath; }
+
+    /** Deterministic seams used by tests and non-dialog integrations. */
+    SwarmSequenceIssue setDocument(const SwarmSequenceDocument &document);
+    SwarmSequenceIssue loadPath(const QString &path);
+    SwarmSequenceIssue savePath(const QString &path);
+
+public slots:
+    void refreshVehicles();
+
+signals:
+    void documentChanged();
+
+private:
+    static Dependencies DefaultDependencies();
+    static bool isArduCopter(const SwarmTelemetrySnapshot &snapshot);
+    static bool sameVehicle(const SwarmVehicleInstanceLease &left,
+                            const SwarmVehicleInstanceLease &right);
+    static QString vehicleLabel(const SwarmVehicleInstanceLease &vehicle);
+
+    void buildUi(QWidget *owner);
+    void connectUi();
+    void refreshVehicles(bool explicitlyRequested);
+    QVector<SwarmVehicleInstanceLease> discoverVehicles() const;
+    void rebuildVehicleControls();
+    void rebuildAssignments();
+    void syncAll(bool selectFirst);
+    void syncLayouts(int selectedIndex = -1);
+    void syncCurrentLayout();
+    void syncOffsets();
+    void syncSteps(int selectedRow = -1);
+    void syncStepDisplay();
+    void resetOfflineState(const QString &status);
+    void setStatus(const QString &status);
+    QString currentLayoutId() const;
+    const SwarmSequenceLayout *currentLayout() const;
+    int nextLayoutNumber() const;
+    SwarmVehicleInstanceLease vehicleForCombo(const QComboBox *combo) const;
+    int optionIndex(const SwarmVehicleInstanceLease &vehicle) const;
+
+    void chooseAndLoad();
+    void chooseAndSave();
+    void createLayout();
+    void addStep();
+    void resizeSlots(int count);
+    void offsetCellChanged(int row, int column);
+    void offsetDragged(int systemId, double x, double y);
+    void stepSelected(int row);
+    void moveSelectedStep(int delta);
+    void removeSelectedStep();
+    void assignmentChanged(int systemId, QComboBox *combo);
+    void chooseBackground();
+
+    static QPointer<SwarmSequenceWindow> s_current;
+
+    QPointer<SwarmTelemetryRegistry> m_registry;
+    Dependencies m_dependencies;
+    SwarmSequenceEditor m_editor;
+    QVector<SwarmVehicleInstanceLease> m_vehicleOptions;
+    QMap<int, SwarmVehicleInstanceLease> m_assignments;
+    SwarmVehicleInstanceLease m_anchor;
+    QString m_currentFilePath;
+    bool m_loading = false;
+    bool m_refreshingVehicles = false;
+    int m_stepIndex = 0;
+
+    QComboBox *m_layouts = nullptr;
+    QSpinBox *m_vehicleCount = nullptr;
+    SequenceLayoutControl *m_canvas = nullptr;
+    QTableWidget *m_offsets = nullptr;
+    QListWidget *m_steps = nullptr;
+    QComboBox *m_anchorCombo = nullptr;
+    QTableWidget *m_assignmentTable = nullptr;
+    QLabel *m_stepDisplay = nullptr;
+    QLabel *m_originDisplay = nullptr;
+    QLabel *m_status = nullptr;
+    QPushButton *m_runStep = nullptr;
+    QPushButton *m_takeoff = nullptr;
+};
+
+#endif // SWARMSEQUENCEWINDOW_H
