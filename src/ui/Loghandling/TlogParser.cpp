@@ -29,6 +29,7 @@ This file is part of the APM_PLANNER project
 
 
 #include "TlogParser.h"
+#include "ArduPilotMegaMAV.h"
 #include "logging.h"
 
 
@@ -40,7 +41,8 @@ bool TlogParser::tlogDescriptor::isValid() const
 
 //*****************************************
 
-TlogParser::TlogParser(LogdataStorage::Ptr storagePtr, IParserCallback *object) :
+TlogParser::TlogParser(ILogdataSink::Ptr storagePtr,
+                       IParserCallback *object) :
     QObject(),
     LogParserBase (storagePtr, object),
     m_mavDecoderPtr(new MAVLinkDecoder()),
@@ -465,4 +467,3 @@ bool TlogParser::extractMsgMessage(const QList<NameValuePair> &NameValuePairList
     }
     return true;
 }
-

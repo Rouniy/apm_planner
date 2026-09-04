@@ -32,7 +32,6 @@ This file is part of the APM_PLANNER project
 #include "ILogParser.h"
 #include "IParserCallback.h"
 #include "LogParserBase.h"
-#include "LogdataStorage.h"
 
 /**
  * @brief The BinLogParser class is a parser for binary ArduPilot
@@ -44,10 +43,11 @@ public:
 
     /**
      * @brief BinLogParser - CTOR
-     * @param storagePtr - Pointer to a valid LogdataStorage used for data storage
+     * @param storagePtr - Receiver for decoded log records
      * @param object - Pointer to a valid call back interface
      */
-    explicit BinLogParser(LogdataStorage::Ptr storagePtr, IParserCallback *object);
+    explicit BinLogParser(ILogdataSink::Ptr storagePtr,
+                          IParserCallback *object);
 
     /**
      * @brief ~BinLogParser - DTOR

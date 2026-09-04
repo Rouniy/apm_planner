@@ -27,8 +27,10 @@ void HelpViewTest::matchesMissionPlannerSurface()
                 ->text().contains(QStringLiteral("APM Planner 3.0")));
     QVERIFY(view.findChild<QLabel *>(QStringLiteral("helpVersionLabel"))
                 ->text().startsWith(QStringLiteral("Version ")));
-    QVERIFY(view.findChild<QLabel *>(QStringLiteral("helpShortcut7")));
-    QVERIFY(!view.findChild<QLabel *>(QStringLiteral("helpShortcut8")));
+    QVERIFY(view.findChild<QLabel *>(QStringLiteral("helpShortcut13")));
+    QVERIFY(!view.findChild<QLabel *>(QStringLiteral("helpShortcut14")));
+    QCOMPARE(view.findChild<QLabel *>(QStringLiteral("helpShortcut10"))->text(),
+             QStringLiteral("Ctrl+L - DataFlash Spectrogram"));
     auto *content = view.findChild<QWidget *>(QStringLiteral("helpContent"));
     auto *viewportHost = view.findChild<QWidget *>(QStringLiteral("helpViewportHost"));
     QVERIFY(content);

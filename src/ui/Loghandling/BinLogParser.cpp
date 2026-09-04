@@ -30,6 +30,8 @@ This file is part of the APM_PLANNER project
 #include "BinLogParser.h"
 #include "logging.h"
 
+#include <QDataStream>
+
 bool BinLogParser::binDescriptor::isValid() const
 {
     // Special handling for FMT messages as they are corrupt in some logs. This is not a real
@@ -62,7 +64,8 @@ bool BinLogParser::binDescriptor::isValid() const
 
 //*****************************************
 
-BinLogParser::BinLogParser(LogdataStorage::Ptr storagePtr, IParserCallback *object) :
+BinLogParser::BinLogParser(ILogdataSink::Ptr storagePtr,
+                           IParserCallback *object) :
     LogParserBase (storagePtr, object),
     m_dataPos(0),
     m_messageType(0)
@@ -507,6 +510,5 @@ bool BinLogParser::extendedStoreDescriptor(const binDescriptor &desc)
     }
     return rc;
 }
-
 
 

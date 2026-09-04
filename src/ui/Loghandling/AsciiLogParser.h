@@ -32,7 +32,6 @@ This file is part of the APM_PLANNER project
 #include "ILogParser.h"
 #include "IParserCallback.h"
 #include "LogParserBase.h"
-#include "LogdataStorage.h"
 
 /**
  * @brief The AsciiLogParser class is a parser for ASCII ArduPilot
@@ -47,10 +46,11 @@ public:
 
     /**
      * @brief AsciiLogParser - CTOR
-     * @param storagePtr - Pointer to a valid LogdataStorage used for data storage
+     * @param storagePtr - Receiver for decoded log records
      * @param object - Pointer to a valid call back interface
      */
-    explicit AsciiLogParser(LogdataStorage::Ptr storagePtr, IParserCallback *object);
+    explicit AsciiLogParser(ILogdataSink::Ptr storagePtr,
+                            IParserCallback *object);
 
     /**
      * @brief ~AsciiLogParser - DTOR

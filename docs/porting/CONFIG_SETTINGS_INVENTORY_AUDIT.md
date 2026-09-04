@@ -46,11 +46,11 @@ then dispatches Plane to the native Q controller/INS page and Copter/Heli to
 the retained legacy ATC/PSC/WPNAV editor.
 
 The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
-all 16 MP10 actions are present, six open working shared tools and ten are
-visibly disabled. In particular, `Warning Manager`, `FFT` and `Spectrogram`
-are not yet ported; `FFT Setup` is also still a missing direct SETUP page. They
-must not be counted as working merely because every direct CONFIG route has a
-factory.
+all 16 MP10 actions are present, seven open working shared tools and nine are
+visibly disabled. `DataFlash Spectrogram` now opens the same complete modeless
+window as TOOLS; `Warning Manager` and `FFT` remain unported, and `FFT Setup`
+is also still a missing direct SETUP page. They must not be counted as working
+merely because every direct CONFIG route has a factory.
 
 The legacy `Heli Setup` route is capability-gated by the exact MP10
 `H_SWASH_TYPE` marker; current `H_SW_TYPE` vehicles use the separate native

@@ -43,6 +43,7 @@ This file is part of the QGROUNDCONTROL project
 #include "MAVLinkInspectorWindow.h"
 #include "LinkStatsWindow.h"
 #include "MavlinkLogWindow.h"
+#include "SpectrogramWindow.h"
 #include "SerialPassThroughWindow.h"
 #include "SerialOutputNMEAWindow.h"
 #include "SerialOutputCotWindow.h"
@@ -640,6 +641,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { SerialOutputNMEAWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionCotOutput"),
                     [this]() { SerialOutputCotWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionDataFlashSpectrogram"),
+                    [this]() { SpectrogramWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionMavlinkDeviceOperations"),
                     [this]() { DeviceOperationsWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionMapTileCache"),

@@ -41,6 +41,8 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
         &actionSource, QStringLiteral("actionCotOutput"));
     QAction *cache = makeAction(
         &actionSource, QStringLiteral("actionMapTileCache"));
+    QAction *spectrogram = makeAction(
+        &actionSource, QStringLiteral("actionDataFlashSpectrogram"));
     QAction *proximity = makeAction(
         &actionSource, QStringLiteral("actionProximity"));
 
@@ -48,14 +50,15 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
-    QCOMPARE(view.ImplementedActionCount(), 6);
-    QVERIFY(view.Log().contains(QStringLiteral("6 of 16")));
+    QCOMPARE(view.ImplementedActionCount(), 7);
+    QVERIFY(view.Log().contains(QStringLiteral("7 of 16")));
 
     QSignalSpy inspectorSpy(inspector, &QAction::triggered);
     QSignalSpy mirrorSpy(mirror, &QAction::triggered);
     QSignalSpy nmeaSpy(nmea, &QAction::triggered);
     QSignalSpy cotSpy(cot, &QAction::triggered);
     QSignalSpy cacheSpy(cache, &QAction::triggered);
+    QSignalSpy spectrogramSpy(spectrogram, &QAction::triggered);
     QSignalSpy proximitySpy(proximity, &QAction::triggered);
 
     auto *inspectorButton = view.findChild<QPushButton *>(
@@ -68,6 +71,8 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
         QStringLiteral("CotTakButton"));
     auto *cacheButton = view.findChild<QPushButton *>(
         QStringLiteral("MapTileCacheButton"));
+    auto *spectrogramButton = view.findChild<QPushButton *>(
+        QStringLiteral("SpectrogramButton"));
     auto *proximityButton = view.findChild<QPushButton *>(
         QStringLiteral("ProximityButton"));
     QVERIFY(inspectorButton && inspectorButton->isEnabled());
@@ -75,6 +80,7 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QVERIFY(nmeaButton && nmeaButton->isEnabled());
     QVERIFY(cotButton && cotButton->isEnabled());
     QVERIFY(cacheButton && cacheButton->isEnabled());
+    QVERIFY(spectrogramButton && spectrogramButton->isEnabled());
     QVERIFY(proximityButton && proximityButton->isEnabled());
 
     inspectorButton->click();
@@ -82,18 +88,21 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     nmeaButton->click();
     cotButton->click();
     cacheButton->click();
+    spectrogramButton->click();
     proximityButton->click();
     QCOMPARE(inspectorSpy.count(), 1);
     QCOMPARE(mirrorSpy.count(), 1);
     QCOMPARE(nmeaSpy.count(), 1);
     QCOMPARE(cotSpy.count(), 1);
     QCOMPARE(cacheSpy.count(), 1);
+    QCOMPARE(spectrogramSpy.count(), 1);
     QCOMPARE(proximitySpy.count(), 1);
     QVERIFY(view.Log().contains(QStringLiteral("Opened MAVLink Inspector")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Mavlink Mirror")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened NMEA")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Cursor-on-Target / TAK")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Map Tile Cache")));
+    QVERIFY(view.Log().contains(QStringLiteral("Opened Spectrogram")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened Proximity")));
 
     auto *anonLog = view.findChild<QPushButton *>(
@@ -114,6 +123,8 @@ void ConfigAdvancedViewTest::tracksSharedActionAvailability()
     makeAction(&actionSource, QStringLiteral("actionNmeaOutput"));
     makeAction(&actionSource, QStringLiteral("actionCotOutput"));
     makeAction(&actionSource, QStringLiteral("actionMapTileCache"));
+    makeAction(&actionSource,
+               QStringLiteral("actionDataFlashSpectrogram"));
     makeAction(&actionSource, QStringLiteral("actionProximity"));
 
     ConfigAdvancedView view(&actionSource);

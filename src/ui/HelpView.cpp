@@ -152,7 +152,13 @@ HelpView::HelpView(QWidget *parent)
         tr("F4 - Tuning"),
         tr("F5 - Refresh full param list"),
         tr("F12 - Connect / Disconnect"),
+        tr("Ctrl+F - Developer Tools"),
+        tr("Ctrl+P - Plugin Manager"),
         tr("Ctrl+I - MAVLink Inspector"),
+        tr("Ctrl+G - NMEA Output"),
+        tr("Ctrl+L - DataFlash Spectrogram"),
+        tr("Ctrl+X - Map Tile Cache"),
+        tr("Ctrl+J - MAVLink Device Operations"),
         tr("Ctrl+Y - Save parameters to EEPROM")
     };
     for (int i = 0; i < shortcuts.size(); ++i) {

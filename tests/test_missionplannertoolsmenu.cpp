@@ -83,6 +83,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     int mirrorOpenCount = 0;
     int nmeaOpenCount = 0;
     int cotOpenCount = 0;
+    int spectrogramOpenCount = 0;
     int deviceOperationsOpenCount = 0;
     MissionPlannerToolsMenu::HandlerMap handlers;
     handlers.insert(QStringLiteral("actionMavlinkInspector"),
@@ -93,6 +94,10 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
                     [&nmeaOpenCount]() { ++nmeaOpenCount; });
     handlers.insert(QStringLiteral("actionCotOutput"),
                     [&cotOpenCount]() { ++cotOpenCount; });
+    handlers.insert(QStringLiteral("actionDataFlashSpectrogram"),
+                    [&spectrogramOpenCount]() {
+        ++spectrogramOpenCount;
+    });
     handlers.insert(QStringLiteral("actionMavlinkDeviceOperations"),
                     [&deviceOperationsOpenCount]() {
         ++deviceOperationsOpenCount;
@@ -113,6 +118,8 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
             || action->objectName() == QStringLiteral("actionNmeaOutput")
             || action->objectName() == QStringLiteral("actionCotOutput")
             || action->objectName()
+                == QStringLiteral("actionDataFlashSpectrogram")
+            || action->objectName()
                 == QStringLiteral("actionMavlinkDeviceOperations")) {
             QVERIFY(action->isEnabled());
             action->trigger();
@@ -127,6 +134,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     QCOMPARE(mirrorOpenCount, 1);
     QCOMPARE(nmeaOpenCount, 1);
     QCOMPARE(cotOpenCount, 1);
+    QCOMPARE(spectrogramOpenCount, 1);
     QCOMPARE(deviceOperationsOpenCount, 1);
 }
 

@@ -31,7 +31,9 @@ This file is part of the APM_PLANNER project
 
 #include "ILogParser.h"
 #include "IParserCallback.h"
-#include "LogdataStorage.h"
+#include "ILogdataSink.h"
+
+#include <mavlink_types.h>
 
 /**
  * @brief The LogParserBase class provides a base class for all log
@@ -45,7 +47,8 @@ public:
      * @param storagePtr - Pointer to a valid LogdataStorage used for data storage
      * @param object - Pointer to a valid call back interface
      */
-    explicit LogParserBase(LogdataStorage::Ptr storagePtr, IParserCallback *object);
+    explicit LogParserBase(ILogdataSink::Ptr storagePtr,
+                           IParserCallback *object);
 
     /**
      * @brief ~LogParserBase - DTOR
@@ -127,7 +130,7 @@ protected:
     typedef QPair<QString, QVariant> NameValuePair;          /// Type holding Lablestring and its value
 
     IParserCallback *m_callbackObject;      /// Pointer to callback interface.
-    LogdataStorage::Ptr m_dataStoragePtr;   /// Pointer to the datamodel for storing the data
+    ILogdataSink::Ptr m_dataStoragePtr;     /// Receiver for decoded log records
 
     bool m_stop;                            /// Flag indicating to stop parsing
     quint64 m_MessageCounter;               /// Simple counter showing number of message wich is currently parsed

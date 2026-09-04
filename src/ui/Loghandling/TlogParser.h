@@ -33,7 +33,7 @@ This file is part of the APM_PLANNER project
 #include "IParserCallback.h"
 #include "LogParserBase.h"
 #include "MAVLinkDecoder.h"
-#include "LogdataStorage.h"
+#include "configuration.h"
 
 /**
  * @brief The TlogParser class is a parser for tlog ArduPilot
@@ -45,10 +45,11 @@ class TlogParser : public QObject, public LogParserBase
 public:
     /**
      * @brief TlogParser - CTOR
-     * @param storagePtr - Pointer to a valid LogdataStorage used for data storage
+     * @param storagePtr - Receiver for decoded log records
      * @param object - Pointer to a valid call back interface
      */
-    explicit TlogParser(LogdataStorage::Ptr storagePtr, IParserCallback *object);
+    explicit TlogParser(ILogdataSink::Ptr storagePtr,
+                        IParserCallback *object);
 
     /**
      * @brief ~TlogParser - DTOR

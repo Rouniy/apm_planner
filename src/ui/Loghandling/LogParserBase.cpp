@@ -83,7 +83,8 @@ bool LogParserBase::typeDescriptor::isValid() const
 
 //*****************************************
 
-LogParserBase::LogParserBase(LogdataStorage::Ptr storagePtr, IParserCallback *object):
+LogParserBase::LogParserBase(ILogdataSink::Ptr storagePtr,
+                             IParserCallback *object):
     m_callbackObject(object),
     m_dataStoragePtr(storagePtr),
     m_stop(false),

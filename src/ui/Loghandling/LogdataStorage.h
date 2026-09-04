@@ -33,6 +33,8 @@ This file is part of the APM_PLANNER project
 #include <QAbstractTableModel>
 #include <ArduPilotMegaMAV.h>
 
+#include "ILogdataSink.h"
+
 /**
  * @brief The LogdataStorage class is used to store the data parsed from logfiles.
  *        Besides that it implements the QAbstractTableModel to provide a well known
@@ -43,7 +45,7 @@ This file is part of the APM_PLANNER project
  *        of the added type.
  *
  */
-class LogdataStorage : public QAbstractTableModel
+class LogdataStorage : public QAbstractTableModel, public ILogdataSink
 {
     Q_OBJECT
 public:
@@ -121,8 +123,9 @@ public:
      *
      * @return - true success, false otherwise (data was not added)
      */
-    virtual bool addDataType(const QString &typeName, quint32 typeID, int typeLength,
-                             const QString &typeFormat, const QStringList &typeLabels, int timeColumn);
+    bool addDataType(const QString &typeName, quint32 typeID, int typeLength,
+                     const QString &typeFormat, const QStringList &typeLabels,
+                     int timeColumn) override;
 
     /**
      * @brief addDataRow adds a data row - a list of pairs of string and value - to the data storage.
@@ -132,7 +135,8 @@ public:
      * @param values - list of pairs containing name and value of a measurement
      * @return - true success, false otherwise (data was not added)
      */
-    virtual bool addDataRow(const QString &typeName, const QList<QPair<QString,QVariant> >  &values);
+    bool addDataRow(const QString &typeName,
+                    const QList<QPair<QString, QVariant>> &values) override;
 
     /**
      * @brief addUnitData adds unit data to the datamodel which can be used to add units to the
@@ -140,14 +144,14 @@ public:
      * @param unitID - Unique ID for this unit.
      * @param unitName - Name for this unit.
      */
-    virtual void addUnitData(quint8 unitID, const QString &unitName);
+    void addUnitData(quint8 unitID, const QString &unitName) override;
 
     /**
      * @brief addMultiplierData adds multiplier infos to the datamodel. This can be used for scaling.
      * @param multiID - Unique ID for this multiplier
      * @param multiplier - multiplier which scales the measurement to its Unit.
      */
-    virtual void addMultiplierData(quint8 multiID, double multiplier);
+    void addMultiplierData(quint8 multiID, double multiplier) override;
 
     /**
      * @brief addMsgToUnitAndMultiplierData combines the unit data and the multiplier data with a
@@ -158,8 +162,9 @@ public:
      * @param unitFieldInfo - unit IDs
      * @return - true success, false otherwise (data was not added)
      */
-    virtual void addMsgToUnitAndMultiplierData(quint32 typeID, const QByteArray &multiplierFieldInfo,
-                                               const QByteArray &unitFieldInfo);
+    void addMsgToUnitAndMultiplierData(
+        quint32 typeID, const QByteArray &multiplierFieldInfo,
+        const QByteArray &unitFieldInfo) override;
 
     /**
      * @brief selectedRowChanged must be called if the selected row in the datamodel changes.
@@ -178,7 +183,7 @@ public:
      * @param timeStampName - name of the timestamp field. All types MUST have the same.
      * @param divisor - divisor used to scale the Time stamps to seconds
      */
-    virtual void setTimeStamp(const QString &timeStampName, double divisor);
+    void setTimeStamp(const QString &timeStampName, double divisor) override;
 
     /**
      * @brief getTimeDivisor - Getter for the divisor for time stamps
@@ -285,7 +290,7 @@ public:
      *
      * @return String conatining the reason for the error.
      */
-    virtual QString getError() const;
+    QString getError() const override;
 
     /**
      * @brief setupUnitData processes the Unit data and adds it to every dataType stored in m_typeStorage.
@@ -297,7 +302,8 @@ public:
      * @param divisor - divisor used to scale the Time stamps to seconds
      * @return StringList containing all problems which occured while processing the unit data.
      */
-    virtual QStringList setupUnitData(const QString &timeStampName, double divisor);
+    QStringList setupUnitData(const QString &timeStampName,
+                              double divisor) override;
 
     /**
      * @brief ModelIsScaled returns true if datamodel contains scaling information

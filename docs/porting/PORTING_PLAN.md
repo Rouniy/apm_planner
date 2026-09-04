@@ -126,9 +126,10 @@ by platform and channel and independent of manifest order. The legacy unsigned
 download prompt remains transitional: production-equivalent self-update still
 requires an APM Planner 3.0-owned HTTPS manifest, signing key, signed metadata,
 and package hash/size verification before an installer may be executed.
-The Help shortcut list still needs to add the newly wired Developer Tools,
-Plugin Manager and Map Tile Cache shortcuts. DataFlash Spectrogram remains
-explicitly disabled parity work instead of an inert shortcut.
+The Help shortcut list includes every currently wired MP10 Tools shortcut,
+including Developer Tools, Plugin Manager, MAVLink Inspector, NMEA Output,
+DataFlash Spectrogram, Map Tile Cache and Device Operations. A shortcut is
+listed only when the corresponding route has a truthful visible outcome.
 
 ## QGroundControl-derived communication safety
 

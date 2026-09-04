@@ -30,6 +30,49 @@ This file is part of the APM_PLANNER project
 #include "AsciiLogParser.h"
 #include "logging.h"
 
+#include <QRegularExpression>
+
+#include <limits>
+#include <utility>
+
+namespace
+{
+constexpr int kInt16ArrayLength = 32;
+
+bool parseInt16Array(const QStringList &tokens, int firstToken,
+                     int tokenCount, QVariantList *values)
+{
+    QStringList elements;
+    if (tokenCount == 1) {
+        QString compact = tokens.at(firstToken);
+        compact.replace(QRegularExpression(QStringLiteral("[\\[\\]{}()]")),
+                        QStringLiteral(" "));
+        elements = compact.split(
+            QRegularExpression(QStringLiteral("[\\s;|]+")),
+            Qt::SkipEmptyParts);
+    } else {
+        elements = tokens.mid(firstToken, tokenCount);
+    }
+    if (elements.size() != kInt16ArrayLength) {
+        return false;
+    }
+
+    QVariantList parsed;
+    parsed.reserve(kInt16ArrayLength);
+    for (QString element : elements) {
+        element.remove(QRegularExpression(QStringLiteral("[\\[\\]{}()]")));
+        bool ok = false;
+        const int number = element.trimmed().toInt(&ok);
+        if (!ok || number < std::numeric_limits<qint16>::min()
+            || number > std::numeric_limits<qint16>::max()) {
+            return false;
+        }
+        parsed.append(number);
+    }
+    *values = std::move(parsed);
+    return true;
+}
+}
 
 bool AsciiLogParser::asciiDescriptor::isValid() const
 {
@@ -68,7 +111,8 @@ bool AsciiLogParser::asciiDescriptor::isValid() const
 const QString AsciiLogParser::s_FMTMessageName = "FMT";
 const QString AsciiLogParser::s_STRTMessageName = "STRT";
 
-AsciiLogParser::AsciiLogParser(LogdataStorage::Ptr storagePtr, IParserCallback *object) :
+AsciiLogParser::AsciiLogParser(ILogdataSink::Ptr storagePtr,
+                               IParserCallback *object) :
     LogParserBase (storagePtr, object),
     m_noMessageBytes(0)
 {
@@ -292,7 +336,12 @@ bool AsciiLogParser::parseDataByDescriptor(QList<NameValuePair> &NameValuePairLi
     static QString floatdef("cCeEfLd");
     static QString chardef("nNZM");
 
-    if(m_tokensToParse.size() != desc.m_format.size())
+    const int arrayCount = desc.m_format.count(QChar('a'));
+    const int expandedTokenCount = desc.m_format.size()
+                                   + arrayCount * (kInt16ArrayLength - 1);
+    const bool arraysExpanded = arrayCount > 0
+                                && m_tokensToParse.size() == expandedTokenCount;
+    if(m_tokensToParse.size() != desc.m_format.size() && !arraysExpanded)
     {
         QLOG_WARN() << "AsciiLogParser::parseDataByDescriptor(): Not enough tokens for message of type "
                     << desc.m_ID << ":" << desc.m_name << ". Dropping line.";
@@ -301,9 +350,30 @@ bool AsciiLogParser::parseDataByDescriptor(QList<NameValuePair> &NameValuePairLi
         return false;
     }
 
+    int tokenIndex = 0;
     for(int i = 0; i < desc.m_format.size(); ++i)
     {
-        QString token = m_tokensToParse.at(i).trimmed();
+        if (desc.m_format.at(i) == QChar('a')) {
+            const int arrayTokenCount = arraysExpanded
+                                            ? kInt16ArrayLength : 1;
+            QVariantList values;
+            if (!parseInt16Array(m_tokensToParse, tokenIndex,
+                                 arrayTokenCount, &values)) {
+                QLOG_DEBUG() << "AsciiLogParser::parseDataByDescriptor(): Failed to convert int16 array";
+                m_logLoadingState.corruptDataRead(
+                    static_cast<int>(m_MessageCounter),
+                    desc.m_name + " data: Failed to convert "
+                        + desc.getLabelAtIndex(i)
+                        + " to an int16[32] array.");
+                return false;
+            }
+            NameValuePairList.append(
+                NameValuePair(desc.getLabelAtIndex(i), values));
+            tokenIndex += arrayTokenCount;
+            continue;
+        }
+
+        QString token = m_tokensToParse.at(tokenIndex++).trimmed();
         if(intdef.contains(desc.m_format.at(i)))
         {
             bool ok = false;

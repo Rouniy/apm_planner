@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после нативного Compass/Motor-среза:
+Проверенная Linux-точка после DataFlash Spectrogram-среза:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 135 из 135 тестов;
+- проходят 148 из 148 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -21,19 +21,19 @@
 - DATA/PLAN используют фиксированные `QWidget`/`QSplitter`, а не плавающие
   `QDockWidget` или KDDockWidgets.
 
-Это не означает готовность продукта. В реестре 127 поверхностей:
+Это не означает готовность продукта. В реестре 128 поверхностей:
 
 | Область | in-progress | partial | not-started | Всего |
 |---|---:|---:|---:|---:|
 | SHELL | 1 | 3 | 0 | 4 |
 | DATA | 2 | 3 | 0 | 5 |
 | PLAN | 5 | 2 | 4 | 11 |
-| SETUP | 27 | 18 | 11 | 56 |
-| CONFIG | 7 | 11 | 2 | 20 |
-| TOOLS | 8 | 3 | 18 | 29 |
+| SETUP | 28 | 17 | 11 | 56 |
+| CONFIG | 9 | 9 | 2 | 20 |
+| TOOLS | 9 | 3 | 18 | 30 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **50** | **42** | **35** | **127** |
+| **Итого** | **54** | **39** | **35** | **128** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -54,11 +54,11 @@
 Работа P0 выполняется первой и не откладывается ради мелкого визуального
 совпадения других страниц.
 
-Основной первый срез TOOLS/диалогов доведён через Device Operations; текущий
-пользовательский приоритет — Settings/CONFIG и их функциональные vertical
-slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
-включаются только после полноценной реализации. Пункты 3–4 остаются важными
-пробелами, но их визуальная часть не должна вытеснять перенос рабочих настроек;
+Основной TOOLS/диалоговый поток доведён через Device Operations и DataFlash
+Spectrogram; текущий пользовательский приоритет — продолжать основные Tools,
+после чего перейти к Settings/CONFIG и их функциональным vertical slices.
+Оставшиеся специализированные Tools сохраняются в точном меню, но включаются
+только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
 Qt Widgets и доверенный QML API можно сочетать по назначению.
 
 1. Убрать пустую полосу у правой границы PLAN и зафиксировать геометрию при
@@ -388,6 +388,8 @@ dirty state никогда не переносится на новый target.
 - MAVLink log player: seek/speed/pause/state isolation/Inspector integration;
 - DataFlash Log Download: list/selected/all/erase/cancel/export;
 - Log Browse: graphs/messages/params/map/report/export;
+- DataFlash Spectrogram: основной modeless/direct+batch/cancellation срез
+  сделан; остаются reference screenshot и native-platform evidence;
 - Terrain 3D: selected map backend, vehicle/camera path и teardown;
 - QML Plugin Manager: широкая документация и API coverage.
 

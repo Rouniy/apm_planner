@@ -525,7 +525,12 @@ set(SOURCES
     src/ui/Loghandling/AsciiLogParser.h
     src/ui/Loghandling/BinLogParser.cpp
     src/ui/Loghandling/BinLogParser.h
+    src/ui/Loghandling/DataFlashSpectrogramAnalyzer.cpp
+    src/ui/Loghandling/DataFlashSpectrogramAnalyzer.h
+    src/ui/Loghandling/DataFlashSpectrogramService.cpp
+    src/ui/Loghandling/DataFlashSpectrogramService.h
     src/ui/Loghandling/ILogParser.h
+    src/ui/Loghandling/ILogdataSink.h
     src/ui/Loghandling/IParserCallback.h
     src/ui/Loghandling/LogAnalysis.cpp
     src/ui/Loghandling/LogAnalysis.h
@@ -588,6 +593,9 @@ set(SOURCES
     src/comm/TlogExportService.h
     src/ui/MavlinkLogWindow.cpp
     src/ui/MavlinkLogWindow.h
+    src/ui/SpectrogramWindow.cpp
+    src/ui/SpectrogramWindow.h
+    src/ui/SpectrogramWindowIntegration.cpp
     src/ui/SerialPassThroughViewModel.cpp
     src/ui/SerialPassThroughViewModel.h
     src/ui/SerialPassThroughWindow.cpp
@@ -2267,6 +2275,78 @@ if(BUILD_TESTING)
     add_test(NAME configadvancedview_tests
         COMMAND configadvancedview_tests)
     set_tests_properties(configadvancedview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(dataflashspectrogramanalyzer_tests
+        tests/test_dataflashspectrogramanalyzer.cpp
+        src/ui/Loghandling/DataFlashSpectrogramAnalyzer.cpp
+        src/ui/Loghandling/DataFlashSpectrogramAnalyzer.h
+    )
+    target_include_directories(dataflashspectrogramanalyzer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(dataflashspectrogramanalyzer_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+    )
+    add_test(NAME dataflashspectrogramanalyzer_tests
+        COMMAND dataflashspectrogramanalyzer_tests)
+
+    add_executable(dataflashspectrogramservice_tests
+        tests/test_dataflashspectrogramservice.cpp
+        src/ui/Loghandling/AP2DataPlotStatus.cpp
+        src/ui/Loghandling/AP2DataPlotStatus.h
+        src/ui/Loghandling/AsciiLogParser.cpp
+        src/ui/Loghandling/AsciiLogParser.h
+        src/ui/Loghandling/BinLogParser.cpp
+        src/ui/Loghandling/BinLogParser.h
+        src/ui/Loghandling/DataFlashSpectrogramAnalyzer.cpp
+        src/ui/Loghandling/DataFlashSpectrogramAnalyzer.h
+        src/ui/Loghandling/DataFlashSpectrogramService.cpp
+        src/ui/Loghandling/DataFlashSpectrogramService.h
+        src/ui/Loghandling/ILogParser.h
+        src/ui/Loghandling/ILogdataSink.h
+        src/ui/Loghandling/IParserCallback.h
+        src/ui/Loghandling/LogParserBase.cpp
+        src/ui/Loghandling/LogParserBase.h
+    )
+    target_include_directories(dataflashspectrogramservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Loghandling
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(dataflashspectrogramservice_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME dataflashspectrogramservice_tests
+        COMMAND dataflashspectrogramservice_tests)
+    set_tests_properties(dataflashspectrogramservice_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(spectrogramwindow_tests
+        tests/test_spectrogramwindow.cpp
+        src/ui/SpectrogramWindow.cpp
+        src/ui/SpectrogramWindow.h
+    )
+    target_include_directories(spectrogramwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(spectrogramwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME spectrogramwindow_tests
+        COMMAND spectrogramwindow_tests)
+    set_tests_properties(spectrogramwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
