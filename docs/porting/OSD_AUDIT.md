@@ -1,6 +1,6 @@
 # Mission Planner 10 OSD route audit
 
-Updated: 2026-09-02. This is a read-only implementation handoff. It separates
+Updated: 2026-09-04. This is an implementation handoff. It separates
 two Mission Planner routes that currently share the old Qt `OsdConfig` widget
 but have different purposes.
 
@@ -12,13 +12,15 @@ but have different purposes.
   its widget/class identity and transaction feedback are incomplete.
 - CONFIG `Onboard OSD`, ID `ConfigOSDView`, is a separate onboard layout
   editor after Extended Tuning. Its phase-one Qt page now requires a connected
-  target and complete parameter list, while MP10's persisted `displayOSD` gate
-  remains future work. The former wrong `OsdConfig` mapping stays removed.
+  target and complete parameter list and consumes MP10's persisted `displayOSD`
+  gate. The former wrong `OsdConfig` mapping stays removed.
 - Developer Tools `OSD Video — Telemetry Overlay` and PLAN `OSD Color` are
   independent functions and must not be folded into either page.
 
-The Qt port does not yet have the shared DisplayView profile service. Both
-profile gates remain tracked deviations.
+The application-owned `DisplayViewProfileService` now persists both distinct
+flags. `SetupView` consumes `displayOsd` for `ConfigHWOSDView`, while
+`ConfigRouteProfile`/`ConfigView` consume `displayOSD` for `ConfigOSDView`;
+their separate meanings and capitalization remain covered by profile tests.
 
 ## SETUP ConfigHWOSDView
 

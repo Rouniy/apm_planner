@@ -84,6 +84,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     int nmeaOpenCount = 0;
     int cotOpenCount = 0;
     int spectrogramOpenCount = 0;
+    int terrainOpenCount = 0;
     int deviceOperationsOpenCount = 0;
     MissionPlannerToolsMenu::HandlerMap handlers;
     handlers.insert(QStringLiteral("actionMavlinkInspector"),
@@ -98,6 +99,8 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
                     [&spectrogramOpenCount]() {
         ++spectrogramOpenCount;
     });
+    handlers.insert(QStringLiteral("actionTerrain3D"),
+                    [&terrainOpenCount]() { ++terrainOpenCount; });
     handlers.insert(QStringLiteral("actionMavlinkDeviceOperations"),
                     [&deviceOperationsOpenCount]() {
         ++deviceOperationsOpenCount;
@@ -119,6 +122,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
             || action->objectName() == QStringLiteral("actionCotOutput")
             || action->objectName()
                 == QStringLiteral("actionDataFlashSpectrogram")
+            || action->objectName() == QStringLiteral("actionTerrain3D")
             || action->objectName()
                 == QStringLiteral("actionMavlinkDeviceOperations")) {
             QVERIFY(action->isEnabled());
@@ -135,6 +139,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     QCOMPARE(nmeaOpenCount, 1);
     QCOMPARE(cotOpenCount, 1);
     QCOMPARE(spectrogramOpenCount, 1);
+    QCOMPARE(terrainOpenCount, 1);
     QCOMPARE(deviceOperationsOpenCount, 1);
 }
 

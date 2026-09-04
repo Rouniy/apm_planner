@@ -44,6 +44,7 @@ This file is part of the QGROUNDCONTROL project
 #include "LinkStatsWindow.h"
 #include "MavlinkLogWindow.h"
 #include "SpectrogramWindow.h"
+#include "Terrain3DWindow.h"
 #include "SerialPassThroughWindow.h"
 #include "SerialOutputNMEAWindow.h"
 #include "SerialOutputCotWindow.h"
@@ -647,6 +648,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { DeviceOperationsWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionMapTileCache"),
                     [this]() { MapCacheView::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionTerrain3D"),
+                    [this]() { Terrain3DWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),
                     [this]() { LinkStatsWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionConnectionOptions"),

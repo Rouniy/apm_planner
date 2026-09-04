@@ -620,6 +620,13 @@ set(SOURCES
     src/ui/DeviceOperationsWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
+    src/ui/Terrain3DWindow.cpp
+    src/ui/Terrain3DWindow.h
+    src/ui/Terrain3DWindowIntegration.cpp
+    src/ui/terrain/Terrain3DCore.cpp
+    src/ui/terrain/Terrain3DCore.h
+    src/ui/terrain/Terrain3DTelemetrySource.cpp
+    src/ui/terrain/Terrain3DTelemetrySource.h
     src/ui/QGCMAVLinkLogPlayer.cc
     src/ui/QGCMAVLinkLogPlayer.h
     src/ui/QGCMAVLinkLogPlayer.ui
@@ -2347,6 +2354,63 @@ if(BUILD_TESTING)
     add_test(NAME spectrogramwindow_tests
         COMMAND spectrogramwindow_tests)
     set_tests_properties(spectrogramwindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(terrain3dcore_tests
+        tests/test_terrain3dcore.cpp
+        src/ui/terrain/Terrain3DCore.cpp
+        src/ui/terrain/Terrain3DCore.h
+    )
+    target_include_directories(terrain3dcore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(terrain3dcore_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+    )
+    add_test(NAME terrain3dcore_tests COMMAND terrain3dcore_tests)
+
+    add_executable(terrain3dtelemetrysource_tests
+        tests/test_terrain3dtelemetrysource.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/terrain/Terrain3DTelemetrySource.cpp
+        src/ui/terrain/Terrain3DTelemetrySource.h
+    )
+    target_include_directories(terrain3dtelemetrysource_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(terrain3dtelemetrysource_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME terrain3dtelemetrysource_tests
+             COMMAND terrain3dtelemetrysource_tests)
+
+    add_executable(terrain3dwindow_tests
+        tests/test_terrain3dwindow.cpp
+        src/ui/Terrain3DWindow.cpp
+        src/ui/Terrain3DWindow.h
+        src/ui/terrain/Terrain3DCore.cpp
+        src/ui/terrain/Terrain3DCore.h
+    )
+    target_include_directories(terrain3dwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(terrain3dwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME terrain3dwindow_tests COMMAND terrain3dwindow_tests)
+    set_tests_properties(terrain3dwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

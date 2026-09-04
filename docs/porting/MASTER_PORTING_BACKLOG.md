@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после DataFlash Spectrogram-среза:
+Проверенная Linux-точка после DataFlash Spectrogram и 3D Terrain-срезов:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 148 из 148 тестов;
+- проходят 151 из 151 теста;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -30,10 +30,10 @@
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 28 | 17 | 11 | 56 |
 | CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 9 | 3 | 18 | 30 |
+| TOOLS | 10 | 2 | 18 | 30 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **54** | **39** | **35** | **128** |
+| **Итого** | **55** | **38** | **35** | **128** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -54,8 +54,8 @@
 Работа P0 выполняется первой и не откладывается ради мелкого визуального
 совпадения других страниц.
 
-Основной TOOLS/диалоговый поток доведён через Device Operations и DataFlash
-Spectrogram; текущий пользовательский приоритет — продолжать основные Tools,
+Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
+Spectrogram и 3D Terrain View; текущий пользовательский приоритет — продолжать основные Tools,
 после чего перейти к Settings/CONFIG и их функциональным vertical slices.
 Оставшиеся специализированные Tools сохраняются в точном меню, но включаются
 только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
@@ -282,7 +282,7 @@ Gate: создать/загрузить/изменить/сохранить/за
 Rally; после cancel/target switch нет поздних изменений; все кнопки либо
 работают end-to-end, либо явно недоступны с причиной.
 
-### Wave 5 — SETUP, 57 поверхностей
+### Wave 5 — SETUP, 56 поверхностей
 
 #### 5A. Завершить уже начатые native Qt vertical slices
 
@@ -293,7 +293,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer/Advanced Tools: заменить 43 disabled операции законченными
+- Developer/Advanced Tools: заменить 37 disabled операций законченными
   пакетами, не включая кнопки заранее.
 - Elevation Sources и Mission Command List: native/package evidence.
 - SETUP OSD: live 24-write full/partial path и profile gate.
@@ -305,7 +305,7 @@ Rally; после cancel/target switch нет поздних изменений;
 
 - Setup shell/order/profile gating;
 - Install Firmware и legacy firmware route;
-- Frame Class/Type, Accel, Compass Legacy/Compass Motor;
+- Frame Class/Type, Accel и Compass Legacy;
 - Radio Input и FailSafe; Flight Modes уже заменён общим нативным
   CONFIG/SETUP exact-target экраном и проверен через оба X11 route,
   остаются hardware/native-platform
@@ -318,19 +318,17 @@ Rally; после cancel/target switch нет поздних изменений;
 snapshot и exact-target transaction, получает typed validation, busy/error/
 cancel states и lifecycle tests.
 
-#### 5C. Реализовать отсутствующие страницы
+#### 5C. Реализовать 11 отсутствующих MP10-страниц
 
-- `ConfigAntennaTrackerParamView` и `AntennaTrackerUIView`;
+- `Install Firmware Legacy`;
+- `ConfigAntennaTrackerParamView`;
 - `ConfigCubeIDView`;
 - `ConfigFFTView`;
 - `ConfigOnboardReplView`, `ConfigScriptReplView`;
 - `ConfigPX4FlowView`;
 - `ConfigSecureView`, `ConfigSecureApView`;
-- `ConfigTradHeliView`, `ConfigTradHeli4View`;
-- SETUP `MavFTPUIView`;
+- `Joystick`;
 - `NvModemView`;
-- `DroneCANInspectorView`;
-- `OpenDroneIdView`.
 
 #### 5D. Antenna Tracker sequence
 
@@ -364,23 +362,24 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 - Fence configuration и live status.
 - Planner settings: нативная страница уже воспроизводит все девять секций,
   общий DisplayView profile и restart-scoped dual Startup UDP listeners;
-  точный аудит насчитывает 64 MP10 controls, из них 17 уже имеют рабочие
-  нативные эквиваленты после live HUD Overlay и Speech C1 slices. Центральный
+  точный аудит насчитывает 64 MP10 controls, из них 21 уже имеет рабочие
+  нативные эквиваленты после live HUD Overlay, полного event Speech slice,
+  Message Severity и Startup UDP. Центральный
   announcer применяет MP10 gates/templates для Armed Only, Waypoint, Mode,
-  Battery и Arm/Disarm. Далее — периодические Custom/Alt Warning/Low Speed/No
-  Data/vario consumers, severity, общий unit service/speed, затем shortcuts,
-  target-safe telemetry/identity и map overlays.
+  Battery, Arm/Disarm, periodic Custom/Alt Warning/Low Speed и No Data. Далее —
+  общий unit service и Speed Units, OSD Color, Speech Level/Vario, затем
+  shortcuts, target-safe telemetry rates/identity и map overlays.
 - Planner Advanced и User Defined — завершить screenshots/native evidence.
 - Param Compare — полный merge/diff/apply workflow.
 - CONFIG Onboard OSD — Wave 2.
 - Shared MAVFTP UI: завершить streaming/burst, capability gate, exclusive
   no-replace local save и live-hardware evidence.
-- Отсутствующие: Traditional Heli, FFT analysis window и Warning Manager.
+- Отсутствующие: FFT analysis window и Warning Manager.
 
 Gate: изменение параметров всегда проходит typed metadata validation и ACK,
 dirty state никогда не переносится на новый target.
 
-### Wave 7 — TOOLS, 28 поверхностей
+### Wave 7 — TOOLS, 30 поверхностей
 
 #### Основные инструменты P1
 
@@ -390,7 +389,11 @@ dirty state никогда не переносится на новый target.
 - Log Browse: graphs/messages/params/map/report/export;
 - DataFlash Spectrogram: основной modeless/direct+batch/cancellation срез
   сделан; остаются reference screenshot и native-platform evidence;
-- Terrain 3D: selected map backend, vehicle/camera path и teardown;
+- Terrain 3D: основной modeless/exact-target/software-rendered DEM/camera/
+  hover/cancellation срез сделан; остаются imagery через единый tile cache,
+  exact-target guided click, reference screenshot и native-platform evidence;
+- Device Operations: основной modeless/exact-target срез сделан; остаются
+  hardware/native evidence и визуальная полировка;
 - QML Plugin Manager: широкая документация и API coverage.
 
 #### Отсутствующие инструменты P2
@@ -401,14 +404,9 @@ dirty state никогда не переносится на новый target.
 - Terrain Maker;
 - Follow Me, External Guided, Moving Base;
 - Formation Control и четыре swarm workflow;
-- Serial NMEA Output;
-- CoT/TAK UDP/TCP Output;
 - MAVLink Serial/TCP Bridge;
-- Serial Pass Through;
 - OSD Video Overlay;
 - Microdrone Downlink;
-- Device Operations — основной modeless/exact-target срез сделан; остаются
-  hardware/native evidence и визуальная полировка;
 - Translation Editor;
 - Tracker Home Module.
 
@@ -423,8 +421,8 @@ tools — Unicode paths, `QSaveFile`, bounded parsing и отсутствие GU
   reconnect и exact link identity.
 - Backstage order, group headers, loading overlay и page restore.
 - Общий JSON `DisplayView`/vehicle profile service, 11 CONFIG + 35 SETUP flags
-  и синхронизация Advanced Mode — сделано; 30 SETUP-флагов уже gate активные
-  фабрики, пять ожидают отсутствующие routes, также остаются profile consumers
+  и синхронизация Advanced Mode — сделано; 31 SETUP-флаг уже gate активные
+  фабрики, четыре ожидают отсутствующие routes, также остаются profile consumers
   вне navigation и полноценный Custom editor.
 - Удалить старые menu/dock ownership paths после миграции всех consumers.
 - Проверить несколько links с одинаковыми sysid/compid, link removal и active

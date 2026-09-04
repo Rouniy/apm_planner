@@ -15,7 +15,7 @@ class ConfigDeveloperToolsViewTest final : public QObject
 
 private slots:
     void mirrorsMissionPlannerInventory();
-    void deviceOperationsUsesSharedApplicationAction();
+    void sharedApplicationActionsOpenTools();
     void decodersAppendResultsAndErrors();
     void actionGridAdaptsToAvailableWidth();
 };
@@ -48,31 +48,45 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
         QStringLiteral("RebootVehicleButton"))->isEnabled());
 }
 
-void ConfigDeveloperToolsViewTest::deviceOperationsUsesSharedApplicationAction()
+void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 {
     QObject actionSource;
     QAction deviceOperations(&actionSource);
     deviceOperations.setObjectName(
         QStringLiteral("actionMavlinkDeviceOperations"));
-    bool triggered = false;
+    QAction terrain(&actionSource);
+    terrain.setObjectName(QStringLiteral("actionTerrain3D"));
+    bool deviceTriggered = false;
+    bool terrainTriggered = false;
     connect(&deviceOperations, &QAction::triggered,
-            this, [&triggered]() { triggered = true; });
+            this, [&deviceTriggered]() { deviceTriggered = true; });
+    connect(&terrain, &QAction::triggered,
+            this, [&terrainTriggered]() { terrainTriggered = true; });
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 3);
-    QVERIFY(view.Log().contains(QStringLiteral("3 of 32")));
-    auto *button = view.findChild<QPushButton *>(
+    QCOMPARE(view.ImplementedActionCount(), 4);
+    QVERIFY(view.Log().contains(QStringLiteral("4 of 32")));
+    auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
-    QVERIFY(button);
-    QVERIFY(button->isEnabled());
-    button->click();
-    QVERIFY(triggered);
+    auto *terrainButton = view.findChild<QPushButton *>(
+        QStringLiteral("Terrain3dViewButton"));
+    QVERIFY(deviceButton);
+    QVERIFY(terrainButton);
+    QVERIFY(deviceButton->isEnabled());
+    QVERIFY(terrainButton->isEnabled());
+    deviceButton->click();
+    terrainButton->click();
+    QVERIFY(deviceTriggered);
+    QVERIFY(terrainTriggered);
     QVERIFY(view.Log().contains(
         QStringLiteral("Opened MAVLink Device Operations.")));
+    QVERIFY(view.Log().contains(QStringLiteral("Opened 3D Terrain View.")));
 
     deviceOperations.setEnabled(false);
-    QVERIFY(!button->isEnabled());
+    terrain.setEnabled(false);
+    QVERIFY(!deviceButton->isEnabled());
+    QVERIFY(!terrainButton->isEnabled());
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()
