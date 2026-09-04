@@ -105,6 +105,37 @@ mavlink_message_t extendedState(int systemId)
     return message;
 }
 
+mavlink_message_t missionCurrent(int systemId, quint16 sequence = 7)
+{
+    mavlink_mission_current_t payload{};
+    payload.seq = sequence;
+    mavlink_message_t message{};
+    mavlink_msg_mission_current_encode(
+        static_cast<quint8>(systemId), MAV_COMP_ID_AUTOPILOT1,
+        &message, &payload);
+    return message;
+}
+
+mavlink_message_t navigationController(
+    int systemId, float roll = 4.5F, float pitch = -2.25F,
+    quint16 waypointDistance = 37)
+{
+    mavlink_nav_controller_output_t payload{};
+    payload.nav_roll = roll;
+    payload.nav_pitch = pitch;
+    payload.nav_bearing = 123;
+    payload.target_bearing = -45;
+    payload.wp_dist = waypointDistance;
+    payload.alt_error = 8.25F;
+    payload.aspd_error = -1.5F;
+    payload.xtrack_error = 3.75F;
+    mavlink_message_t message{};
+    mavlink_msg_nav_controller_output_encode(
+        static_cast<quint8>(systemId), MAV_COMP_ID_AUTOPILOT1,
+        &message, &payload);
+    return message;
+}
+
 bool near(double actual, double expected)
 {
     return std::abs(actual - expected) < 1.0e-6;
@@ -126,6 +157,7 @@ private slots:
     void capacityIsBoundedToTwentyFourAutopilots();
     void groupValidationIsAllOrNothing();
     void invalidVfrValuesClearValidity();
+    void invalidNavigationValuesClearAtomicValidity();
     void synchronousSignalsMayReenterOrDeleteRegistry();
 };
 
@@ -183,6 +215,10 @@ void SwarmTelemetryRegistryTest::parsesRequiredTelemetryIntoInstanceSnapshot()
     QVERIFY(registry.observeMessage(2, session, attitude(42)));
     now = 140;
     QVERIFY(registry.observeMessage(2, session, extendedState(42)));
+    now = 150;
+    QVERIFY(registry.observeMessage(2, session, missionCurrent(42)));
+    now = 160;
+    QVERIFY(registry.observeMessage(2, session, navigationController(42)));
 
     SwarmTelemetrySnapshot snapshot;
     QVERIFY(registry.acquireSnapshot(endpoint(2, 42), &snapshot));
@@ -212,7 +248,20 @@ void SwarmTelemetryRegistryTest::parsesRequiredTelemetryIntoInstanceSnapshot()
     QVERIFY(snapshot.extendedSystemStateValid);
     QCOMPARE(snapshot.vtolState, int(MAV_VTOL_STATE_MC));
     QCOMPARE(snapshot.landedState, int(MAV_LANDED_STATE_IN_AIR));
-    QCOMPARE(snapshot.lastMessageMs, qint64(140));
+    QVERIFY(snapshot.missionCurrentValid);
+    QCOMPARE(snapshot.missionCurrentObservedMs, qint64(150));
+    QCOMPARE(snapshot.missionCurrentSequence, quint16(7));
+    QVERIFY(snapshot.navigationControllerValid);
+    QCOMPARE(snapshot.navigationControllerObservedMs, qint64(160));
+    QVERIFY(near(snapshot.navigationRollDegrees, 4.5));
+    QVERIFY(near(snapshot.navigationPitchDegrees, -2.25));
+    QCOMPARE(snapshot.navigationBearingDegrees, 123);
+    QCOMPARE(snapshot.targetBearingDegrees, -45);
+    QVERIFY(near(snapshot.waypointDistanceM, 37.0));
+    QVERIFY(near(snapshot.altitudeErrorM, 8.25));
+    QVERIFY(near(snapshot.airspeedErrorMps, -1.5));
+    QVERIFY(near(snapshot.crossTrackErrorM, 3.75));
+    QCOMPARE(snapshot.lastMessageMs, qint64(160));
 }
 
 void SwarmTelemetryRegistryTest::duplicateSystemIdsAcrossLinksRemainDistinct()
@@ -223,6 +272,10 @@ void SwarmTelemetryRegistryTest::duplicateSystemIdsAcrossLinksRemainDistinct()
     const quint64 secondSession = registry.beginLinkSession(9, QStringLiteral("TCP"));
     QVERIFY(registry.observeMessage(3, firstSession, heartbeat(42)));
     QVERIFY(registry.observeMessage(9, secondSession, heartbeat(42)));
+    QVERIFY(registry.observeMessage(3, firstSession,
+                                    missionCurrent(42, 3)));
+    QVERIFY(registry.observeMessage(9, secondSession,
+                                    missionCurrent(42, 9)));
 
     QCOMPARE(registry.endpointCount(), 2);
     const SwarmVehicleInstanceLease first = registry.acquireVehicle(endpoint(3, 42));
@@ -231,6 +284,12 @@ void SwarmTelemetryRegistryTest::duplicateSystemIdsAcrossLinksRemainDistinct()
     QVERIFY(second.isValid());
     QVERIFY(first != second);
     QVERIFY(first.endpoint.systemId == second.endpoint.systemId);
+    SwarmTelemetrySnapshot firstSnapshot;
+    SwarmTelemetrySnapshot secondSnapshot;
+    QVERIFY(registry.snapshotForLease(first, &firstSnapshot));
+    QVERIFY(registry.snapshotForLease(second, &secondSnapshot));
+    QCOMPARE(firstSnapshot.missionCurrentSequence, quint16(3));
+    QCOMPARE(secondSnapshot.missionCurrentSequence, quint16(9));
 
     const SwarmVehicleGroupLease group = registry.acquireGroup(
         {endpoint(3, 42), endpoint(9, 42)});
@@ -413,6 +472,33 @@ void SwarmTelemetryRegistryTest::invalidVfrValuesClearValidity()
     QVERIFY(!snapshot.vfrHudValid);
     QVERIFY(!snapshot.headingValid);
     QCOMPARE(snapshot.throttlePercent, 42);
+}
+
+void SwarmTelemetryRegistryTest::invalidNavigationValuesClearAtomicValidity()
+{
+    qint64 now = 0;
+    SwarmTelemetryRegistry registry([&now]() { return now; });
+    const quint64 session = registry.beginLinkSession(15);
+    QVERIFY(registry.observeMessage(15, session, heartbeat(47)));
+    QVERIFY(registry.observeMessage(
+        15, session, navigationController(47, 4.5F, -2.25F, 37)));
+
+    SwarmTelemetrySnapshot snapshot;
+    QVERIFY(registry.acquireSnapshot(endpoint(15, 47), &snapshot));
+    QVERIFY(snapshot.navigationControllerValid);
+    QCOMPARE(snapshot.waypointDistanceM, 37.0);
+
+    now = 1;
+    QVERIFY(registry.observeMessage(
+        15, session,
+        navigationController(
+            47, std::numeric_limits<float>::quiet_NaN(), -1.0F, 99)));
+    QVERIFY(registry.acquireSnapshot(endpoint(15, 47), &snapshot));
+    QVERIFY(!snapshot.navigationControllerValid);
+    QCOMPARE(snapshot.navigationControllerObservedMs, qint64(1));
+    // An invalid atomic update never leaks a new distance beside the previous
+    // valid bearings/errors.
+    QCOMPARE(snapshot.waypointDistanceM, 37.0);
 }
 
 void SwarmTelemetryRegistryTest::synchronousSignalsMayReenterOrDeleteRegistry()

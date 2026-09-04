@@ -47,7 +47,9 @@ MissionProtocolCoordinator::tryAcquire(QObject *leaseOwner,
                 clearLease();
             }
         });
-    return {m_owner, m_missionType, m_generation};
+    const LeaseToken token{m_owner, m_missionType, m_generation};
+    emit leaseChanged(m_owner.data(), m_missionType, m_generation);
+    return token;
 }
 
 bool MissionProtocolCoordinator::owns(const LeaseToken &token) const
@@ -114,4 +116,5 @@ void MissionProtocolCoordinator::clearLease()
         m_ownerDestroyedConnection = {};
     }
     m_owner.clear();
+    emit leaseChanged(nullptr, m_missionType, m_generation);
 }

@@ -163,7 +163,9 @@ SwarmCommandService::Result SwarmCommandService::reserve(
             | SwarmTelemetryRequirements::Heading
             | SwarmTelemetryRequirements::Attitude
             | SwarmTelemetryRequirements::VfrHud
-            | SwarmTelemetryRequirements::ExtendedSystemState;
+            | SwarmTelemetryRequirements::ExtendedSystemState
+            | SwarmTelemetryRequirements::MissionCurrent
+            | SwarmTelemetryRequirements::NavigationController;
         const auto validAge = [](int value) {
             return value >= 1 && value <= 10 * 60 * 1000;
         };
@@ -179,7 +181,9 @@ SwarmCommandService::Result SwarmCommandService::reserve(
             || !validAge(required.headingMaximumAgeMs)
             || !validAge(required.attitudeMaximumAgeMs)
             || !validAge(required.vfrHudMaximumAgeMs)
-            || !validAge(required.extendedSystemStateMaximumAgeMs)) {
+            || !validAge(required.extendedSystemStateMaximumAgeMs)
+            || !validAge(required.missionCurrentMaximumAgeMs)
+            || !validAge(required.navigationControllerMaximumAgeMs)) {
             if (error) {
                 *error = QStringLiteral(
                     "Swarm telemetry field or age requirements are invalid.");
@@ -252,8 +256,8 @@ SwarmCommandService::Result SwarmCommandService::reserve(
     m_active.owner = guardedOwner;
     m_active.members = members;
     m_active.maximumBatchHz = maximumBatchHz;
-    m_active.lastBatchMs = -1;
-    m_active.lastStreamRequestMs = -1;
+    m_active.nextBatchDueMs = -1;
+    m_active.nextStreamRequestDueMs = -1;
     const quint64 capturedId = m_active.id;
     m_active.ownerDestroyed = connect(guardedOwner.data(), &QObject::destroyed, this,
                                       [this, capturedId]() {
@@ -564,6 +568,18 @@ bool SwarmCommandService::validateMember(
                    || !fresh(snapshot.extendedSystemStateObservedMs,
                              required.extendedSystemStateMaximumAgeMs))) {
         field = QStringLiteral("extended system state");
+    } else if (required.fields.testFlag(
+                   SwarmTelemetryRequirements::MissionCurrent)
+               && (!snapshot.missionCurrentValid
+                   || !fresh(snapshot.missionCurrentObservedMs,
+                             required.missionCurrentMaximumAgeMs))) {
+        field = QStringLiteral("mission current");
+    } else if (required.fields.testFlag(
+                   SwarmTelemetryRequirements::NavigationController)
+               && (!snapshot.navigationControllerValid
+                   || !fresh(snapshot.navigationControllerObservedMs,
+                             required.navigationControllerMaximumAgeMs))) {
+        field = QStringLiteral("navigation controller");
     }
     if (!field.isEmpty()) {
         if (failure) {
@@ -747,26 +763,40 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
             token.id, validationFailure, error);
     }
     const qint64 current = nowMs();
-    const qint64 previousSend = rateLimited
-        ? m_active.lastBatchMs : m_active.lastStreamRequestMs;
+    const qint64 nextDue = rateLimited
+        ? m_active.nextBatchDueMs : m_active.nextStreamRequestDueMs;
     const qint64 minimumInterval = rateLimited
         ? (1000 + m_active.maximumBatchHz - 1) / m_active.maximumBatchHz
         : 1000;
-    if (previousSend >= 0) {
-        if (current < previousSend
-            || current - previousSend < minimumInterval) {
-            return preflightReport(
-                token.id, Result::RateLimited,
-                QStringLiteral("The swarm batch rate limit was exceeded."));
-        }
+    // QTimer commonly delivers a nominal 100 ms tick one or two milliseconds
+    // early.  Anchor accepted writes to a logical deadline instead of the
+    // early wall-clock sample: this preserves the long-term maximum rate
+    // without dropping an entire 10 Hz Waypoint/Follow Leader batch.
+    constexpr qint64 SchedulerJitterToleranceMs = 2;
+    const auto saturatedAdd = [](qint64 value, qint64 increment) {
+        return value > std::numeric_limits<qint64>::max() - increment
+            ? std::numeric_limits<qint64>::max()
+            : value + increment;
+    };
+    if (nextDue >= 0
+        && saturatedAdd(current, SchedulerJitterToleranceMs) < nextDue) {
+        return preflightReport(
+            token.id, Result::RateLimited,
+            QStringLiteral("The swarm batch rate limit was exceeded."));
     }
     // Consume the rate slot before the first callback/physical write. A
     // partially sent batch must not be retried as an unbounded burst.
     if (m_active.id == capturedId) {
+        const qint64 deadlineAfterOne = nextDue < 0
+            ? -1 : saturatedAdd(nextDue, minimumInterval);
+        const qint64 nextLogicalDue = nextDue < 0
+            || current >= deadlineAfterOne
+            ? saturatedAdd(current, minimumInterval)
+            : deadlineAfterOne;
         if (rateLimited) {
-            m_active.lastBatchMs = current;
+            m_active.nextBatchDueMs = nextLogicalDue;
         } else {
-            m_active.lastStreamRequestMs = current;
+            m_active.nextStreamRequestDueMs = nextLogicalDue;
         }
     }
 

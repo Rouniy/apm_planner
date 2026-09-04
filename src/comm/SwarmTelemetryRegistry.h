@@ -101,6 +101,26 @@ struct SwarmTelemetrySnapshot
     qint64 extendedSystemStateObservedMs = -1;
     int vtolState = MAV_VTOL_STATE_UNDEFINED;
     int landedState = MAV_LANDED_STATE_UNDEFINED;
+
+    // Exact per-instance mission progress.  The vendored MAVLink dialect
+    // exposes the classic one-field MISSION_CURRENT payload.
+    bool missionCurrentValid = false;
+    qint64 missionCurrentObservedMs = -1;
+    quint16 missionCurrentSequence = 0;
+
+    // NAV_CONTROLLER_OUTPUT is kept as one atomic observation so consumers
+    // cannot combine wp_dist from one vehicle/update with bearings or errors
+    // from another.
+    bool navigationControllerValid = false;
+    qint64 navigationControllerObservedMs = -1;
+    double navigationRollDegrees = 0.0;
+    double navigationPitchDegrees = 0.0;
+    int navigationBearingDegrees = 0;
+    int targetBearingDegrees = 0;
+    double waypointDistanceM = 0.0;
+    double altitudeErrorM = 0.0;
+    double airspeedErrorMps = 0.0;
+    double crossTrackErrorM = 0.0;
 };
 
 /** A group of exact instances captured for one all-or-nothing validation. */

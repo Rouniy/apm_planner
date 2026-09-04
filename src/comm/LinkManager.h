@@ -54,6 +54,7 @@ This file is part of the APM_PLANNER project
 #include "UAS.h"
 #include "UASObject.h"
 class VehicleTargetManager;
+struct SwarmVehicleInstanceLease;
 class SwarmTelemetryRegistry;
 class SwarmCommandService;
 class VehicleCommandService;
@@ -62,6 +63,7 @@ class MovingBasePositionStore;
 class MovingBaseService;
 class CompassCalibrationService;
 class ExactLinkTransmitter;
+class ExactMissionSnapshotService;
 class RadioStatusMonitor;
 class ParameterService;
 class MavFtpService;
@@ -87,6 +89,7 @@ public:
     VehicleTargetManager *vehicleTargetManager() const;
     SwarmTelemetryRegistry *swarmTelemetryRegistry() const;
     SwarmCommandService *swarmCommandService() const;
+    ExactMissionSnapshotService *exactMissionSnapshotService() const;
     ExactLinkTransmitter *exactLinkTransmitter() const;
     // Link-scoped SiK RADIO_STATUS / legacy RADIO statistics (MP10 localsnrdb).
     RadioStatusMonitor *radioStatusMonitor() const;
@@ -170,6 +173,9 @@ private:
     void saveSettings();
     bool activateLinkSession(LinkInterface *link);
     void invalidateLinkSession(int linkId);
+    bool exactVehicleRouteIsEligible(
+        const SwarmVehicleInstanceLease &lease,
+        QString *error = nullptr) const;
     void syncActiveUasToTarget();
     void syncTargetToActiveUas(UASInterface *uas);
 
@@ -186,6 +192,7 @@ private:
     VehicleTargetManager *m_vehicleTargetManager = nullptr;
     SwarmTelemetryRegistry *m_swarmTelemetryRegistry = nullptr;
     SwarmCommandService *m_swarmCommandService = nullptr;
+    ExactMissionSnapshotService *m_exactMissionSnapshotService = nullptr;
     ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;

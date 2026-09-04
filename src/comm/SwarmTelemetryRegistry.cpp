@@ -365,7 +365,9 @@ bool SwarmTelemetryRegistry::isParsedMessage(quint32 messageId) noexcept
         || messageId == MAVLINK_MSG_ID_GLOBAL_POSITION_INT
         || messageId == MAVLINK_MSG_ID_VFR_HUD
         || messageId == MAVLINK_MSG_ID_ATTITUDE
-        || messageId == MAVLINK_MSG_ID_EXTENDED_SYS_STATE;
+        || messageId == MAVLINK_MSG_ID_EXTENDED_SYS_STATE
+        || messageId == MAVLINK_MSG_ID_MISSION_CURRENT
+        || messageId == MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT;
 }
 
 bool SwarmTelemetryRegistry::isCommandCapableHeartbeat(
@@ -545,6 +547,34 @@ void SwarmTelemetryRegistry::updateMessage(
         snapshot->extendedSystemStateValid = true;
         snapshot->vtolState = state.vtol_state;
         snapshot->landedState = state.landed_state;
+        break;
+    }
+    case MAVLINK_MSG_ID_MISSION_CURRENT: {
+        mavlink_mission_current_t current{};
+        mavlink_msg_mission_current_decode(&message, &current);
+        snapshot->missionCurrentObservedMs = observedMs;
+        snapshot->missionCurrentValid = true;
+        snapshot->missionCurrentSequence = current.seq;
+        break;
+    }
+    case MAVLINK_MSG_ID_NAV_CONTROLLER_OUTPUT: {
+        mavlink_nav_controller_output_t navigation{};
+        mavlink_msg_nav_controller_output_decode(&message, &navigation);
+        snapshot->navigationControllerObservedMs = observedMs;
+        snapshot->navigationControllerValid = allFinite(
+            {navigation.nav_roll, navigation.nav_pitch,
+             navigation.alt_error, navigation.aspd_error,
+             navigation.xtrack_error});
+        if (snapshot->navigationControllerValid) {
+            snapshot->navigationRollDegrees = navigation.nav_roll;
+            snapshot->navigationPitchDegrees = navigation.nav_pitch;
+            snapshot->navigationBearingDegrees = navigation.nav_bearing;
+            snapshot->targetBearingDegrees = navigation.target_bearing;
+            snapshot->waypointDistanceM = navigation.wp_dist;
+            snapshot->altitudeErrorM = navigation.alt_error;
+            snapshot->airspeedErrorMps = navigation.aspd_error;
+            snapshot->crossTrackErrorM = navigation.xtrack_error;
+        }
         break;
     }
     default:

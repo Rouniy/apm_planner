@@ -42,6 +42,11 @@ public:
     MissionType missionType() const;
     quint64 generation() const;
 
+signals:
+    void leaseChanged(QObject *owner,
+                      MissionProtocolCoordinator::MissionType missionType,
+                      qulonglong generation);
+
 private:
     static bool isSupportedMissionType(MissionType missionType);
     void assertCoordinatorThread() const;

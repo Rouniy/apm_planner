@@ -45,6 +45,7 @@ This file is part of the APM_PLANNER project
 #include "UASObject.h"
 #include "CompassCalibrationService.h"
 #include "ExactLinkTransmitter.h"
+#include "ExactMissionSnapshotService.h"
 #include "GuidedTargetService.h"
 #include "MavFtpService.h"
 #include "MovingBasePositionStore.h"
@@ -121,43 +122,29 @@ LinkManager::LinkManager(QObject *parent) :
         [this](int linkId, const QByteArray &frame) {
             return writeRawBytes(linkId, frame);
         }, this);
+    m_exactMissionSnapshotService = new ExactMissionSnapshotService(
+        m_swarmTelemetryRegistry, m_exactLinkTransmitter,
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            return exactVehicleRouteIsEligible(lease, error);
+        },
+        [this](const SwarmVehicleInstanceLease &lease) {
+            UAS *const uas = dynamic_cast<UAS *>(
+                m_uasMap.value(lease.endpoint.systemId, nullptr).data());
+            if (!uas
+                || !uas->getLinkIdList().contains(lease.endpoint.linkId)
+                || uas->primaryComponentId()
+                    != lease.endpoint.componentId) {
+                return static_cast<MissionProtocolCoordinator *>(nullptr);
+            }
+            return uas->missionProtocolCoordinator();
+        },
+        1500, 3, this);
+    m_exactMissionSnapshotService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
     m_swarmCommandService = new SwarmCommandService(
         m_swarmTelemetryRegistry, m_exactLinkTransmitter,
         [this](const SwarmVehicleInstanceLease &lease, QString *error) {
-            const int linkId = lease.endpoint.linkId;
-            QPointer<LinkInterface> link(getLink(linkId));
-            if (!link || !link->isConnected()) {
-                if (error) {
-                    *error = QStringLiteral(
-                        "The exact physical link is unavailable.");
-                }
-                return false;
-            }
-            switch (link->getLinkType()) {
-            case LinkInterface::TCP_LINK:
-            case LinkInterface::UDP_CLIENT_LINK:
-                return true;
-            case LinkInterface::SERIAL_LINK:
-                if (error) {
-                    *error = QStringLiteral(
-                        "Serial/radio swarm control requires an explicit dedicated-link approval that is not yet available.");
-                }
-                return false;
-            case LinkInterface::UDP_LINK:
-                if (error) {
-                    *error = QStringLiteral(
-                        "Listening UDP broadcasts queued frames to every learned peer; use TCP or UDP Client for exact swarm control.");
-                }
-                return false;
-            case LinkInterface::SIM_LINK:
-            case LinkInterface::UNKNOWN_LINK:
-                if (error) {
-                    *error = QStringLiteral(
-                        "Simulation or unknown transports are not exact swarm command routes.");
-                }
-                return false;
-            }
-            return false;
+            return exactVehicleRouteIsEligible(lease, error);
         }, this);
     m_swarmCommandService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
@@ -165,6 +152,28 @@ LinkManager::LinkManager(QObject *parent) :
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_vehicleCommandService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
+    const bool exactCommandsConfigured =
+        m_vehicleCommandService->configureExactTransactions(
+            [registry = QPointer<SwarmTelemetryRegistry>(
+                 m_swarmTelemetryRegistry)](
+                const SwarmVehicleInstanceLease &lease) {
+                return registry && registry->validateLease(lease);
+            },
+            [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+                return exactVehicleRouteIsEligible(lease, error);
+            });
+    Q_ASSERT(exactCommandsConfigured);
+    connect(m_swarmTelemetryRegistry,
+            &SwarmTelemetryRegistry::endpointRetired,
+            m_vehicleCommandService,
+            [service = QPointer<VehicleCommandService>(
+                 m_vehicleCommandService)](
+                const SwarmVehicleInstanceLease &lease,
+                SwarmTelemetryRegistry::RetirementReason) {
+                if (service) {
+                    service->retireExactVehicle(lease);
+                }
+            });
     m_guidedTargetService = new GuidedTargetService(
         m_vehicleTargetManager, m_vehicleCommandService, this);
     m_guidedTargetService->setLocalIdentity(
@@ -205,6 +214,51 @@ LinkManager::LinkManager(QObject *parent) :
             &ExactLinkTransmitter::setOutboundVersion);
 
     QTimer::singleShot(500, this, SLOT(reloadSettings()));
+}
+
+bool LinkManager::exactVehicleRouteIsEligible(
+    const SwarmVehicleInstanceLease &lease, QString *error) const
+{
+    if (error) {
+        error->clear();
+    }
+    const int linkId = lease.endpoint.linkId;
+    QPointer<LinkInterface> link(getLink(linkId));
+    if (!lease.isValid() || !link || !link->isConnected()) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact physical link is unavailable.");
+        }
+        return false;
+    }
+    switch (link->getLinkType()) {
+    case LinkInterface::TCP_LINK:
+    case LinkInterface::UDP_CLIENT_LINK:
+        return true;
+    case LinkInterface::SERIAL_LINK:
+        if (error) {
+            *error = QStringLiteral(
+                "Serial/radio swarm control requires an explicit dedicated-link approval that is not yet available.");
+        }
+        return false;
+    case LinkInterface::UDP_LINK:
+        if (error) {
+            *error = QStringLiteral(
+                "Listening UDP broadcasts queued frames to every learned peer; use TCP or UDP Client for exact swarm control.");
+        }
+        return false;
+    case LinkInterface::SIM_LINK:
+    case LinkInterface::UNKNOWN_LINK:
+        if (error) {
+            *error = QStringLiteral(
+                "Simulation or unknown transports are not exact swarm command routes.");
+        }
+        return false;
+    }
+    if (error) {
+        *error = QStringLiteral("The exact physical link type is unsupported.");
+    }
+    return false;
 }
 
 void LinkManager::reloadSettings()
@@ -661,6 +715,11 @@ SwarmCommandService *LinkManager::swarmCommandService() const
     return m_swarmCommandService;
 }
 
+ExactMissionSnapshotService *LinkManager::exactMissionSnapshotService() const
+{
+    return m_exactMissionSnapshotService;
+}
+
 ExactLinkTransmitter *LinkManager::exactLinkTransmitter() const
 {
     return m_exactLinkTransmitter;
@@ -1030,10 +1089,12 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
         m_swarmTelemetryRegistry->observeMessage(
             linkId, ingressSwarmSession, message);
     }
-    if (!linkIsCurrent()
-        || (ingressSwarmSession != 0
-            && m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId)
-                != ingressSwarmSession)) {
+    if (!linkIsCurrent()) {
+        return;
+    }
+    m_exactMissionSnapshotService->observeMessage(
+        linkId, ingressSwarmSession, message);
+    if (!linkIsCurrent()) {
         return;
     }
     emit messageReceived(guardedLink.data(), message);

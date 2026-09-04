@@ -23,7 +23,9 @@ struct SwarmTelemetryRequirements
         Heading = 0x04,
         Attitude = 0x08,
         VfrHud = 0x10,
-        ExtendedSystemState = 0x20
+        ExtendedSystemState = 0x20,
+        MissionCurrent = 0x40,
+        NavigationController = 0x80
     };
     Q_DECLARE_FLAGS(Fields, Field)
 
@@ -35,6 +37,8 @@ struct SwarmTelemetryRequirements
     int attitudeMaximumAgeMs = 1500;
     int vfrHudMaximumAgeMs = 1500;
     int extendedSystemStateMaximumAgeMs = 2000;
+    int missionCurrentMaximumAgeMs = 2500;
+    int navigationControllerMaximumAgeMs = 2500;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(SwarmTelemetryRequirements::Fields)
@@ -168,8 +172,8 @@ private:
         QPointer<QObject> owner;
         QVector<SwarmCommandMember> members;
         int maximumBatchHz = 0;
-        qint64 lastBatchMs = -1;
-        qint64 lastStreamRequestMs = -1;
+        qint64 nextBatchDueMs = -1;
+        qint64 nextStreamRequestDueMs = -1;
         QMetaObject::Connection ownerDestroyed;
     };
 

@@ -265,6 +265,8 @@ set(SOURCES
     src/comm/Esp8266ParameterClient.h
     src/comm/ExactLinkTransmitter.cpp
     src/comm/ExactLinkTransmitter.h
+    src/comm/ExactMissionSnapshotService.cpp
+    src/comm/ExactMissionSnapshotService.h
     src/comm/GuidedTargetService.cpp
     src/comm/GuidedTargetService.h
     src/comm/FollowMeGpsInput.cpp
@@ -2452,6 +2454,35 @@ if(BUILD_TESTING)
     add_test(NAME swarmtelemetryregistry_tests
         COMMAND swarmtelemetryregistry_tests)
 
+    add_executable(exactmissionsnapshotservice_tests
+        tests/test_exactmissionsnapshotservice.cpp
+        src/comm/ExactMissionSnapshotService.cpp
+        src/comm/ExactMissionSnapshotService.h
+        src/comm/MissionProtocolCoordinator.cc
+        src/comm/MissionProtocolCoordinator.h
+        src/comm/MissionTransferService.cc
+        src/comm/MissionTransferService.h
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(exactmissionsnapshotservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(exactmissionsnapshotservice_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME exactmissionsnapshotservice_tests
+        COMMAND exactmissionsnapshotservice_tests)
+
     add_executable(swarmcommandservice_tests
         tests/test_swarmcommandservice.cpp
         src/comm/SwarmCommandService.cpp
@@ -2629,6 +2660,30 @@ if(BUILD_TESTING)
     )
     add_test(NAME swarmfollowleadercore_tests
         COMMAND swarmfollowleadercore_tests)
+
+    add_executable(swarmwaypointleadercore_tests
+        tests/test_swarmwaypointleadercore.cpp
+        src/ui/tools/SwarmWaypointLeaderCore.cpp
+        src/ui/tools/SwarmWaypointLeaderCore.h
+        src/ui/tools/SwarmFollowPathCore.cpp
+        src/ui/tools/SwarmFollowPathCore.h
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/SwarmFlightMode.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmwaypointleadercore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmwaypointleadercore_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME swarmwaypointleadercore_tests
+        COMMAND swarmwaypointleadercore_tests)
 
     add_executable(swarmfollowleaderwindow_tests
         tests/test_swarmfollowleaderwindow.cpp

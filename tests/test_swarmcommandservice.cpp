@@ -112,6 +112,35 @@ mavlink_message_t extendedState(int systemId)
     return message;
 }
 
+mavlink_message_t missionCurrent(int systemId, quint16 sequence = 7)
+{
+    mavlink_mission_current_t payload{};
+    payload.seq = sequence;
+    mavlink_message_t message{};
+    mavlink_msg_mission_current_encode(
+        static_cast<quint8>(systemId), MAV_COMP_ID_AUTOPILOT1,
+        &message, &payload);
+    return message;
+}
+
+mavlink_message_t navigationController(int systemId)
+{
+    mavlink_nav_controller_output_t payload{};
+    payload.nav_roll = 2.0F;
+    payload.nav_pitch = -1.0F;
+    payload.nav_bearing = 80;
+    payload.target_bearing = 95;
+    payload.wp_dist = 12;
+    payload.alt_error = 3.0F;
+    payload.aspd_error = -0.5F;
+    payload.xtrack_error = 0.25F;
+    mavlink_message_t message{};
+    mavlink_msg_nav_controller_output_encode(
+        static_cast<quint8>(systemId), MAV_COMP_ID_AUTOPILOT1,
+        &message, &payload);
+    return message;
+}
+
 mavlink_message_t decodeFrame(const QByteArray &bytes)
 {
     MAVLinkFrameParser parser;
@@ -190,6 +219,9 @@ public:
         registry.observeMessage(linkId, session, vfrHud(systemId));
         registry.observeMessage(linkId, session, attitude(systemId));
         registry.observeMessage(linkId, session, extendedState(systemId));
+        registry.observeMessage(linkId, session, missionCurrent(systemId));
+        registry.observeMessage(linkId, session,
+                                navigationController(systemId));
     }
 
     qint64 registryNowMs = 100;
@@ -280,7 +312,7 @@ reservationRequiresUniqueSlotsEndpointsAndOwner()
 
     SwarmCommandMember unknownFields = member(1, first);
     unknownFields.required.fields = SwarmTelemetryRequirements::Fields(
-        static_cast<SwarmTelemetryRequirements::Field>(0x40));
+        static_cast<SwarmTelemetryRequirements::Field>(0x100));
     QCOMPARE(fixture.service.reserve(
                  &owner, {unknownFields}, 4, &token, &error),
              SwarmCommandService::Result::InvalidPlan);
@@ -336,6 +368,10 @@ void SwarmCommandServiceTest::requiredTelemetryMustBeFreshBeforeCommands_data()
         << int(SwarmTelemetryRequirements::VfrHud);
     QTest::newRow("extended-system-state")
         << int(SwarmTelemetryRequirements::ExtendedSystemState);
+    QTest::newRow("mission-current")
+        << int(SwarmTelemetryRequirements::MissionCurrent);
+    QTest::newRow("navigation-controller")
+        << int(SwarmTelemetryRequirements::NavigationController);
 }
 
 void SwarmCommandServiceTest::requiredTelemetryMustBeFreshBeforeCommands()
@@ -368,6 +404,12 @@ void SwarmCommandServiceTest::requiredTelemetryMustBeFreshBeforeCommands()
         break;
     case SwarmTelemetryRequirements::ExtendedSystemState:
         required.required.extendedSystemStateMaximumAgeMs = 50;
+        break;
+    case SwarmTelemetryRequirements::MissionCurrent:
+        required.required.missionCurrentMaximumAgeMs = 50;
+        break;
+    case SwarmTelemetryRequirements::NavigationController:
+        required.required.navigationControllerMaximumAgeMs = 50;
         break;
     default:
         QFAIL("Unknown telemetry requirement in test data");
@@ -415,6 +457,14 @@ void SwarmCommandServiceTest::requiredTelemetryMustBeFreshBeforeCommands()
     case SwarmTelemetryRequirements::ExtendedSystemState:
         QVERIFY(fixture.registry.observeMessage(
             4, fixture.sessions.value(4), extendedState(44)));
+        break;
+    case SwarmTelemetryRequirements::MissionCurrent:
+        QVERIFY(fixture.registry.observeMessage(
+            4, fixture.sessions.value(4), missionCurrent(44)));
+        break;
+    case SwarmTelemetryRequirements::NavigationController:
+        QVERIFY(fixture.registry.observeMessage(
+            4, fixture.sessions.value(4), navigationController(44)));
         break;
     default:
         QFAIL("Unknown telemetry requirement in test data");
@@ -567,20 +617,54 @@ void SwarmCommandServiceTest::positionBatchRateLimitUsesInjectedClock()
              SwarmCommandService::Result::SentAll);
     QCOMPARE(fixture.frames.size(), 1);
 
-    fixture.serviceNowMs = 1249;
+    fixture.serviceNowMs = 1247;
     QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
              SwarmCommandService::Result::RateLimited);
     QCOMPARE(fixture.frames.size(), 1);
 
-    fixture.serviceNowMs = 1250;
+    // Two milliseconds of timer jitter is admitted, but the next deadline
+    // stays anchored at 1500 ms rather than ratcheting to the early sample.
+    fixture.serviceNowMs = 1248;
     QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
              SwarmCommandService::Result::SentAll);
     QCOMPARE(fixture.frames.size(), 2);
 
-    fixture.serviceNowMs = 1240;
+    fixture.serviceNowMs = 1497;
     QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
              SwarmCommandService::Result::RateLimited);
     QCOMPARE(fixture.frames.size(), 2);
+
+    fixture.serviceNowMs = 1498;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+    QCOMPARE(fixture.frames.size(), 3);
+
+    fixture.serviceNowMs = 1240; // A regressing clock never opens the gate.
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::RateLimited);
+    QCOMPARE(fixture.frames.size(), 3);
+
+    QCOMPARE(fixture.service.release(token),
+             SwarmCommandService::Result::Cancelled);
+    fixture.serviceNowMs = 2000;
+    QCOMPARE(fixture.service.reserve(
+                 &owner, {member(1, lease)}, 10, &token),
+             SwarmCommandService::Result::Reserved);
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+    fixture.serviceNowMs = 2099;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+    fixture.serviceNowMs = 2198;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+    fixture.serviceNowMs = 2297;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::RateLimited);
+    fixture.serviceNowMs = 2298;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+    QCOMPARE(fixture.frames.size(), 7);
 }
 
 void SwarmCommandServiceTest::secondTransportFailureReportsPartialBatch()
