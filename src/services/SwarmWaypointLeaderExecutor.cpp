@@ -470,6 +470,14 @@ bool SwarmWaypointLeaderExecutor::executorReady(QString *error) const
     if (error) {
         error->clear();
     }
+    if (m_state == State::Draining) {
+        return setError(error, QStringLiteral(
+            "Waypoint Leader is still draining exact reservations."));
+    }
+    if (m_state == State::OutcomeUncertain) {
+        return setError(error, QStringLiteral(
+            "A prior Waypoint Leader outcome is uncertain; restart is blocked."));
+    }
     if (!m_backend) {
         return setError(error, QStringLiteral(
             "Waypoint Leader executor backend is unavailable."));

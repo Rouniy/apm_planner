@@ -34,6 +34,7 @@ This file is part of the APM_PLANNER project
 #include "RadioStatusMonitor.h"
 #include "SwarmCommandService.h"
 #include "SwarmTelemetryRegistry.h"
+#include "services/SwarmWaypointLeaderExecutor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
 #include "ArduPilotMegaMAV.h"
@@ -212,6 +213,13 @@ LinkManager::LinkManager(QObject *parent) :
                     service->retireExactVehicle(lease);
                 }
             });
+    m_swarmWaypointLeaderExecutor = new SwarmWaypointLeaderExecutor(
+        m_swarmTelemetryRegistry,
+        m_exactMissionSnapshotService,
+        m_swarmCommandService,
+        m_vehicleCommandService,
+        m_parameterService,
+        this);
     m_mavFtpService = new MavFtpService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_mavFtpService->setLocalIdentity(
@@ -418,6 +426,13 @@ void LinkManager::shutdown()
         return;
     }
     m_shuttingDown = true;
+
+    // Stop exact multi-vehicle dispatch while every reservation, endpoint
+    // session and physical route is still available for orderly cancellation.
+    if (m_swarmWaypointLeaderExecutor) {
+        m_swarmWaypointLeaderExecutor->cancelActiveRun(
+            QStringLiteral("Application is shutting down."));
+    }
 
     // Persist configured connections before taking them out of the live map.
     saveSettings();
@@ -734,6 +749,11 @@ SwarmTelemetryRegistry *LinkManager::swarmTelemetryRegistry() const
 SwarmCommandService *LinkManager::swarmCommandService() const
 {
     return m_swarmCommandService;
+}
+
+SwarmWaypointLeaderExecutor *LinkManager::swarmWaypointLeaderExecutor() const
+{
+    return m_swarmWaypointLeaderExecutor;
 }
 
 ExactMissionSnapshotService *LinkManager::exactMissionSnapshotService() const

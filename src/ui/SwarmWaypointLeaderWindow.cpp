@@ -27,6 +27,11 @@
 #include <optional>
 #include <utility>
 
+// Supplied by SwarmWaypointLeaderWindowIntegration.cpp in the application and
+// by a focused null/fake seam in the window test.
+SwarmWaypointLeaderWindowInterface *
+SwarmWaypointLeaderApplicationInterface(QObject *parent);
+
 namespace
 {
 enum WaypointLeaderColumn {
@@ -1686,8 +1691,12 @@ public:
 QPointer<SwarmWaypointLeaderWindow> SwarmWaypointLeaderWindow::s_current;
 
 SwarmWaypointLeaderWindow::SwarmWaypointLeaderWindow(QWidget *owner)
-    : SwarmWaypointLeaderWindow(nullptr, Dependencies(), owner)
+    : QWidget(owner, Qt::Window)
 {
+    SwarmWaypointLeaderWindowInterface *windowInterface =
+        SwarmWaypointLeaderApplicationInterface(this);
+    m_impl.reset(new Implementation(
+        this, windowInterface, Dependencies(), owner));
 }
 
 SwarmWaypointLeaderWindow::SwarmWaypointLeaderWindow(
@@ -1710,7 +1719,19 @@ SwarmWaypointLeaderWindow::~SwarmWaypointLeaderWindow()
 SwarmWaypointLeaderWindow *SwarmWaypointLeaderWindow::OpenWindow(
     QWidget *owner)
 {
-    return OpenWindow(nullptr, Dependencies(), owner);
+    if (s_current) {
+        s_current->show();
+        s_current->raise();
+        s_current->activateWindow();
+        return s_current;
+    }
+    QWidget *resolvedOwner = owner ? owner : QApplication::activeWindow();
+    s_current = new SwarmWaypointLeaderWindow(resolvedOwner);
+    s_current->setAttribute(Qt::WA_DeleteOnClose, true);
+    s_current->show();
+    s_current->raise();
+    s_current->activateWindow();
+    return s_current;
 }
 
 SwarmWaypointLeaderWindow *SwarmWaypointLeaderWindow::OpenWindow(

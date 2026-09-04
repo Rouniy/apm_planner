@@ -55,6 +55,7 @@ This file is part of the QGROUNDCONTROL project
 #include "SwarmFormationWindow.h"
 #include "SwarmFollowPathWindow.h"
 #include "SwarmFollowLeaderWindow.h"
+#include "SwarmWaypointLeaderWindow.h"
 #include "SwarmSequenceWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #ifdef APM_HAS_QT_MULTIMEDIA
@@ -676,6 +677,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { SwarmFollowPathWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionSwarmFollowLeader"),
                     [this]() { SwarmFollowLeaderWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionSwarmWaypointLeader"),
+                    [this]() { SwarmWaypointLeaderWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionSwarmSequence"),
                     [this]() { SwarmSequenceWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),

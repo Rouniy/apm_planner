@@ -663,6 +663,9 @@ set(SOURCES
     src/ui/WaypointLeaderProfileControl.h
     src/ui/SwarmWaypointLeaderWindow.cpp
     src/ui/SwarmWaypointLeaderWindow.h
+    src/ui/SwarmWaypointLeaderWindowAdapter.cpp
+    src/ui/SwarmWaypointLeaderWindowAdapter.h
+    src/ui/SwarmWaypointLeaderWindowIntegration.cpp
     src/services/SwarmWaypointLeaderExecutor.cpp
     src/services/SwarmWaypointLeaderExecutor.h
     src/comm/SwarmFlightMode.h
@@ -2741,6 +2744,59 @@ if(BUILD_TESTING)
     )
     add_test(NAME swarmwaypointleaderexecutor_tests
         COMMAND swarmwaypointleaderexecutor_tests)
+
+    add_executable(swarmwaypointleaderwindowadapter_tests
+        tests/test_swarmwaypointleaderwindowadapter.cpp
+        src/ui/SwarmWaypointLeaderWindowAdapter.cpp
+        src/ui/SwarmWaypointLeaderWindowAdapter.h
+        src/services/SwarmWaypointLeaderExecutor.cpp
+        src/services/SwarmWaypointLeaderExecutor.h
+        src/ui/tools/SwarmWaypointLeaderCore.cpp
+        src/ui/tools/SwarmWaypointLeaderCore.h
+        src/ui/tools/SwarmFollowPathCore.cpp
+        src/ui/tools/SwarmFollowPathCore.h
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/ExactMissionSnapshotService.cpp
+        src/comm/ExactMissionSnapshotService.h
+        src/comm/MissionProtocolCoordinator.cc
+        src/comm/MissionProtocolCoordinator.h
+        src/comm/MissionTransferService.cc
+        src/comm/MissionTransferService.h
+        src/comm/SwarmCommandService.cpp
+        src/comm/SwarmCommandService.h
+        src/comm/SwarmFlightMode.h
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/ParameterService.cpp
+        src/comm/ParameterService.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/uas/QGCUASParamManager.cc
+        src/uas/QGCUASParamManager.h
+    )
+    target_include_directories(swarmwaypointleaderwindowadapter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmwaypointleaderwindowadapter_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME swarmwaypointleaderwindowadapter_tests
+        COMMAND swarmwaypointleaderwindowadapter_tests)
 
     add_executable(waypointleaderprofilecontrol_tests
         tests/test_waypointleaderprofilecontrol.cpp

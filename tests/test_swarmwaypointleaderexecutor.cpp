@@ -757,6 +757,9 @@ stopCancelsParameterBeforeReleaseAndPreventsNewSends()
     QCOMPARE(executor.state(),
              SwarmWaypointLeaderExecutor::State::OutcomeUncertain);
     QVERIFY(!executor.isRunning());
+    QVERIFY(!executor.executorReady(&error));
+    QVERIFY(error.contains(QStringLiteral("uncertain"),
+                           Qt::CaseInsensitive));
 
     QVERIFY(QMetaObject::invokeMethod(&executor, "controlTick",
                                       Qt::DirectConnection));
@@ -807,6 +810,7 @@ void SwarmWaypointLeaderExecutorTest::writerAttemptFailureIsOutcomeUncertain()
     QVERIFY(!executor.start(backend.data.plan, &error));
     QCOMPARE(executor.state(),
              SwarmWaypointLeaderExecutor::State::OutcomeUncertain);
+    QVERIFY(!executor.executorReady(&error));
     QVERIFY(executor.statusText().contains(
         QStringLiteral("uncertain"), Qt::CaseInsensitive));
 }

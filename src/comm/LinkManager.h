@@ -57,6 +57,7 @@ class VehicleTargetManager;
 struct SwarmVehicleInstanceLease;
 class SwarmTelemetryRegistry;
 class SwarmCommandService;
+class SwarmWaypointLeaderExecutor;
 class VehicleCommandService;
 class GuidedTargetService;
 class MovingBasePositionStore;
@@ -89,6 +90,7 @@ public:
     VehicleTargetManager *vehicleTargetManager() const;
     SwarmTelemetryRegistry *swarmTelemetryRegistry() const;
     SwarmCommandService *swarmCommandService() const;
+    SwarmWaypointLeaderExecutor *swarmWaypointLeaderExecutor() const;
     ExactMissionSnapshotService *exactMissionSnapshotService() const;
     ExactLinkTransmitter *exactLinkTransmitter() const;
     // Link-scoped SiK RADIO_STATUS / legacy RADIO statistics (MP10 localsnrdb).
@@ -192,6 +194,7 @@ private:
     VehicleTargetManager *m_vehicleTargetManager = nullptr;
     SwarmTelemetryRegistry *m_swarmTelemetryRegistry = nullptr;
     SwarmCommandService *m_swarmCommandService = nullptr;
+    SwarmWaypointLeaderExecutor *m_swarmWaypointLeaderExecutor = nullptr;
     ExactMissionSnapshotService *m_exactMissionSnapshotService = nullptr;
     ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;

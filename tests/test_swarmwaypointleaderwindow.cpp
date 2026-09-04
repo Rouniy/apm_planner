@@ -23,6 +23,15 @@
 #include <limits>
 #include <utility>
 
+static QPointer<SwarmWaypointLeaderWindowInterface>
+    applicationWaypointLeaderInterface;
+
+SwarmWaypointLeaderWindowInterface *
+SwarmWaypointLeaderApplicationInterface(QObject *)
+{
+    return applicationWaypointLeaderInterface.data();
+}
+
 namespace
 {
 constexpr int UseColumn = 0;
@@ -421,6 +430,7 @@ class SwarmWaypointLeaderWindowTest final : public QObject
 
 private slots:
     void inventoryDefaultsSplitAndExactIdentityAreStable();
+    void defaultWindowUsesApplicationInterfaceFactory();
     void readinessMissionAndEligibilityFailClosed();
     void missionRefreshHidesUntilMatchingObservation();
     void airMasterReplacementCancelsOnlyPreviousRefresh();
@@ -432,6 +442,28 @@ private slots:
     void acceptedActionsAndCloseCancelTheExactRun();
     void openWindowIsModelessSingleton();
 };
+
+void SwarmWaypointLeaderWindowTest::
+defaultWindowUsesApplicationInterfaceFactory()
+{
+    FakeWaypointLeaderInterface fake;
+    SwarmVehicleInstanceLease ground;
+    SwarmVehicleInstanceLease air;
+    populateUsableFixture(&fake, &ground, &air);
+    applicationWaypointLeaderInterface = &fake;
+
+    QPointer<SwarmWaypointLeaderWindow> window =
+        SwarmWaypointLeaderWindow::OpenWindow();
+    QVERIFY(window);
+    QCOMPARE(window->vehicleCount(), 2);
+    QVERIFY(startButton(window)->isEnabled());
+    window->close();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCoreApplication::processEvents();
+    QVERIFY(!window);
+    QVERIFY(!fake.handler);
+    applicationWaypointLeaderInterface = nullptr;
+}
 
 void SwarmWaypointLeaderWindowTest::
 inventoryDefaultsSplitAndExactIdentityAreStable()

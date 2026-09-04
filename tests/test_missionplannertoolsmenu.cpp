@@ -79,73 +79,21 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
 {
     QMenu menu;
     QObject context;
-    int inspectorOpenCount = 0;
-    int mirrorOpenCount = 0;
-    int nmeaOpenCount = 0;
-    int cotOpenCount = 0;
-    int spectrogramOpenCount = 0;
-    int terrainOpenCount = 0;
-    int externalGuidedOpenCount = 0;
-    int followMeOpenCount = 0;
-    int movingBaseOpenCount = 0;
-    int swarmFormationOpenCount = 0;
-    int swarmFollowPathOpenCount = 0;
-    int swarmFollowLeaderOpenCount = 0;
-    int swarmSequenceOpenCount = 0;
-    int deviceOperationsOpenCount = 0;
-    int propagationOpenCount = 0;
-    int osdVideoOverlayOpenCount = 0;
+    QHash<QString, int> openCounts;
     MissionPlannerToolsMenu::HandlerMap handlers;
-    handlers.insert(QStringLiteral("actionMavlinkInspector"),
-                    [&inspectorOpenCount]() { ++inspectorOpenCount; });
-    handlers.insert(QStringLiteral("actionMavlinkMirror"),
-                    [&mirrorOpenCount]() { ++mirrorOpenCount; });
-    handlers.insert(QStringLiteral("actionNmeaOutput"),
-                    [&nmeaOpenCount]() { ++nmeaOpenCount; });
-    handlers.insert(QStringLiteral("actionCotOutput"),
-                    [&cotOpenCount]() { ++cotOpenCount; });
-    handlers.insert(QStringLiteral("actionDataFlashSpectrogram"),
-                    [&spectrogramOpenCount]() {
-        ++spectrogramOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionTerrain3D"),
-                    [&terrainOpenCount]() { ++terrainOpenCount; });
-    handlers.insert(QStringLiteral("actionExternalGuided"),
-                    [&externalGuidedOpenCount]() {
-        ++externalGuidedOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionFollowMe"),
-                    [&followMeOpenCount]() { ++followMeOpenCount; });
-    handlers.insert(QStringLiteral("actionMovingBase"),
-                    [&movingBaseOpenCount]() { ++movingBaseOpenCount; });
-    handlers.insert(QStringLiteral("actionSwarmFormation"),
-                    [&swarmFormationOpenCount]() {
-        ++swarmFormationOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionSwarmFollowPath"),
-                    [&swarmFollowPathOpenCount]() {
-        ++swarmFollowPathOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionSwarmFollowLeader"),
-                    [&swarmFollowLeaderOpenCount]() {
-        ++swarmFollowLeaderOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionSwarmSequence"),
-                    [&swarmSequenceOpenCount]() {
-        ++swarmSequenceOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionMavlinkDeviceOperations"),
-                    [&deviceOperationsOpenCount]() {
-        ++deviceOperationsOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionPropagationSettings"),
-                    [&propagationOpenCount]() {
-        ++propagationOpenCount;
-    });
-    handlers.insert(QStringLiteral("actionOsdVideoOverlay"),
-                    [&osdVideoOverlayOpenCount]() {
-        ++osdVideoOverlayOpenCount;
-    });
+    for (const MissionPlannerToolDefinition &definition
+         : MissionPlannerToolsMenu::Inventory()) {
+#ifndef APM_HAS_QT_MULTIMEDIA
+        if (definition.objectName == QStringLiteral("actionOsdVideoOverlay")) {
+            continue;
+        }
+#endif
+        const QString objectName = definition.objectName;
+        openCounts.insert(objectName, 0);
+        handlers.insert(objectName, [&openCounts, objectName]() {
+            ++openCounts[objectName];
+        });
+    }
 
     MissionPlannerToolsMenu::Populate(&menu, &context, handlers);
     QCOMPARE(menu.title(), QStringLiteral("TOOLS"));
@@ -157,51 +105,27 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
             continue;
         }
         ++toolCount;
-        if (action->objectName() == QStringLiteral("actionMavlinkInspector")
-            || action->objectName() == QStringLiteral("actionMavlinkMirror")
-            || action->objectName() == QStringLiteral("actionNmeaOutput")
-            || action->objectName() == QStringLiteral("actionCotOutput")
-            || action->objectName()
-                == QStringLiteral("actionDataFlashSpectrogram")
-            || action->objectName() == QStringLiteral("actionTerrain3D")
-            || action->objectName() == QStringLiteral("actionExternalGuided")
-            || action->objectName() == QStringLiteral("actionFollowMe")
-            || action->objectName() == QStringLiteral("actionMovingBase")
-            || action->objectName() == QStringLiteral("actionSwarmFormation")
-            || action->objectName() == QStringLiteral("actionSwarmFollowPath")
-            || action->objectName() == QStringLiteral("actionSwarmFollowLeader")
-            || action->objectName() == QStringLiteral("actionSwarmSequence")
-            || action->objectName()
-                == QStringLiteral("actionPropagationSettings")
-            || action->objectName()
-                == QStringLiteral("actionOsdVideoOverlay")
-            || action->objectName()
-                == QStringLiteral("actionMavlinkDeviceOperations")) {
+        if (handlers.contains(action->objectName())) {
             QVERIFY(action->isEnabled());
             action->trigger();
+            QCOMPARE(openCounts.value(action->objectName()), 1);
             continue;
         }
+#ifdef APM_HAS_QT_MULTIMEDIA
+        QFAIL("Every MP10 Tools action must have a handler");
+#else
+        QCOMPARE(action->objectName(), QStringLiteral("actionOsdVideoOverlay"));
         QVERIFY(!action->isEnabled());
         QVERIFY(action->text().contains(QStringLiteral("not ported yet")));
         QVERIFY(!action->property("unavailableReason").toString().isEmpty());
+#endif
     }
     QCOMPARE(toolCount, MissionPlannerToolsMenu::Inventory().size());
-    QCOMPARE(inspectorOpenCount, 1);
-    QCOMPARE(mirrorOpenCount, 1);
-    QCOMPARE(nmeaOpenCount, 1);
-    QCOMPARE(cotOpenCount, 1);
-    QCOMPARE(spectrogramOpenCount, 1);
-    QCOMPARE(terrainOpenCount, 1);
-    QCOMPARE(externalGuidedOpenCount, 1);
-    QCOMPARE(followMeOpenCount, 1);
-    QCOMPARE(movingBaseOpenCount, 1);
-    QCOMPARE(swarmFormationOpenCount, 1);
-    QCOMPARE(swarmFollowPathOpenCount, 1);
-    QCOMPARE(swarmFollowLeaderOpenCount, 1);
-    QCOMPARE(swarmSequenceOpenCount, 1);
-    QCOMPARE(deviceOperationsOpenCount, 1);
-    QCOMPARE(propagationOpenCount, 1);
-    QCOMPARE(osdVideoOverlayOpenCount, 1);
+#ifdef APM_HAS_QT_MULTIMEDIA
+    QCOMPARE(handlers.size(), MissionPlannerToolsMenu::Inventory().size());
+#else
+    QCOMPARE(handlers.size(), MissionPlannerToolsMenu::Inventory().size() - 1);
+#endif
 }
 
 QTEST_MAIN(MissionPlannerToolsMenuTest)
