@@ -75,6 +75,10 @@ struct ConfigRouteContext
     bool connected = false;
     bool advanced = false;
     ConfigVehicleKind vehicle = ConfigVehicleKind::Unknown;
+    // MP10's CONFIG Heli Setup is the pre-4.0 editor and is exposed only when
+    // its defining legacy parameter exists. Modern H_SW_TYPE belongs to the
+    // distinct SETUP "Heli Setup (4.0+)" workflow.
+    bool legacyHeliSetupAvailable = false;
     ConfigRouteProfileFlags profile;
 };
 

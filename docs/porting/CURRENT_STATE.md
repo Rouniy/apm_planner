@@ -17,7 +17,7 @@ minor visual matching is recorded and deferred until the useful workflows exist.
 The immediate user-directed order is:
 
 1. Keep the committed PLAN, MAVLink Inspector and Antenna Tracker foundations green.
-2. Continue the requested Settings/CONFIG stream from the completed visible-page/profile, Onboard OSD phase-one and native Planner Settings foundations; next fill the highest-value missing Planner controls and CONFIG routes without fake toggles.
+2. Continue the requested Settings/CONFIG stream from the completed visible-page/profile, Onboard OSD phase-one, native Planner Settings and legacy Heli Setup foundations; next port SETUP `Heli Setup (4.0+)` without aliasing its current parameter schema onto the legacy CONFIG page.
 3. Keep the remaining specialized `TOOLS` entries in their exact MP10 positions but disabled until each has a complete modeless workflow; no visible action may open an empty panel or silently do nothing.
 4. Retain the deferred Tracker Home/parameter work and DATA HUD audit without allowing them to displace the current Settings priority.
 5. Track functional and GUI inaccuracies separately and keep committing complete slices rather than disconnected stubs.
@@ -29,17 +29,18 @@ The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD teleme
 At this checkpoint:
 
 - CMake configure and `cmake --build build-codex-qt -j12` completed successfully; Claude's separately leased `build-claude` target also compiled and tested the NMEA sentence builder.
-- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror, NMEA Output, CoT/TAK, Device Operations, CONFIG Onboard OSD, DisplayView profiles, Planner startup UDP, the native Planner Settings page and shared CONFIG/SETUP MAVFTP: **122/122 tests**.
+- The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror, NMEA Output, CoT/TAK, Device Operations, CONFIG Onboard OSD, DisplayView profiles, Planner startup UDP, the native Planner Settings page, shared CONFIG/SETUP MAVFTP and legacy Heli Setup: **126/126 tests**.
 - Real X11 smoke verifies the exact 24-entry MP10 TOOLS order without late HIL/custom/panel actions, independent Link Statistics, Tlog Convert, MAVLink Mirror, NMEA Output, CoT/TAK and Device Operations windows from the main surface, modeless Inspector, Map Tile Cache, Plugin Manager and Log Download windows, Developer Tools navigation, and clean application exit with tool windows open. The Mirror smoke used a live UDP heartbeat source, received 64 framed bytes through TCP Host, observed Tx accounting and Listening after client disconnect, then opened a second independent window and exited with status 0. A separate write-back run sent the exact `WRITEBACK_MARKER_4096` bytes from the TCP peer through the pinned UDP vehicle link, showed Rx 21 with the checkbox enabled and exited cleanly. The NMEA smoke received 100 TCP Host sentences from a live local MAVLink source, verified the first GGA/GLL/HDG/VTG/RMC cycle and its five checksums, opened a second independent window and exited with status 0. The CoT smoke opened the enabled menu route on a live UDP vehicle, selected TCP Host, delivered the same parseable CoT 2.0 event to two simultaneous clients, opened a second independent window and exited cleanly with the first session active. The Device Operations smoke opened the 760×520 window through TOOLS, opened a second independent instance through Ctrl+J, then opened a third through SETUP → Developer Tools and exited with status 0.
 - A new real-X11 CONFIG smoke used a local UDP target with two OSD screens and nine committed parameters, clicked the production `Onboard OSD` navigation row, rendered the non-empty canvas plus ALT/BAT item editors and closed the application cleanly. Evidence is `/tmp/apm-osd-smoke.kLNaLd/osd.png` for this workspace run; reference screenshot diff and physical-vehicle writes remain.
 - A second real-X11 CONFIG smoke clicked the production `Planner` row, rendered the native scrollable Planner Settings page instead of the old generic widget, showed the Display, Speech, Flight Command Shortcuts, Waypoints / Connect, Startup UDP and Telemetry sections, scrolled successfully and exited cleanly. Evidence is `/tmp/apm-planner-settings-smoke.pSKCFA/planner-lower.png`; all nine section/order checks are also deterministic in `configplannerview_tests`.
 - A real-X11 route smoke with a connected local UDP target clicked the production `MAVFtp` row in both CONFIG and SETUP and rendered the same non-empty native tree/table/toolbar page from each shell. Evidence is `/tmp/apm-mavftp-smoke.al49Kd/config-mavftp.png` and `/tmp/apm-mavftp-smoke.al49Kd/setup-mavftp.png`; live MAVFTP-server transactions remain separate hardware/SITL evidence.
+- A real-X11 CONFIG smoke used an isolated MAVLink-v1 helicopter target on UDP 15550 with the exact legacy `H_SWASH_TYPE` capability, clicked the production `Heli Setup` row and rendered the non-empty swash/manual-control, curve and live-servo page. Evidence is `/tmp/apm-heli-smoke.vPSoO8/heli-setup.png`; the application exited cleanly, while physical legacy-heli writes remain separate evidence.
 - The DATA HUD AOA/SSA overlay no longer leaks its opaque black brush into the following speed/altitude tape outlines. Those side tapes retain the same translucent fill with AOA off or on; `hudcontrol_tests` compares the complete left tape pixel region between both render paths.
 - The recovered PLAN row actions, explicit multi-instance MAVLink Inspector lifecycle, Antenna Tracker stack and first corrected Tools-menu/window slice are verified. Any later working-tree changes must be reviewed and checkpointed as their own coherent slice.
 
 Always re-check the current Git state and test count; these numbers describe the checkpoint, not a permanent guarantee.
 
-The parity inventory currently has 128 product rows: 44 `in-progress`, 46 `partial`, 38 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
+The parity inventory currently has 127 product rows: 45 `in-progress`, 46 `partial`, 36 `not-started`, and no row is considered complete yet under the strict visual/cross-platform evidence rule. The duplicate legacy-Heli inventory row has been removed. This means a large amount of global functionality still remains; passing tests does not imply Mission Planner parity.
 
 ## Implemented foundations worth reusing
 
@@ -53,6 +54,7 @@ These are working foundations, though their parity rows may remain partial becau
 - Exact `(link, system, component)` vehicle target registry, shared link transmitter, command service, parameter service and committed parameter store.
 - Backstage SETUP/CONFIG infrastructure, the phase-one Onboard OSD layout editor and a substantial set of hardware/parameter pages listed in the parity ledger.
 - A native Planner Settings page with the exact nine-section MP10 topology, one shared application model across both entry points, live unit/profile/runtime controls, dual startup UDP policy and an explicitly bounded Legacy settings dialog.
+- A native legacy CONFIG Heli Setup page with the exact 43 logical parameter rows, swash/manual controls, MP10 curve math and live RC/servo visualization; dangerous manual writes are disarmed, confirmation-gated, exact-target and exact-batch correlated. A conservative uncertainty latch survives lost ACKs/raw echoes until an exact successful `H_SV_MAN=0` batch, with best-effort deactivation cleanup.
 - Shared trusted QML plugin engine/API (`docs/porting/QML_PLUGINS.md`); legacy binary APM Planner plugins are intentionally unsupported.
 - Mission Command List editor and catalog, exposed to PLAN and QML.
 - The MP10 Default Settings workflow: official frame catalog discovery/download/cache, compare/stage into the native raw-parameter editor, exact target-generation guards and operation-scoped cancellation.
@@ -95,11 +97,27 @@ The shared MAVFTP remote-file browser is now routed from both CONFIG and SETUP. 
 
 ## Settings/CONFIG current phase
 
-`CONFIG_SETTINGS_INVENTORY_AUDIT.md` is the count baseline. MP10 has 15 ordered
-CONFIG routes; Qt has 14 concrete factories, with only Heli Setup missing and
-Plane QP Extended Tuning still a functional mismatch. The useful
+`CONFIG_SETTINGS_INVENTORY_AUDIT.md` is the count baseline. MP10 and Qt now
+both have 15 ordered concrete CONFIG factories; Plane QP Extended Tuning is
+the remaining route-level functional mismatch. The useful
 legacy Flight Modes, tuning and GeoFence pages remain visibly classified
 instead of being deleted to improve the raw count.
+
+Legacy `Heli Setup` is exposed only with MP10's exact `H_SWASH_TYPE`
+capability. It is a dedicated non-empty native page, not Copter Basic Tuning:
+all 43 reference logical fields/aliases, CCPM/H1, six visible manual-servo
+actions, collective/acro plot, RC3/RC4 inputs, servo-output-6 cursor, three
+position readouts and manual-only range capture are present. Writes use one
+immutable exact target and finish by exact batch ID rather than an unrelated
+same-name PARAM_VALUE. Non-zero modes require disarmed state and a
+default-Cancel blade-removal confirmation; unsupported mode 5 remains visible
+but disabled. Once a manual write is submitted, neither a raw zero echo nor a
+lost ACK can clear its conservative uncertainty state; only the exact
+successful zero batch can do that. Hiding/deactivating the page attempts
+`H_SV_MAN=0`, and target or link uncertainty produces an operator-visible
+warning. Current `H_SW_TYPE`
+helicopters deliberately wait for the separate SETUP `Heli Setup (4.0+)`
+slice.
 
 Planner Settings now uses `ConfigPlannerView`, not `QGCSettingsWidget`, on the
 active CONFIG route and the standalone Settings dialog. Its exact nine
@@ -153,10 +171,10 @@ Legacy APM Planner binary plugins are not a requirement. Where MP10 calls someth
 ## Settings/CONFIG audit baseline
 
 The active Settings path is `MainWindow -> ConfigView`; the compiled
-`ApmSoftwareConfig` is not the production surface. MP10 registers 15 ordered
-CONFIG routes, while the truthful Qt shell currently registers 14 concrete
-factories. `MAVFtp` now uses the same functional native remote-file browser in
-CONFIG and SETUP; only `Heli Setup` remains absent. `Onboard OSD` now opens a
+`ApmSoftwareConfig` is not the production surface. MP10 and the truthful Qt
+shell now both register 15 ordered concrete CONFIG factories. `MAVFtp` uses
+the same functional native remote-file browser in CONFIG and SETUP, and legacy
+`Heli Setup` now opens its own parameter/live-setup page. `Onboard OSD` opens a
 dedicated, non-empty 30x16 phase-one layout
 editor rather than the unrelated legacy MinimOSD stream-rate helper. It parses
 complete EN/X/Y triplets, stages drag/toggle/coordinate edits, confirms refresh
@@ -170,8 +188,8 @@ legacy Flight Modes, GeoFence, vehicle tuning and Planner factories remain
 under their reference headers with a visible `Legacy` badge. Plane `QP Extended Tuning` is still
 absent, while the deliberately narrower GeoFence vehicle restriction composes
 with MP10's profile gate. The QtCore-only `ConfigRouteProfile` records all 15 MP10 routes in
-reference order, separates reference visibility from the 14 currently
-actionable Qt factories and tests offline/advanced, Copter, Heli, Plane/VTOL,
+reference order, separates reference visibility from vehicle/capability
+actionability and tests offline/advanced, Copter, legacy/current Heli, Plane/VTOL,
 Rover and per-feature profile gates. `ConfigView` consumes that policy instead
 of maintaining a second set of vehicle lambdas. The deterministic JSON
 `DisplayViewProfileService` supplies all 11 CONFIG and 35 SETUP flags,

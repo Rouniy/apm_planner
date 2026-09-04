@@ -797,6 +797,14 @@ set(SOURCES
     src/ui/configuration/ConfigParachuteView.h
     src/ui/configuration/ConfigParachuteViewModel.cpp
     src/ui/configuration/ConfigParachuteViewModel.h
+    src/ui/configuration/ConfigTradHeliView.cpp
+    src/ui/configuration/ConfigTradHeliView.h
+    src/ui/configuration/ConfigTradHeliViewModel.cpp
+    src/ui/configuration/ConfigTradHeliViewModel.h
+    src/ui/configuration/HeliCollectivePlot.cpp
+    src/ui/configuration/HeliCollectivePlot.h
+    src/ui/configuration/HeliVisualization.cpp
+    src/ui/configuration/HeliVisualization.h
     src/ui/configuration/ConfigGpsInjectView.cpp
     src/ui/configuration/ConfigGpsInjectView.h
     src/ui/configuration/ConfigGpsInjectViewModel.cpp
@@ -2270,6 +2278,94 @@ if(BUILD_TESTING)
     add_test(NAME configparachuteview_tests
         COMMAND configparachuteview_tests)
     set_tests_properties(configparachuteview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(helivisualization_tests
+        tests/test_helivisualization.cpp
+        src/ui/configuration/HeliVisualization.cpp
+        src/ui/configuration/HeliVisualization.h
+    )
+    target_include_directories(helivisualization_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(helivisualization_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME helivisualization_tests
+        COMMAND helivisualization_tests)
+
+    add_executable(helicollectiveplot_tests
+        tests/test_helicollectiveplot.cpp
+        src/ui/configuration/HeliCollectivePlot.cpp
+        src/ui/configuration/HeliCollectivePlot.h
+        src/ui/configuration/HeliVisualization.cpp
+        src/ui/configuration/HeliVisualization.h
+    )
+    target_include_directories(helicollectiveplot_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(helicollectiveplot_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME helicollectiveplot_tests
+        COMMAND helicollectiveplot_tests)
+    set_tests_properties(helicollectiveplot_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configtradheliviewmodel_tests
+        tests/test_configtradheliviewmodel.cpp
+        src/ui/configuration/ConfigTradHeliViewModel.cpp
+        src/ui/configuration/ConfigTradHeliViewModel.h
+        src/ui/configuration/HeliVisualization.cpp
+        src/ui/configuration/HeliVisualization.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configtradheliviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configtradheliviewmodel_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configtradheliviewmodel_tests
+        COMMAND configtradheliviewmodel_tests)
+
+    add_executable(configtradheliview_tests
+        tests/test_configtradheliview.cpp
+        src/ui/configuration/ConfigTradHeliView.cpp
+        src/ui/configuration/ConfigTradHeliView.h
+        src/ui/configuration/ConfigTradHeliViewModel.cpp
+        src/ui/configuration/ConfigTradHeliViewModel.h
+        src/ui/configuration/HeliCollectivePlot.cpp
+        src/ui/configuration/HeliCollectivePlot.h
+        src/ui/configuration/HeliVisualization.cpp
+        src/ui/configuration/HeliVisualization.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configtradheliview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configtradheliview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configtradheliview_tests
+        COMMAND configtradheliview_tests)
+    set_tests_properties(configtradheliview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

@@ -30,6 +30,8 @@ ConfigRouteContext connectedContext(ConfigVehicleKind vehicle,
     context.connected = true;
     context.advanced = advanced;
     context.vehicle = vehicle;
+    context.legacyHeliSetupAvailable =
+        vehicle == ConfigVehicleKind::Helicopter;
     return context;
 }
 }
@@ -44,6 +46,7 @@ private slots:
     void offlineAndAdvancedGatesMatchReference();
     void copterRoutesSeparateReferenceFromCurrentQt();
     void helicopterDoesNotReceiveCopterBasicTuning();
+    void modernHelicopterDoesNotReceiveLegacyConfigEditor();
     void planeUsesQpLabelAndRejectsLegacyExtendedPage();
     void roverUsesOnlyItsCurrentTuningPage();
 };
@@ -99,6 +102,7 @@ void ConfigRouteProfileTest::inventoryMatchesMissionPlanner10()
         QStringLiteral("ConfigFriendlyParamsAdvView"),
         QStringLiteral("ConfigAC_FenceView"),
         QStringLiteral("ConfigBasicTuningView"),
+        QStringLiteral("ConfigTradHeliView"),
         QStringLiteral("ConfigArduplaneView"),
         QStringLiteral("ConfigArduroverView"),
         QStringLiteral("ConfigExtendedTuningView"),
@@ -109,7 +113,7 @@ void ConfigRouteProfileTest::inventoryMatchesMissionPlanner10()
         QStringLiteral("ConfigPlannerView"),
         QStringLiteral("ConfigPlannerAdvView")
     }));
-    QCOMPARE(factoryPageIds(inventory).size(), 14);
+    QCOMPARE(factoryPageIds(inventory).size(), 15);
     QCOMPARE(ConfigRouteProfile::currentFactoryPageIds(),
              factoryPageIds(inventory));
 
@@ -240,6 +244,7 @@ void ConfigRouteProfileTest::helicopterDoesNotReceiveCopterBasicTuning()
         QStringLiteral("ConfigFlightModesView"),
         QStringLiteral("ConfigFriendlyParamsView"),
         QStringLiteral("ConfigAC_FenceView"),
+        QStringLiteral("ConfigTradHeliView"),
         QStringLiteral("ConfigExtendedTuningView"),
         QStringLiteral("ConfigOSDView"),
         QStringLiteral("MavFTPUIView"),
@@ -247,6 +252,19 @@ void ConfigRouteProfileTest::helicopterDoesNotReceiveCopterBasicTuning()
         QStringLiteral("RawParamsView"),
         QStringLiteral("ConfigPlannerView")
     }));
+}
+
+void ConfigRouteProfileTest::modernHelicopterDoesNotReceiveLegacyConfigEditor()
+{
+    ConfigRouteContext context = connectedContext(
+        ConfigVehicleKind::Helicopter);
+    context.legacyHeliSetupAvailable = false;
+    QVERIFY(!ConfigRouteProfile::isReferenceVisible(
+        ConfigRouteId::HeliSetup, context));
+    QVERIFY(!ConfigRouteProfile::isActionable(
+        ConfigRouteId::HeliSetup, context));
+    QVERIFY(!ConfigRouteProfile::actionablePageIds(context).contains(
+        QStringLiteral("ConfigTradHeliView")));
 }
 
 void ConfigRouteProfileTest::planeUsesQpLabelAndRejectsLegacyExtendedPage()

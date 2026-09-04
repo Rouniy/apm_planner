@@ -40,6 +40,13 @@ bool referenceVehicleAllows(ConfigRouteId route, ConfigVehicleKind vehicle)
     }
 }
 
+bool referenceCapabilityAllows(ConfigRouteId route,
+                               const ConfigRouteContext &context)
+{
+    return route != ConfigRouteId::HeliSetup
+        || context.legacyHeliSetupAvailable;
+}
+
 bool currentFactoryAllows(ConfigRouteId route, ConfigVehicleKind vehicle)
 {
     switch (route) {
@@ -60,8 +67,6 @@ bool currentFactoryAllows(ConfigRouteId route, ConfigVehicleKind vehicle)
         // including traditional helicopters. It is not MP10's Plane QP page.
         return vehicle == ConfigVehicleKind::Copter
             || vehicle == ConfigVehicleKind::Helicopter;
-    case ConfigRouteId::HeliSetup:
-        return false;
     default:
         return true;
     }
@@ -169,7 +174,7 @@ QList<ConfigRouteDefinition> ConfigRouteProfile::inventory()
          ConfigProfileFlag::BasicTuning, true, false, false, true},
         {ConfigRouteId::HeliSetup,
          QStringLiteral("ConfigTradHeliView"), routeText("Heli Setup"),
-         ConfigProfileFlag::BasicTuning, true, false, false, false},
+         ConfigProfileFlag::BasicTuning, true, false, false, true},
         {ConfigRouteId::PlaneTuning,
          QStringLiteral("ConfigArduplaneView"),
          routeText("Basic Tuning (Plane)"), ConfigProfileFlag::BasicTuning,
@@ -230,7 +235,8 @@ bool ConfigRouteProfile::isReferenceVisible(
 {
     const ConfigRouteDefinition routeDefinition = definition(route);
     return shellAllows(routeDefinition, context)
-        && referenceVehicleAllows(route, context.vehicle);
+        && referenceVehicleAllows(route, context.vehicle)
+        && referenceCapabilityAllows(route, context);
 }
 
 bool ConfigRouteProfile::isActionable(ConfigRouteId route,
@@ -239,7 +245,8 @@ bool ConfigRouteProfile::isActionable(ConfigRouteId route,
     const ConfigRouteDefinition routeDefinition = definition(route);
     return routeDefinition.currentQtFactory
         && shellAllows(routeDefinition, context)
-        && currentFactoryAllows(route, context.vehicle);
+        && currentFactoryAllows(route, context.vehicle)
+        && referenceCapabilityAllows(route, context);
 }
 
 QList<ConfigRouteId> ConfigRouteProfile::referenceVisibleRoutes(

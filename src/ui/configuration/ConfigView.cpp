@@ -9,6 +9,7 @@
 #include "ConfigPlannerView.h"
 #include "ConfigPlannerViewIntegration.h"
 #include "ConfigPlannerAdvView.h"
+#include "ConfigTradHeliView.h"
 #include "ConfigFriendlyParamsView.h"
 #include "ConfigOSDView.h"
 #include "ConfigRawParams.h"
@@ -48,6 +49,7 @@ const QString kStandardParams = QStringLiteral("ConfigFriendlyParamsView");
 const QString kAdvancedParams = QStringLiteral("ConfigFriendlyParamsAdvView");
 const QString kGeoFence = QStringLiteral("ConfigAC_FenceView");
 const QString kBasicTuning = QStringLiteral("ConfigBasicTuningView");
+const QString kHeliSetup = QStringLiteral("ConfigTradHeliView");
 const QString kPlaneTuning = QStringLiteral("ConfigArduplaneView");
 const QString kRoverTuning = QStringLiteral("ConfigArduroverView");
 const QString kExtendedTuning = QStringLiteral("ConfigExtendedTuningView");
@@ -157,7 +159,16 @@ ConfigView::ConfigView(QWidget *parent)
     m_backstage->restoreInitialPage(m_preferredPageHeader);
 }
 
-ConfigView::~ConfigView() = default;
+ConfigView::~ConfigView()
+{
+    // Deactivate the safety-sensitive page while ConfigView's target/member
+    // guards are still alive. The child destructor itself never emits writes.
+    if (auto *page = qobject_cast<ConfigTradHeliView *>(
+            m_backstage->page(kHeliSetup))) {
+        page->setActive(false);
+        disconnect(page, nullptr, nullptr, nullptr);
+    }
+}
 
 void ConfigView::buildPages()
 {
@@ -204,8 +215,15 @@ void ConfigView::buildPages()
     m_backstage->addPage(legacy(makeBackstagePage<BasicPidConfig>(
         kBasicTuning, tr("Basic Tuning"),
         routeVisible(ConfigRouteId::BasicTuning))));
-    // MP10's Heli Setup route remains intentionally absent until its distinct
-    // editor is ported; never substitute the Copter tuning widget for it.
+    BackstagePage heliSetup;
+    heliSetup.id = kHeliSetup;
+    heliSetup.header = tr("Heli Setup");
+    heliSetup.requiresConnection = true;
+    heliSetup.visibleWhen = routeVisible(ConfigRouteId::HeliSetup);
+    heliSetup.factory = [this](QWidget *parent) {
+        return createHeliSetupPage(parent);
+    };
+    m_backstage->addPage(heliSetup);
     m_backstage->addPage(legacy(makeBackstagePage<ArduPlanePidConfig>(
         kPlaneTuning, tr("Basic Tuning (Plane)"),
         routeVisible(ConfigRouteId::PlaneTuning))));
@@ -634,7 +652,8 @@ void ConfigView::bindParameterManager(QGCUASParamManager *manager)
             this, [this](int component, const QString &name,
                          const QVariant &) {
         if (component == MAV_COMP_ID_AUTOPILOT1
-            && name == QStringLiteral("H_SWASH_TYPE")) {
+            && (name == QStringLiteral("H_SWASH_TYPE")
+                || name == QStringLiteral("H_SW_TYPE"))) {
             refreshPageVisibility();
         }
     });
@@ -671,6 +690,18 @@ void ConfigView::resetVehiclePages(bool targetChanged)
 
 void ConfigView::parameterTargetChanged()
 {
+    if (auto *page = qobject_cast<ConfigTradHeliView *>(
+            m_backstage->page(kHeliSetup));
+        page && page->viewModel()->ManualOverrideMayBeActive()) {
+        const QString warning = tr(
+            "The vehicle target changed while a manual helicopter servo "
+            "override could still be active. Verify H_SV_MAN is disabled "
+            "on the previous vehicle before flight.");
+        QLOG_WARN() << warning;
+        QTimer::singleShot(0, this, [this, warning]() {
+            QMessageBox::warning(this, tr("Heli Setup safety"), warning);
+        });
+    }
     const QString currentPage = m_backstage->currentPageId();
     if (!currentPage.isEmpty()) {
         m_targetPageToRestore = currentPage;
@@ -842,6 +873,233 @@ QWidget *ConfigView::createFriendlyParamsPage(bool advanced, QWidget *parent)
                     MAV_COMP_ID_AUTOPILOT1);
             }
         });
+    }
+    return page;
+}
+
+QWidget *ConfigView::createHeliSetupPage(QWidget *parent)
+{
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+    const ParameterMetaDataCatalog catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    const bool enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    const VehicleTargetLease expectedTarget = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const int expectedComponent = expectedTarget.isValid()
+        ? expectedTarget.endpoint.componentId : MAV_COMP_ID_AUTOPILOT1;
+    const QPointer<UASInterface> expectedUas(m_uas);
+    const QPointer<QGCUASParamManager> expectedManager(m_parameterManager);
+    const QPointer<LinkInterface> expectedLink(
+        expectedTarget.isValid() && links
+            ? links->getLink(expectedTarget.endpoint.linkId) : nullptr);
+
+    auto *page = new ConfigTradHeliView(parent);
+    page->setObjectName(kHeliSetup);
+    page->setCatalog(catalog, enforceMetadataRanges);
+    page->setParameterSnapshot(
+        parameterSnapshot(expectedComponent), expectedComponent);
+    page->setArmed(expectedUas && expectedUas->isArmed());
+
+    const auto targetIsCurrent =
+        [this, targets, expectedTarget, expectedUas,
+         expectedManager, expectedLink]() {
+        return expectedTarget.isValid() && targets && expectedUas
+            && expectedManager && expectedLink
+            && m_uas == expectedUas
+            && m_parameterManager == expectedManager
+            && expectedUas->getUASID()
+                == expectedTarget.endpoint.systemId
+            && targets->isCurrentTarget(
+                expectedTarget.endpoint.linkId,
+                expectedTarget.endpoint.systemId,
+                expectedTarget.endpoint.componentId,
+                expectedTarget.generation);
+    };
+    const auto syncConnected =
+        [page, targetIsCurrent, expectedLink]() {
+        page->setConnected(
+            targetIsCurrent() && expectedLink
+            && expectedLink->isConnected());
+    };
+    syncConnected();
+
+    if (expectedLink) {
+        connect(expectedLink,
+                QOverload<bool>::of(&LinkInterface::connected),
+                page, [syncConnected](bool) { syncConnected(); });
+    }
+    connect(m_backstage, &BackstageView::pageActivated,
+            page, [page](const QString &id, QWidget *) {
+        if (id == kHeliSetup) {
+            page->setActive(true);
+        }
+    });
+    connect(m_backstage, &BackstageView::pageDeactivated,
+            page, [page](const QString &id, QWidget *) {
+        if (id == kHeliSetup) {
+            page->setActive(false);
+        }
+    });
+
+    connect(page, &ConfigTradHeliView::refreshRequested,
+            page,
+            [this, page, targetIsCurrent, expectedManager,
+             expectedComponent](int componentId) {
+        if (!targetIsCurrent() || !expectedManager
+            || componentId != expectedComponent) {
+            page->refreshFailed(
+                tr("not connected to the selected target"));
+            return;
+        }
+        if (m_uas && m_uas->isArmed()
+            && QMessageBox::question(
+                   this, tr("Refresh Params"),
+                   tr("The vehicle is armed. Refreshing the complete parameter "
+                      "list can consume telemetry bandwidth. Continue?"),
+                   QMessageBox::Yes | QMessageBox::No,
+                   QMessageBox::No) != QMessageBox::Yes) {
+            page->refreshCanceled();
+            return;
+        }
+        if (expectedManager->parameterListInProgress()) {
+            page->refreshFailed(
+                tr("parameter refresh already in progress"));
+            return;
+        }
+        expectedManager->requestParameterList();
+    });
+
+    connect(page, &ConfigTradHeliView::writeRequested,
+            page,
+            [this, page, targetIsCurrent, expectedManager, expectedLink,
+             expectedComponent](quint64 requestId, int componentId,
+                                const QString &name,
+                                const QVariant &value) {
+        const bool safetyDisable =
+            name.compare(QStringLiteral("H_SV_MAN"),
+                         Qt::CaseInsensitive) == 0
+            && value.toDouble() == 0.0;
+        if (!targetIsCurrent() || !expectedManager || !expectedLink
+            || !expectedLink->isConnected()
+            || componentId != expectedComponent) {
+            page->parameterWriteSubmissionFailed(
+                requestId,
+                tr("not connected to the selected target"));
+            return;
+        }
+        if (m_uas && m_uas->isArmed() && !safetyDisable) {
+            page->parameterWriteSubmissionFailed(
+                requestId, tr("vehicle armed"));
+            return;
+        }
+        if (!expectedManager->getParameterNames(componentId)
+                 .contains(name)) {
+            page->parameterWriteSubmissionFailed(
+                requestId, tr("parameter unavailable"));
+            return;
+        }
+        const QVariantList changes{QVariantMap{
+            {QStringLiteral("name"), name},
+            {QStringLiteral("value"), value}
+        }};
+        // Heli setup requires an observable vehicle echo even when a safety
+        // disable supersedes an unacknowledged enable and the committed cache
+        // still contains zero.
+        const qulonglong batchId = expectedManager->writeParameters(
+            componentId, changes, true);
+        if (batchId == 0) {
+            page->parameterWriteSubmissionFailed(
+                requestId,
+                tr("write was rejected for the selected target"));
+            return;
+        }
+        page->parameterWriteSubmitted(requestId, batchId);
+    });
+
+    connect(page, &ConfigTradHeliView::safetyWarning,
+            this, [this](const QString &warning) {
+        QLOG_WARN() << warning;
+        QTimer::singleShot(0, this, [this, warning]() {
+            QMessageBox::warning(this, tr("Heli Setup safety"), warning);
+        });
+    });
+
+    if (expectedUas) {
+        connect(expectedUas,
+                QOverload<bool>::of(&UASInterface::armingChanged),
+                page, &ConfigTradHeliView::setArmed);
+        connect(expectedUas, &UASInterface::remoteControlChannelRawChanged,
+                page,
+                &ConfigTradHeliView::remoteControlChannelRawChanged);
+        connect(expectedUas, &UASInterface::servoOutputChanged,
+                page, &ConfigTradHeliView::servoOutputChanged);
+    }
+    if (expectedManager) {
+        connect(expectedManager,
+                QOverload<int, QString, QVariant>::of(
+                    &QGCUASParamManager::parameterChanged),
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    int componentId, const QString &name,
+                    const QVariant &value) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterChanged(componentId, name, value);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteFailed,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong batchId, int componentId,
+                    const QString &name, int, const QString &reason) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterWriteFailed(
+                    batchId, componentId, name, reason);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterWriteCancelled,
+                page,
+                [page, targetIsCurrent, expectedComponent](
+                    qulonglong, qulonglong batchId, int componentId,
+                    const QString &name) {
+            if (targetIsCurrent() && componentId == expectedComponent) {
+                page->parameterWriteFailed(
+                    batchId, componentId, name, tr("write cancelled"));
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterBatchCompleted,
+                page,
+                [page](qulonglong batchId, int succeeded, int failed) {
+            page->parameterBatchCompleted(batchId, succeeded, failed);
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListReadyChanged,
+                page,
+                [this, page, targetIsCurrent, expectedManager,
+                 expectedComponent](bool ready) {
+            if (ready && targetIsCurrent() && expectedManager
+                && !page->viewModel()->HasPendingWrites()) {
+                page->setParameterSnapshot(
+                    parameterSnapshot(expectedComponent),
+                    expectedComponent);
+            }
+        });
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListLoadFailed,
+                page, &ConfigTradHeliView::refreshFailed);
+        connect(expectedManager,
+                &QGCUASParamManager::parameterListLoadCanceled,
+                page, &ConfigTradHeliView::refreshCanceled);
     }
     return page;
 }
@@ -1248,9 +1506,21 @@ bool ConfigView::isHelicopterProfile() const
     }
     QVariant ignored;
     return m_parameterManager
+        && (m_parameterManager->getParameterValue(
+                MAV_COMP_ID_AUTOPILOT1,
+                QStringLiteral("H_SWASH_TYPE"), ignored)
+            || m_parameterManager->getParameterValue(
+                MAV_COMP_ID_AUTOPILOT1,
+                QStringLiteral("H_SW_TYPE"), ignored));
+}
+
+bool ConfigView::hasLegacyHeliSetup() const
+{
+    QVariant ignored;
+    return m_parameterManager
         && m_parameterManager->getParameterValue(
-               MAV_COMP_ID_AUTOPILOT1,
-               QStringLiteral("H_SWASH_TYPE"), ignored);
+            MAV_COMP_ID_AUTOPILOT1,
+            QStringLiteral("H_SWASH_TYPE"), ignored);
 }
 
 ConfigRouteContext ConfigView::routeContext() const
@@ -1272,6 +1542,7 @@ ConfigRouteContext ConfigView::routeContext() const
     context.profile.userParams = displayFlags.displayUserParam;
     context.profile.fullParameterList = displayFlags.displayFullParamList;
     context.profile.plannerSettings = displayFlags.displayPlannerSettings;
+    context.legacyHeliSetupAvailable = hasLegacyHeliSetup();
     const ParameterFirmwareFamily family = parameterFirmwareFamily();
     switch (family) {
     case ParameterFirmwareFamily::ArduCopter:

@@ -64,6 +64,7 @@ private:
     void resetParameterProgress();
     void restorePreferredPage();
     QWidget *createFriendlyParamsPage(bool advanced, QWidget *parent);
+    QWidget *createHeliSetupPage(QWidget *parent);
     QWidget *createOsdPage(QWidget *parent);
     QWidget *createUserDefinedPage(QWidget *parent);
     QWidget *createRawParamsPage(QWidget *parent);
@@ -71,6 +72,7 @@ private:
     ParameterFirmwareFamily parameterFirmwareFamily() const;
     ConfigRouteContext routeContext() const;
     bool isHelicopterProfile() const;
+    bool hasLegacyHeliSetup() const;
     bool hasConnectedLink() const;
     bool currentPageAllowsPartialParameters() const;
 

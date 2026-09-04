@@ -10,8 +10,8 @@ not support classes or controls that are merely present in source files.
 ## CONFIG route count
 
 Mission Planner 10 registers 15 ordered CONFIG routes. Qt models all 15 in
-`ConfigRouteProfile`, but deliberately registers only the 14 routes that have
-concrete factories. There are no null factories in the active Qt navigation.
+`ConfigRouteProfile` and now registers all 15 as concrete factories. There are
+no null factories in the active Qt navigation.
 
 | # | Mission Planner 10 route | Qt status |
 |---:|---|---|
@@ -20,7 +20,7 @@ concrete factories. There are no null factories in the active Qt navigation.
 | 3 | Advanced Params | Native metadata-backed page; partial |
 | 4 | GeoFence | Useful legacy Copter page retained; partial |
 | 5 | Basic Tuning | Useful legacy Copter page retained; partial |
-| 6 | Heli Setup | Missing; no misleading Copter substitute |
+| 6 | Heli Setup | Native legacy-heli editor; in progress |
 | 7 | Basic Tuning (Plane) | Useful legacy Plane page retained; partial |
 | 8 | Basic Tuning (Rover) | Useful legacy Rover page retained; partial |
 | 9 | Extended / QP Extended Tuning | Legacy Copter editor retained; Plane QP workflow missing |
@@ -31,11 +31,24 @@ concrete factories. There are no null factories in the active Qt navigation.
 | 14 | Planner | Native nine-section page; partial |
 | 15 | Planner (Advanced) | Native read-only settings snapshot; in progress |
 
-The raw factory gap is therefore one route: `Heli Setup`.
-Plane `QP Extended Tuning` is a second functional mismatch even though the Qt
-route count is occupied by a useful Copter-only legacy editor. Existing APM
+There is no longer a raw CONFIG factory gap. Plane `QP Extended Tuning` remains
+the one functional route mismatch because the Qt route is occupied by a useful
+Copter-only legacy editor. Existing APM
 Planner pages remain only where they provide a non-empty same-domain workflow;
 their Legacy/partial classification is not a parity claim.
+
+The legacy `Heli Setup` route is capability-gated by the exact MP10
+`H_SWASH_TYPE` marker; current `H_SW_TYPE` vehicles belong to the separate
+SETUP `Heli Setup (4.0+)` page and are never collapsed into the binary CCPM/H1
+editor. The native page has the exact 43 logical parameter rows and aliases,
+the six visible manual-servo commands, swash controls, collective/acro plot,
+RC3/RC4 input, servo-output-6 cursor and observed ranges. Writes are disarmed,
+exact-target and terminal-batch correlated. Non-zero manual modes require a
+default-Cancel blade-removal confirmation, mode 5 stays disabled unless
+firmware metadata declares it, and leaving the page makes a best-effort
+`H_SV_MAN=0` request. Lost ACKs and raw parameter echoes cannot clear the
+conservative manual-override latch; only an exact successful zero batch can.
+Link/target uncertainty remains an operator-visible warning.
 
 ## Planner Settings section and control count
 
