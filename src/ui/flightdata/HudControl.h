@@ -2,6 +2,7 @@
 #define HUDCONTROL_H
 
 #include <QImage>
+#include <QPointer>
 #include <QRectF>
 #include <QString>
 #include <QWidget>
@@ -10,6 +11,7 @@ class QContextMenuEvent;
 class QPainter;
 class QTimer;
 class QMouseEvent;
+class HudDisplaySettings;
 
 class HudControl final : public QWidget
 {
@@ -73,7 +75,8 @@ class HudControl final : public QWidget
 #undef HUD_PROPERTY
 
 public:
-    explicit HudControl(QWidget *parent = nullptr);
+    explicit HudControl(QWidget *parent = nullptr,
+                        HudDisplaySettings *displaySettings = nullptr);
 
     double roll() const { return m_roll; }
     double pitch() const { return m_pitch; }
@@ -201,6 +204,7 @@ protected:
 
 private slots:
     void stepEase();
+    void applyOverlayEnabled(bool enabled);
 
 private:
     void changed();
@@ -282,6 +286,7 @@ private:
     double m_easedVerticalSpeed = 0.0;
     bool m_easeInitialized = false;
     QTimer *m_easeTimer = nullptr;
+    QPointer<HudDisplaySettings> m_displaySettings;
     QRectF m_ekfRect;
     QRectF m_vibeRect;
     QRectF m_prearmRect;

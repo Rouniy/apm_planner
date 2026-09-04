@@ -89,6 +89,15 @@ bool QtAudioOutput::speak(const QString &text)
 #endif
 }
 
+void QtAudioOutput::stopSpeech()
+{
+#ifdef APM_HAS_QT_TEXT_TO_SPEECH
+    if (m_speech) {
+        m_speech->stop();
+    }
+#endif
+}
+
 bool QtAudioOutput::isSpeechReady() const
 {
 #ifdef APM_HAS_QT_TEXT_TO_SPEECH

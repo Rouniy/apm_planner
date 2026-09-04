@@ -364,8 +364,10 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 - Fence configuration и live status.
 - Planner settings: нативная страница уже воспроизводит все девять секций,
   общий DisplayView profile и restart-scoped dual Startup UDP listeners;
-  точный аудит насчитывает 64 MP10 controls. Далее — language/speed/HUD,
-  полноценные speech/shortcuts, target-safe telemetry/identity и map overlays.
+  точный аудит насчитывает 64 MP10 controls, из них 12 уже имеют рабочие
+  нативные эквиваленты после live HUD Overlay и Speech master/Test slice.
+  Далее — language/speed/severity, speech event policies/vario/shortcuts,
+  target-safe telemetry/identity и map overlays.
 - Planner Advanced и User Defined — завершить screenshots/native evidence.
 - Param Compare — полный merge/diff/apply workflow.
 - CONFIG Onboard OSD — Wave 2.

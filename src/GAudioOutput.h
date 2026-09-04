@@ -6,6 +6,7 @@
 
 class QTimer;
 class QtAudioOutput;
+class SpeechSettings;
 
 class GAudioOutput : public QObject
 {
@@ -20,6 +21,7 @@ public:
     } QGVoice;
 
     bool isMuted() const;
+    bool isSpeechEnabled() const;
     bool isSpeechReady() const;
 
 public slots:
@@ -33,9 +35,11 @@ public slots:
     void notifyPositive();
     void notifyNegative();
     void mute(bool mute);
+    void setSpeechEnabled(bool enabled);
 
 signals:
     void mutedChanged(bool muted);
+    void speechEnabledChanged(bool enabled);
 
 private:
     explicit GAudioOutput(QObject *parent = nullptr);
@@ -46,6 +50,7 @@ private:
     QTimer *emergencyTimer = nullptr;
     bool muted = false;
     QtAudioOutput *audioBackend = nullptr;
+    SpeechSettings *speechSettings = nullptr;
 };
 
 #endif

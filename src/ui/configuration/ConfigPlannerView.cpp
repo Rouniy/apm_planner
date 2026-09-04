@@ -77,8 +77,11 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     m_layoutStatus->setObjectName(QStringLiteral("DisplayLayoutStatus"));
     m_layoutStatus->setWordWrap(true);
     displayForm->addRow(m_layoutStatus);
+    m_hudOverlay = new QCheckBox(tr("Enable HUD Overlay"), display);
+    m_hudOverlay->setObjectName(QStringLiteral("CHK_hudshow"));
+    displayForm->addRow(tr("HUD / OSD"), m_hudOverlay);
     auto *displayMissing = new QLabel(
-        tr("UI language, speed units, HUD/OSD and message severity do not "
+        tr("UI language, speed units, OSD color and message severity do not "
            "yet have complete Qt consumers."), display);
     displayMissing->setObjectName(QStringLiteral("DisplayPendingNote"));
     displayMissing->setProperty("portingUnavailable", true);
@@ -88,14 +91,31 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     QGroupBox *speech = addSection(
         root, 1, QStringLiteral("PlannerSpeechSection"));
     auto *speechLayout = new QVBoxLayout(speech);
+    auto *speechControls = new QWidget(speech);
+    auto *speechControlsLayout = new QHBoxLayout(speechControls);
+    speechControlsLayout->setContentsMargins(0, 0, 0, 0);
+    m_speechEnabled = new QCheckBox(tr("Enable Speech"), speechControls);
+    m_speechEnabled->setObjectName(QStringLiteral("CHK_speechenable"));
+    speechControlsLayout->addWidget(m_speechEnabled);
+    m_speechTest = new QPushButton(tr("Test Speech"), speechControls);
+    m_speechTest->setObjectName(QStringLiteral("SpeechTest"));
+    speechControlsLayout->addWidget(m_speechTest);
+    speechControlsLayout->addStretch(1);
+    speechLayout->addWidget(speechControls);
+    m_speechBackendStatus = new QLabel(speech);
+    m_speechBackendStatus->setObjectName(
+        QStringLiteral("SpeechBackendStatus"));
+    m_speechBackendStatus->setWordWrap(true);
+    speechLayout->addWidget(m_speechBackendStatus);
     m_audioMute = new QCheckBox(
         tr("Mute all audio output (useful legacy Qt control)"), speech);
     m_audioMute->setObjectName(QStringLiteral("CHK_audioMute"));
     speechLayout->addWidget(m_audioMute);
     addUnavailableNote(
         speechLayout,
-        tr("MP10 speech levels, templates, Test Speech and Vario remain "
-           "unavailable until their complete audio consumers are ported."),
+        tr("Enable Speech controls all current Qt vehicle announcements. "
+           "MP10 speech levels, per-event switches/templates, Armed Only and "
+           "Vario remain unavailable until their complete consumers are ported."),
         QStringLiteral("SpeechPendingNote"));
 
     QGroupBox *shortcuts = addSection(
@@ -282,6 +302,23 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
             m_layoutStatus->setText(m_viewModel->lastError());
         }
     });
+    connect(m_hudOverlay, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (!m_viewModel->setHudOverlayEnabled(enabled)) {
+            syncFromModel();
+        }
+    });
+    connect(m_speechEnabled, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+        if (!m_viewModel) return;
+        if (!m_viewModel->setSpeechEnabled(enabled)) {
+            syncFromModel();
+            m_speechBackendStatus->setText(m_viewModel->lastError());
+        }
+    });
+    connect(m_speechTest, &QPushButton::clicked,
+            this, &ConfigPlannerView::speechTestRequested);
     connect(m_startupUdpEnabled, &QCheckBox::toggled,
             this, &ConfigPlannerView::saveStartupUdpOptions);
     connect(m_startupUdpPrimary,
@@ -384,6 +421,14 @@ void ConfigPlannerView::syncFromModel()
         const QSignalBlocker blocker(m_betaUpdates);
         m_betaUpdates->setChecked(m_viewModel->betaUpdatesEnabled());
     }
+    {
+        const QSignalBlocker blocker(m_hudOverlay);
+        m_hudOverlay->setChecked(m_viewModel->hudOverlayEnabled());
+    }
+    {
+        const QSignalBlocker blocker(m_speechEnabled);
+        m_speechEnabled->setChecked(m_viewModel->speechEnabled());
+    }
 }
 
 void ConfigPlannerView::saveStartupUdpOptions()
@@ -459,6 +504,11 @@ void ConfigPlannerView::setLogDirectories(
 {
     m_dataFlashLogDirectory->setText(dataFlashDirectory);
     m_tlogDirectory->setText(tlogDirectory);
+}
+
+void ConfigPlannerView::setSpeechBackendStatus(const QString &status)
+{
+    m_speechBackendStatus->setText(status);
 }
 
 void ConfigPlannerView::chooseDataFlashLogDirectory()

@@ -1,8 +1,11 @@
 #include "HudControl.h"
+#include "services/HudDisplaySettings.h"
 
 #include <QImage>
 #include <QMetaObject>
 #include <QPainter>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QtTest/QTest>
 #include <QtTest/QSignalSpy>
 
@@ -25,12 +28,79 @@ class HudControlTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void displaySettingsDefaultWithoutConstructorWrite();
+    void displaySettingsPersistAndReloadActualChanges();
+    void sharesInjectedOverlaySettingsLive();
     void exposesMissionPlannerTelemetryProperties();
     void acceptsACompleteTelemetrySnapshot();
     void rendersAttitudeAndInstruments();
     void aoaDoesNotDarkenTranslucentSideTapes();
     void preservesSelectableAspectRatio();
 };
+
+void HudControlTest::displaySettingsDefaultWithoutConstructorWrite()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QSettings settings(temporary.filePath(QStringLiteral("hud.ini")),
+                       QSettings::IniFormat);
+    settings.setValue(QStringLiteral("FlightData/Hud/OverlayEnabled"), false);
+    const QStringList keysBeforeConstruction = settings.allKeys();
+
+    HudDisplaySettings displaySettings(&settings);
+
+    QVERIFY(displaySettings.overlayEnabled());
+    QVERIFY(!settings.contains(QStringLiteral("CHK_hudshow")));
+    QCOMPARE(settings.allKeys(), keysBeforeConstruction);
+}
+
+void HudControlTest::displaySettingsPersistAndReloadActualChanges()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QSettings settings(temporary.filePath(QStringLiteral("hud.ini")),
+                       QSettings::IniFormat);
+    HudDisplaySettings displaySettings(&settings);
+    QSignalSpy changed(&displaySettings,
+                       &HudDisplaySettings::overlayEnabledChanged);
+
+    displaySettings.setOverlayEnabled(false);
+    QCOMPARE(settings.value(QStringLiteral("CHK_hudshow")).toBool(), false);
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(changed.at(0).at(0).toBool(), false);
+
+    displaySettings.setOverlayEnabled(false);
+    displaySettings.reload();
+    QCOMPARE(changed.count(), 1);
+
+    settings.setValue(QStringLiteral("CHK_hudshow"), true);
+    displaySettings.reload();
+    QVERIFY(displaySettings.overlayEnabled());
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(changed.at(1).at(0).toBool(), true);
+}
+
+void HudControlTest::sharesInjectedOverlaySettingsLive()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QSettings settings(temporary.filePath(QStringLiteral("hud.ini")),
+                       QSettings::IniFormat);
+    settings.setValue(QStringLiteral("CHK_hudshow"), false);
+    HudDisplaySettings displaySettings(&settings);
+    HudControl hud(nullptr, &displaySettings);
+    QSignalSpy changed(&hud, &HudControl::telemetryChanged);
+
+    QVERIFY(!hud.overlayEnabled());
+    displaySettings.setOverlayEnabled(true);
+    QVERIFY(hud.overlayEnabled());
+    QCOMPARE(changed.count(), 1);
+
+    hud.setOverlayEnabled(false);
+    QVERIFY(!displaySettings.overlayEnabled());
+    QCOMPARE(settings.value(QStringLiteral("CHK_hudshow")).toBool(), false);
+    QCOMPARE(changed.count(), 2);
+}
 
 void HudControlTest::exposesMissionPlannerTelemetryProperties()
 {

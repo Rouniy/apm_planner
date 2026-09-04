@@ -38,6 +38,7 @@ private slots:
     void constructionDoesNotPersistDefaults();
     void defaultViewsShareApplicationModel();
     void modelPersistsOwnedSettingsAndEmitsLiveUnitRequests();
+    void hudAndSpeechControlsPersistAndSynchronize();
     void viewSynchronizesProfilesStartupAndRuntimeState();
     void mapAndLegacyRequestsStayOutsideTheView();
 
@@ -149,6 +150,8 @@ void ConfigPlannerViewTest::constructionDoesNotPersistDefaults()
     QCOMPARE(model.startupUdpOptions().orderedPorts(),
              QList<int>({14550, 14551}));
     QVERIFY(!model.betaUpdatesEnabled());
+    QVERIFY(model.hudOverlayEnabled());
+    QVERIFY(!model.speechEnabled());
 }
 
 void ConfigPlannerViewTest::modelPersistsOwnedSettingsAndEmitsLiveUnitRequests()
@@ -234,6 +237,69 @@ void ConfigPlannerViewTest::viewSynchronizesProfilesStartupAndRuntimeState()
     QCOMPARE(heartbeat.count(), 0);
     QCOMPARE(logging.count(), 0);
     QCOMPARE(proxy.count(), 0);
+}
+
+void ConfigPlannerViewTest::hudAndSpeechControlsPersistAndSynchronize()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
+                       QSettings::IniFormat);
+    DisplayViewProfileService profiles(
+        &settings, directory.filePath(QStringLiteral("custom.displayview")));
+    ConfigPlannerViewModel model(&settings, &profiles);
+    ConfigPlannerView first(&model);
+    ConfigPlannerView second(&model);
+
+    auto *firstHud = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_hudshow"));
+    auto *secondHud = second.findChild<QCheckBox *>(
+        QStringLiteral("CHK_hudshow"));
+    auto *firstSpeech = first.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechenable"));
+    auto *secondSpeech = second.findChild<QCheckBox *>(
+        QStringLiteral("CHK_speechenable"));
+    auto *testSpeech = first.findChild<QPushButton *>(
+        QStringLiteral("SpeechTest"));
+    auto *status = first.findChild<QLabel *>(
+        QStringLiteral("SpeechBackendStatus"));
+    QVERIFY(firstHud);
+    QVERIFY(secondHud);
+    QVERIFY(firstSpeech);
+    QVERIFY(secondSpeech);
+    QVERIFY(testSpeech);
+    QVERIFY(status);
+    QVERIFY(firstHud->isChecked());
+    QVERIFY(!firstSpeech->isChecked());
+
+    QSignalSpy hudChanged(&model,
+                          &ConfigPlannerViewModel::hudOverlayEnabledChanged);
+    QSignalSpy speechChanged(&model,
+                             &ConfigPlannerViewModel::speechEnabledChanged);
+    QSignalSpy testRequested(&first,
+                             &ConfigPlannerView::speechTestRequested);
+    firstHud->setChecked(false);
+    firstSpeech->setChecked(true);
+    QCOMPARE(hudChanged.count(), 1);
+    QCOMPARE(speechChanged.count(), 1);
+    QVERIFY(!secondHud->isChecked());
+    QVERIFY(secondSpeech->isChecked());
+    QCOMPARE(settings.value(QStringLiteral("CHK_hudshow")).toBool(), false);
+    QCOMPARE(settings.value(QStringLiteral("speechenable")).toBool(), true);
+
+    testSpeech->click();
+    QCOMPARE(testRequested.count(), 1);
+    first.setSpeechBackendStatus(QStringLiteral("ready"));
+    QCOMPARE(status->text(), QStringLiteral("ready"));
+
+    settings.setValue(QStringLiteral("CHK_hudshow"), true);
+    settings.setValue(QStringLiteral("speechenable"), false);
+    settings.sync();
+    model.reload();
+    QVERIFY(firstHud->isChecked());
+    QVERIFY(!firstSpeech->isChecked());
+    QVERIFY(secondHud->isChecked());
+    QVERIFY(!secondSpeech->isChecked());
 }
 
 void ConfigPlannerViewTest::mapAndLegacyRequestsStayOutsideTheView()

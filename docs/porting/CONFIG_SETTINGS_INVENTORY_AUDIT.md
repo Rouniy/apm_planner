@@ -92,8 +92,22 @@ logging, DataFlash/tlog directories, beta update channel and system proxy.
 The two production entry points share one application-owned model, so one
 open page cannot overwrite stale UDP/beta state from another.
 
+The next live slice adds three direct MP10 controls, bringing the working
+native-equivalent count to 12 of 64: `Enable HUD Overlay`, `Enable Speech` and
+`Test Speech`. HUD visibility now has one application-owned `CHK_hudshow`
+service shared with the HUD context menu, so either surface updates the other
+immediately. The speech master uses the canonical `speechenable` key and gates
+all TTS without disabling WAV alerts or beeps; Test Speech reports disabled,
+muted, ready and unavailable-backend states instead of failing silently.
+The useful Qt audio-mute control remains an extension and is not included in
+the 12-control parity count. A real-X11 production-route run toggles both new
+switches, verifies their exact persisted keys, shows the unavailable TTS state
+and observes the existing DATA HUD disappear live without an application
+restart (`/tmp/apm-planner-live-smoke.3anzjo`).
+
 The remaining MP10 controls are not represented as fake toggles. Language,
-speed/HUD/severity, full speech/vario, safety-confirmed flight shortcuts,
+speed/OSD-color/severity, speech levels/event policies/vario,
+safety-confirmed flight shortcuts,
 connect policies, the five target-safe telemetry rates and GCS identity, map
 vectors/overlays/cache/external ADS-B, and the remaining advanced policies are
 called out in their corresponding section. Useful old APM Planner themes,

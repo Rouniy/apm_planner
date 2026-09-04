@@ -1,5 +1,7 @@
 #include "ConfigBatteryMonitoring2View.h"
 
+#include "services/SpeechSettings.h"
+
 #include <QColor>
 #include <QCheckBox>
 #include <QComboBox>
@@ -285,7 +287,7 @@ ConfigBatteryMonitoring2View::ConfigBatteryMonitoring2View(
             this, [](bool enabled) {
         QSettings settings;
         settings.setValue(QStringLiteral("speechbatteryenabled"), enabled);
-        settings.setValue(QStringLiteral("speechenable"), true);
+        SpeechSettings::instance()->setEnabled(true);
         if (enabled) {
             if (!settings.contains(QStringLiteral("speechbattery"))) {
                 settings.setValue(

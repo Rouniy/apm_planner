@@ -3,6 +3,7 @@
 #include "audio/QtAudioOutput.h"
 #include "configuration.h"
 #include "logging.h"
+#include "services/SpeechSettings.h"
 
 #include <QApplication>
 #include <QSettings>
@@ -23,13 +24,21 @@ GAudioOutput *GAudioOutput::instance()
 
 GAudioOutput::GAudioOutput(QObject *parent)
     : QObject(parent),
-      audioBackend(new QtAudioOutput(this))
+      audioBackend(new QtAudioOutput(this)),
+      speechSettings(SpeechSettings::instance())
 {
     QSettings settings;
     muted = settings.value(kAudioSettingsPrefix + QStringLiteral("muted"), false).toBool();
 
     emergencyTimer = new QTimer(this);
     connect(emergencyTimer, &QTimer::timeout, this, &GAudioOutput::beep);
+    connect(speechSettings, &SpeechSettings::enabledChanged, this,
+            [this](bool enabled) {
+                if (!enabled) {
+                    audioBackend->stopSpeech();
+                }
+                emit speechEnabledChanged(enabled);
+            });
 
     if (voiceIndex == VOICE_FEMALE) {
         selectFemaleVoice();
@@ -49,6 +58,9 @@ void GAudioOutput::mute(bool shouldMute)
         return;
     }
     muted = shouldMute;
+    if (muted) {
+        audioBackend->stopSpeech();
+    }
     QSettings settings;
     settings.setValue(kAudioSettingsPrefix + QStringLiteral("muted"), muted);
     settings.sync();
@@ -60,9 +72,21 @@ bool GAudioOutput::isMuted() const
     return muted;
 }
 
+bool GAudioOutput::isSpeechEnabled() const
+{
+    return speechSettings && speechSettings->isEnabled();
+}
+
+void GAudioOutput::setSpeechEnabled(bool enabled)
+{
+    if (speechSettings) {
+        speechSettings->setEnabled(enabled);
+    }
+}
+
 bool GAudioOutput::isSpeechReady() const
 {
-    return !muted && !emergency && audioBackend
+    return isSpeechEnabled() && !muted && !emergency && audioBackend
         && audioBackend->isSpeechReady();
 }
 

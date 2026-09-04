@@ -1,5 +1,8 @@
 #include "ConfigPlannerViewModel.h"
 
+#include "services/HudDisplaySettings.h"
+#include "services/SpeechSettings.h"
+
 #include <QCoreApplication>
 #include <QSettings>
 
@@ -10,13 +13,27 @@ ConfigPlannerViewModel::ConfigPlannerViewModel(
 {
     if (settings) {
         m_settings = settings;
+        m_hudSettings = new HudDisplaySettings(settings, this);
+        m_speechSettings = new SpeechSettings(settings, this);
     } else {
         m_ownedSettings.reset(new QSettings);
         m_settings = m_ownedSettings.get();
+        m_hudSettings = HudDisplaySettings::instance();
+        m_speechSettings = SpeechSettings::instance();
     }
     m_settings->setFallbacksEnabled(false);
     connect(m_profiles, &DisplayViewProfileService::changed,
             this, &ConfigPlannerViewModel::stateChanged);
+    connect(m_hudSettings, &HudDisplaySettings::overlayEnabledChanged,
+            this, [this](bool enabled) {
+        emit hudOverlayEnabledChanged(enabled);
+        emit stateChanged();
+    });
+    connect(m_speechSettings, &SpeechSettings::enabledChanged,
+            this, [this](bool enabled) {
+        emit speechEnabledChanged(enabled);
+        emit stateChanged();
+    });
     reload();
 }
 
@@ -62,9 +79,21 @@ DisplayViewProfile ConfigPlannerViewModel::displayProfile() const
     return m_profiles->current();
 }
 
+bool ConfigPlannerViewModel::hudOverlayEnabled() const
+{
+    return m_hudSettings && m_hudSettings->overlayEnabled();
+}
+
+bool ConfigPlannerViewModel::speechEnabled() const
+{
+    return m_speechSettings && m_speechSettings->isEnabled();
+}
+
 void ConfigPlannerViewModel::reload()
 {
     m_settings->sync();
+    m_hudSettings->reload();
+    m_speechSettings->reload();
     m_altitudeUnits = canonicalLinearUnits(m_settings->value(
         QStringLiteral("altunits"), QStringLiteral("Meters")).toString());
     if (m_altitudeUnits.isEmpty()) {
@@ -172,4 +201,26 @@ bool ConfigPlannerViewModel::setBetaUpdatesEnabled(bool enabled)
     m_betaUpdates = enabled;
     emit stateChanged();
     return true;
+}
+
+bool ConfigPlannerViewModel::setHudOverlayEnabled(bool enabled)
+{
+    if (!m_hudSettings) {
+        m_lastError = tr("HUD settings are unavailable.");
+        return false;
+    }
+    m_hudSettings->setOverlayEnabled(enabled);
+    m_lastError.clear();
+    return m_hudSettings->overlayEnabled() == enabled;
+}
+
+bool ConfigPlannerViewModel::setSpeechEnabled(bool enabled)
+{
+    if (!m_speechSettings) {
+        m_lastError = tr("Speech settings are unavailable.");
+        return false;
+    }
+    m_speechSettings->setEnabled(enabled);
+    m_lastError.clear();
+    return m_speechSettings->isEnabled() == enabled;
 }

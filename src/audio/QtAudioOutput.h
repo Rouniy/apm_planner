@@ -17,6 +17,7 @@ public:
     bool playFile(const QString &fileName);
     bool isSpeechReady() const;
     bool speak(const QString &text);
+    void stopSpeech();
     QStringList availableVoices() const;
     void selectFemaleVoice();
     void selectMaleVoice();

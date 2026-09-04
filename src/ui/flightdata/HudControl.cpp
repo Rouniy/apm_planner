@@ -1,5 +1,7 @@
 #include "HudControl.h"
 
+#include "services/HudDisplaySettings.h"
+
 #include <QAction>
 #include <QContextMenuEvent>
 #include <QDateTime>
@@ -53,9 +55,11 @@ QColor hudGreen()
 }
 }
 
-HudControl::HudControl(QWidget *parent)
+HudControl::HudControl(QWidget *parent, HudDisplaySettings *displaySettings)
     : QWidget(parent),
-      m_easeTimer(new QTimer(this))
+      m_easeTimer(new QTimer(this)),
+      m_displaySettings(displaySettings ? displaySettings
+                                        : HudDisplaySettings::instance())
 {
     setObjectName(QStringLiteral("Hud"));
     setMinimumSize(240, 180);
@@ -63,6 +67,9 @@ HudControl::HudControl(QWidget *parent)
     setAutoFillBackground(false);
     setAttribute(Qt::WA_OpaquePaintEvent);
     loadDisplaySettings();
+    m_overlayEnabled = m_displaySettings->overlayEnabled();
+    connect(m_displaySettings, &HudDisplaySettings::overlayEnabledChanged,
+            this, &HudControl::applyOverlayEnabled);
     m_easeTimer->setInterval(16);
     connect(m_easeTimer, &QTimer::timeout, this, &HudControl::stepEase);
     m_easeTimer->start();
@@ -130,7 +137,6 @@ DEFINE_BOOL_SETTER(setArmed, m_armed)
 DEFINE_BOOL_SETTER(setPrearmOk, m_prearmOk)
 DEFINE_DOUBLE_SETTER(setBatteryVoltage, m_batteryVoltage)
 DEFINE_INT_SETTER(setBatteryRemaining, m_batteryRemaining)
-DEFINE_BOOL_SETTER(setOverlayEnabled, m_overlayEnabled)
 DEFINE_BOOL_SETTER(setShowIcons, m_showIcons)
 DEFINE_BOOL_SETTER(setRussian, m_russian)
 DEFINE_INT_SETTER(setBatteryCells, m_batteryCells)
@@ -172,6 +178,22 @@ DEFINE_DOUBLE_SETTER(setLinkQuality, m_linkQuality)
 #undef DEFINE_DOUBLE_SETTER
 #undef DEFINE_INT_SETTER
 #undef DEFINE_BOOL_SETTER
+
+void HudControl::setOverlayEnabled(bool value)
+{
+    if (m_displaySettings) {
+        m_displaySettings->setOverlayEnabled(value);
+    }
+}
+
+void HudControl::applyOverlayEnabled(bool enabled)
+{
+    if (m_overlayEnabled == enabled) {
+        return;
+    }
+    m_overlayEnabled = enabled;
+    changed();
+}
 
 void HudControl::setMode(const QString &value)
 {
@@ -233,7 +255,6 @@ void HudControl::loadDisplaySettings()
 {
     QSettings settings;
     settings.beginGroup(QStringLiteral("FlightData/Hud"));
-    m_overlayEnabled = settings.value(QStringLiteral("OverlayEnabled"), true).toBool();
     m_showIcons = settings.value(QStringLiteral("ShowIcons"), true).toBool();
     m_russian = settings.value(QStringLiteral("Russian"), false).toBool();
     m_groundBrown = settings.value(QStringLiteral("GroundBrown"), false).toBool();
@@ -275,8 +296,11 @@ void HudControl::contextMenuEvent(QContextMenuEvent *event)
                 });
     };
 
-    addToggle(&menu, tr("HUD overlay"), QStringLiteral("OverlayEnabled"),
-              m_overlayEnabled, &HudControl::setOverlayEnabled);
+    QAction *overlayAction = menu.addAction(tr("HUD overlay"));
+    overlayAction->setCheckable(true);
+    overlayAction->setChecked(m_overlayEnabled);
+    connect(overlayAction, &QAction::toggled,
+            this, &HudControl::setOverlayEnabled);
     addToggle(&menu, tr("16:9 aspect ratio"), QStringLiteral("SixteenByNine"),
               m_sixteenByNine, &HudControl::setSixteenByNine);
     addToggle(&menu, tr("Russian HUD"), QStringLiteral("Russian"),

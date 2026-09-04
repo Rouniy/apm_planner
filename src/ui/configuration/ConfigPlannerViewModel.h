@@ -9,6 +9,8 @@
 #include <memory>
 
 class QSettings;
+class HudDisplaySettings;
+class SpeechSettings;
 
 /**
  * Settings-owned, transport-free state for the native Planner page.
@@ -39,6 +41,8 @@ public:
         return m_startupUdp;
     }
     bool betaUpdatesEnabled() const { return m_betaUpdates; }
+    bool hudOverlayEnabled() const;
+    bool speechEnabled() const;
     QString lastError() const { return m_lastError; }
 
     bool setAltitudeUnits(const QString &units);
@@ -46,6 +50,8 @@ public:
     bool setDisplayPreset(DisplayViewPreset preset);
     bool setStartupUdpOptions(const PlannerStartupUdpOptions &options);
     bool setBetaUpdatesEnabled(bool enabled);
+    bool setHudOverlayEnabled(bool enabled);
+    bool setSpeechEnabled(bool enabled);
 
 public slots:
     void reload();
@@ -54,6 +60,8 @@ signals:
     void stateChanged();
     void altitudeUnitsChanged(const QString &units);
     void distanceUnitsChanged(const QString &units);
+    void hudOverlayEnabledChanged(bool enabled);
+    void speechEnabledChanged(bool enabled);
 
 private:
     static QString canonicalLinearUnits(const QString &units);
@@ -62,6 +70,8 @@ private:
     std::unique_ptr<QSettings> m_ownedSettings;
     QSettings *m_settings = nullptr;
     DisplayViewProfileService *m_profiles = nullptr;
+    HudDisplaySettings *m_hudSettings = nullptr;
+    SpeechSettings *m_speechSettings = nullptr;
     QString m_altitudeUnits = QStringLiteral("Meters");
     QString m_distanceUnits = QStringLiteral("Meters");
     PlannerStartupUdpOptions m_startupUdp;

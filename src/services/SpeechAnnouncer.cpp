@@ -1,6 +1,7 @@
 #include "SpeechAnnouncer.h"
 
 #include "GAudioOutput.h"
+#include "SpeechSettings.h"
 #include "UASInterface.h"
 #include "ui/configuration/BatteryMonitorInstanceModel.h"
 #include "ui/flightdata/FlightDataViewModel.h"
@@ -42,7 +43,7 @@ void SpeechAnnouncer::handleBatteryTelemetry(
         return;
     }
     const QSettings settings;
-    if (!settings.value(QStringLiteral("speechenable"), false).toBool()
+    if (!SpeechSettings::instance()->isEnabled()
         || !settings.value(
                 QStringLiteral("speechbatteryenabled"), false).toBool()
         || (settings.value(

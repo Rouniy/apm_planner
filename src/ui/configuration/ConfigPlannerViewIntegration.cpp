@@ -24,6 +24,22 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
     RegisterCompiledMapBackends();
 
     const QPointer<ConfigPlannerView> guardedView(view);
+    const auto refreshSpeech = [guardedView, audio]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        if (!guardedView->viewModel()->speechEnabled()) {
+            guardedView->setSpeechBackendStatus(QObject::tr(
+                "Speech is disabled."));
+        } else if (audio->isMuted()) {
+            guardedView->setSpeechBackendStatus(QObject::tr(
+                "Speech is enabled, but all audio output is muted."));
+        } else if (!audio->isSpeechReady()) {
+            guardedView->setSpeechBackendStatus(QObject::tr(
+                "Speech engine is unavailable."));
+        } else {
+            guardedView->setSpeechBackendStatus(QObject::tr(
+                "Speech engine is ready."));
+        }
+    };
     const auto refreshRuntime = [guardedView, mainWindow, links, audio]() {
         if (!guardedView) return;
         guardedView->setAudioMuted(audio->isMuted());
@@ -64,6 +80,25 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
                      audio, &GAudioOutput::mute);
     QObject::connect(audio, &GAudioOutput::mutedChanged,
                      view, &ConfigPlannerView::setAudioMuted);
+    QObject::connect(audio, &GAudioOutput::mutedChanged,
+                     view, [refreshSpeech](bool) { refreshSpeech(); });
+    QObject::connect(audio, &GAudioOutput::speechEnabledChanged,
+                     view, [refreshSpeech](bool) { refreshSpeech(); });
+    QObject::connect(view, &ConfigPlannerView::speechTestRequested,
+                     view, [guardedView, audio, refreshSpeech]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        if (!guardedView->viewModel()->speechEnabled()) {
+            refreshSpeech();
+            return;
+        }
+        if (audio->say(QStringLiteral(
+                "Проверка звука Mission Planner 10"))) {
+            guardedView->setSpeechBackendStatus(QObject::tr(
+                "Speech test was sent to the audio engine."));
+        } else {
+            refreshSpeech();
+        }
+    });
     QObject::connect(view, &ConfigPlannerView::heartbeatChanged,
                      mainWindow, &MainWindow::enableHeartbeat);
     QObject::connect(view, &ConfigPlannerView::mavlinkLoggingChanged,
@@ -142,4 +177,5 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
 
     refreshRuntime();
     refreshMaps();
+    refreshSpeech();
 }

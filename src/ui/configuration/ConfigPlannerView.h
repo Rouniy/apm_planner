@@ -12,6 +12,7 @@ class QComboBox;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
+class QPushButton;
 class QSpinBox;
 class QVBoxLayout;
 
@@ -41,6 +42,7 @@ public:
     void setAutoProxyEnabled(bool enabled);
     void setLogDirectories(const QString &dataFlashDirectory,
                            const QString &tlogDirectory);
+    void setSpeechBackendStatus(const QString &status);
 
 public slots:
     void reloadSettings();
@@ -55,6 +57,7 @@ signals:
     void mapBackendRequested(const QString &backendId);
     void dataFlashLogDirectorySelected(const QString &directory);
     void tlogDirectorySelected(const QString &directory);
+    void speechTestRequested();
     void legacyOptionsRequested();
     void legacyTelemetryOptionsRequested();
 
@@ -76,6 +79,10 @@ private:
     QLabel *m_layoutLabel = nullptr;
     QComboBox *m_layout = nullptr;
     QLabel *m_layoutStatus = nullptr;
+    QCheckBox *m_hudOverlay = nullptr;
+    QCheckBox *m_speechEnabled = nullptr;
+    QPushButton *m_speechTest = nullptr;
+    QLabel *m_speechBackendStatus = nullptr;
     QCheckBox *m_audioMute = nullptr;
     QCheckBox *m_heartbeat = nullptr;
     QCheckBox *m_startupUdpEnabled = nullptr;

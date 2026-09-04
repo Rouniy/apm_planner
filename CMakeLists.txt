@@ -229,6 +229,10 @@ set(SOURCES
     src/Settings.h
     src/services/SpeechAnnouncer.cpp
     src/services/SpeechAnnouncer.h
+    src/services/HudDisplaySettings.cpp
+    src/services/HudDisplaySettings.h
+    src/services/SpeechSettings.cpp
+    src/services/SpeechSettings.h
     src/Waypoint.cc
     src/Waypoint.h
     src/audio/QtAudioOutput.cpp
@@ -1464,6 +1468,21 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(speechsettings_tests
+        tests/test_speechsettings.cpp
+        src/services/SpeechSettings.cpp
+        src/services/SpeechSettings.h
+    )
+    target_include_directories(speechsettings_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(speechsettings_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME speechsettings_tests
+        COMMAND speechsettings_tests)
+
     add_executable(applicationidentity_tests
         tests/test_applicationidentity.cpp
     )
@@ -2007,6 +2026,10 @@ if(BUILD_TESTING)
 
     add_executable(configplannerview_tests
         tests/test_configplannerview.cpp
+        src/services/HudDisplaySettings.cpp
+        src/services/HudDisplaySettings.h
+        src/services/SpeechSettings.cpp
+        src/services/SpeechSettings.h
         src/ui/configuration/ConfigPlannerView.cpp
         src/ui/configuration/ConfigPlannerView.h
         src/ui/configuration/ConfigPlannerViewModel.cpp
@@ -2876,6 +2899,8 @@ if(BUILD_TESTING)
         tests/test_batterymonitor.cpp
         src/core/parameters/ParameterMetaData.cpp
         src/core/parameters/ParameterMetaData.h
+        src/services/SpeechSettings.cpp
+        src/services/SpeechSettings.h
         src/ui/configuration/BatteryMonitorInstanceModel.cpp
         src/ui/configuration/BatteryMonitorInstanceModel.h
         src/ui/configuration/ConfigBatteryMonitoring2View.cpp
@@ -3962,8 +3987,11 @@ if(BUILD_TESTING)
         tests/test_hudcontrol.cpp
         src/ui/flightdata/HudControl.cpp
         src/ui/flightdata/HudControl.h
+        src/services/HudDisplaySettings.cpp
+        src/services/HudDisplaySettings.h
     )
     target_include_directories(hudcontrol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/flightdata
     )
     target_link_libraries(hudcontrol_tests PRIVATE
