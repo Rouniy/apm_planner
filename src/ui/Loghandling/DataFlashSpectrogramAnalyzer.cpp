@@ -565,7 +565,11 @@ public:
             if (!current.samples.isEmpty()) {
                 const double gap = sample.timeSeconds
                                    - current.samples.constLast().timeSeconds;
-                if (gap <= 0.0 || gap > maximumGap) {
+                // DataFlash parsers repair a backwards TimeUS value by
+                // repeating the previous timestamp. Keep that repaired sample
+                // in the same segment; only a real forward discontinuity
+                // breaks the FFT input stream.
+                if (gap > maximumGap) {
                     if (!current.samples.isEmpty()) {
                         source.sampleCount += current.samples.size();
                         source.segments.append(std::move(current));

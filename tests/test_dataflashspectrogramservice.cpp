@@ -1,7 +1,11 @@
 #include <QtTest>
 
 #include "logging.h"
+#include "ui/Loghandling/AsciiLogParser.h"
+#include "ui/Loghandling/BinLogParser.h"
 #include "ui/Loghandling/DataFlashSpectrogramService.h"
+#include "ui/Loghandling/ILogdataSink.h"
+#include "ui/Loghandling/IParserCallback.h"
 
 #include <QDataStream>
 #include <QDir>
@@ -18,8 +22,10 @@ class DataFlashSpectrogramServiceTest final : public QObject
 
 private slots:
     void readsAsciiDirectSensorsFromUnicodePath();
+    void readsModernAsciiDirectSensorUsingSampleTime();
     void readsAsciiBatchSensors();
     void readsBinaryBatchSensorsAndKeepsAxesDistinct();
+    void parsersStopWhenSinkRejectsARow();
     void rejectsMissingFilesSensorsAndCancellation();
 };
 
@@ -94,6 +100,54 @@ bool writeFile(const QString &path, const QByteArray &contents)
         && file.write(contents) == contents.size()
         && file.flush();
 }
+
+class RejectingSink final : public ILogdataSink
+{
+public:
+    bool addDataType(const QString &, quint32, int, const QString &,
+                     const QStringList &, int) override
+    {
+        return true;
+    }
+    bool addDataRow(
+        const QString &,
+        const QList<QPair<QString, QVariant>> &) override
+    {
+        ++rowCount;
+        return false;
+    }
+    void addUnitData(quint8, const QString &) override {}
+    void addMultiplierData(quint8, double) override {}
+    void addMsgToUnitAndMultiplierData(
+        quint32, const QByteArray &, const QByteArray &) override {}
+    void setTimeStamp(const QString &, double) override {}
+    QStringList setupUnitData(const QString &, double) override { return {}; }
+    QString getError() const override
+    {
+        return QStringLiteral("intentional sink refusal");
+    }
+
+    int rowCount = 0;
+};
+
+class NoOpParserCallback final : public IParserCallback
+{
+public:
+    void onProgress(qint64, qint64) override {}
+    void onError(const QString &) override {}
+};
+
+void appendDirectSample(QByteArray *bytes, quint8 id, quint64 timeUs)
+{
+    bytes->append(char(0xA3));
+    bytes->append(char(0x95));
+    bytes->append(char(id));
+    QDataStream stream(bytes, QIODevice::Append);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream << timeUs;
+    stream.setFloatingPointPrecision(QDataStream::SinglePrecision);
+    stream << 1.0f << 2.0f << 3.0f;
+}
 }
 
 void DataFlashSpectrogramServiceTest::readsAsciiDirectSensorsFromUnicodePath()
@@ -137,6 +191,42 @@ void DataFlashSpectrogramServiceTest::readsAsciiDirectSensorsFromUnicodePath()
     QVERIFY(std::abs(result.axes[1].strongestFrequencyHz - 50.0) < 0.5);
     QVERIFY(std::abs(result.axes[2].strongestFrequencyHz - 75.0) < 0.5);
     QVERIFY(result.message.contains(QStringLiteral("Log parser reported")));
+}
+
+void DataFlashSpectrogramServiceTest::readsModernAsciiDirectSensorUsingSampleTime()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("modern-acc.log"));
+    QByteArray log(
+        "FMT,150,32,ACC,QBQfff,TimeUS,I,SampleUS,AccX,AccY,AccZ\n"
+        "FMT,151,11,DUMY,Q,TimeUS\n");
+    constexpr int sampleRate = 400;
+    constexpr int sampleCount = 1024;
+    const double twoPi = 2.0 * std::acos(-1.0);
+    for (int sample = 0; sample < sampleCount; ++sample) {
+        // TimeUS deliberately does not advance: modern ACC records carry the
+        // actual sample clock in SampleUS and identify the IMU with I.
+        log += "ACC,1000000,0,";
+        log += QByteArray::number(qulonglong(sample * 2500));
+        for (double frequency : {25.0, 50.0, 75.0}) {
+            log += ',';
+            log += QByteArray::number(
+                std::sin(twoPi * frequency * sample / sampleRate),
+                'g', 16);
+        }
+        log += '\n';
+    }
+    QVERIFY(writeFile(path, log));
+
+    const auto result = DataFlashSpectrogramService::Generate(
+        path, QStringLiteral("ACC1"), -80, -20);
+    QVERIFY2(result.ok(), qPrintable(result.message));
+    QCOMPARE(result.inputSampleCount, sampleCount);
+    QVERIFY(std::abs(result.sampleRateHz - sampleRate) < 0.5);
+    QVERIFY(std::abs(result.axes[0].strongestFrequencyHz - 25.0) < 0.5);
+    QVERIFY(std::abs(result.axes[1].strongestFrequencyHz - 50.0) < 0.5);
+    QVERIFY(std::abs(result.axes[2].strongestFrequencyHz - 75.0) < 0.5);
 }
 
 void DataFlashSpectrogramServiceTest::readsAsciiBatchSensors()
@@ -225,6 +315,49 @@ void DataFlashSpectrogramServiceTest::readsBinaryBatchSensorsAndKeepsAxesDistinc
     QVERIFY(std::abs(result.axes[2].strongestFrequencyHz - 60.0) < 0.5);
     QVERIFY(result.axes[0].image != result.axes[1].image);
     QVERIFY(result.axes[1].image != result.axes[2].image);
+}
+
+void DataFlashSpectrogramServiceTest::parsersStopWhenSinkRejectsARow()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    NoOpParserCallback callback;
+
+    const QString asciiPath = directory.filePath(QStringLiteral("reject.log"));
+    QVERIFY(writeFile(
+        asciiPath,
+        QByteArray("FMT,150,23,ACC1,Qfff,TimeUS,AccX,AccY,AccZ\n"
+                   "FMT,151,11,DUMY,Q,TimeUS\n"
+                   "ACC1,1000,1,2,3\n"
+                   "ACC1,2000,4,5,6\n"
+                   "ACC1,3000,7,8,9\n")));
+    auto asciiSink = QSharedPointer<RejectingSink>::create();
+    AsciiLogParser asciiParser(asciiSink, &callback);
+    QFile asciiFile(asciiPath);
+    QVERIFY(asciiFile.open(QIODevice::ReadOnly));
+    const AP2DataPlotStatus asciiStatus = asciiParser.parse(asciiFile);
+    QCOMPARE(asciiSink->rowCount, 1);
+    QVERIFY(asciiStatus.getErrorOverview().contains(
+        QStringLiteral("1 data corruption")));
+
+    const QString binaryPath = directory.filePath(QStringLiteral("reject.bin"));
+    QByteArray binaryLog;
+    constexpr quint8 sampleId = 150;
+    appendFmt(&binaryLog, sampleId, 23, "ACC1", "Qfff",
+              "TimeUS,AccX,AccY,AccZ");
+    appendFmt(&binaryLog, 151, 11, "DUMY", "Q", "TimeUS");
+    appendDirectSample(&binaryLog, sampleId, 1000);
+    appendDirectSample(&binaryLog, sampleId, 2000);
+    appendDirectSample(&binaryLog, sampleId, 3000);
+    QVERIFY(writeFile(binaryPath, binaryLog));
+    auto binarySink = QSharedPointer<RejectingSink>::create();
+    BinLogParser binaryParser(binarySink, &callback);
+    QFile binaryFile(binaryPath);
+    QVERIFY(binaryFile.open(QIODevice::ReadOnly));
+    const AP2DataPlotStatus binaryStatus = binaryParser.parse(binaryFile);
+    QCOMPARE(binarySink->rowCount, 1);
+    QVERIFY(binaryStatus.getErrorOverview().contains(
+        QStringLiteral("1 data corruption")));
 }
 
 void DataFlashSpectrogramServiceTest::rejectsMissingFilesSensorsAndCancellation()

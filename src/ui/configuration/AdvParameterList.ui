@@ -116,9 +116,6 @@
            <property name="text">
             <string>Load From File</string>
            </property>
-           <property name="shortcut">
-            <string>Ctrl+L</string>
-           </property>
           </widget>
          </item>
          <item>

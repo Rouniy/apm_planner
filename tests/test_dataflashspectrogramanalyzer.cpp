@@ -90,6 +90,7 @@ private slots:
     void directRowsProduceDistinctAxisSpectra();
     void batchRowsMapFifthSensorAndReconstructSamples();
     void incompleteBatchFallsBackToDirectRows();
+    void repairedDuplicateTimestampRemainsContiguous();
     void validatesDecibelRangeAndFiniteSamples();
     void cancellationIsTyped();
     void rasterWidthIsBoundedWithoutBlankColumns();
@@ -214,6 +215,31 @@ void DataFlashSpectrogramAnalyzerTest::incompleteBatchFallsBackToDirectRows()
     QCOMPARE(static_cast<int>(build.source.kind),
              static_cast<int>(Analyzer::SourceKind::Direct));
     QCOMPARE(build.source.sampleCount, Analyzer::FftSize);
+}
+
+void DataFlashSpectrogramAnalyzerTest::repairedDuplicateTimestampRemainsContiguous()
+{
+    Analyzer::RecordBuilder builder(QStringLiteral("ACC1"));
+    for (int sample = 0; sample < Analyzer::FftSize; ++sample) {
+        const int timestampSample = sample == Analyzer::FftSize / 2
+            ? sample - 1 : sample;
+        QCOMPARE(static_cast<int>(builder.addDirectRecord(
+                     QStringLiteral("ACC1"), timestampSample * 1000.0,
+                     sine(sample, 64.0, 1000.0),
+                     sine(sample, 96.0, 1000.0),
+                     sine(sample, 128.0, 1000.0))),
+                 static_cast<int>(Analyzer::RecordDisposition::Accepted));
+    }
+
+    const Analyzer::BuildResult build = builder.finish();
+    QVERIFY2(build.ok(), qPrintable(build.message));
+    QCOMPARE(build.source.segments.size(), 1);
+    QCOMPARE(build.source.segments.constFirst().samples.size(),
+             Analyzer::FftSize);
+
+    const Analyzer::AnalysisResult result = Analyzer::Analyze(build.source);
+    QVERIFY2(result.ok(), qPrintable(result.message));
+    QCOMPARE(result.availableWindowCount, 1);
 }
 
 void DataFlashSpectrogramAnalyzerTest::validatesDecibelRangeAndFiniteSamples()
