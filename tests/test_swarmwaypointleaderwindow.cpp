@@ -137,15 +137,38 @@ public:
         return true;
     }
 
+    quint64 missionObservationRevision(
+        const SwarmVehicleInstanceLease &airMaster) const noexcept override
+    {
+        ++missionRevisionReads;
+        return airMaster.sameInstance(missionSnapshot.airMaster)
+            ? missionObservationRevisionValue : 0;
+    }
+
     bool refreshMission(const SwarmVehicleInstanceLease &airMaster,
                         QString *error) override
     {
         ++missionRefreshCalls;
         lastMissionRefresh = airMaster;
+        if (onMissionRefresh) {
+            onMissionRefresh();
+        }
         if (error) {
             error->clear();
         }
         return missionRefreshAccepted;
+    }
+
+    void cancelMissionRefresh(
+        const SwarmVehicleInstanceLease &airMaster,
+        const QString &reason) override
+    {
+        ++missionRefreshCancelCalls;
+        lastMissionRefreshCancellation = airMaster;
+        missionRefreshCancelReasons.append(reason);
+        if (onMissionRefreshCancel) {
+            onMissionRefreshCancel();
+        }
     }
 
     bool executorReady(QString *error) const override
@@ -242,13 +265,15 @@ public:
 
     void notify()
     {
-        if (handler) {
-            handler();
+        const ChangedHandler callback = handler;
+        if (callback) {
+            callback();
         }
     }
 
     QVector<SwarmWaypointLeaderWindowVehicle> vehicleRows;
     SwarmWaypointLeaderMissionSnapshot missionSnapshot;
+    quint64 missionObservationRevisionValue = 1;
     bool missionAvailable = true;
     bool missionRefreshAccepted = true;
     bool ready = true;
@@ -260,18 +285,24 @@ public:
     QString currentStatus;
     int vehicleRefreshCalls = 0;
     mutable int missionReads = 0;
+    mutable int missionRevisionReads = 0;
     int missionRefreshCalls = 0;
+    int missionRefreshCancelCalls = 0;
     mutable int readinessChecks = 0;
     mutable int validationCalls = 0;
     int startCalls = 0;
     int cancelCalls = 0;
     int modeRequestCalls = 0;
     SwarmVehicleInstanceLease lastMissionRefresh;
+    SwarmVehicleInstanceLease lastMissionRefreshCancellation;
     mutable SwarmWaypointLeaderPlan lastValidatedPlan;
     SwarmWaypointLeaderPlan lastStartedPlan;
     QVector<SwarmWaypointLeaderMode> requestedModes;
     QStringList cancelReasons;
+    QStringList missionRefreshCancelReasons;
     std::function<void()> onVehicleRefresh;
+    std::function<void()> onMissionRefresh;
+    std::function<void()> onMissionRefreshCancel;
     ChangedHandler handler;
 };
 
@@ -305,6 +336,21 @@ QPushButton *startButton(SwarmWaypointLeaderWindow *window)
 {
     return window->findChild<QPushButton *>(
         QStringLiteral("WaypointLeaderRunButton"));
+}
+
+int comboIndexForLease(QComboBox *combo,
+                       const SwarmVehicleInstanceLease &vehicleLease)
+{
+    if (!combo) {
+        return -1;
+    }
+    for (int index = 0; index < combo->count(); ++index) {
+        if (qvariant_cast<SwarmVehicleInstanceLease>(
+                combo->itemData(index)).sameInstance(vehicleLease)) {
+            return index;
+        }
+    }
+    return -1;
 }
 
 int rowForLease(QTableWidget *table,
@@ -376,6 +422,10 @@ class SwarmWaypointLeaderWindowTest final : public QObject
 private slots:
     void inventoryDefaultsSplitAndExactIdentityAreStable();
     void readinessMissionAndEligibilityFailClosed();
+    void missionRefreshHidesUntilMatchingObservation();
+    void airMasterReplacementCancelsOnlyPreviousRefresh();
+    void closeCancelsMissionRefreshWithoutActiveRun();
+    void missionRefreshCallbackCanDeleteWindow();
     void duplicateSysidsPreserveExactRolesAndOrdersAcrossRefresh();
     void confirmationDefaultsToCancelAndPlanIsRevalidated();
     void nestedConfirmationCloseNeverStarts();
@@ -607,6 +657,183 @@ readinessMissionAndEligibilityFailClosed()
     window.refreshMission();
     QCOMPARE(fake.missionRefreshCalls, 1);
     QVERIFY(fake.lastMissionRefresh.sameInstance(air));
+}
+
+void SwarmWaypointLeaderWindowTest::
+missionRefreshHidesUntilMatchingObservation()
+{
+    FakeWaypointLeaderInterface fake;
+    SwarmVehicleInstanceLease ground;
+    SwarmVehicleInstanceLease air;
+    populateUsableFixture(&fake, &ground, &air);
+    SwarmWaypointLeaderWindow window(&fake, confirmation(false));
+    auto *profile = window.findChild<WaypointLeaderProfileControl *>();
+    auto *missionStatus = window.findChild<QLabel *>(
+        QStringLiteral("waypointLeaderMissionStatus"));
+    QVERIFY(profile);
+    QVERIFY(missionStatus);
+    QVERIFY(startButton(&window)->isEnabled());
+    QCOMPARE(profile->profile().size(), 3);
+    const int initialMissionReads = fake.missionReads;
+
+    window.refreshMission();
+    QCOMPARE(fake.missionRefreshCalls, 1);
+    QVERIFY(fake.lastMissionRefresh.sameInstance(air));
+    QCOMPARE(profile->profile().size(), 0);
+    QCOMPARE(profile->vehicleMarkers().size(), 0);
+    QVERIFY(!startButton(&window)->isEnabled());
+    QCOMPARE(fake.missionReads, initialMissionReads);
+    QVERIFY(missionStatus->text().contains(
+        QStringLiteral("hidden"), Qt::CaseInsensitive));
+
+    // A failed/late generic adapter notification with no new successful
+    // observation cannot expose the cached pre-refresh snapshot again.
+    fake.currentStatus = QStringLiteral("Mission refresh failed.");
+    fake.notify();
+    QCOMPARE(profile->profile().size(), 0);
+    QCOMPARE(profile->vehicleMarkers().size(), 0);
+    QVERIFY(!startButton(&window)->isEnabled());
+    QCOMPARE(fake.missionReads, initialMissionReads);
+
+    // Identical content is still a valid completion when the adapter's
+    // successful-observation revision advances.
+    ++fake.missionObservationRevisionValue;
+    fake.notify();
+    QCOMPARE(profile->profile().size(), 3);
+    QVERIFY(!profile->vehicleMarkers().isEmpty());
+    QVERIFY(startButton(&window)->isEnabled());
+    QCOMPARE(fake.missionReads, initialMissionReads + 1);
+    QCOMPARE(fake.missionRefreshCancelCalls, 0);
+
+    FakeWaypointLeaderInterface reentrantFake;
+    populateUsableFixture(&reentrantFake, &ground, &air);
+    SwarmWaypointLeaderWindow reentrantWindow(
+        &reentrantFake, confirmation(false));
+    auto *reentrantProfile =
+        reentrantWindow.findChild<WaypointLeaderProfileControl *>();
+    QVERIFY(reentrantProfile);
+    reentrantFake.onMissionRefresh = [&reentrantFake]() {
+        ++reentrantFake.missionObservationRevisionValue;
+        reentrantFake.notify();
+    };
+    reentrantWindow.refreshMission();
+    QCOMPARE(reentrantFake.missionRefreshCalls, 1);
+    QCOMPARE(reentrantProfile->profile().size(), 3);
+    QVERIFY(startButton(&reentrantWindow)->isEnabled());
+    QCOMPARE(reentrantFake.missionRefreshCancelCalls, 0);
+}
+
+void SwarmWaypointLeaderWindowTest::
+airMasterReplacementCancelsOnlyPreviousRefresh()
+{
+    {
+        FakeWaypointLeaderInterface fake;
+        SwarmVehicleInstanceLease ground;
+        SwarmVehicleInstanceLease air;
+        SwarmVehicleInstanceLease replacement;
+        populateUsableFixture(&fake, &ground, &air, &replacement);
+        SwarmWaypointLeaderWindow window(&fake, confirmation(false));
+        auto *profile = window.findChild<WaypointLeaderProfileControl *>();
+        auto *airCombo = window.findChild<QComboBox *>(
+            QStringLiteral("WaypointLeaderAirMasterCombo"));
+        QVERIFY(profile);
+        QVERIFY(airCombo);
+
+        window.refreshMission();
+        const int replacementIndex =
+            comboIndexForLease(airCombo, replacement);
+        QVERIFY(replacementIndex >= 0);
+        airCombo->setCurrentIndex(replacementIndex);
+        QCOMPARE(fake.missionRefreshCancelCalls, 1);
+        QVERIFY(fake.lastMissionRefreshCancellation.sameInstance(air));
+        QVERIFY(!fake.lastMissionRefreshCancellation.sameInstance(
+            replacement));
+        QCOMPARE(profile->profile().size(), 0);
+        QVERIFY(!startButton(&window)->isEnabled());
+
+        fake.missionSnapshot = mission(replacement);
+        ++fake.missionObservationRevisionValue;
+        fake.notify();
+        QCOMPARE(profile->profile().size(), 3);
+        QVERIFY(startButton(&window)->isEnabled());
+
+        // Begin a refresh for the replacement.  A late generic callback from
+        // the cancelled old request has no matching revision and cannot
+        // resurrect the replacement's now-hidden pre-refresh snapshot.
+        window.refreshMission();
+        QCOMPARE(fake.missionRefreshCalls, 2);
+        fake.notify();
+        QCOMPARE(profile->profile().size(), 0);
+        QVERIFY(!startButton(&window)->isEnabled());
+        QCOMPARE(fake.missionRefreshCancelCalls, 1);
+    }
+
+    {
+        FakeWaypointLeaderInterface fake;
+        SwarmVehicleInstanceLease ground;
+        SwarmVehicleInstanceLease air;
+        SwarmVehicleInstanceLease replacement;
+        populateUsableFixture(&fake, &ground, &air, &replacement);
+        SwarmWaypointLeaderWindow window(&fake, confirmation(false));
+        window.refreshMission();
+
+        fake.vehicleRows = {fake.vehicleRows.at(0),
+                            fake.vehicleRows.at(2)};
+        fake.missionSnapshot = mission(replacement);
+        ++fake.missionObservationRevisionValue;
+        fake.notify();
+        QCOMPARE(fake.missionRefreshCancelCalls, 1);
+        QVERIFY(fake.lastMissionRefreshCancellation.sameInstance(air));
+        QVERIFY(!fake.lastMissionRefreshCancellation.sameInstance(
+            replacement));
+        QVERIFY(startButton(&window)->isEnabled());
+    }
+}
+
+void SwarmWaypointLeaderWindowTest::
+closeCancelsMissionRefreshWithoutActiveRun()
+{
+    FakeWaypointLeaderInterface fake;
+    SwarmVehicleInstanceLease ground;
+    SwarmVehicleInstanceLease air;
+    populateUsableFixture(&fake, &ground, &air);
+    SwarmWaypointLeaderWindow window(&fake, confirmation(false));
+    window.show();
+    QCoreApplication::processEvents();
+    QVERIFY(!window.isRunning());
+
+    window.refreshMission();
+    QCOMPARE(fake.cancelCalls, 0);
+    QCOMPARE(fake.missionRefreshCancelCalls, 0);
+    window.close();
+    QCOMPARE(fake.cancelCalls, 0);
+    QCOMPARE(fake.missionRefreshCancelCalls, 1);
+    QVERIFY(fake.lastMissionRefreshCancellation.sameInstance(air));
+    QVERIFY(fake.missionRefreshCancelReasons.constFirst().contains(
+        QStringLiteral("window closed"), Qt::CaseInsensitive));
+}
+
+void SwarmWaypointLeaderWindowTest::
+missionRefreshCallbackCanDeleteWindow()
+{
+    FakeWaypointLeaderInterface fake;
+    SwarmVehicleInstanceLease ground;
+    SwarmVehicleInstanceLease air;
+    populateUsableFixture(&fake, &ground, &air);
+    QPointer<SwarmWaypointLeaderWindow> guarded =
+        new SwarmWaypointLeaderWindow(&fake, confirmation(false));
+    fake.onMissionRefresh = [&guarded]() {
+        delete guarded.data();
+    };
+
+    guarded->refreshMission();
+    QVERIFY(!guarded);
+    QCOMPARE(fake.missionRefreshCalls, 1);
+    QCOMPARE(fake.missionRefreshCancelCalls, 1);
+    QVERIFY(fake.lastMissionRefreshCancellation.sameInstance(air));
+    QCOMPARE(fake.startCalls, 0);
+    QCOMPARE(fake.cancelCalls, 0);
+    QVERIFY(!fake.handler);
 }
 
 void SwarmWaypointLeaderWindowTest::

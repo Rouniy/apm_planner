@@ -140,6 +140,20 @@ public:
         int order = 0;
     };
 
+    struct MissionRefreshState
+    {
+        quint64 localGeneration = 0;
+        SwarmVehicleInstanceLease airMaster;
+        quint64 baselineObservationRevision = 0;
+        bool completionArmed = false;
+        bool requestOutstanding = false;
+
+        bool isActive() const noexcept
+        {
+            return localGeneration != 0 && airMaster.isValid();
+        }
+    };
+
     Implementation(SwarmWaypointLeaderWindow *window,
                    SwarmWaypointLeaderWindowInterface *windowInterface,
                    Dependencies deps, QWidget *owner)
@@ -482,14 +496,24 @@ public:
             return;
         }
         refreshing = true;
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
         const SwarmVehicleInstanceLease previousGround = groundMaster;
         const SwarmVehicleInstanceLease previousAir = airMaster;
         const QVector<VehicleRow> previousRows = rows;
         rows.clear();
 
-        if (interface) {
+        const QPointer<SwarmWaypointLeaderWindowInterface> currentInterface =
+            interface;
+        if (currentInterface) {
             const QVector<SwarmWaypointLeaderWindowVehicle> discovered =
-                interface->vehicles();
+                currentInterface->vehicles();
+            if (!windowGuard) {
+                return;
+            }
+            if (!interface || interface.data() != currentInterface.data()) {
+                refreshing = false;
+                return;
+            }
             for (const SwarmWaypointLeaderWindowVehicle &vehicle : discovered) {
                 if (!vehicle.lease.isValid() || rows.size() >= 24
                     || rowForLease(vehicle.lease) >= 0) {
@@ -552,6 +576,16 @@ public:
              && !sameVehicle(previousGround, groundMaster))
             || (previousAir.isValid()
                 && !sameVehicle(previousAir, airMaster));
+        const bool airWasReplaced = previousAir.isValid()
+            && !sameVehicle(previousAir, airMaster);
+        if (airWasReplaced) {
+            cancelMissionRefreshFor(previousAir, q->tr(
+                "The exact air master changed before its mission refresh completed."));
+            if (!windowGuard) {
+                return;
+            }
+            observedMissionRevision = 0;
+        }
         if (masterWasReplaced) {
             for (VehicleRow &row : rows) {
                 row.included = false;
@@ -562,6 +596,9 @@ public:
         assignMissingOrders();
         rebuildVehicleWidgets();
         loadMission();
+        if (!windowGuard) {
+            return;
+        }
         updateProfileMarkers();
         refreshing = false;
 
@@ -745,48 +782,167 @@ public:
         }
     }
 
-    void loadMission()
+    bool missionRefreshMatches(
+        quint64 generation,
+        const SwarmVehicleInstanceLease &vehicle) const noexcept
+    {
+        return missionRefresh.isActive()
+            && missionRefresh.localGeneration == generation
+            && sameVehicle(missionRefresh.airMaster, vehicle);
+    }
+
+    void clearMissionPresentation(const QString &text)
     {
         missionValid = false;
         mission = SwarmWaypointLeaderMissionSnapshot();
         missionPath = SwarmWaypointLeaderMissionPath();
         profile->setProfile({});
+        profile->setVehicleMarkers({});
+        missionStatus->setText(text);
+    }
+
+    void rejectMissionObservation(quint64 generation, quint64 revision)
+    {
+        if (!missionRefreshMatches(generation, airMaster)) {
+            return;
+        }
+        missionRefresh.baselineObservationRevision = std::max(
+            missionRefresh.baselineObservationRevision, revision);
+        missionRefresh.requestOutstanding = false;
+    }
+
+    void loadMission()
+    {
+        if (loadingMission) {
+            return;
+        }
+        loadingMission = true;
+        clearMissionPresentation(QString());
         if (!interface) {
+            observedMissionRevision = 0;
             missionStatus->setText(q->tr(
                 "The exact mission service is unavailable."));
+            loadingMission = false;
             return;
         }
         if (!airMaster.isValid()) {
+            observedMissionRevision = 0;
             missionStatus->setText(q->tr(
                 "No air-master mission selected."));
+            loadingMission = false;
+            return;
+        }
+
+        const SwarmVehicleInstanceLease selectedAir = airMaster;
+        const MissionRefreshState expectedRefresh = missionRefresh;
+        const bool refreshGated = expectedRefresh.isActive();
+        if (refreshGated
+            && !sameVehicle(expectedRefresh.airMaster, selectedAir)) {
+            missionStatus->setText(q->tr(
+                "The selected exact air master changed while its mission refresh was pending."));
+            loadingMission = false;
+            return;
+        }
+        if (refreshGated && !expectedRefresh.completionArmed) {
+            missionStatus->setText(q->tr(
+                "Preparing an exact air-master mission refresh; the previous snapshot is hidden."));
+            loadingMission = false;
+            return;
+        }
+
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
+        const QPointer<SwarmWaypointLeaderWindowInterface> currentInterface =
+            interface;
+        const quint64 observationRevision =
+            currentInterface->missionObservationRevision(selectedAir);
+        if (!windowGuard) {
+            return;
+        }
+        if (!interface || interface.data() != currentInterface.data()
+            || !sameVehicle(airMaster, selectedAir)
+            || (refreshGated
+                && !missionRefreshMatches(
+                    expectedRefresh.localGeneration, selectedAir))) {
+            loadingMission = false;
+            return;
+        }
+        observedMissionRevision = observationRevision;
+        if (refreshGated
+            && observationRevision
+                <= expectedRefresh.baselineObservationRevision) {
+            missionStatus->setText(q->tr(
+                "Waiting for a new complete observation of the exact air-master mission; the previous snapshot remains hidden."));
+            loadingMission = false;
+            return;
+        }
+        if (observationRevision == 0) {
+            missionStatus->setText(q->tr(
+                "No successful exact air-master mission observation is available."));
+            loadingMission = false;
             return;
         }
 
         QString error;
         SwarmWaypointLeaderMissionSnapshot snapshot;
-        if (!interface->missionForAirMaster(airMaster, &snapshot, &error)) {
-            missionStatus->setText(error.trimmed().isEmpty()
-                ? q->tr("No exact air-master mission is available.") : error);
+        const bool available = currentInterface->missionForAirMaster(
+            selectedAir, &snapshot, &error);
+        if (!windowGuard) {
             return;
         }
-        if (!sameVehicle(snapshot.airMaster, airMaster)) {
+        if (!interface || interface.data() != currentInterface.data()
+            || !sameVehicle(airMaster, selectedAir)
+            || (refreshGated
+                && !missionRefreshMatches(
+                    expectedRefresh.localGeneration, selectedAir))) {
+            loadingMission = false;
+            return;
+        }
+        if (!available) {
+            if (refreshGated) {
+                rejectMissionObservation(
+                    expectedRefresh.localGeneration, observationRevision);
+            }
+            missionStatus->setText(error.trimmed().isEmpty()
+                ? q->tr("No exact air-master mission is available.") : error);
+            loadingMission = false;
+            return;
+        }
+        if (!sameVehicle(snapshot.airMaster, selectedAir)) {
+            if (refreshGated) {
+                rejectMissionObservation(
+                    expectedRefresh.localGeneration, observationRevision);
+            }
             missionStatus->setText(q->tr(
                 "The mission snapshot does not belong to the selected exact air master."));
+            loadingMission = false;
             return;
         }
         if (snapshot.missionType != MAV_MISSION_TYPE_MISSION
             || snapshot.contentGeneration == 0
             || snapshot.contentDigest.isEmpty()) {
+            if (refreshGated) {
+                rejectMissionObservation(
+                    expectedRefresh.localGeneration, observationRevision);
+            }
             missionStatus->setText(q->tr(
                 "The air-master mission lacks exact type, generation or digest identity."));
+            loadingMission = false;
             return;
         }
         SwarmWaypointLeaderMissionPath path;
         if (!SwarmWaypointLeaderMissionPath::build(snapshot, &path, &error)) {
+            if (refreshGated) {
+                rejectMissionObservation(
+                    expectedRefresh.localGeneration, observationRevision);
+            }
             missionStatus->setText(error);
+            loadingMission = false;
             return;
         }
 
+        if (refreshGated) {
+            missionRefresh = MissionRefreshState();
+        }
         mission = snapshot;
         missionPath = path;
         missionValid = true;
@@ -796,10 +952,15 @@ public:
             .arg(path.profile().size())
             .arg(path.lengthM(), 0, 'f', 1)
             .arg(path.signature().left(8)));
+        loadingMission = false;
     }
 
     void updateProfileMarkers()
     {
+        if (!missionValid) {
+            profile->setVehicleMarkers({});
+            return;
+        }
         QVector<WaypointLeaderVehicleMarker> markers;
         markers.reserve(rows.size());
         for (const VehicleRow &row : rows) {
@@ -999,6 +1160,9 @@ public:
         // Confirmation may run a nested event loop. Re-read discovery and the
         // exact mission, then validate through the executor a second time.
         refreshFromInterface(false);
+        if (!windowGuard) {
+            return;
+        }
         if (!tryBuildPlan(&plan, &error)
             || !samePlan(confirmedPlan, plan)) {
             setStatus(q->tr(
@@ -1071,6 +1235,9 @@ public:
             return;
         }
         refreshFromInterface(false);
+        if (!windowGuard) {
+            return;
+        }
         SwarmWaypointLeaderPlan current;
         QString error;
         if (!runtimeRunning() || !tryBuildPlan(&current, &error)
@@ -1094,17 +1261,39 @@ public:
         if (loading || refreshing) {
             return;
         }
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
+        const SwarmVehicleInstanceLease previousAir = airMaster;
+        const SwarmVehicleInstanceLease nextGround =
+            qvariant_cast<SwarmVehicleInstanceLease>(
+                groundCombo->currentData());
+        const SwarmVehicleInstanceLease nextAir =
+            qvariant_cast<SwarmVehicleInstanceLease>(
+                airCombo->currentData());
+        const bool airWasReplaced = previousAir.isValid()
+            && !sameVehicle(previousAir, nextAir);
+        if (airWasReplaced) {
+            cancelMissionRefreshFor(previousAir, q->tr(
+                "The exact air master was changed before its mission refresh completed."));
+            if (!windowGuard) {
+                return;
+            }
+            observedMissionRevision = 0;
+        }
         cancelActive(q->tr("Waypoint Leader stopped because the %1 changed.")
             .arg(ground ? q->tr("ground master") : q->tr("air master")));
-        groundMaster = qvariant_cast<SwarmVehicleInstanceLease>(
-            groundCombo->currentData());
-        airMaster = qvariant_cast<SwarmVehicleInstanceLease>(
-            airCombo->currentData());
+        if (!windowGuard) {
+            return;
+        }
+        groundMaster = nextGround;
+        airMaster = nextAir;
         clearMasterFollowerState();
         assignMissingOrders();
         rebuildTable();
         if (!ground) {
             loadMission();
+            if (!windowGuard) {
+                return;
+            }
         }
         updateProfileMarkers();
         updateActions();
@@ -1148,32 +1337,131 @@ public:
         updateActions();
     }
 
+    void cancelMissionRefreshFor(
+        const SwarmVehicleInstanceLease &vehicle,
+        const QString &reason)
+    {
+        if (!missionRefresh.isActive()
+            || !sameVehicle(missionRefresh.airMaster, vehicle)) {
+            return;
+        }
+        const bool cancelAdapterRequest =
+            missionRefresh.requestOutstanding;
+        missionRefresh = MissionRefreshState();
+        if (!cancelAdapterRequest || !interface) {
+            return;
+        }
+
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
+        const QPointer<SwarmWaypointLeaderWindowInterface> currentInterface =
+            interface;
+        cancellingMissionRefresh = true;
+        currentInterface->cancelMissionRefresh(vehicle, reason);
+        if (!windowGuard) {
+            return;
+        }
+        cancellingMissionRefresh = false;
+    }
+
     void explicitVehicleRefresh()
     {
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
         cancelActive(q->tr(
             "Waypoint Leader stopped because the vehicle list was refreshed."));
-        if (interface) {
-            interface->refreshVehicles();
+        if (!windowGuard) {
+            return;
+        }
+        const QPointer<SwarmWaypointLeaderWindowInterface> currentInterface =
+            interface;
+        if (currentInterface) {
+            currentInterface->refreshVehicles();
+            if (!windowGuard) {
+                return;
+            }
         }
         refreshFromInterface(true);
     }
 
     void explicitMissionRefresh()
     {
-        cancelActive(q->tr(
-            "Waypoint Leader stopped because the air-master mission was refreshed."));
-        if (!interface || !airMaster.isValid()) {
+        if (closing || !interface || !airMaster.isValid()) {
             setStatus(q->tr("Select an exact air master before refreshing its mission."));
             updateActions();
             return;
         }
+
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
+        const QPointer<SwarmWaypointLeaderWindowInterface> currentInterface =
+            interface;
+        const SwarmVehicleInstanceLease requestedAir = airMaster;
+        cancelMissionRefreshFor(requestedAir, q->tr(
+            "A newer mission refresh superseded the previous request for this exact air master."));
+        if (!windowGuard) {
+            return;
+        }
+        if (!interface || interface.data() != currentInterface.data()
+            || !sameVehicle(airMaster, requestedAir)) {
+            return;
+        }
+
+        ++nextMissionRefreshGeneration;
+        if (nextMissionRefreshGeneration == 0) {
+            ++nextMissionRefreshGeneration;
+        }
+        missionRefresh.localGeneration = nextMissionRefreshGeneration;
+        missionRefresh.airMaster = requestedAir;
+        missionRefresh.baselineObservationRevision =
+            observedMissionRevision;
+        missionRefresh.completionArmed = false;
+        missionRefresh.requestOutstanding = false;
+        const quint64 localGeneration =
+            missionRefresh.localGeneration;
+        clearMissionPresentation(q->tr(
+            "Preparing an exact air-master mission refresh; the previous snapshot is hidden."));
+        updateActions();
+
+        cancelActive(q->tr(
+            "Waypoint Leader stopped because the air-master mission was refreshed."));
+        if (!windowGuard) {
+            return;
+        }
+        if (!interface || !sameVehicle(airMaster, requestedAir)
+            || !missionRefreshMatches(localGeneration, requestedAir)) {
+            return;
+        }
+
+        const quint64 adapterRevision =
+            currentInterface->missionObservationRevision(requestedAir);
+        if (!windowGuard) {
+            return;
+        }
+        if (!interface || interface.data() != currentInterface.data()
+            || !sameVehicle(airMaster, requestedAir)
+            || !missionRefreshMatches(localGeneration, requestedAir)) {
+            return;
+        }
+        missionRefresh.baselineObservationRevision = std::max(
+            missionRefresh.baselineObservationRevision, adapterRevision);
+        missionRefresh.completionArmed = true;
+        missionRefresh.requestOutstanding = true;
+
         QString error;
-        const bool requested = interface->refreshMission(airMaster, &error);
-        loadMission();
-        updateProfileMarkers();
+        const bool requested =
+            currentInterface->refreshMission(requestedAir, &error);
+        if (!windowGuard) {
+            return;
+        }
+        if (!interface || interface.data() != currentInterface.data()
+            || !sameVehicle(airMaster, requestedAir)
+            || !missionRefreshMatches(localGeneration, requestedAir)) {
+            return;
+        }
+        if (!requested) {
+            missionRefresh.requestOutstanding = false;
+        }
         setStatus(requested
             ? q->tr("Air-master mission refresh requested for %1.")
-                .arg(fallbackVehicleLabel(airMaster))
+                .arg(fallbackVehicleLabel(requestedAir))
             : (error.trimmed().isEmpty()
                 ? q->tr("The exact mission refresh request was rejected.")
                 : error));
@@ -1182,12 +1470,23 @@ public:
 
     void interfaceChanged()
     {
-        if (refreshing || cancelling || !interface) {
+        if (refreshing || loadingMission || cancelling
+            || cancellingMissionRefresh || closing || !interface) {
             return;
         }
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
         const bool wasRunning = runtimeRunning();
         const std::optional<SwarmWaypointLeaderPlan> expected = activePlan;
         refreshFromInterface(false);
+        if (!windowGuard) {
+            return;
+        }
+        if (!interface) {
+            activePlan.reset();
+            syncRuntime(false);
+            updateActions();
+            return;
+        }
         if (wasRunning && expected && runtimeRunning()) {
             SwarmWaypointLeaderPlan current;
             QString error;
@@ -1214,14 +1513,15 @@ public:
     {
         interface = nullptr;
         activePlan.reset();
-        missionValid = false;
+        missionRefresh = MissionRefreshState();
+        observedMissionRevision = 0;
+        loadingMission = false;
+        cancellingMissionRefresh = false;
         rows.clear();
         groundMaster = SwarmVehicleInstanceLease();
         airMaster = SwarmVehicleInstanceLease();
         rebuildVehicleWidgets();
-        profile->setProfile({});
-        profile->setVehicleMarkers({});
-        missionStatus->setText(q->tr(
+        clearMissionPresentation(q->tr(
             "The exact mission service is unavailable."));
         setStatus(q->tr(
             "Waypoint Leader stopped: the exact executor was destroyed."));
@@ -1240,7 +1540,13 @@ public:
         cancelling = true;
         cancellationIssued = true;
         activePlan.reset();
-        interface->cancelActiveRun(reason);
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
+        const QPointer<SwarmWaypointLeaderWindowInterface> currentInterface =
+            interface;
+        currentInterface->cancelActiveRun(reason);
+        if (!windowGuard) {
+            return;
+        }
         cancelling = false;
         setStatus(reason);
         syncRuntime(false);
@@ -1253,8 +1559,20 @@ public:
             return;
         }
         closing = true;
+        const QPointer<SwarmWaypointLeaderWindow> windowGuard(q);
         cancelActive(q->tr(
             "Waypoint Leader stopped because the window closed; no further targets are sent."));
+        if (!windowGuard) {
+            return;
+        }
+        if (missionRefresh.isActive()
+            && sameVehicle(missionRefresh.airMaster, airMaster)) {
+            cancelMissionRefreshFor(airMaster, q->tr(
+                "The mission refresh was cancelled because the Waypoint Leader window closed."));
+            if (!windowGuard) {
+                return;
+            }
+        }
         updateActions();
     }
 
@@ -1328,11 +1646,16 @@ public:
     SwarmVehicleInstanceLease airMaster;
     SwarmWaypointLeaderMissionSnapshot mission;
     SwarmWaypointLeaderMissionPath missionPath;
+    MissionRefreshState missionRefresh;
     std::optional<SwarmWaypointLeaderPlan> activePlan;
+    quint64 nextMissionRefreshGeneration = 0;
+    quint64 observedMissionRevision = 0;
     bool missionValid = false;
     bool loading = false;
+    bool loadingMission = false;
     bool refreshing = false;
     bool cancelling = false;
+    bool cancellingMissionRefresh = false;
     bool cancellationIssued = false;
     bool displayedRunning = false;
     bool closing = false;

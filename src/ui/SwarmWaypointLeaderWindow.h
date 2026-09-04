@@ -58,9 +58,21 @@ public:
         const SwarmVehicleInstanceLease &airMaster,
         SwarmWaypointLeaderMissionSnapshot *mission,
         QString *error) const = 0;
+    /**
+     * Monotonic revision of complete successful mission observations for this
+     * exact air-master instance.  It must advance even when a new download has
+     * identical content generation and digest, and must be zero when no
+     * successful observation exists.
+     */
+    virtual quint64 missionObservationRevision(
+        const SwarmVehicleInstanceLease &airMaster) const noexcept = 0;
     virtual bool refreshMission(
         const SwarmVehicleInstanceLease &airMaster,
         QString *error) = 0;
+    /** Synchronously detach/cancel only this exact instance's refresh. */
+    virtual void cancelMissionRefresh(
+        const SwarmVehicleInstanceLease &airMaster,
+        const QString &reason) = 0;
 
     virtual bool executorReady(QString *error) const = 0;
     virtual bool validatePlan(const SwarmWaypointLeaderPlan &plan,
