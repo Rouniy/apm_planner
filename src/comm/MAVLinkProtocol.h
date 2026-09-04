@@ -47,6 +47,7 @@ This file is part of the APM_PLANNER project
 #include <QFile>
 #include <QByteArray>
 #include <QMap>
+#include <QSharedPointer>
 
 class LinkManager;
 class MAVLinkProtocol : public QObject
@@ -113,7 +114,7 @@ private:
     QMap<int, quint64> totalLossCounter;
     QMap<int, quint64> currReceiveCounter;
     QMap<int, quint64> currLossCounter;
-    QMap<int, LinkReceiveState> m_linkReceiveStates;
+    QMap<int, QSharedPointer<LinkReceiveState>> m_linkReceiveStates;
     QMap<int, QMap<int, QMap<int, quint8>>> m_lastIndexByLink;
 
 signals:

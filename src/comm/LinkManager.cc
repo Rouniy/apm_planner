@@ -32,6 +32,7 @@ This file is part of the APM_PLANNER project
 #include "LinkManagerFactory.h"
 #include "LinkManager.h"
 #include "RadioStatusMonitor.h"
+#include "SwarmTelemetryRegistry.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
 #include "ArduPilotMegaMAV.h"
@@ -113,6 +114,7 @@ LinkManager::LinkManager(QObject *parent) :
     m_mavlinkLoggingEnabled(true)
 {
     m_vehicleTargetManager = new VehicleTargetManager(this);
+    m_swarmTelemetryRegistry = new SwarmTelemetryRegistry(this);
     m_radioStatusMonitor = new RadioStatusMonitor(this);
     m_exactLinkTransmitter = new ExactLinkTransmitter(
         [this](int linkId, const QByteArray &frame) {
@@ -352,6 +354,11 @@ void LinkManager::shutdown()
                            m_mavlinkProtocol.data(),
                            SLOT(receiveBytes(LinkInterface*,QByteArray)));
             }
+        }
+        const quint64 swarmSession =
+            m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
+        if (swarmSession != 0) {
+            m_swarmTelemetryRegistry->endLinkSession(linkId, swarmSession);
         }
     }
 
@@ -601,6 +608,11 @@ VehicleTargetManager *LinkManager::vehicleTargetManager() const
     return m_vehicleTargetManager;
 }
 
+SwarmTelemetryRegistry *LinkManager::swarmTelemetryRegistry() const
+{
+    return m_swarmTelemetryRegistry;
+}
+
 ExactLinkTransmitter *LinkManager::exactLinkTransmitter() const
 {
     return m_exactLinkTransmitter;
@@ -682,19 +694,29 @@ void LinkManager::addLink(LinkInterface *link)
         QLOG_WARN() << "Ignoring link added during terminal shutdown";
         return;
     }
-    m_connectionMap.insert(link->getId(),link);
+    QPointer<LinkInterface> guardedLink(link);
+    const int linkId = link->getId();
+    const bool alreadyConnected = link->isConnected();
+    const LinkInterface::LinkType linkType = link->getLinkType();
+    m_connectionMap.insert(linkId, link);
+    if (alreadyConnected) {
+        activateLinkSession(link);
+    } else {
+        m_exactLinkTransmitter->setMotorStopLinkEligible(
+            linkId, linkType == LinkInterface::SERIAL_LINK
+                || linkType == LinkInterface::TCP_LINK);
+    }
     // UDPLink is a known listening/broadcast transport: every outgoing
     // datagram is copied to every configured or learned peer. CompassMot's
     // stop ACK is not target-filtered by ArduCopter, so it is never eligible.
     // Ordered Serial/TCP streams are merely eligible: the safety UI separately
     // requires the operator to confirm this instance is a dedicated direct
     // connection rather than a router or radio network.
-    const LinkInterface::LinkType linkType = link->getLinkType();
-    m_exactLinkTransmitter->setMotorStopLinkEligible(
-        link->getId(),
-        linkType == LinkInterface::SERIAL_LINK
-            || linkType == LinkInterface::TCP_LINK);
-    emit newLink(link->getId());
+    if (!guardedLink
+        || m_connectionMap.value(linkId, nullptr) != guardedLink.data()) {
+        return;
+    }
+    emit newLink(linkId);
 //    saveSettings();
 }
 
@@ -882,21 +904,51 @@ QStringList LinkManager::getCurrentPorts()
 
 void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
 {
-    if (m_shuttingDown) {
+    if (m_shuttingDown || !link
+        || m_connectionMap.value(link->getId(), nullptr) != link) {
         return;
     }
-    if (link) {
-        m_vehicleCommandService->observeMessage(link->getId(), message);
-        m_compassCalibrationService->observeMessage(link->getId(), message);
-        m_parameterService->observeMessage(link->getId(), message);
-        m_mavFtpService->observeMessage(link->getId(), message);
-        // MP10 propagates RADIO/RADIO_STATUS to every vehicle on the link; the
-        // monitor keys the statistics by this physical link only.
-        m_radioStatusMonitor->observe(link->getId(), message,
-                                      QDateTime::currentMSecsSinceEpoch());
+    QPointer<LinkInterface> guardedLink(link);
+    const int linkId = link->getId();
+    const quint64 ingressSwarmSession =
+        m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
+    // A queued byte batch can arrive after physical disconnect while the
+    // LinkInterface is still kept in the configuration map. Never let such a
+    // packet revive legacy target/services or escape on the public stream.
+    if (ingressSwarmSession == 0) {
+        return;
     }
-    if (link
-        && VehicleTargetManager::isVisibleDiscoveryMessage(message.msgid)) {
+    const auto linkIsCurrent = [this, &guardedLink, linkId,
+                                ingressSwarmSession]() {
+        return guardedLink
+            && m_connectionMap.value(linkId, nullptr) == guardedLink.data()
+            && m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId)
+                == ingressSwarmSession;
+    };
+    m_vehicleCommandService->observeMessage(linkId, message);
+    if (!linkIsCurrent()) {
+        return;
+    }
+    m_compassCalibrationService->observeMessage(linkId, message);
+    if (!linkIsCurrent()) {
+        return;
+    }
+    m_parameterService->observeMessage(linkId, message);
+    if (!linkIsCurrent()) {
+        return;
+    }
+    m_mavFtpService->observeMessage(linkId, message);
+    if (!linkIsCurrent()) {
+        return;
+    }
+    // MP10 propagates RADIO/RADIO_STATUS to every vehicle on the link; the
+    // monitor keys the statistics by this physical link only.
+    m_radioStatusMonitor->observe(linkId, message,
+                                  QDateTime::currentMSecsSinceEpoch());
+    if (!linkIsCurrent()) {
+        return;
+    }
+    if (VehicleTargetManager::isVisibleDiscoveryMessage(message.msgid)) {
         VehicleEndpoint endpoint;
         endpoint.linkId = link->getId();
         endpoint.systemId = message.sysid;
@@ -907,6 +959,9 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
         // port. Globally we only do so while no explicit target exists.
         m_vehicleTargetManager->observeEndpoint(
             endpoint, message.compid != MAV_COMP_ID_MISSIONPLANNER);
+        if (!linkIsCurrent()) {
+            return;
+        }
         if (message.msgid == MAVLINK_MSG_ID_HEARTBEAT) {
             mavlink_heartbeat_t heartbeat{};
             mavlink_msg_heartbeat_decode(&message, &heartbeat);
@@ -916,7 +971,24 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
                 heartbeat.autopilot, heartbeat.type);
         }
     }
-    emit messageReceived(link,message);
+    if (!linkIsCurrent()) {
+        return;
+    }
+    if (m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId)
+        != ingressSwarmSession) {
+        return;
+    }
+    if (ingressSwarmSession != 0) {
+        m_swarmTelemetryRegistry->observeMessage(
+            linkId, ingressSwarmSession, message);
+    }
+    if (!linkIsCurrent()
+        || (ingressSwarmSession != 0
+            && m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId)
+                != ingressSwarmSession)) {
+        return;
+    }
+    emit messageReceived(guardedLink.data(), message);
 }
 
 UASInterface* LinkManager::getUas(int id)
@@ -1090,11 +1162,11 @@ void LinkManager::linkConnected(LinkInterface* link)
     if (!link || m_connectionMap.value(link->getId(), nullptr) != link) {
         return;
     }
-    const LinkInterface::LinkType linkType = link->getLinkType();
-    m_exactLinkTransmitter->setMotorStopLinkEligible(
-        link->getId(), linkType == LinkInterface::SERIAL_LINK
-            || linkType == LinkInterface::TCP_LINK);
-    emit linkChanged(link->getId());
+    const int linkId = link->getId();
+    if (!activateLinkSession(link)) {
+        return;
+    }
+    emit linkChanged(linkId);
 }
 
 void LinkManager::linkDisonnected(LinkInterface* link)
@@ -1102,14 +1174,51 @@ void LinkManager::linkDisonnected(LinkInterface* link)
     if (!link) {
         return;
     }
-    QLOG_DEBUG() << "LinkManager::linkDisonnected: " << link->getName() << link->getId();
-    if (m_connectionMap.value(link->getId(), nullptr) == link) {
+    const int linkId = link->getId();
+    const QString linkName = link->getName();
+    QLOG_DEBUG() << "LinkManager::linkDisonnected: "
+                 << linkName << linkId;
+    if (m_connectionMap.value(linkId, nullptr) == link) {
         // A live LinkInterface may reconnect under the same integer id. Treat
         // every physical disconnect as an epoch boundary immediately: an old
         // heartbeat/lease must never authorize commands to the next peer.
-        invalidateLinkSession(link->getId());
+        invalidateLinkSession(linkId);
     }
-    emit linkChanged(link->getId());
+    if (m_connectionMap.contains(linkId)) {
+        emit linkChanged(linkId);
+    }
+}
+
+bool LinkManager::activateLinkSession(LinkInterface *link)
+{
+    if (m_shuttingDown || !link
+        || m_connectionMap.value(link->getId(), nullptr) != link) {
+        return false;
+    }
+    QPointer<LinkInterface> guardedLink(link);
+    const int linkId = link->getId();
+    const QString linkName = link->getShortName();
+    const LinkInterface::LinkType linkType = link->getLinkType();
+
+    // Some transports can reconnect/rebind without first delivering the typed
+    // disconnected(LinkInterface*) signal. A new connected signal is always
+    // an epoch boundary for every parser and exact-target service.
+    invalidateLinkSession(linkId);
+    if (m_shuttingDown || !guardedLink
+        || m_connectionMap.value(linkId, nullptr) != guardedLink.data()
+        || !guardedLink->isConnected()
+        || m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId) != 0) {
+        return false;
+    }
+    m_exactLinkTransmitter->setMotorStopLinkEligible(
+        linkId, linkType == LinkInterface::SERIAL_LINK
+            || linkType == LinkInterface::TCP_LINK);
+    const quint64 session =
+        m_swarmTelemetryRegistry->beginLinkSession(linkId, linkName);
+    return !m_shuttingDown && guardedLink && guardedLink->isConnected()
+        && m_connectionMap.value(linkId, nullptr) == guardedLink.data()
+        && m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId)
+            == session;
 }
 
 void LinkManager::invalidateLinkSession(int linkId)
@@ -1117,6 +1226,8 @@ void LinkManager::invalidateLinkSession(int linkId)
     if (linkId < 0) {
         return;
     }
+    const quint64 swarmSession =
+        m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
     m_mavFtpService->forgetLink(linkId);
     m_compassCalibrationService->forgetLink(linkId);
     m_guidedTargetService->forgetLink(linkId);
@@ -1128,6 +1239,9 @@ void LinkManager::invalidateLinkSession(int linkId)
     m_radioStatusMonitor->forgetLink(linkId);
     if (m_mavlinkProtocol) {
         m_mavlinkProtocol->forgetLink(linkId);
+    }
+    if (swarmSession != 0) {
+        m_swarmTelemetryRegistry->endLinkSession(linkId, swarmSession);
     }
 }
 

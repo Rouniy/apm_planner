@@ -54,6 +54,7 @@ This file is part of the APM_PLANNER project
 #include "UAS.h"
 #include "UASObject.h"
 class VehicleTargetManager;
+class SwarmTelemetryRegistry;
 class VehicleCommandService;
 class GuidedTargetService;
 class MovingBasePositionStore;
@@ -83,6 +84,7 @@ public:
 
     MAVLinkProtocol* getProtocol() const;
     VehicleTargetManager *vehicleTargetManager() const;
+    SwarmTelemetryRegistry *swarmTelemetryRegistry() const;
     ExactLinkTransmitter *exactLinkTransmitter() const;
     // Link-scoped SiK RADIO_STATUS / legacy RADIO statistics (MP10 localsnrdb).
     RadioStatusMonitor *radioStatusMonitor() const;
@@ -164,6 +166,7 @@ private slots:
 private:
     void loadSettings();
     void saveSettings();
+    bool activateLinkSession(LinkInterface *link);
     void invalidateLinkSession(int linkId);
     void syncActiveUasToTarget();
     void syncTargetToActiveUas(UASInterface *uas);
@@ -179,6 +182,7 @@ private:
     QScopedPointer<MAVLinkDecoder> m_mavlinkDecoder;
     QScopedPointer<MAVLinkProtocol> m_mavlinkProtocol;
     VehicleTargetManager *m_vehicleTargetManager = nullptr;
+    SwarmTelemetryRegistry *m_swarmTelemetryRegistry = nullptr;
     ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;

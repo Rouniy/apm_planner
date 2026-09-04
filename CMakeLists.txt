@@ -322,6 +322,8 @@ set(SOURCES
     src/comm/VehicleCommandService.h
     src/comm/VehicleEndpoint.cpp
     src/comm/VehicleEndpoint.h
+    src/comm/SwarmTelemetryRegistry.cpp
+    src/comm/SwarmTelemetryRegistry.h
     src/comm/VehicleTargetManager.cpp
     src/comm/VehicleTargetManager.h
     src/comm/RadioStatusMonitor.cpp
@@ -2403,6 +2405,25 @@ if(BUILD_TESTING)
     )
     add_test(NAME guidedtargetservice_tests
         COMMAND guidedtargetservice_tests)
+
+    add_executable(swarmtelemetryregistry_tests
+        tests/test_swarmtelemetryregistry.cpp
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmtelemetryregistry_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmtelemetryregistry_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME swarmtelemetryregistry_tests
+        COMMAND swarmtelemetryregistry_tests)
 
     add_executable(nmeaggaparser_tests
         tests/test_nmeaggaparser.cpp

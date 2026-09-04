@@ -40,6 +40,7 @@ This file is part of the APM_PLANNER project
 #include <cstring>
 #include <QDataStream>
 #include <QMetaMethod>
+#include <QPointer>
 
 MAVLinkProtocol::MAVLinkProtocol()
 {
@@ -72,43 +73,76 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
     if (!link) {
         return;
     }
-    LinkReceiveState &linkState = m_linkReceiveStates[link->getId()];
+    QPointer<LinkInterface> guardedLink(link);
+    const int linkId = link->getId();
+    if (dataBytes.isEmpty()
+        || (m_connectionManager
+            && m_connectionManager->getLink(linkId) != guardedLink.data())) {
+        return;
+    }
+    QSharedPointer<LinkReceiveState> linkState =
+        m_linkReceiveStates.value(linkId);
+    if (linkState.isNull()) {
+        linkState.reset(new LinkReceiveState);
+        m_linkReceiveStates.insert(linkId, linkState);
+    }
+    const auto receiveSessionIsCurrent =
+        [this, &guardedLink, linkId, &linkState]() {
+        return guardedLink
+            && (!m_connectionManager
+                || m_connectionManager->getLink(linkId)
+                    == guardedLink.data())
+            && m_linkReceiveStates.value(linkId) == linkState;
+    };
 
     mavlink_message_t message;
     memset(&message, 0, sizeof(mavlink_message_t));
     const auto setOutboundVersion =
-        [this, link, &linkState](unsigned int version) {
-        linkState.parser.setOutboundVersion(version);
+        [this, &guardedLink, linkId,
+         &linkState, &receiveSessionIsCurrent](unsigned int version) {
+        if (!receiveSessionIsCurrent()) {
+            return false;
+        }
+        linkState->parser.setOutboundVersion(version);
         // Message encoders still finalize through the legacy default channel.
         // Keep it aligned while receive parsing remains isolated per link.
         mavlink_set_proto_version(MAVLINK_COMM_0, version);
-        emit outboundVersionChanged(link->getId(), version);
+        if (guardedLink) {
+            emit outboundVersionChanged(linkId, version);
+        }
+        return receiveSessionIsCurrent();
     };
 
     //QLOG_DEBUG() << "MAVLinkProtocol received size:" << dataBytes.size() << " " << dataBytes.at(0);
 
     for(const auto &data : dataBytes)
     {
-        const unsigned int decodeState = linkState.parser.parseByte(
+        if (!receiveSessionIsCurrent()) {
+            return;
+        }
+        const unsigned int decodeState = linkState->parser.parseByte(
             static_cast<quint8>(data), &message);
 
         if (decodeState == MAVLINK_FRAMING_INCOMPLETE
-            && !linkState.decodedFirstPacket)
+            && !linkState->decodedFirstPacket)
         {
-            linkState.nonMavlinkCount++;
-            if (linkState.nonMavlinkCount > 2000
-                && !linkState.warnedUserNonMavlink)
+            linkState->nonMavlinkCount++;
+            if (linkState->nonMavlinkCount > 2000
+                && !linkState->warnedUserNonMavlink)
             {
                 //2000 bytes with no mavlink message. Are we connected to a mavlink capable device?
-                if (!linkState.checkedUserNonMavlink)
+                if (!linkState->checkedUserNonMavlink)
                 {
-                    link->requestReset();
-                    linkState.nonMavlinkCount = 0;
-                    linkState.checkedUserNonMavlink = true;
+                    guardedLink->requestReset();
+                    if (!receiveSessionIsCurrent()) {
+                        return;
+                    }
+                    linkState->nonMavlinkCount = 0;
+                    linkState->checkedUserNonMavlink = true;
                 }
                 else
                 {
-                    linkState.warnedUserNonMavlink = true;
+                    linkState->warnedUserNonMavlink = true;
                     emit protocolStatusMessage("MAVLink Baud Rate or Version Mismatch", "Please check if the baud rates of APM Planner and your autopilot are the same.");
                 }
             }
@@ -116,15 +150,17 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
 
         if (decodeState == MAVLINK_FRAMING_OK)
         {
-            mavlink_status_t *mavlinkStatus = &linkState.parser.status();
-            if (!linkState.decodedFirstPacket)
+            mavlink_status_t *mavlinkStatus = &linkState->parser.status();
+            if (!linkState->decodedFirstPacket)
             {
-                linkState.decodedFirstPacket = true;
+                linkState->decodedFirstPacket = true;
 
                 if (mavlinkStatus->flags & MAVLINK_STATUS_FLAG_IN_MAVLINK1)
                 {
                     QLOG_INFO() << "First Mavlink message is version 1.0. Using mavlink 1.0 and ask for mavlink 2.0 capability";
-                    setOutboundVersion(1);
+                    if (!setOutboundVersion(1)) {
+                        return;
+                    }
 
                     // Request AUTOPILOT_VERSION message to check if vehicle is mavlink 2.0 capable
                     mavlink_command_long_t command;
@@ -136,7 +172,11 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                     mavlink_msg_command_long_encode(message.sysid, message.compid, &commandMessage, &command);
                     // Write message into buffer, prepending start sign
                     int len = mavlink_msg_to_send_buffer(sendbuffer, &commandMessage);
-                    link->writeBytes(reinterpret_cast<const char*>(sendbuffer), len);
+                    guardedLink->writeBytes(
+                        reinterpret_cast<const char*>(sendbuffer), len);
+                    if (!receiveSessionIsCurrent()) {
+                        return;
+                    }
 
                     // also request the message using MAV_CMD_REQUEST_MESSAGE
                     command.command = MAV_CMD_REQUEST_MESSAGE;
@@ -145,20 +185,28 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                     mavlink_msg_command_long_encode(message.sysid, message.compid, &commandMessage, &command);
                     // Write message into buffer, prepending start sign
                     len = mavlink_msg_to_send_buffer(sendbuffer, &commandMessage);
-                    link->writeBytes(reinterpret_cast<const char*>(sendbuffer), len);
+                    guardedLink->writeBytes(
+                        reinterpret_cast<const char*>(sendbuffer), len);
+                    if (!receiveSessionIsCurrent()) {
+                        return;
+                    }
                 }
                 else
                 {
                     QLOG_INFO() << "First Mavlink message is version 2.0. Using Mavlink 2.0 for communication";
-                    setOutboundVersion(2);
+                    if (!setOutboundVersion(2)) {
+                        return;
+                    }
                 }
             }
 
             // Check if we are receiving mavlink 2.0 while sending mavlink 1.0
             if (!(mavlinkStatus->flags & MAVLINK_STATUS_FLAG_IN_MAVLINK1) && (mavlinkStatus->flags & MAVLINK_STATUS_FLAG_OUT_MAVLINK1))
             {
-                QLOG_DEBUG() << "Switching outbound to mavlink 2.0 due to incoming mavlink 2.0 packet:" << mavlinkStatus << link->getId() << mavlinkStatus->flags;
-                setOutboundVersion(2);
+                QLOG_DEBUG() << "Switching outbound to mavlink 2.0 due to incoming mavlink 2.0 packet:" << mavlinkStatus << linkId << mavlinkStatus->flags;
+                if (!setOutboundVersion(2)) {
+                    return;
+                }
             }
 
             if(message.msgid == MAVLINK_MSG_ID_AUTOPILOT_VERSION)
@@ -168,12 +216,16 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                 if(version.capabilities & MAV_PROTOCOL_CAPABILITY_MAVLINK2)
                 {
                     QLOG_INFO() << "Vehicle reports mavlink 2.0 capability. Using Mavlink 2.0 for communication";
-                    setOutboundVersion(2);
+                    if (!setOutboundVersion(2)) {
+                        return;
+                    }
                 }
                 else
                 {
                     QLOG_INFO() << "Vehicle reports mavlink 1.0 capability. Using Mavlink 1.0 for communication";
-                    setOutboundVersion(1);
+                    if (!setOutboundVersion(1)) {
+                        return;
+                    }
                 }
             }
 
@@ -227,19 +279,21 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                         && !(mavlinkStatus->flags & MAVLINK_STATUS_FLAG_OUT_MAVLINK1))
                 {
 
-                    linkState.radioVersionMismatchCount++;
+                    linkState->radioVersionMismatchCount++;
                 }
             }
 
-            if (linkState.radioVersionMismatchCount == 5)
+            if (linkState->radioVersionMismatchCount == 5)
             {
                 // Warn the user if the radio continues to send v1 while the link uses v2
                 emit protocolStatusMessage(tr("MAVLink Protocol"), tr("Detected radio still using MAVLink v1.0 on a link with MAVLink v2.0 enabled. Please upgrade the radio firmware."));
                 // Ensure the warning can't get stuck
-                linkState.radioVersionMismatchCount++;
+                linkState->radioVersionMismatchCount++;
                 // Flick link back to v1
-                QLOG_DEBUG() << "Switching outbound to mavlink 1.0 due to incoming mavlink 1.0 packet:" << mavlinkStatus << link->getId() << mavlinkStatus->flags;
-                setOutboundVersion(1);
+                QLOG_DEBUG() << "Switching outbound to mavlink 1.0 due to incoming mavlink 1.0 packet:" << mavlinkStatus << linkId << mavlinkStatus->flags;
+                if (!setOutboundVersion(1)) {
+                    return;
+                }
             }
 
             // MP10's mirror sees complete inbound MAVLink packets, not raw
@@ -259,7 +313,7 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
             }
 
             if (frameObserved) {
-                emit frameReceived(link->getId(), receivedFrame);
+                emit frameReceived(linkId, receivedFrame);
             }
 
             // Log data
@@ -286,7 +340,13 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
 
             if (m_isOnline)
             {
+                if (!receiveSessionIsCurrent()) {
+                    return;
+                }
                  handleMessage(link, message);
+                if (!receiveSessionIsCurrent()) {
+                    return;
+                }
             }
         }
     }
