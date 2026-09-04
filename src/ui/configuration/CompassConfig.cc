@@ -53,6 +53,17 @@ CompassConfig::CompassConfig(QWidget *parent) : AP2ConfigWidget(parent),
     ui.orientationComboBox->setEnabled(false);
     ui.degreesLineEdit->setEnabled(false);
     ui.minutesLineEdit->setEnabled(false);
+
+    const QString calibrationUnavailable = tr(
+        "Unavailable in the legacy page: this calibration path is not "
+        "isolated to the selected vehicle. Use the forthcoming native "
+        "Compass page.");
+    ui.liveCalibrationButton->setEnabled(false);
+    ui.liveCalibrationButton->setToolTip(calibrationUnavailable);
+    ui.onboardCalibrationButton->setEnabled(false);
+    ui.onboardCalibrationButton->setToolTip(calibrationUnavailable);
+    ui.compassMotButton->setEnabled(false);
+    ui.compassMotButton->setToolTip(calibrationUnavailable);
     connect(ui.enableCheckBox,SIGNAL(clicked(bool)),this,SLOT(enableClicked(bool)));
     connect(ui.autoDecCheckBox,SIGNAL(clicked(bool)),this,SLOT(autoDecClicked(bool)));
     connect(ui.orientationComboBox,SIGNAL(currentIndexChanged(int)),this,SLOT(orientationComboChanged(int)));
@@ -143,6 +154,14 @@ void CompassConfig::degreeEditFinished()
     bool minok = false;
     double degrees = ui.degreesLineEdit->text().toDouble(&degok);
     double minutes = ui.minutesLineEdit->text().toDouble(&minok);
+    if (!degok || !minok)
+    {
+        QMessageBox::information(
+            this, tr("Error"),
+            tr("Error, degrees or minutes are not in a valid numeric "
+               "format. Please re-enter the information."));
+        return;
+    }
     if (degrees < 0)
     {
         degrees = degrees - (minutes / 60.0);
@@ -153,11 +172,6 @@ void CompassConfig::degreeEditFinished()
     }
     degrees = degrees * (M_PI/180.0);
     m_uas->getParamManager()->setParameter(1,"COMPASS_DEC",(float)degrees);
-    if (!degok || !minok)
-    {
-        QMessageBox::information(this,tr("Error"),tr("Error, degrees or minutes entered are nor in valid numeric format. Please re-enter the information"));
-        return;
-    }
 }
 
 CompassConfig::~CompassConfig()

@@ -35,7 +35,7 @@ Qt is missing 13 direct MP10 pages:
 
 - Ungrouped: `Install Firmware Legacy`, `Secure`, and
   `Secure (Bootloader Keys)`.
-- Mandatory Hardware: `Compass (Legacy)`.
+- Mandatory Hardware: the current `Compass` page.
 - Optional Hardware: `CubeID Update`, `NV Modem`, `Joystick`,
   `Compass/Motor Calib`, `PX4Flow`, `Antenna Tracker`, and `FFT Setup`.
 - Advanced: `Onboard Lua REPL` and `Local Script REPL`.
@@ -59,15 +59,21 @@ route. Keep their source, but label them Legacy/partial or replace the route.
 `Frame Type` now uses a native `FRAME_CLASS` / `FRAME_TYPE` page and the useful
 `FRAME` workflow is retained as the separate native `Frame Type (Legacy)`
 route. The old combined factory remains available to the legacy shell but is
-not an MP10 SETUP page. The current compass page should be
-called `Compass (Legacy)` because it lacks current multi-compass
-discovery/priority. Range Finder supports one old `RNGFND_*` instance, Airspeed
+not an MP10 SETUP page. The old compass page is now called
+`Compass (Legacy)` because it lacks current multi-compass discovery/priority.
+Its useful basic fields remain, while Live, Onboard and CompassMot calibration
+actions are disabled: the inherited dialogs bind the global active vehicle/link,
+the live path can zero more offsets than it reconstructs, and the onboard path
+can accept a failed result. The modern `Compass` page therefore remains a
+visible inventory gap rather than being claimed by this widget. Range Finder
+supports one old `RNGFND_*` instance, Airspeed
 exposes only the old enable/use/pin choices, Optical Flow is only a
 `FLOW_ENABLE` checkbox, and Camera Gimbal is the old single `MNT_*` surface.
 Those four pages use parameter families that are obsolete on many modern 4.x
 vehicles, so they should be explicitly labelled `(Legacy)` and shown only when
 their legacy parameters exist. Existing Joystick and Compass/Motor code may
-seed the missing direct routes after ownership and lifecycle review.
+seed the missing direct routes after ownership and lifecycle review, but the
+old CompassMot dialog is not an active SETUP route or a safe substitute.
 
 Retention does not permit a misleading replacement. A legacy module may be an
 additional clearly named route, or a temporary partial implementation of the
@@ -92,11 +98,13 @@ Among pages common to both applications, the active inversion is
 `DroneCAN/UAVCAN`:
 MP10 places it immediately after `Battery Monitor 2`, while Qt places it after
 both Antenna Tracker pages. The tracker pages correctly precede `HW CAN` in
-both. Qt now has one shared JSON `DisplayViewProfileService`. All 35 MP10
-SETUP feature flags gate corresponding existing factories, including the
-independent CONFIG `displayOSD` versus SETUP `displayOsd` distinction, CAN,
-tracker and Terminal flags. These gates compose with connection and
-conservative vehicle-family checks; they never make a missing page appear.
+both. Qt now has one shared JSON `DisplayViewProfileService`. It preserves all
+35 MP10 SETUP feature flags; 30 currently gate corresponding existing
+factories, including the independent CONFIG `displayOSD` versus SETUP
+`displayOsd` distinction, CAN, tracker and Terminal flags. The five dormant
+flags belong to the missing Compass/Motor, FFT, Joystick, PX4Flow and REPL
+routes. Active gates compose with connection and conservative vehicle-family
+checks; they never make a missing page appear.
 Useful Qt-only `QML Plugins` and Advanced utilities without a reference feature
 flag remain. `setup_lastpage` is persisted and restored.
 

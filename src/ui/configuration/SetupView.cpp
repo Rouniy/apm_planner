@@ -87,7 +87,7 @@ const QString kFrameType = QStringLiteral("ConfigFrameClassTypeView");
 const QString kFrameTypeLegacy = QStringLiteral("ConfigFrameTypeView");
 const QString kDefaultSettings = QStringLiteral("ConfigDefaultSettingsView");
 const QString kAccelCalibration = QStringLiteral("ConfigAccelCalibrationView");
-const QString kCompass = QStringLiteral("ConfigCompassView");
+const QString kCompassLegacy = QStringLiteral("ConfigCompassLegacyView");
 const QString kRadioInput = QStringLiteral("ConfigRadioInputView");
 const QString kRadioOutput = QStringLiteral("ConfigRadioOutputView");
 const QString kSerialPorts = QStringLiteral("ConfigSerialView");
@@ -366,7 +366,7 @@ void SetupView::buildPages()
     m_backstage->addPage(makeBackstagePage<AccelCalibrationConfig>(
         kAccelCalibration, tr("Accel Calibration"), true, true));
     m_backstage->addPage(makeBackstagePage<CompassConfig>(
-        kCompass, tr("Compass"), true, true));
+        kCompassLegacy, tr("Compass (Legacy)"), true, true));
     m_backstage->addPage(makeBackstagePage<RadioCalibrationConfig>(
         kRadioInput, tr("Radio Calibration"), true, true));
     BackstagePage radioOutput;
@@ -946,7 +946,8 @@ void SetupView::refreshPageVisibility()
     m_backstage->setPageVisible(
         kAccelCalibration, m_connected && profile.displayAccelCalibration);
     m_backstage->setPageVisible(
-        kCompass, m_connected && profile.displayCompassConfiguration);
+        kCompassLegacy,
+        m_connected && profile.displayCompassConfiguration);
     m_backstage->setPageVisible(
         kRadioInput, m_connected && profile.displayRadioCalibration);
     m_backstage->setPageVisible(

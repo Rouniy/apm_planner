@@ -406,9 +406,10 @@ tools — Unicode paths, `QSaveFile`, bounded parsing и отсутствие GU
 - Connect dialog/options: serial/UDP/TCP discovery, validation, history,
   reconnect и exact link identity.
 - Backstage order, group headers, loading overlay и page restore.
-- Общий JSON `DisplayView`/vehicle profile service, 11 CONFIG + 35 SETUP gates
-  и синхронизация Advanced Mode — сделано; остаются profile consumers вне
-  navigation и полноценный Custom editor.
+- Общий JSON `DisplayView`/vehicle profile service, 11 CONFIG + 35 SETUP flags
+  и синхронизация Advanced Mode — сделано; 30 SETUP-флагов уже gate активные
+  фабрики, пять ожидают отсутствующие routes, также остаются profile consumers
+  вне navigation и полноценный Custom editor.
 - Удалить старые menu/dock ownership paths после миграции всех consumers.
 - Проверить несколько links с одинаковыми sysid/compid, link removal и active
   target selection.
