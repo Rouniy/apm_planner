@@ -47,7 +47,7 @@ private slots:
     void copterRoutesSeparateReferenceFromCurrentQt();
     void helicopterDoesNotReceiveCopterBasicTuning();
     void modernHelicopterDoesNotReceiveLegacyConfigEditor();
-    void planeUsesQpLabelAndRejectsLegacyExtendedPage();
+    void planeUsesActionableQpExtendedPage();
     void roverUsesOnlyItsCurrentTuningPage();
 };
 
@@ -267,7 +267,7 @@ void ConfigRouteProfileTest::modernHelicopterDoesNotReceiveLegacyConfigEditor()
         QStringLiteral("ConfigTradHeliView")));
 }
 
-void ConfigRouteProfileTest::planeUsesQpLabelAndRejectsLegacyExtendedPage()
+void ConfigRouteProfileTest::planeUsesActionableQpExtendedPage()
 {
     const ConfigRouteContext context = connectedContext(
         ConfigVehicleKind::Plane);
@@ -286,6 +286,7 @@ void ConfigRouteProfileTest::planeUsesQpLabelAndRejectsLegacyExtendedPage()
         QStringLiteral("ConfigFlightModesView"),
         QStringLiteral("ConfigFriendlyParamsView"),
         QStringLiteral("ConfigArduplaneView"),
+        QStringLiteral("ConfigExtendedTuningView"),
         QStringLiteral("ConfigOSDView"),
         QStringLiteral("MavFTPUIView"),
         QStringLiteral("ConfigUserDefinedView"),

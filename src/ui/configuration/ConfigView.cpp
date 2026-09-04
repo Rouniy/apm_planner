@@ -10,6 +10,8 @@
 #include "ConfigPlannerViewIntegration.h"
 #include "ConfigPlannerAdvView.h"
 #include "ConfigTradHeliView.h"
+#include "ConfigExtendedTuningPageFactory.h"
+#include "ConfigExtendedTuningView.h"
 #include "ConfigFlightModesPageFactory.h"
 #include "ConfigFlightModesView.h"
 #include "ConfigFriendlyParamsView.h"
@@ -121,10 +123,23 @@ ConfigView::ConfigView(QWidget *parent)
     DisplayViewProfileService *const displayProfiles =
         DisplayViewProfileService::instance();
     m_advanced = displayProfiles->current().isAdvancedMode();
-    m_preferredPageHeader = settings.value(kLastPageKey).toString();
+    m_preferredPage = settings.value(kLastPageKey).toString();
 
     m_backstage->setAutomaticSelectionEnabled(false);
     buildPages();
+    // Older versions persisted the translated header. Resolve it while the
+    // definitions still carry their canonical labels, before vehicle-specific
+    // presentation changes (notably Plane's "QP Extended Tuning") are applied.
+    if (!m_preferredPage.isEmpty()
+        && !m_backstage->pageIds().contains(m_preferredPage)) {
+        for (const QString &pageId : m_backstage->pageIds()) {
+            if (m_backstage->pageDefinition(pageId).header
+                == m_preferredPage) {
+                m_preferredPage = pageId;
+                break;
+            }
+        }
+    }
     connect(m_backstage, &BackstageView::currentPageChanged,
             this, &ConfigView::currentPageChanged);
     connect(m_backstage, &BackstageView::stopLoadingRequested,
@@ -157,7 +172,7 @@ ConfigView::ConfigView(QWidget *parent)
         restorePreferredPage();
     });
     activeUASSet(UASManager::instance()->getActiveUAS());
-    m_backstage->restoreInitialPage(m_preferredPageHeader);
+    m_backstage->restoreInitialPage(m_preferredPage);
 }
 
 ConfigView::~ConfigView()
@@ -237,9 +252,20 @@ void ConfigView::buildPages()
     m_backstage->addPage(legacy(makeBackstagePage<ArduRoverPidConfig>(
         kRoverTuning, tr("Basic Tuning (Rover)"),
         routeVisible(ConfigRouteId::RoverTuning))));
-    m_backstage->addPage(legacy(makeBackstagePage<CopterPidConfig>(
-        kExtendedTuning, tr("Extended Tuning"),
-        routeVisible(ConfigRouteId::ExtendedTuning))));
+    BackstagePage extendedTuning;
+    extendedTuning.id = kExtendedTuning;
+    extendedTuning.header = tr("Extended Tuning");
+    extendedTuning.requiresConnection = true;
+    extendedTuning.visibleWhen =
+        routeVisible(ConfigRouteId::ExtendedTuning);
+    extendedTuning.factory = [this](QWidget *parent) {
+        if (routeContext().vehicle == ConfigVehicleKind::Plane) {
+            return createExtendedTuningPage(parent);
+        }
+        return scrollablePage(
+            new CopterPidConfig, kExtendedTuning, parent);
+    };
+    m_backstage->addPage(extendedTuning);
     BackstagePage onboardOsd;
     onboardOsd.id = kOnboardOsd;
     onboardOsd.header = tr("Onboard OSD");
@@ -516,9 +542,9 @@ void ConfigView::retryParameterLoading()
 void ConfigView::currentPageChanged(const QString &pageId)
 {
     if (!m_adjustingSelection && !pageId.isEmpty()) {
-        m_preferredPageHeader = m_backstage->pageDefinition(pageId).header;
+        m_preferredPage = pageId;
         QSettings settings;
-        settings.setValue(kLastPageKey, m_preferredPageHeader);
+        settings.setValue(kLastPageKey, m_preferredPage);
     }
     refreshLoadingOverlay();
 }
@@ -569,6 +595,13 @@ void ConfigView::refreshPageVisibility()
     // BackstageView chooses a visible fallback synchronously, but that fallback
     // must not replace the user's saved route preference.
     QScopedValueRollback<bool> selectionGuard(m_adjustingSelection, true);
+    const ConfigRouteContext context = routeContext();
+    m_backstage->setPagePresentation(
+        kExtendedTuning,
+        ConfigRouteProfile::label(ConfigRouteId::ExtendedTuning,
+                                  context.vehicle),
+        context.vehicle == ConfigVehicleKind::Plane
+            ? QString() : tr("Legacy"));
     m_backstage->refreshVisibility();
     if (auto *page = qobject_cast<ConfigRawParams *>(
             m_backstage->page(kFullParameterList))) {
@@ -776,6 +809,10 @@ void ConfigView::refreshFriendlyParameterPages()
             m_backstage->page(kFullParameterList))) {
         page->setCatalog(catalog, enforceMetadataRanges);
     }
+    if (auto *page = qobject_cast<ConfigExtendedTuningView *>(
+            m_backstage->page(kExtendedTuning))) {
+        page->setCatalog(catalog, enforceMetadataRanges);
+    }
 }
 
 void ConfigView::resetParameterProgress()
@@ -788,13 +825,14 @@ void ConfigView::resetParameterProgress()
 
 void ConfigView::restorePreferredPage()
 {
-    if (m_preferredPageHeader.isEmpty()) {
+    if (m_preferredPage.isEmpty()) {
         return;
     }
     for (const QString &pageId : m_backstage->pageIds()) {
         if (m_backstage->isPageVisible(pageId)
-            && m_backstage->pageDefinition(pageId).header
-                == m_preferredPageHeader) {
+            && (pageId == m_preferredPage
+                || m_backstage->pageDefinition(pageId).header
+                    == m_preferredPage)) {
             QScopedValueRollback<bool> selectionGuard(
                 m_adjustingSelection, true);
             m_backstage->setCurrentPage(pageId);
@@ -908,6 +946,34 @@ QWidget *ConfigView::createFlightModesPage(QWidget *parent)
     context.parameterSnapshotComplete = m_parameterManager
         && m_parameterManager->parameterListReady();
     return CreateConfigFlightModesPage(context, parent);
+}
+
+QWidget *ConfigView::createExtendedTuningPage(QWidget *parent)
+{
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    const VehicleTargetLease target = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const int componentId = target.isValid()
+        ? target.endpoint.componentId : MAV_COMP_ID_AUTOPILOT1;
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+
+    ConfigExtendedTuningPageContext context;
+    context.catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    context.enforceMetadataRanges =
+        m_metadataRepository->catalogMatchesFirmwareVersion(
+            family, catalogVersion);
+    context.parameters = parameterSnapshot(componentId);
+    context.target = target;
+    context.linkManager = links;
+    context.parameterManager = m_parameterManager;
+    context.parameterSnapshotComplete = m_parameterManager
+        && m_parameterManager->parameterListReady();
+    return CreateConfigExtendedTuningPage(context, parent);
 }
 
 QWidget *ConfigView::createHeliSetupPage(QWidget *parent)

@@ -62,6 +62,8 @@ public slots:
     bool restoreInitialPage(const QString &preferredPage = QString());
     bool setCurrentPage(const QString &id);
     bool setPageVisible(const QString &id, bool visible);
+    bool setPagePresentation(const QString &id, const QString &header,
+                             const QString &badge = QString());
     bool setGroupExpanded(const QString &id, bool expanded);
     bool setGroupVisible(const QString &id, bool visible);
     bool resetPage(const QString &id);

@@ -65,6 +65,7 @@ private:
     void restorePreferredPage();
     QWidget *createFriendlyParamsPage(bool advanced, QWidget *parent);
     QWidget *createFlightModesPage(QWidget *parent);
+    QWidget *createExtendedTuningPage(QWidget *parent);
     QWidget *createHeliSetupPage(QWidget *parent);
     QWidget *createOsdPage(QWidget *parent);
     QWidget *createUserDefinedPage(QWidget *parent);
@@ -83,7 +84,9 @@ private:
     QPointer<UASInterface> m_uas;
     QPointer<QGCUASParamManager> m_parameterManager;
     QString m_parameterLoadFailure;
-    QString m_preferredPageHeader;
+    // New values are stable page ids; old installations may still contain a
+    // translated page header and remain accepted during restore.
+    QString m_preferredPage;
     QString m_firmwareVersion;
     QString m_targetPageToRestore;
     qulonglong m_parameterTargetRevision = 0;

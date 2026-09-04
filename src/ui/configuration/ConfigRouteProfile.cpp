@@ -64,9 +64,10 @@ bool currentFactoryAllows(ConfigRouteId route, ConfigVehicleKind vehicle)
         return vehicle == ConfigVehicleKind::Rover;
     case ConfigRouteId::ExtendedTuning:
         // The retained ATC_/PSC_/WPNAV editor is useful for ArduCopter,
-        // including traditional helicopters. It is not MP10's Plane QP page.
+        // including traditional helicopters. Plane uses the native QP page.
         return vehicle == ConfigVehicleKind::Copter
-            || vehicle == ConfigVehicleKind::Helicopter;
+            || vehicle == ConfigVehicleKind::Helicopter
+            || vehicle == ConfigVehicleKind::Plane;
     default:
         return true;
     }

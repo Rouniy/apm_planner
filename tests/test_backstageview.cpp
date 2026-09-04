@@ -28,6 +28,7 @@ private slots:
     void restoresPreferredSubPageAndExpandsItsGroup();
     void reenablingAutomaticSelectionRestoresConcreteFallback();
     void restoresSelectionWhenPagesReappear();
+    void updatesPagePresentationWithoutReplacingItsIdentity();
     void gatesParameterLoadingLikeMissionPlanner();
     void modelsMissionPlannerParameterLoadingStates();
     void exposesLoadingState();
@@ -326,6 +327,34 @@ void BackstageViewTest::restoresSelectionWhenPagesReappear()
 
     QVERIFY(view.setPageVisible(QStringLiteral("onlyPage"), true));
     QCOMPARE(view.currentPageId(), QStringLiteral("onlyPage"));
+}
+
+void BackstageViewTest::updatesPagePresentationWithoutReplacingItsIdentity()
+{
+    BackstageView view;
+    const QString id = QStringLiteral("ConfigExtendedTuningView");
+    QVERIFY(view.addPage(id, QStringLiteral("Extended Tuning"),
+                         new QWidget));
+    QAbstractButton *button = view.findChild<QAbstractButton *>(id);
+    QVERIFY(button);
+    QCOMPARE(button->text(), QStringLiteral("Extended Tuning"));
+
+    QVERIFY(view.setPagePresentation(
+        id, QStringLiteral("QP Extended Tuning")));
+    QCOMPARE(view.currentPageId(), id);
+    QCOMPARE(button->text(), QStringLiteral("QP Extended Tuning"));
+    QCOMPARE(view.pageDefinition(id).header,
+             QStringLiteral("QP Extended Tuning"));
+    QVERIFY(view.pageDefinition(id).badge.isEmpty());
+
+    QVERIFY(view.setPagePresentation(
+        id, QStringLiteral("Extended Tuning"),
+        QStringLiteral("Legacy")));
+    QCOMPARE(button->text(), QStringLiteral("Extended Tuning"));
+    QCOMPARE(view.pageDefinition(id).badge, QStringLiteral("Legacy"));
+    QVERIFY(!view.setPagePresentation(
+        QStringLiteral("missing"), QStringLiteral("Missing")));
+    QVERIFY(!view.setPagePresentation(id, QString()));
 }
 
 void BackstageViewTest::exposesLoadingState()

@@ -789,6 +789,12 @@ set(SOURCES
     src/ui/configuration/ConfigFlightModesPageFactory.h
     src/ui/configuration/FlightModeTelemetryMonitor.cpp
     src/ui/configuration/FlightModeTelemetryMonitor.h
+    src/ui/configuration/ConfigExtendedTuningView.cpp
+    src/ui/configuration/ConfigExtendedTuningView.h
+    src/ui/configuration/ConfigExtendedTuningViewModel.cpp
+    src/ui/configuration/ConfigExtendedTuningViewModel.h
+    src/ui/configuration/ConfigExtendedTuningPageFactory.cpp
+    src/ui/configuration/ConfigExtendedTuningPageFactory.h
     src/ui/configuration/ConfigHWBTSerialService.cpp
     src/ui/configuration/ConfigHWBTSerialService.h
     src/ui/configuration/ConfigHWBTView.cpp
@@ -2544,6 +2550,49 @@ if(BUILD_TESTING)
     add_test(NAME configflightmodesview_tests
         COMMAND configflightmodesview_tests)
     set_tests_properties(configflightmodesview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configextendedtuningviewmodel_tests
+        tests/test_configextendedtuningviewmodel.cpp
+        src/ui/configuration/ConfigExtendedTuningViewModel.cpp
+        src/ui/configuration/ConfigExtendedTuningViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configextendedtuningviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configextendedtuningviewmodel_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configextendedtuningviewmodel_tests
+        COMMAND configextendedtuningviewmodel_tests)
+
+    add_executable(configextendedtuningview_tests
+        tests/test_configextendedtuningview.cpp
+        src/ui/configuration/ConfigExtendedTuningView.cpp
+        src/ui/configuration/ConfigExtendedTuningView.h
+        src/ui/configuration/ConfigExtendedTuningViewModel.cpp
+        src/ui/configuration/ConfigExtendedTuningViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configextendedtuningview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configextendedtuningview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configextendedtuningview_tests
+        COMMAND configextendedtuningview_tests)
+    set_tests_properties(configextendedtuningview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

@@ -23,7 +23,7 @@ no null factories in the active Qt navigation.
 | 6 | Heli Setup | Native legacy-heli editor; in progress |
 | 7 | Basic Tuning (Plane) | Useful legacy Plane page retained; partial |
 | 8 | Basic Tuning (Rover) | Useful legacy Rover page retained; partial |
-| 9 | Extended / QP Extended Tuning | Legacy Copter editor retained; Plane QP workflow missing |
+| 9 | Extended / QP Extended Tuning | Native Plane QP page; useful legacy Copter/Heli editor retained |
 | 10 | Onboard OSD | Native phase-one editor; in progress |
 | 11 | MAVFtp | Native remote file browser and exact-target service; in progress |
 | 12 | User Params | Native metadata-backed page; in progress |
@@ -31,20 +31,19 @@ no null factories in the active Qt navigation.
 | 14 | Planner | Native nine-section page; partial |
 | 15 | Planner (Advanced) | Native read-only settings snapshot; in progress |
 
-There is no longer a raw CONFIG factory gap. Plane `QP Extended Tuning` remains
-the one functional route mismatch because the Qt route is occupied by a useful
-Copter-only legacy editor. Existing APM
-Planner pages remain only where they provide a non-empty same-domain workflow;
-their Legacy/partial classification is not a parity claim.
+There is no longer a CONFIG route-level factory or vehicle-dispatch gap. The
+shared route creates the native `QP Extended Tuning` page for Plane and keeps
+the useful non-empty legacy editor for Copter/Heli. Existing APM Planner pages
+remain only where they provide a same-domain workflow; their Legacy/partial
+classification is not a parity claim.
 
 Factory coverage is therefore 15/15, but functional parity is not. The current
 truthful route policy deliberately narrows `Standard Params` and `Advanced
-Params` to Copter/Heli/Plane/Rover, `GeoFence` to Copter/Heli and `Extended
-Tuning` to Copter/Heli because those retained factories do not implement the
-broader MP10 vehicle surfaces. The Plane route would be named `QP Extended
-Tuning` by `ConfigRouteProfile`, but the production factory is still the
-hard-coded Copter `Extended Tuning` widget and is hidden for Plane. These are
-recorded implementation gaps, not missing navigation factories.
+Params` to Copter/Heli/Plane/Rover and `GeoFence` to Copter/Heli. `Extended
+Tuning` is actionable for Copter/Heli/Plane: the stable route id changes its
+visible Plane label to `QP Extended Tuning` without losing saved selection,
+then dispatches Plane to the native Q controller/INS page and Copter/Heli to
+the retained legacy ATC/PSC/WPNAV editor.
 
 The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
 all 16 MP10 actions are present, six open working shared tools and ten are
@@ -121,15 +120,16 @@ is the explicit recovery path for incomplete or uncertain state. The old
 `FlightModeConfig` source remains compiled for legacy-shell compatibility but
 neither active MP10 route instantiates it.
 
-The next CONFIG route-level mismatch remains Plane `QP Extended Tuning`.
-Planner Settings also remains a broad control-level gap: all nine sections are
-present, but many of the audited 64 controls are still explicitly unavailable.
+The 15 direct CONFIG routes now all create a truthful non-empty page for their
+supported vehicle contexts. Planner Settings is the next broad control-level
+gap: all nine sections are present, but many of the audited 64 controls are
+still explicitly unavailable.
 
 ## SETUP cross-check
 
 The separate `SETUP_INVENTORY_AUDIT.md` remains the count baseline: both
 applications have four logical sections (ungrouped plus three named groups).
 Mission Planner 10 registers 53 pages plus three group headings, or 56
-navigation entries. Qt registers 43 concrete pages plus the same three group
-headings, or 46 entries. Qt is missing 11 reference pages and intentionally
-keeps one useful extra page, `QML Plugins`.
+navigation entries. Rechecked after this CONFIG slice, Qt still registers 43
+concrete pages plus the same three group headings, or 46 entries. Qt is missing
+11 reference pages and intentionally keeps one useful extra page, `QML Plugins`.

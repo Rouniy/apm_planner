@@ -42,6 +42,15 @@ public:
         return QSize(kNavigationWidth, m_subPage ? 28 : 34);
     }
 
+    void setBadge(const QString &badge)
+    {
+        if (m_badge == badge) {
+            return;
+        }
+        m_badge = badge;
+        update();
+    }
+
 protected:
     void paintEvent(QPaintEvent *) override
     {
@@ -410,6 +419,21 @@ bool BackstageView::setPageVisible(const QString &id, bool visible)
     } else if (visible && m_currentPageId.isEmpty()) {
         selectFallbackPage();
     }
+    return true;
+}
+
+bool BackstageView::setPagePresentation(
+    const QString &id, const QString &header, const QString &badge)
+{
+    auto iterator = m_pages.find(id);
+    if (iterator == m_pages.end() || header.isEmpty()) {
+        return false;
+    }
+    iterator->definition.header = header;
+    iterator->definition.badge = badge;
+    iterator->button->setText(header);
+    static_cast<BackstagePageButton *>(iterator->button)->setBadge(badge);
+    iterator->button->update();
     return true;
 }
 

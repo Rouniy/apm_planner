@@ -357,7 +357,10 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 - Friendly Params basic/advanced.
 - Flight Modes: нативный общий CONFIG/SETUP slice реализован; остаются
   reference screenshot diff, native-platform и physical-vehicle evidence.
-- Basic/Extended tuning, Copter/Plane/Rover tuning.
+- Plane QP Extended Tuning: нативные 17 групп/68 строк, metadata editors,
+  exact-target batch и X11 route реализованы; Copter/Heli сохраняют полезный
+  legacy Extended editor. Остаются physical-vehicle/reference/native evidence.
+- Basic tuning и оставшиеся Copter/Plane/Rover tuning gaps.
 - Fence configuration и live status.
 - Planner settings: нативная страница уже воспроизводит все девять секций,
   общий DisplayView profile и restart-scoped dual Startup UDP listeners;
