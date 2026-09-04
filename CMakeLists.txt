@@ -654,6 +654,9 @@ set(SOURCES
     src/ui/SwarmFollowPathWindow.cpp
     src/ui/SwarmFollowPathWindow.h
     src/ui/SwarmFollowPathWindowIntegration.cpp
+    src/ui/SwarmFollowLeaderWindow.cpp
+    src/ui/SwarmFollowLeaderWindow.h
+    src/ui/SwarmFollowLeaderWindowIntegration.cpp
     src/comm/SwarmFlightMode.h
     src/ui/MovingBaseWindow.cpp
     src/ui/MovingBaseWindow.h
@@ -698,6 +701,8 @@ set(SOURCES
     src/ui/tools/SwarmFormationCore.h
     src/ui/tools/SwarmFollowPathCore.cpp
     src/ui/tools/SwarmFollowPathCore.h
+    src/ui/tools/SwarmFollowLeaderCore.cpp
+    src/ui/tools/SwarmFollowLeaderCore.h
     src/ui/tools/PropagationTelemetrySource.cpp
     src/ui/tools/PropagationTelemetrySource.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2598,6 +2603,67 @@ if(BUILD_TESTING)
     add_test(NAME swarmfollowpathwindow_tests
         COMMAND swarmfollowpathwindow_tests)
     set_tests_properties(swarmfollowpathwindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(swarmfollowleadercore_tests
+        tests/test_swarmfollowleadercore.cpp
+        src/ui/tools/SwarmFollowLeaderCore.cpp
+        src/ui/tools/SwarmFollowLeaderCore.h
+        src/ui/tools/SwarmFollowPathCore.cpp
+        src/ui/tools/SwarmFollowPathCore.h
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/SwarmFlightMode.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmfollowleadercore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmfollowleadercore_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME swarmfollowleadercore_tests
+        COMMAND swarmfollowleadercore_tests)
+
+    add_executable(swarmfollowleaderwindow_tests
+        tests/test_swarmfollowleaderwindow.cpp
+        src/ui/SwarmFollowLeaderWindow.cpp
+        src/ui/SwarmFollowLeaderWindow.h
+        src/ui/tools/SwarmFollowLeaderCore.cpp
+        src/ui/tools/SwarmFollowLeaderCore.h
+        src/ui/tools/SwarmFollowPathCore.cpp
+        src/ui/tools/SwarmFollowPathCore.h
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/SwarmCommandService.cpp
+        src/comm/SwarmCommandService.h
+        src/comm/SwarmFlightMode.h
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/SwarmTelemetryRegistry.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmfollowleaderwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmfollowleaderwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME swarmfollowleaderwindow_tests
+        COMMAND swarmfollowleaderwindow_tests)
+    set_tests_properties(swarmfollowleaderwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
