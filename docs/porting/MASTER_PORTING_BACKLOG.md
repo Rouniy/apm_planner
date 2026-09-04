@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence и первого Formation-среза:
+Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation и Follow Path:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 183 из 183 тестов;
+- проходят 185 из 185 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -30,10 +30,10 @@
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 29 | 16 | 11 | 56 |
 | CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 17 | 2 | 12 | 31 |
+| TOOLS | 18 | 2 | 11 | 31 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **63** | **37** | **29** | **129** |
+| **Итого** | **64** | **37** | **28** | **129** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -56,9 +56,9 @@
 
 Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
 Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base, RF
-Propagation, OSD Video, полезный offline Swarm Sequence editor и первый
-functional Formation slice. Далее идут три safety-critical command-driven Swarm
-workflow и общий Sequence command runner,
+Propagation, OSD Video, полезный offline Swarm Sequence editor, Formation и
+Follow Path. Далее идут два safety-critical command-driven Swarm workflow и
+общий Sequence command runner,
 после чего приоритет переходит к Settings/CONFIG и их функциональным vertical
 slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
 включаются только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
@@ -424,6 +424,12 @@ dirty state никогда не переносится на новый target.
   точная Copter/Rover position+velocity отправка до 10 Гц сделаны через общий
   multi-endpoint sender; остаются Plane PID, yaw/gimbal, bulk flight commands,
   dedicated Serial route, checked enqueue, live/reference/native evidence;
+- Swarm Follow Path: singleton modeless leader/order/table surface, bounded
+  newest-first trail и точная Copter/Rover position-only отправка на 5 Гц
+  сделаны через общий multi-endpoint sender; family-specific ArduPilot
+  `custom_mode` проверяется до подтверждения, каждый tick и повторно после
+  route callback непосредственно перед отправкой; остаются automatic GUIDED,
+  Plane guided-waypoint/ACK, bulk flight commands и live/reference/native evidence;
 - QML Plugin Manager: широкая документация и API coverage.
 
 #### Отсутствующие инструменты P2
@@ -432,7 +438,7 @@ dirty state никогда не переносится на новый target.
 - Offline Mag Fit;
 - Photo/video GeoRef;
 - Terrain Maker;
-- Swarm Follow Path, Follow Leader и Waypoint Leader;
+- Swarm Follow Leader и Waypoint Leader;
 - exact multi-endpoint command runner для уже доступного offline Sequence editor;
 - MAVLink Serial/TCP Bridge;
 - Microdrone Downlink;

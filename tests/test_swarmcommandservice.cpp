@@ -30,13 +30,15 @@ VehicleEndpoint endpoint(int linkId, int systemId,
 }
 
 mavlink_message_t heartbeat(int systemId,
-                            int componentId = MAV_COMP_ID_AUTOPILOT1)
+                            int componentId = MAV_COMP_ID_AUTOPILOT1,
+                            quint32 customMode = 17,
+                            quint8 baseMode = 0)
 {
     mavlink_heartbeat_t payload{};
     payload.autopilot = MAV_AUTOPILOT_ARDUPILOTMEGA;
     payload.type = MAV_TYPE_QUADROTOR;
-    payload.base_mode = 0;
-    payload.custom_mode = 17;
+    payload.base_mode = baseMode;
+    payload.custom_mode = customMode;
     payload.system_status = MAV_STATE_ACTIVE;
     payload.mavlink_version = 3;
     mavlink_message_t message{};
@@ -211,6 +213,7 @@ class SwarmCommandServiceTest final : public QObject
 
 private slots:
     void reservationRequiresUniqueSlotsEndpointsAndOwner();
+    void routeEligibilityIsAReadOnlyPreflight();
     void requiredTelemetryMustBeFreshBeforeCommands_data();
     void requiredTelemetryMustBeFreshBeforeCommands();
     void positionTargetsUseExactMasksTargetsAndPhysicalLinks();
@@ -219,9 +222,35 @@ private slots:
     void secondTransportFailureReportsPartialBatch();
     void synchronousCancellationCannotInterleaveNewSession();
     void routeCancellationCannotLeakPhysicalFrame();
+    void guidedModeLossDuringRouteValidationCannotLeakPhysicalFrame();
     void ownerDestructionAndEndpointRetirementCancelSession();
     void streamRequestsDecodeExactlyPerPhysicalLink();
+    void positionOnlyStreamRequestsExcludeAttitude();
 };
+
+void SwarmCommandServiceTest::routeEligibilityIsAReadOnlyPreflight()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease lease = fixture.addVehicle(7, 42);
+    QString error;
+    QVERIFY(fixture.service.routeIsEligible(lease, &error));
+    QVERIFY(error.isEmpty());
+    QVERIFY(!fixture.service.hasActiveSession());
+
+    fixture.routeHook = [](const SwarmVehicleInstanceLease &, QString *reason) {
+        if (reason) {
+            *reason = QStringLiteral("Listening UDP is not exact.");
+        }
+        return false;
+    };
+    QVERIFY(!fixture.service.routeIsEligible(lease, &error));
+    QVERIFY(error.contains(QStringLiteral("UDP")));
+    QVERIFY(!fixture.service.hasActiveSession());
+
+    fixture.registryNowMs += 5001;
+    QVERIFY(!fixture.service.routeIsEligible(lease, &error));
+    QVERIFY(error.contains(QStringLiteral("stale"), Qt::CaseInsensitive));
+}
 
 void SwarmCommandServiceTest::
 reservationRequiresUniqueSlotsEndpointsAndOwner()
@@ -691,6 +720,59 @@ void SwarmCommandServiceTest::routeCancellationCannotLeakPhysicalFrame()
 }
 
 void SwarmCommandServiceTest::
+guidedModeLossDuringRouteValidationCannotLeakPhysicalFrame()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease lease = fixture.addVehicle(3, 31);
+    const quint8 misleadingGuidedFlags = static_cast<quint8>(
+        MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED);
+    QVERIFY(fixture.registry.observeMessage(
+        3, fixture.sessions.value(3),
+        heartbeat(31, MAV_COMP_ID_AUTOPILOT1, 4, misleadingGuidedFlags)));
+
+    SwarmCommandMember guidedMember = member(1, lease);
+    guidedMember.flightMode =
+        SwarmCommandMember::FlightModeRequirement::ArduPilotGuided;
+    QObject owner;
+    SwarmCommandSessionToken token;
+    int routeCalls = 0;
+    bool modeUpdateAccepted = false;
+    fixture.routeHook = [&](const SwarmVehicleInstanceLease &, QString *error) {
+        ++routeCalls;
+        if (error) {
+            error->clear();
+        }
+        if (routeCalls == 3) {
+            // ArduCopter reports GUIDED_ENABLED in LOITER too. The exact
+            // custom mode must be rechecked after this injected callback.
+            modeUpdateAccepted = fixture.registry.observeMessage(
+                3, fixture.sessions.value(3),
+                heartbeat(31, MAV_COMP_ID_AUTOPILOT1, 5,
+                          misleadingGuidedFlags));
+        }
+        return true;
+    };
+    QCOMPARE(fixture.service.reserve(
+                 &owner, {guidedMember}, 10, &token),
+             SwarmCommandService::Result::Reserved);
+
+    SwarmPositionTarget target;
+    target.slotId = 1;
+    target.latitudeDegrees = 35.0;
+    target.longitudeDegrees = 33.0;
+    target.relativeAltitudeM = 20.0F;
+    const SwarmCommandService::BatchReport report =
+        fixture.service.sendPositionTargets(token, {target});
+
+    QCOMPARE(routeCalls, 3);
+    QVERIFY(modeUpdateAccepted);
+    QCOMPARE(report.result,
+             SwarmCommandService::Result::RejectedBeforeSend);
+    QVERIFY(report.detail.contains(QStringLiteral("Loiter")));
+    QCOMPARE(fixture.writeAttempts, 0);
+}
+
+void SwarmCommandServiceTest::
 ownerDestructionAndEndpointRetirementCancelSession()
 {
     Fixture fixture;
@@ -794,6 +876,45 @@ void SwarmCommandServiceTest::streamRequestsDecodeExactlyPerPhysicalLink()
         decodeFrame(fixture.frames.at(2).bytes);
     QCOMPARE(firstOnSecondLink.seq, quint8(0));
     QCOMPARE(firstOnFirstLink.seq, quint8(0));
+}
+
+void SwarmCommandServiceTest::positionOnlyStreamRequestsExcludeAttitude()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease leader = fixture.addVehicle(6, 41);
+    const SwarmVehicleInstanceLease follower = fixture.addVehicle(8, 42);
+    QObject owner;
+    SwarmCommandSessionToken token;
+    QCOMPARE(fixture.service.reserve(
+                 &owner, {member(1, leader), member(2, follower)}, 5,
+                 &token),
+             SwarmCommandService::Result::Reserved);
+
+    const SwarmCommandService::BatchReport report =
+        fixture.service.requestPositionStreams(token, {2, 1}, 5);
+    QCOMPARE(report.result, SwarmCommandService::Result::SentAll);
+    QCOMPARE(report.members.size(), 2);
+    QCOMPARE(report.members.at(0).framesPlanned, 1);
+    QCOMPARE(report.members.at(0).framesSent, 1);
+    QCOMPARE(report.members.at(1).framesPlanned, 1);
+    QCOMPARE(report.members.at(1).framesSent, 1);
+    QCOMPARE(fixture.frames.size(), 2);
+
+    const QVector<int> expectedLinks{6, 8};
+    for (int index = 0; index < fixture.frames.size(); ++index) {
+        QCOMPARE(fixture.frames.at(index).linkId,
+                 expectedLinks.at(index));
+        const mavlink_message_t message =
+            decodeFrame(fixture.frames.at(index).bytes);
+        QCOMPARE(message.msgid,
+                 quint32(MAVLINK_MSG_ID_REQUEST_DATA_STREAM));
+        mavlink_request_data_stream_t payload{};
+        mavlink_msg_request_data_stream_decode(&message, &payload);
+        QCOMPARE(payload.req_stream_id,
+                 quint8(MAV_DATA_STREAM_POSITION));
+        QCOMPARE(payload.req_message_rate, quint16(5));
+        QCOMPARE(payload.start_stop, quint8(1));
+    }
 }
 
 QTEST_MAIN(SwarmCommandServiceTest)

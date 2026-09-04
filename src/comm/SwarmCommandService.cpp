@@ -1,6 +1,7 @@
 #include "SwarmCommandService.h"
 
 #include "ExactLinkTransmitter.h"
+#include "SwarmFlightMode.h"
 
 #include <QSet>
 #include <QScopedValueRollback>
@@ -88,6 +89,25 @@ SwarmCommandService::SwarmCommandService(
     }
 }
 
+bool SwarmCommandService::routeIsEligible(
+    const SwarmVehicleInstanceLease &lease, QString *error) const
+{
+    if (error) {
+        error->clear();
+    }
+    if (!m_registry || !lease.isValid()
+        || !m_registry->validateLease(lease)) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact vehicle instance is unavailable or stale.");
+        }
+        return false;
+    }
+    SwarmCommandMember member;
+    member.lease = lease;
+    return validateRoute(member, error);
+}
+
 SwarmCommandService::Result SwarmCommandService::reserve(
     QObject *owner, const QVector<SwarmCommandMember> &requestedMembers,
     int maximumBatchHz, SwarmCommandSessionToken *token, QString *error)
@@ -147,7 +167,12 @@ SwarmCommandService::Result SwarmCommandService::reserve(
         const auto validAge = [](int value) {
             return value >= 1 && value <= 10 * 60 * 1000;
         };
+        const bool knownFlightMode = member.flightMode
+                == SwarmCommandMember::FlightModeRequirement::Any
+            || member.flightMode
+                == SwarmCommandMember::FlightModeRequirement::ArduPilotGuided;
         if ((int(required.fields) & ~KnownTelemetryFields) != 0
+            || !knownFlightMode
             || !validAge(required.heartbeatMaximumAgeMs)
             || !validAge(required.positionMaximumAgeMs)
             || !validAge(required.velocityMaximumAgeMs)
@@ -188,6 +213,12 @@ SwarmCommandService::Result SwarmCommandService::reserve(
                 *error = memberError;
             }
             return Result::UnsafeRoute;
+        }
+        if (!validateMember(member, false, &memberFailure, &memberError)) {
+            if (error) {
+                *error = memberError;
+            }
+            return memberFailure;
         }
         if (m_active.id != 0) {
             if (error) {
@@ -250,6 +281,21 @@ SwarmCommandService::requestPositionAndAttitudeStreams(
     const SwarmCommandSessionToken &token,
     const QVector<int> &slotIds, int rateHz)
 {
+    return requestStreams(token, slotIds, rateHz, true);
+}
+
+SwarmCommandService::BatchReport
+SwarmCommandService::requestPositionStreams(
+    const SwarmCommandSessionToken &token,
+    const QVector<int> &slotIds, int rateHz)
+{
+    return requestStreams(token, slotIds, rateHz, false);
+}
+
+SwarmCommandService::BatchReport SwarmCommandService::requestStreams(
+    const SwarmCommandSessionToken &token,
+    const QVector<int> &slotIds, int rateHz, bool includeAttitude)
+{
     if (!tokenIsCurrent(token)) {
         return preflightReport(token.id, Result::InvalidSession,
                                QStringLiteral("The swarm session is no longer active."),
@@ -263,7 +309,7 @@ SwarmCommandService::requestPositionAndAttitudeStreams(
     std::sort(orderedSlots.begin(), orderedSlots.end());
     QSet<int> unique;
     QVector<QPair<SwarmCommandMember, mavlink_message_t>> messages;
-    messages.reserve(slotIds.size() * 2);
+    messages.reserve(slotIds.size() * (includeAttitude ? 2 : 1));
     for (int slotId : orderedSlots) {
         const SwarmCommandMember *member = memberForSlot(slotId);
         if (!member || unique.contains(slotId)) {
@@ -275,9 +321,11 @@ SwarmCommandService::requestPositionAndAttitudeStreams(
         messages.append(qMakePair(
             *member, streamRequestMessage(
                 *member, MAV_DATA_STREAM_POSITION, rateHz)));
-        messages.append(qMakePair(
-            *member, streamRequestMessage(
-                *member, MAV_DATA_STREAM_EXTRA1, rateHz)));
+        if (includeAttitude) {
+            messages.append(qMakePair(
+                *member, streamRequestMessage(
+                    *member, MAV_DATA_STREAM_EXTRA1, rateHz)));
+        }
     }
     return sendMessages(token, messages, false, false);
 }
@@ -458,6 +506,20 @@ bool SwarmCommandService::validateMember(
         return false;
     }
     const SwarmTelemetryRequirements &required = member.required;
+    if (member.flightMode
+            == SwarmCommandMember::FlightModeRequirement::ArduPilotGuided
+        && !SwarmFlightMode::isExactGuided(snapshot)) {
+        if (failure) {
+            *failure = Result::RejectedBeforeSend;
+        }
+        if (error) {
+            *error = QStringLiteral(
+                "%1 is in %2, not the exact ArduPilot GUIDED mode.")
+                .arg(endpointLabel(member.lease),
+                     SwarmFlightMode::displayName(snapshot));
+        }
+        return false;
+    }
     if (!requireTelemetryFields) {
         if (error) {
             error->clear();
@@ -578,6 +640,16 @@ bool SwarmCommandService::validateAll(
             }
             return false;
         }
+        if (!validateMember(member, requireTelemetryFields,
+                            &memberFailure, &memberError)) {
+            if (error) {
+                *error = memberError;
+            }
+            if (failure) {
+                *failure = memberFailure;
+            }
+            return false;
+        }
     }
     if (error) {
         error->clear();
@@ -604,6 +676,19 @@ bool SwarmCommandService::validateRoute(
                 ? QStringLiteral("%1 does not have a unique writable route.")
                     .arg(endpointLabel(member.lease))
                 : routeError;
+        }
+        return false;
+    }
+    if (!m_registry
+        || !m_registry->validateLease(
+            member.lease, member.required.heartbeatMaximumAgeMs)
+        || m_registry->currentLinkSessionEpoch(
+               member.lease.endpoint.linkId)
+            != member.lease.linkSessionEpoch) {
+        if (error) {
+            *error = QStringLiteral(
+                "%1 exact vehicle session changed during route validation.")
+                .arg(endpointLabel(member.lease));
         }
         return false;
     }
@@ -723,9 +808,9 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
             report.detail = item->detail;
             break;
         }
-        if (!m_registry || !m_registry->validateLease(
-                member.lease,
-                member.required.heartbeatMaximumAgeMs)
+        Result memberFailure = Result::StaleLease;
+        if (!validateMember(member, requireTelemetryFields,
+                            &memberFailure, &error)
             || !validateRoute(member, &error) || !transmitter) {
             item->result = Result::RejectedBeforeSend;
             item->detail = error.isEmpty()
@@ -739,17 +824,20 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
         // RouteValidator is an injected callback and may synchronously retire
         // a link or cancel this session. Re-establish the exact-instance
         // barrier after it returns and immediately before the physical write.
-        if (!m_registry || !m_registry->validateLease(
-                member.lease,
-                member.required.heartbeatMaximumAgeMs)
+        QString postRouteError;
+        Result postRouteFailure = Result::StaleLease;
+        if (!validateMember(member, requireTelemetryFields,
+                            &postRouteFailure, &postRouteError)
             || !tokenIsCurrent(token)
             || m_registry->currentLinkSessionEpoch(
                    member.lease.endpoint.linkId)
                 != member.lease.linkSessionEpoch
             || !transmitter) {
             item->result = Result::RejectedBeforeSend;
-            item->detail = QStringLiteral(
-                "The exact vehicle session changed during route validation.");
+            item->detail = postRouteError.isEmpty()
+                ? QStringLiteral(
+                    "The exact vehicle session changed during route validation.")
+                : postRouteError;
             report.result = sentCount == 0
                 ? Result::RejectedBeforeSend : Result::PartialSend;
             report.detail = item->detail;

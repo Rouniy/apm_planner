@@ -41,9 +41,15 @@ Q_DECLARE_OPERATORS_FOR_FLAGS(SwarmTelemetryRequirements::Fields)
 
 struct SwarmCommandMember
 {
+    enum class FlightModeRequirement {
+        Any,
+        ArduPilotGuided
+    };
+
     int slotId = 0;
     SwarmVehicleInstanceLease lease;
     SwarmTelemetryRequirements required;
+    FlightModeRequirement flightMode = FlightModeRequirement::Any;
 };
 
 struct SwarmCommandSessionToken
@@ -126,6 +132,10 @@ public:
 
     void setLocalIdentity(quint8 systemId, quint8 componentId);
 
+    /** Read-only UI preflight; reserve() repeats this check authoritatively. */
+    bool routeIsEligible(const SwarmVehicleInstanceLease &lease,
+                         QString *error = nullptr) const;
+
     Result reserve(QObject *owner,
                    const QVector<SwarmCommandMember> &members,
                    int maximumBatchHz,
@@ -134,6 +144,10 @@ public:
     Result release(const SwarmCommandSessionToken &token);
 
     BatchReport requestPositionAndAttitudeStreams(
+        const SwarmCommandSessionToken &token,
+        const QVector<int> &slotIds,
+        int rateHz);
+    BatchReport requestPositionStreams(
         const SwarmCommandSessionToken &token,
         const QVector<int> &slotIds,
         int rateHz);
@@ -189,6 +203,11 @@ private:
         const QVector<QPair<SwarmCommandMember, mavlink_message_t>> &messages,
         bool rateLimited,
         bool requireTelemetryFields);
+    BatchReport requestStreams(
+        const SwarmCommandSessionToken &token,
+        const QVector<int> &slotIds,
+        int rateHz,
+        bool includeAttitude);
     void cancelActive(const QString &reason, bool publishSignal);
     qint64 nowMs() const;
 

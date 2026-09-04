@@ -53,6 +53,7 @@ This file is part of the QGROUNDCONTROL project
 #include "FollowMeWindow.h"
 #include "MovingBaseWindow.h"
 #include "SwarmFormationWindow.h"
+#include "SwarmFollowPathWindow.h"
 #include "SwarmSequenceWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #ifdef APM_HAS_QT_MULTIMEDIA
@@ -670,6 +671,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { MovingBaseWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionSwarmFormation"),
                     [this]() { SwarmFormationWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionSwarmFollowPath"),
+                    [this]() { SwarmFollowPathWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionSwarmSequence"),
                     [this]() { SwarmSequenceWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),
