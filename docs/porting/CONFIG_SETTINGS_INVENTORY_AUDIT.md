@@ -38,7 +38,7 @@ Planner pages remain only where they provide a non-empty same-domain workflow;
 their Legacy/partial classification is not a parity claim.
 
 The legacy `Heli Setup` route is capability-gated by the exact MP10
-`H_SWASH_TYPE` marker; current `H_SW_TYPE` vehicles belong to the separate
+`H_SWASH_TYPE` marker; current `H_SW_TYPE` vehicles use the separate native
 SETUP `Heli Setup (4.0+)` page and are never collapsed into the binary CCPM/H1
 editor. The native page has the exact 43 logical parameter rows and aliases,
 the six visible manual-servo commands, swash controls, collective/acro plot,
@@ -91,6 +91,6 @@ split-brain MAVLink identity controls are hidden there.
 The separate `SETUP_INVENTORY_AUDIT.md` remains the count baseline: both
 applications have four logical sections (ungrouped plus three named groups).
 Mission Planner 10 registers 53 pages plus three group headings, or 56
-navigation entries. Qt registers 39 concrete pages plus the same three group
-headings, or 42 entries. Qt is missing 15 reference pages and intentionally
+navigation entries. Qt registers 40 concrete pages plus the same three group
+headings, or 43 entries. Qt is missing 14 reference pages and intentionally
 keeps one useful extra page, `QML Plugins`.

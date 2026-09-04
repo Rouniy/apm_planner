@@ -286,7 +286,7 @@ with an incoming ArduPilot heartbeat and Alt+F4 exits cleanly with status 0.
 ## Delivery sequence and gates
 
 1. **Baseline and inventory**
-   - Freeze the 126-row parity manifest and reference commit.
+   - Freeze the 127-row parity manifest and reference commit.
    - Keep the Qt 5 build/tests green. An optional Qt 6 configure path is only a
      forward-compatibility diagnostic and is not a product-completeness gate.
    - Gate: manifest has an owner/status/evidence rule for every row.

@@ -801,6 +801,10 @@ set(SOURCES
     src/ui/configuration/ConfigTradHeliView.h
     src/ui/configuration/ConfigTradHeliViewModel.cpp
     src/ui/configuration/ConfigTradHeliViewModel.h
+    src/ui/configuration/ConfigTradHeli4View.cpp
+    src/ui/configuration/ConfigTradHeli4View.h
+    src/ui/configuration/ConfigTradHeli4ViewModel.cpp
+    src/ui/configuration/ConfigTradHeli4ViewModel.h
     src/ui/configuration/HeliCollectivePlot.cpp
     src/ui/configuration/HeliCollectivePlot.h
     src/ui/configuration/HeliVisualization.cpp
@@ -2366,6 +2370,49 @@ if(BUILD_TESTING)
     add_test(NAME configtradheliview_tests
         COMMAND configtradheliview_tests)
     set_tests_properties(configtradheliview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configtradheli4viewmodel_tests
+        tests/test_configtradheli4viewmodel.cpp
+        src/ui/configuration/ConfigTradHeli4ViewModel.cpp
+        src/ui/configuration/ConfigTradHeli4ViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configtradheli4viewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configtradheli4viewmodel_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configtradheli4viewmodel_tests
+        COMMAND configtradheli4viewmodel_tests)
+
+    add_executable(configtradheli4view_tests
+        tests/test_configtradheli4view.cpp
+        src/ui/configuration/ConfigTradHeli4View.cpp
+        src/ui/configuration/ConfigTradHeli4View.h
+        src/ui/configuration/ConfigTradHeli4ViewModel.cpp
+        src/ui/configuration/ConfigTradHeli4ViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configtradheli4view_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configtradheli4view_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configtradheli4view_tests
+        COMMAND configtradheli4view_tests)
+    set_tests_properties(configtradheli4view_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

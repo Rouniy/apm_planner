@@ -61,6 +61,7 @@ private:
     void syncConnectionState();
     void bindParameterManager(QGCUASParamManager *manager);
     void resetConnectionPages(bool restoreSelection = true);
+    void restoreTargetPageAfterParameters();
     void resetParameterProgress();
     bool hasConnectedLink() const;
     bool currentPageAllowsPartialParameters() const;
@@ -82,6 +83,7 @@ private:
     QWidget *createDroneCanPage(QWidget *parent);
     QWidget *createHWCANPage(QWidget *parent);
     QWidget *createEscCalibrationPage(QWidget *parent);
+    QWidget *createHeliSetup4Page(QWidget *parent);
     QWidget *createRadioOutputPage(QWidget *parent);
     QWidget *createSerialPage(QWidget *parent);
     QWidget *createInitialParamsPage(QWidget *parent);
