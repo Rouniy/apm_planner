@@ -659,6 +659,8 @@ set(SOURCES
     src/ui/SwarmFollowLeaderWindow.cpp
     src/ui/SwarmFollowLeaderWindow.h
     src/ui/SwarmFollowLeaderWindowIntegration.cpp
+    src/ui/WaypointLeaderProfileControl.cpp
+    src/ui/WaypointLeaderProfileControl.h
     src/comm/SwarmFlightMode.h
     src/ui/MovingBaseWindow.cpp
     src/ui/MovingBaseWindow.h
@@ -2684,6 +2686,37 @@ if(BUILD_TESTING)
     )
     add_test(NAME swarmwaypointleadercore_tests
         COMMAND swarmwaypointleadercore_tests)
+
+    add_executable(waypointleaderprofilecontrol_tests
+        tests/test_waypointleaderprofilecontrol.cpp
+        src/ui/WaypointLeaderProfileControl.cpp
+        src/ui/WaypointLeaderProfileControl.h
+        src/ui/tools/SwarmWaypointLeaderCore.cpp
+        src/ui/tools/SwarmWaypointLeaderCore.h
+        src/ui/tools/SwarmFollowPathCore.cpp
+        src/ui/tools/SwarmFollowPathCore.h
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/SwarmFlightMode.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(waypointleaderprofilecontrol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(waypointleaderprofilecontrol_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME waypointleaderprofilecontrol_tests
+        COMMAND waypointleaderprofilecontrol_tests)
+    set_tests_properties(waypointleaderprofilecontrol_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(swarmfollowleaderwindow_tests
         tests/test_swarmfollowleaderwindow.cpp
