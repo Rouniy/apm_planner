@@ -46,12 +46,21 @@ remain. The arithmetic is therefore `53 - 11 + 1 = 43` Qt pages.
 ## Retained useful legacy modules
 
 Existing APM Planner modules may remain when they provide a real and useful
-workflow. Install Firmware, Accel Calibration, Radio Calibration, Flight Modes,
-FailSafe, SiK Radio, Battery Monitor and Terminal are substantive same-domain
+workflow. Install Firmware, Accel Calibration, Radio Calibration, FailSafe,
+SiK Radio, Battery Monitor and Terminal are substantive same-domain
 implementations worth retaining as explicitly `partial`. The vehicle pages
 derived from `AP2ConfigWidget` still bind the global active UAS/parameter
 manager and often force component 1, so none should be treated as exact-target
 safe until its target lease, component filtering and ACK lifecycle are ported.
+
+`Flight Modes` no longer belongs to that legacy set. SETUP and CONFIG now use
+the same native six-row widget, immutable target lease, exact-link heartbeat
+and RC monitor, and one changed-only parameter batch. Copter always exposes
+both Simple columns, disabling one only when its parameter is absent. Plane
+and Rover keep their sixth slot, Rover uses `MODE_CH`, and PX4 uses the
+`COM_FLTMODE_CH` channel plus the exact 0..12 slot enum separately from packed
+heartbeat custom modes. The legacy source remains compiled but is not
+instantiated by either active route.
 
 Several old modules are useful but misleading under an unqualified modern MP10
 route. Keep their source, but label them Legacy/partial or replace the route.
@@ -102,6 +111,8 @@ the completed direct routes, `Heli Setup (4.0+)` is now the first child of
 Mandatory Hardware before the native `Frame Type`, `Frame Type (Legacy)` and
 `Default Settings` sequence. The current `Compass` route follows Accel
 Calibration and precedes the retained `Compass (Legacy)` route, matching MP10.
+The shared native `Flight Modes` page remains after `ESC Calibration` and
+before `FailSafe`, also matching MP10 without changing the page/section count.
 The helicopter page's five sections retain the exact
 8x5 servo, 13 swashplate, 12 rotor-speed, nine governor and nine miscellaneous
 bindings. The route deliberately checks the current `H_SW_TYPE` capability;

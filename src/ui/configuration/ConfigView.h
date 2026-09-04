@@ -64,6 +64,7 @@ private:
     void resetParameterProgress();
     void restorePreferredPage();
     QWidget *createFriendlyParamsPage(bool advanced, QWidget *parent);
+    QWidget *createFlightModesPage(QWidget *parent);
     QWidget *createHeliSetupPage(QWidget *parent);
     QWidget *createOsdPage(QWidget *parent);
     QWidget *createUserDefinedPage(QWidget *parent);

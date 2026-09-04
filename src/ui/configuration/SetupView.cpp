@@ -22,6 +22,8 @@
 #include "ConfigDeveloperToolsView.h"
 #include "ConfigElevationSourcesView.h"
 #include "ConfigESCCalibrationView.h"
+#include "ConfigFlightModesPageFactory.h"
+#include "ConfigFlightModesView.h"
 #include "ConfigFrameClassTypeView.h"
 #include "ConfigFrameTypeView.h"
 #include "ConfigGpsInjectView.h"
@@ -51,7 +53,6 @@
 #include "comm/VehicleCommandService.h"
 #include "comm/VehicleTargetManager.h"
 #include "FailSafeConfig.h"
-#include "FlightModeConfig.h"
 #include "LinkInterface.h"
 #include "LinkManager.h"
 #include "MavFTPUIView.h"
@@ -477,8 +478,15 @@ void SetupView::buildPages()
         return createEscCalibrationPage(parent);
     };
     m_backstage->addPage(escCalibration);
-    m_backstage->addPage(makeBackstagePage<FlightModeConfig>(
-        kFlightModes, tr("Flight Modes"), true, true));
+    BackstagePage flightModes;
+    flightModes.id = kFlightModes;
+    flightModes.header = tr("Flight Modes");
+    flightModes.isSub = true;
+    flightModes.requiresConnection = true;
+    flightModes.factory = [this](QWidget *parent) {
+        return createFlightModesPage(parent);
+    };
+    m_backstage->addPage(flightModes);
     m_backstage->addPage(makeBackstagePage<FailSafeConfig>(
         kFailSafe, tr("FailSafe"), true, true));
     BackstagePage initialParams;
@@ -3078,6 +3086,32 @@ QWidget *SetupView::createEscCalibrationPage(QWidget *parent)
                 page, &ConfigESCCalibrationView::refreshCanceled);
     }
     return page;
+}
+
+QWidget *SetupView::createFlightModesPage(QWidget *parent)
+{
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    const VehicleTargetLease target = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const int componentId = target.isValid()
+        ? target.endpoint.componentId : MAV_COMP_ID_AUTOPILOT1;
+    const ParameterFirmwareFamily family = firmwareFamily(m_uas);
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+
+    ConfigFlightModesPageContext context;
+    context.firmwareFamily = family;
+    context.catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    context.parameters = parameterSnapshot(componentId);
+    context.target = target;
+    context.linkManager = links;
+    context.parameterManager = m_parameterManager;
+    context.parameterSnapshotComplete = m_parameterManager
+        && m_parameterManager->parameterListReady();
+    return CreateConfigFlightModesPage(context, parent);
 }
 
 QWidget *SetupView::createCompassPage(QWidget *parent)

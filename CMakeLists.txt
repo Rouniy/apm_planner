@@ -781,6 +781,14 @@ set(SOURCES
     src/ui/configuration/ConfigESCCalibrationView.h
     src/ui/configuration/ConfigESCCalibrationViewModel.cpp
     src/ui/configuration/ConfigESCCalibrationViewModel.h
+    src/ui/configuration/ConfigFlightModesView.cpp
+    src/ui/configuration/ConfigFlightModesView.h
+    src/ui/configuration/ConfigFlightModesViewModel.cpp
+    src/ui/configuration/ConfigFlightModesViewModel.h
+    src/ui/configuration/ConfigFlightModesPageFactory.cpp
+    src/ui/configuration/ConfigFlightModesPageFactory.h
+    src/ui/configuration/FlightModeTelemetryMonitor.cpp
+    src/ui/configuration/FlightModeTelemetryMonitor.h
     src/ui/configuration/ConfigHWBTSerialService.cpp
     src/ui/configuration/ConfigHWBTSerialService.h
     src/ui/configuration/ConfigHWBTView.cpp
@@ -2495,6 +2503,70 @@ if(BUILD_TESTING)
     set_tests_properties(configframeviews_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_executable(configflightmodesviewmodel_tests
+        tests/test_configflightmodesviewmodel.cpp
+        src/ui/configuration/ConfigFlightModesViewModel.cpp
+        src/ui/configuration/ConfigFlightModesViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configflightmodesviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configflightmodesviewmodel_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configflightmodesviewmodel_tests
+        COMMAND configflightmodesviewmodel_tests)
+
+    add_executable(configflightmodesview_tests
+        tests/test_configflightmodesview.cpp
+        src/ui/configuration/ConfigFlightModesView.cpp
+        src/ui/configuration/ConfigFlightModesView.h
+        src/ui/configuration/ConfigFlightModesViewModel.cpp
+        src/ui/configuration/ConfigFlightModesViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configflightmodesview_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configflightmodesview_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configflightmodesview_tests
+        COMMAND configflightmodesview_tests)
+    set_tests_properties(configflightmodesview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(flightmodetelemetrymonitor_tests
+        tests/test_flightmodetelemetrymonitor.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/configuration/FlightModeTelemetryMonitor.cpp
+        src/ui/configuration/FlightModeTelemetryMonitor.h
+    )
+    target_include_directories(flightmodetelemetrymonitor_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(flightmodetelemetrymonitor_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME flightmodetelemetrymonitor_tests
+        COMMAND flightmodetelemetrymonitor_tests)
 
     add_executable(configcompassviewmodel_tests
         tests/test_configcompassviewmodel.cpp

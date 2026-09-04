@@ -85,6 +85,7 @@ private:
     QWidget *createDroneCanPage(QWidget *parent);
     QWidget *createHWCANPage(QWidget *parent);
     QWidget *createEscCalibrationPage(QWidget *parent);
+    QWidget *createFlightModesPage(QWidget *parent);
     QWidget *createHeliSetup4Page(QWidget *parent);
     QWidget *createCompassPage(QWidget *parent);
     QWidget *createCompassMotPage(QWidget *parent);

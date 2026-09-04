@@ -10,11 +10,12 @@
 #include "ConfigPlannerViewIntegration.h"
 #include "ConfigPlannerAdvView.h"
 #include "ConfigTradHeliView.h"
+#include "ConfigFlightModesPageFactory.h"
+#include "ConfigFlightModesView.h"
 #include "ConfigFriendlyParamsView.h"
 #include "ConfigOSDView.h"
 #include "ConfigRawParams.h"
 #include "ConfigUserDefinedView.h"
-#include "FlightModeConfig.h"
 #include "GeoFenceConfig.h"
 #include "LinkInterface.h"
 #include "LinkManager.h"
@@ -182,9 +183,15 @@ void ConfigView::buildPages()
         return page;
     };
 
-    m_backstage->addPage(legacy(makeBackstagePage<FlightModeConfig>(
-        kFlightModes, tr("Flight Modes"),
-        routeVisible(ConfigRouteId::FlightModes))));
+    BackstagePage flightModes;
+    flightModes.id = kFlightModes;
+    flightModes.header = tr("Flight Modes");
+    flightModes.requiresConnection = true;
+    flightModes.visibleWhen = routeVisible(ConfigRouteId::FlightModes);
+    flightModes.factory = [this](QWidget *parent) {
+        return createFlightModesPage(parent);
+    };
+    m_backstage->addPage(flightModes);
 
     BackstagePage standardParameters;
     standardParameters.id = kStandardParams;
@@ -875,6 +882,32 @@ QWidget *ConfigView::createFriendlyParamsPage(bool advanced, QWidget *parent)
         });
     }
     return page;
+}
+
+QWidget *ConfigView::createFlightModesPage(QWidget *parent)
+{
+    LinkManager *const links = LinkManager::instance();
+    VehicleTargetManager *const targets = links
+        ? links->vehicleTargetManager() : nullptr;
+    const VehicleTargetLease target = targets
+        ? targets->acquireTarget() : VehicleTargetLease{};
+    const int componentId = target.isValid()
+        ? target.endpoint.componentId : MAV_COMP_ID_AUTOPILOT1;
+    const ParameterFirmwareFamily family = parameterFirmwareFamily();
+    const QString catalogVersion = m_officialFirmware
+        ? m_firmwareVersion : QString();
+
+    ConfigFlightModesPageContext context;
+    context.firmwareFamily = family;
+    context.catalog = m_metadataRepository->catalog(
+        family, catalogVersion);
+    context.parameters = parameterSnapshot(componentId);
+    context.target = target;
+    context.linkManager = links;
+    context.parameterManager = m_parameterManager;
+    context.parameterSnapshotComplete = m_parameterManager
+        && m_parameterManager->parameterListReady();
+    return CreateConfigFlightModesPage(context, parent);
 }
 
 QWidget *ConfigView::createHeliSetupPage(QWidget *parent)

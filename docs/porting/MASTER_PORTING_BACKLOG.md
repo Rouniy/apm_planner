@@ -297,16 +297,19 @@ Rally; после cancel/target switch нет поздних изменений;
   пакетами, не включая кнопки заранее.
 - Elevation Sources и Mission Command List: native/package evidence.
 - SETUP OSD: live 24-write full/partial path и profile gate.
-- Current Compass: parameter/priority, onboard multi-compass и Large Vehicle
-  fixed-yaw slices сделаны; остаются physical-hardware evidence, OfflineMagFit
-  и отдельный Compass/Motor route.
+- Current Compass: parameter/priority, onboard multi-compass, Large Vehicle
+  fixed-yaw и отдельный Compass/Motor slices сделаны; остаются
+  physical-hardware evidence и OfflineMagFit.
 
 #### 5B. Исправить partial legacy pages
 
 - Setup shell/order/profile gating;
 - Install Firmware и legacy firmware route;
 - Frame Class/Type, Accel, Compass Legacy/Compass Motor;
-- Radio Input, Flight Modes, FailSafe;
+- Radio Input и FailSafe; Flight Modes уже заменён общим нативным
+  CONFIG/SETUP exact-target экраном и проверен через оба X11 route,
+  остаются hardware/native-platform
+  evidence;
 - Battery Monitor 1, Range Finder, Airspeed;
 - GPS Inject, DroneCAN, Joystick, Mount, Optical Flow;
 - SiK Radio и Terminal.
@@ -352,7 +355,8 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 - Full/Raw Params: search, staged edit, compare, load/save, defaults,
   favorites, metadata, component selection и atomic target switch.
 - Friendly Params basic/advanced.
-- Flight Modes.
+- Flight Modes: нативный общий CONFIG/SETUP slice реализован; остаются
+  reference screenshot diff, native-platform и physical-vehicle evidence.
 - Basic/Extended tuning, Copter/Plane/Rover tuning.
 - Fence configuration и live status.
 - Planner settings: нативная страница уже воспроизводит все девять секций,

@@ -15,7 +15,7 @@ no null factories in the active Qt navigation.
 
 | # | Mission Planner 10 route | Qt status |
 |---:|---|---|
-| 1 | Flight Modes | Useful legacy page retained; partial |
+| 1 | Flight Modes | Native exact-target page; in progress |
 | 2 | Standard Params | Native metadata-backed page; partial |
 | 3 | Advanced Params | Native metadata-backed page; partial |
 | 4 | GeoFence | Useful legacy Copter page retained; partial |
@@ -102,13 +102,28 @@ file paths and seven-rate telemetry editor remain reachable through an
 explicitly named Legacy dialog; dead reconnect/donate/titlebar/low-power and
 split-brain MAVLink identity controls are hidden there.
 
-The next CONFIG vertical slice is the native `Flight Modes` page. The retained
-legacy page has six selectors and PWM highlighting, but Plane/Rover mode 6 is
-disabled, Copter exposes only `SIMPLE`, the change detector compares the mode-1
-parameter against the SIMPLE bitmask, and MP10's current mode, numeric current
-PWM, `SUPER_SIMPLE` controls and help route are absent. The replacement should
-use the application exact-target parameter service and retain the useful old
-page only until the six-mode/Simple/Super Simple/live-PWM workflow is complete.
+The native `Flight Modes` page is shared by CONFIG and SETUP. It renders all
+six MP10 mode rows and PWM bands for Copter, Plane, Rover and PX4 schemas.
+ArduPilot slot choices come from packaged metadata (plus the MP10
+`31: ModelCal` Copter extension); PX4 `COM_FLTMODE1..6` uses its separate
+0..12 slot enum and never the packed heartbeat `custom_mode`. Unknown values
+remain selectable. Copter always exposes the `SIMPLE` and `SUPER_SIMPLE`
+columns and help, while each column stays disabled when its parameter is not
+provided by the vehicle. Current Mode,
+numeric Current PWM, active-row highlighting and the Super Simple help route
+consume telemetry from the immutable physical-link target rather than the
+legacy global active-UAS stream. Edits require a fresh exact heartbeat and a
+disarmed vehicle; Save submits one changed-only ordered parameter batch and a
+partial outcome forces full-snapshot reconciliation. Full parameter refreshes
+preserve staged per-field edits, while reconciliation deliberately replaces
+them with the new committed snapshot. The additional `Refresh Params` action
+is the explicit recovery path for incomplete or uncertain state. The old
+`FlightModeConfig` source remains compiled for legacy-shell compatibility but
+neither active MP10 route instantiates it.
+
+The next CONFIG route-level mismatch remains Plane `QP Extended Tuning`.
+Planner Settings also remains a broad control-level gap: all nine sections are
+present, but many of the audited 64 controls are still explicitly unavailable.
 
 ## SETUP cross-check
 
