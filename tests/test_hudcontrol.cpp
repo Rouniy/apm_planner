@@ -37,6 +37,8 @@ private slots:
     void aoaDoesNotDarkenTranslucentSideTapes();
     void rendersHighMessageAtMissionPlannerSeverityColors();
     void preservesSelectableAspectRatio();
+    void videoBackgroundUsesCompleteRenderSurface();
+    void exportRendererDoesNotLoadSharedHudPreferences();
 };
 
 void HudControlTest::displaySettingsDefaultWithoutConstructorWrite()
@@ -295,6 +297,37 @@ void HudControlTest::preservesSelectableAspectRatio()
     QCOMPARE(wide.width(), 1000);
     QVERIFY(wide.height() == 562 || wide.height() == 563);
     QVERIFY(qAbs(static_cast<double>(wide.width()) / wide.height() - 16.0 / 9.0) < 0.01);
+}
+
+void HudControlTest::videoBackgroundUsesCompleteRenderSurface()
+{
+    HudControl hud;
+    hud.resize(1000, 600);
+    QVERIFY(hud.contentViewport().width() < hud.width());
+
+    QImage video(640, 480, QImage::Format_ARGB32);
+    video.fill(Qt::black);
+    hud.setVideoBackground(video);
+    QCOMPARE(hud.contentViewport(), hud.rect());
+}
+
+void HudControlTest::exportRendererDoesNotLoadSharedHudPreferences()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QSettings settings(temporary.filePath(QStringLiteral("hud.ini")),
+                       QSettings::IniFormat);
+    HudDisplaySettings sharedSettings(&settings);
+    sharedSettings.setOverlayEnabled(false);
+
+    HudControl exportHud(nullptr, &sharedSettings, false);
+    QVERIFY(exportHud.overlayEnabled());
+    QVERIFY(exportHud.displayHeading());
+    QVERIFY(!exportHud.displayAoa());
+    exportHud.setOverlayEnabled(false);
+    QVERIFY(!exportHud.overlayEnabled());
+    exportHud.setOverlayEnabled(true);
+    QVERIFY(exportHud.overlayEnabled());
 }
 
 QTEST_MAIN(HudControlTest)

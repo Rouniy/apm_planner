@@ -5,8 +5,7 @@
 #include <QQueue>
 #include <QStringList>
 
-class QMediaPlayer;
-class QAudioOutput;
+class QSoundEffect;
 class QTextToSpeech;
 class QueuedSpeechController;
 
@@ -27,13 +26,13 @@ public:
     void selectMaleVoice();
 
 private:
+    bool ensureSoundEffect();
     void playNextFile();
     void selectVoice(bool female);
 
     QQueue<QString> m_pendingFiles;
     bool m_playing = false;
-    QMediaPlayer *m_player = nullptr;
-    QAudioOutput *m_audioOutput = nullptr;
+    QSoundEffect *m_soundEffect = nullptr;
     QTextToSpeech *m_speech = nullptr;
     QueuedSpeechController *m_speechQueue = nullptr;
 };

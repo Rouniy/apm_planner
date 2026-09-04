@@ -56,37 +56,52 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
         QStringLiteral("actionMavlinkDeviceOperations"));
     QAction terrain(&actionSource);
     terrain.setObjectName(QStringLiteral("actionTerrain3D"));
+    QAction osdVideo(&actionSource);
+    osdVideo.setObjectName(QStringLiteral("actionOsdVideoOverlay"));
     bool deviceTriggered = false;
     bool terrainTriggered = false;
+    bool osdVideoTriggered = false;
     connect(&deviceOperations, &QAction::triggered,
             this, [&deviceTriggered]() { deviceTriggered = true; });
     connect(&terrain, &QAction::triggered,
             this, [&terrainTriggered]() { terrainTriggered = true; });
+    connect(&osdVideo, &QAction::triggered,
+            this, [&osdVideoTriggered]() { osdVideoTriggered = true; });
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 4);
-    QVERIFY(view.Log().contains(QStringLiteral("4 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 5);
+    QVERIFY(view.Log().contains(QStringLiteral("5 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
         QStringLiteral("Terrain3dViewButton"));
+    auto *osdVideoButton = view.findChild<QPushButton *>(
+        QStringLiteral("OsdVideoTelemetryOverlayButton"));
     QVERIFY(deviceButton);
     QVERIFY(terrainButton);
+    QVERIFY(osdVideoButton);
     QVERIFY(deviceButton->isEnabled());
     QVERIFY(terrainButton->isEnabled());
+    QVERIFY(osdVideoButton->isEnabled());
     deviceButton->click();
     terrainButton->click();
+    osdVideoButton->click();
     QVERIFY(deviceTriggered);
     QVERIFY(terrainTriggered);
+    QVERIFY(osdVideoTriggered);
     QVERIFY(view.Log().contains(
         QStringLiteral("Opened MAVLink Device Operations.")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened 3D Terrain View.")));
+    QVERIFY(view.Log().contains(
+        QStringLiteral("Opened OSD Video — Telemetry Overlay.")));
 
     deviceOperations.setEnabled(false);
     terrain.setEnabled(false);
+    osdVideo.setEnabled(false);
     QVERIFY(!deviceButton->isEnabled());
     QVERIFY(!terrainButton->isEnabled());
+    QVERIFY(!osdVideoButton->isEnabled());
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()

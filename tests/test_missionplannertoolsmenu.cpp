@@ -90,6 +90,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     int movingBaseOpenCount = 0;
     int deviceOperationsOpenCount = 0;
     int propagationOpenCount = 0;
+    int osdVideoOverlayOpenCount = 0;
     MissionPlannerToolsMenu::HandlerMap handlers;
     handlers.insert(QStringLiteral("actionMavlinkInspector"),
                     [&inspectorOpenCount]() { ++inspectorOpenCount; });
@@ -121,6 +122,10 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
                     [&propagationOpenCount]() {
         ++propagationOpenCount;
     });
+    handlers.insert(QStringLiteral("actionOsdVideoOverlay"),
+                    [&osdVideoOverlayOpenCount]() {
+        ++osdVideoOverlayOpenCount;
+    });
 
     MissionPlannerToolsMenu::Populate(&menu, &context, handlers);
     QCOMPARE(menu.title(), QStringLiteral("TOOLS"));
@@ -145,6 +150,8 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
             || action->objectName()
                 == QStringLiteral("actionPropagationSettings")
             || action->objectName()
+                == QStringLiteral("actionOsdVideoOverlay")
+            || action->objectName()
                 == QStringLiteral("actionMavlinkDeviceOperations")) {
             QVERIFY(action->isEnabled());
             action->trigger();
@@ -166,6 +173,7 @@ void MissionPlannerToolsMenuTest::populatedMenuNeverLeavesUnavailableActionsAmbi
     QCOMPARE(movingBaseOpenCount, 1);
     QCOMPARE(deviceOperationsOpenCount, 1);
     QCOMPARE(propagationOpenCount, 1);
+    QCOMPARE(osdVideoOverlayOpenCount, 1);
 }
 
 QTEST_MAIN(MissionPlannerToolsMenuTest)

@@ -7,10 +7,7 @@
 #include <QtGlobal>
 
 #ifdef APM_HAS_QT_MULTIMEDIA
-#include <QMediaPlayer>
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-#include <QAudioOutput>
-#endif
+#include <QSoundEffect>
 #endif
 
 #ifdef APM_HAS_QT_TEXT_TO_SPEECH
@@ -21,21 +18,6 @@
 QtAudioOutput::QtAudioOutput(QObject *parent)
     : QObject(parent)
 {
-#ifdef APM_HAS_QT_MULTIMEDIA
-    m_player = new QMediaPlayer(this);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    m_audioOutput = new QAudioOutput(this);
-    m_player->setAudioOutput(m_audioOutput);
-#endif
-    connect(m_player, &QMediaPlayer::mediaStatusChanged, this,
-            [this](QMediaPlayer::MediaStatus status) {
-                if (status == QMediaPlayer::EndOfMedia || status == QMediaPlayer::InvalidMedia) {
-                    m_playing = false;
-                    playNextFile();
-                }
-            });
-#endif
-
     m_speechQueue = new QueuedSpeechController(
         [this](const QString &text) {
 #ifdef APM_HAS_QT_TEXT_TO_SPEECH
@@ -77,10 +59,40 @@ QtAudioOutput::QtAudioOutput(QObject *parent)
 #endif
 }
 
+bool QtAudioOutput::ensureSoundEffect()
+{
+#ifdef APM_HAS_QT_MULTIMEDIA
+    if (m_soundEffect) {
+        return true;
+    }
+    // Alerts are short WAV effects. QSoundEffect is the Qt audio-only path;
+    // QMediaPlayer needlessly initializes a video renderer and has triggered
+    // VA-API driver crashes on headless Intel systems.
+    m_soundEffect = new QSoundEffect(this);
+    connect(m_soundEffect, &QSoundEffect::playingChanged, this, [this]() {
+        if (m_playing && m_soundEffect && !m_soundEffect->isPlaying()
+            && m_soundEffect->status() == QSoundEffect::Ready) {
+            m_playing = false;
+            playNextFile();
+        }
+    });
+    connect(m_soundEffect, &QSoundEffect::statusChanged, this, [this]() {
+        if (m_playing && m_soundEffect
+            && m_soundEffect->status() == QSoundEffect::Error) {
+            m_playing = false;
+            playNextFile();
+        }
+    });
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool QtAudioOutput::playFile(const QString &fileName)
 {
 #ifdef APM_HAS_QT_MULTIMEDIA
-    if (!QFileInfo::exists(fileName)) {
+    if (!QFileInfo::exists(fileName) || !ensureSoundEffect()) {
         return false;
     }
     m_pendingFiles.enqueue(fileName);
@@ -97,19 +109,15 @@ bool QtAudioOutput::playFile(const QString &fileName)
 void QtAudioOutput::playNextFile()
 {
 #ifdef APM_HAS_QT_MULTIMEDIA
-    if (!m_player || m_pendingFiles.isEmpty()) {
+    if (!m_soundEffect || m_pendingFiles.isEmpty()) {
         m_playing = false;
         return;
     }
 
     m_playing = true;
     const QUrl source = QUrl::fromLocalFile(m_pendingFiles.dequeue());
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    m_player->setSource(source);
-#else
-    m_player->setMedia(source);
-#endif
-    m_player->play();
+    m_soundEffect->setSource(source);
+    m_soundEffect->play();
 #endif
 }
 

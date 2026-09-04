@@ -60,8 +60,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                          QStringLiteral("ConvertShapefileToPolyButton"), notPorted);
     AddUnavailableAction(tr("Translation / RESX Editor"),
                          QStringLiteral("TranslationResxEditorButton"), notPorted);
-    AddUnavailableAction(tr("OSD Video — Telemetry Overlay"),
-                         QStringLiteral("OsdVideoTelemetryOverlayButton"), notPorted);
+    AddToolAction(tr("OSD Video — Telemetry Overlay"),
+                  QStringLiteral("OsdVideoTelemetryOverlayButton"),
+                  QStringLiteral("actionOsdVideoOverlay"));
     AddUnavailableAction(tr("Offline Magnetometer Calibration (MagFit)"),
                          QStringLiteral("OfflineMagFitButton"), notPorted);
     AddUnavailableAction(tr("Flight Log Index"),

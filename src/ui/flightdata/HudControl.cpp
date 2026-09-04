@@ -55,21 +55,28 @@ QColor hudGreen()
 }
 }
 
-HudControl::HudControl(QWidget *parent, HudDisplaySettings *displaySettings)
+HudControl::HudControl(QWidget *parent, HudDisplaySettings *displaySettings,
+                       bool loadUserSettings)
     : QWidget(parent),
       m_easeTimer(new QTimer(this)),
-      m_displaySettings(displaySettings ? displaySettings
-                                        : HudDisplaySettings::instance())
+      m_displaySettings(loadUserSettings
+                            ? (displaySettings ? displaySettings
+                                               : HudDisplaySettings::instance())
+                            : nullptr)
 {
     setObjectName(QStringLiteral("Hud"));
     setMinimumSize(240, 180);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setAutoFillBackground(false);
     setAttribute(Qt::WA_OpaquePaintEvent);
-    loadDisplaySettings();
-    m_overlayEnabled = m_displaySettings->overlayEnabled();
-    connect(m_displaySettings, &HudDisplaySettings::overlayEnabledChanged,
-            this, &HudControl::applyOverlayEnabled);
+    if (loadUserSettings) {
+        loadDisplaySettings();
+    }
+    if (m_displaySettings) {
+        m_overlayEnabled = m_displaySettings->overlayEnabled();
+        connect(m_displaySettings, &HudDisplaySettings::overlayEnabledChanged,
+                this, &HudControl::applyOverlayEnabled);
+    }
     m_easeTimer->setInterval(16);
     connect(m_easeTimer, &QTimer::timeout, this, &HudControl::stepEase);
     m_easeTimer->start();
@@ -82,6 +89,12 @@ QSize HudControl::sizeHint() const
 
 QRect HudControl::contentViewport() const
 {
+    // A decoded camera frame owns the complete render surface. Applying the
+    // synthetic HUD aspect ratio here would crop the source and differs from
+    // Mission Planner's OSD-video renderer.
+    if (!m_videoBackground.isNull()) {
+        return rect();
+    }
     const double ratio = m_sixteenByNine ? (16.0 / 9.0) : (4.0 / 3.0);
     int contentWidth = width();
     int contentHeight = qRound(contentWidth / ratio);
@@ -184,6 +197,8 @@ void HudControl::setOverlayEnabled(bool value)
 {
     if (m_displaySettings) {
         m_displaySettings->setOverlayEnabled(value);
+    } else {
+        applyOverlayEnabled(value);
     }
 }
 

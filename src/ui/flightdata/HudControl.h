@@ -79,7 +79,8 @@ class HudControl final : public QWidget
 
 public:
     explicit HudControl(QWidget *parent = nullptr,
-                        HudDisplaySettings *displaySettings = nullptr);
+                        HudDisplaySettings *displaySettings = nullptr,
+                        bool loadUserSettings = true);
 
     double roll() const { return m_roll; }
     double pitch() const { return m_pitch; }

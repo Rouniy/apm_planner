@@ -53,6 +53,9 @@ This file is part of the QGROUNDCONTROL project
 #include "FollowMeWindow.h"
 #include "MovingBaseWindow.h"
 #include "MissionPlannerToolsMenu.h"
+#ifdef APM_HAS_QT_MULTIMEDIA
+#include "OsdVideoOverlayWindow.h"
+#endif
 #include "tools/PropagationSettingsWindow.h"
 #include "tools/PropagationOverlayController.h"
 #include "tools/PropagationTelemetrySource.h"
@@ -671,6 +674,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { showLogDownload(); });
     handlers.insert(QStringLiteral("actionTlogConvertExtract"),
                     [this]() { MavlinkLogWindow::OpenWindow(this); });
+#ifdef APM_HAS_QT_MULTIMEDIA
+    handlers.insert(QStringLiteral("actionOsdVideoOverlay"),
+                    [this]() { OsdVideoOverlayWindow::OpenWindow(this); });
+#endif
 
     MissionPlannerToolsMenu::Populate(ui.menuTools, this, handlers);
     // The native menu bar is hidden. Register every MP10 shortcut directly on

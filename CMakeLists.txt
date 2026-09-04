@@ -647,6 +647,8 @@ set(SOURCES
     src/ui/MovingBaseWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
+    src/ui/OsdVideoOverlayWindow.cpp
+    src/ui/OsdVideoOverlayWindow.h
     src/ui/Terrain3DWindow.cpp
     src/ui/Terrain3DWindow.h
     src/ui/Terrain3DWindowIntegration.cpp
@@ -656,6 +658,12 @@ set(SOURCES
     src/ui/terrain/Terrain3DTelemetrySource.h
     src/ui/tools/ExternalGuidedFile.cpp
     src/ui/tools/ExternalGuidedFile.h
+    src/ui/tools/MjpegAviWriter.cpp
+    src/ui/tools/MjpegAviWriter.h
+    src/ui/tools/OsdVideoDecoder.cpp
+    src/ui/tools/OsdVideoDecoder.h
+    src/ui/tools/OsdVideoOverlayCore.cpp
+    src/ui/tools/OsdVideoOverlayCore.h
     src/ui/tools/PropagationCore.cpp
     src/ui/tools/PropagationCore.h
     src/ui/tools/PropagationDistanceEstimator.cpp
@@ -4400,6 +4408,101 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME tlogreader_tests COMMAND tlogreader_tests)
+
+    add_executable(osdvideooverlaycore_tests
+        tests/test_osdvideooverlaycore.cpp
+        src/ui/tools/OsdVideoOverlayCore.cpp
+        src/ui/tools/OsdVideoOverlayCore.h
+        src/comm/TlogReader.cpp
+        src/comm/TlogReader.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+    )
+    target_include_directories(osdvideooverlaycore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(osdvideooverlaycore_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME osdvideooverlaycore_tests
+             COMMAND osdvideooverlaycore_tests)
+
+    add_executable(mjpegaviwriter_tests
+        tests/test_mjpegaviwriter.cpp
+        src/ui/tools/MjpegAviWriter.cpp
+        src/ui/tools/MjpegAviWriter.h
+    )
+    target_include_directories(mjpegaviwriter_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(mjpegaviwriter_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME mjpegaviwriter_tests COMMAND mjpegaviwriter_tests)
+
+    add_executable(osdvideodecoder_tests
+        tests/test_osdvideodecoder.cpp
+        src/ui/tools/MjpegAviWriter.cpp
+        src/ui/tools/MjpegAviWriter.h
+        src/ui/tools/OsdVideoDecoder.cpp
+        src/ui/tools/OsdVideoDecoder.h
+    )
+    target_include_directories(osdvideodecoder_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(osdvideodecoder_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+    )
+    if(TARGET Qt::Multimedia)
+        target_link_libraries(osdvideodecoder_tests PRIVATE Qt::Multimedia)
+    endif()
+    add_test(NAME osdvideodecoder_tests COMMAND osdvideodecoder_tests)
+
+    add_executable(osdvideooverlaywindow_tests
+        tests/test_osdvideooverlaywindow.cpp
+        src/ui/OsdVideoOverlayWindow.cpp
+        src/ui/OsdVideoOverlayWindow.h
+        src/ui/tools/MjpegAviWriter.cpp
+        src/ui/tools/MjpegAviWriter.h
+        src/ui/tools/OsdVideoDecoder.cpp
+        src/ui/tools/OsdVideoDecoder.h
+        src/ui/tools/OsdVideoOverlayCore.cpp
+        src/ui/tools/OsdVideoOverlayCore.h
+        src/ui/flightdata/HudControl.cpp
+        src/ui/flightdata/HudControl.h
+        src/services/HudDisplaySettings.cpp
+        src/services/HudDisplaySettings.h
+        src/comm/TlogReader.cpp
+        src/comm/TlogReader.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+    )
+    target_include_directories(osdvideooverlaywindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/flightdata
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(osdvideooverlaywindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    if(TARGET Qt::Multimedia)
+        target_link_libraries(osdvideooverlaywindow_tests PRIVATE Qt::Multimedia)
+    endif()
+    add_test(NAME osdvideooverlaywindow_tests
+             COMMAND osdvideooverlaywindow_tests)
+    set_tests_properties(osdvideooverlaywindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(tlogexportservice_tests
         tests/test_tlogexportservice.cpp

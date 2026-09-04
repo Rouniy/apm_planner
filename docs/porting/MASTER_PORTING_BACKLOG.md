@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base и RF Propagation-срезов:
+Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation и OSD Video-срезов:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 171 из 171 тестов;
+- проходят 175 из 175 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -30,10 +30,10 @@
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 29 | 16 | 11 | 56 |
 | CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 14 | 2 | 15 | 31 |
+| TOOLS | 15 | 2 | 14 | 31 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **60** | **37** | **32** | **129** |
+| **Итого** | **61** | **37** | **31** | **129** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -55,8 +55,8 @@
 совпадения других страниц.
 
 Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
-Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base и RF
-Propagation. Далее идут пять safety-critical Swarm workflows и OSD Video,
+Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base, RF
+Propagation и OSD Video. Далее идут пять safety-critical Swarm workflows,
 после чего приоритет переходит к Settings/CONFIG и их функциональным vertical
 slices. Оставшиеся специализированные Tools сохраняются в точном меню, но
 включаются только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
@@ -246,8 +246,9 @@ canvas и options совпадают с эталоном, hardware/live evidence
 - Реализовать полную Info Page с группами, выбором полей и единицами.
 - Карта DATA: track, auto-pan, mission/proximity overlays, guided/context
   actions, vehicle icons и target isolation.
-- Video: Qt Multimedia sources, MAVLink camera stream, MJPEG/GStreamer adapters,
-  snapshot/record, HUD-to-video export, cancel и teardown.
+- Video: локальный file+tlog HUD-to-video export уже доступен в TOOLS через
+  Qt Multimedia и bounded MJPEG AVI; для DATA остаются live MAVLink camera
+  stream, snapshot/record и их teardown.
 - HUD: весь inventory Wave 1C, настройки и custom user fields.
 - Audio vario, speech alerts и warning manager должны использовать один
   telemetry snapshot и не дублировать аварийные объявления.
@@ -410,6 +411,11 @@ dirty state никогда не переносится на новый target.
   ограничен восемью уникальными tiles до GUI dispatch; остаются raster
   dateline splitting, ещё один production map backend, representative live
   terrain/vehicle, reference screenshot и native-platform evidence;
+- OSD Video: основной singleton/modeless file+tlog/offset/HUD-to-silent-MJPEG
+  срез сделан через Qt Multimedia с bounded lossless handoff, cancellable
+  partial-file finalize, no-overwrite, synthetic decode и writer-output E2E;
+  остаются audio copy, полное firmware-specific CurrentState/mode покрытие,
+  representative real-log/reference и native-platform evidence;
 - Device Operations: основной modeless/exact-target срез сделан; остаются
   hardware/native evidence и визуальная полировка;
 - QML Plugin Manager: широкая документация и API coverage.
@@ -422,7 +428,6 @@ dirty state никогда не переносится на новый target.
 - Terrain Maker;
 - Formation Control и четыре swarm workflow;
 - MAVLink Serial/TCP Bridge;
-- OSD Video Overlay;
 - Microdrone Downlink;
 - Translation Editor;
 - Tracker Home Module.
