@@ -84,6 +84,8 @@ private:
     QWidget *createHWCANPage(QWidget *parent);
     QWidget *createEscCalibrationPage(QWidget *parent);
     QWidget *createHeliSetup4Page(QWidget *parent);
+    QWidget *createFrameClassTypePage(QWidget *parent);
+    QWidget *createFrameTypeLegacyPage(QWidget *parent);
     QWidget *createRadioOutputPage(QWidget *parent);
     QWidget *createSerialPage(QWidget *parent);
     QWidget *createInitialParamsPage(QWidget *parent);

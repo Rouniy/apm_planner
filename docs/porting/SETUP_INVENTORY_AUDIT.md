@@ -18,31 +18,31 @@ sections.
 | Logical section | MP10 pages | Qt pages | MP10 group heading | Qt group heading |
 |---|---:|---:|---:|---:|
 | Ungrouped | 4 | 1 | 0 | 0 |
-| Mandatory Hardware | 16 | 14 | 1 | 1 |
+| Mandatory Hardware | 16 | 15 | 1 | 1 |
 | Optional Hardware | 26 | 19 | 1 | 1 |
 | Advanced | 7 | 6 | 1 | 1 |
-| **Total** | **53** | **40** | **3** | **3** |
+| **Total** | **53** | **41** | **3** | **3** |
 
 Thus MP10 registers 56 potential navigation entries when group headings are
-included. Qt registers 43: 40 page factories plus the same three group
+included. Qt registers 44: 41 page factories plus the same three group
 headings. Every current Qt page registration has a concrete factory. Counts
 alone do not imply parity because several factories still wrap legacy APM
 Planner widgets rather than the corresponding MP10 implementation.
 
 ## Missing MP10 pages
 
-Qt is missing 14 direct MP10 pages:
+Qt is missing 13 direct MP10 pages:
 
 - Ungrouped: `Install Firmware Legacy`, `Secure`, and
   `Secure (Bootloader Keys)`.
-- Mandatory Hardware: `Frame Type (Legacy)` and `Compass (Legacy)`.
+- Mandatory Hardware: `Compass (Legacy)`.
 - Optional Hardware: `CubeID Update`, `NV Modem`, `Joystick`,
   `Compass/Motor Calib`, `PX4Flow`, `Antenna Tracker`, and `FFT Setup`.
 - Advanced: `Onboard Lua REPL` and `Local Script REPL`.
 
 Qt also has one intentional additional page, `QML Plugins`. It is the useful
 user-facing manager for the fresh port's trusted QML extension system and must
-remain. The arithmetic is therefore `53 - 14 + 1 = 40` Qt pages.
+remain. The arithmetic is therefore `53 - 13 + 1 = 41` Qt pages.
 
 ## Retained useful legacy modules
 
@@ -56,9 +56,10 @@ safe until its target lease, component filtering and ACK lifecycle are ported.
 
 Several old modules are useful but misleading under an unqualified modern MP10
 route. Keep their source, but label them Legacy/partial or replace the route.
-`Frame Type` must split into the modern `FrameTypeConfigNew` route and a
-separate `Frame Type (Legacy)` route backed by `FrameTypeConfigOld`; the current
-combined factory is neither MP10 page. The current compass page should be
+`Frame Type` now uses a native `FRAME_CLASS` / `FRAME_TYPE` page and the useful
+`FRAME` workflow is retained as the separate native `Frame Type (Legacy)`
+route. The old combined factory remains available to the legacy shell but is
+not an MP10 SETUP page. The current compass page should be
 called `Compass (Legacy)` because it lacks current multi-compass
 discovery/priority. Range Finder supports one old `RNGFND_*` instance, Airspeed
 exposes only the old enable/use/pin choices, Optical Flow is only a
@@ -79,7 +80,8 @@ legacy SETUP hardware pages remain available.
 
 Qt preserves the three broad groups but not the complete MP10 order. Among
 the completed direct routes, `Heli Setup (4.0+)` is now the first child of
-Mandatory Hardware before Frame Type. Its five sections retain the exact
+Mandatory Hardware before the native `Frame Type`, `Frame Type (Legacy)` and
+`Default Settings` sequence. Its five sections retain the exact
 8x5 servo, 13 swashplate, 12 rotor-speed, nine governor and nine miscellaneous
 bindings. The route deliberately checks the current `H_SW_TYPE` capability;
 MP10's `IsHeli()` checks the obsolete `H_SWASH_TYPE` even for this 4.0+ page,
@@ -105,17 +107,15 @@ deterministic JSON, preserves unknown Custom fields and omits legacy
 XML/`advancedview` migration for this fresh port.
 
 There are no null factories in active SETUP, but a concrete factory can still
-look empty or be misleading. `FrameTypeConfig` creates its inner widget only
-after both a valid firmware version and a later parameter callback; cached
-parameters arriving first can leave its scroll area blank indefinitely. A
-later vehicle/firmware switch can also leave the previously created inner
-widget visible for the wrong profile. `Optical Flow` is non-empty but
-near-placeholder functionality. These are the first production navigation
-cases the SETUP click/reset test must expose.
+be misleading. The native Frame pages build their complete unavailable state
+before any firmware or parameter callback and therefore replace the combined
+`FrameTypeConfig` blank/stale lifecycle on the active route. `Optical Flow` is
+non-empty but near-placeholder functionality and remains the first production
+navigation case the SETUP click/reset test must expose.
 
 The required navigation regression test must lock:
 
-- the 39 Qt page IDs and three group IDs in production order;
+- the 41 Qt page IDs and three group IDs in production order;
 - a non-null concrete widget after activating every visible page;
 - offline, connected, partial-parameter and advanced-mode visibility;
 - Copter, Plane, Rover, Heli and tracker profile transitions;

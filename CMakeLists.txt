@@ -805,6 +805,14 @@ set(SOURCES
     src/ui/configuration/ConfigTradHeli4View.h
     src/ui/configuration/ConfigTradHeli4ViewModel.cpp
     src/ui/configuration/ConfigTradHeli4ViewModel.h
+    src/ui/configuration/ConfigFrameClassTypeView.cpp
+    src/ui/configuration/ConfigFrameClassTypeView.h
+    src/ui/configuration/ConfigFrameClassTypeViewModel.cpp
+    src/ui/configuration/ConfigFrameClassTypeViewModel.h
+    src/ui/configuration/ConfigFrameTypeView.cpp
+    src/ui/configuration/ConfigFrameTypeView.h
+    src/ui/configuration/ConfigFrameTypeViewModel.cpp
+    src/ui/configuration/ConfigFrameTypeViewModel.h
     src/ui/configuration/HeliCollectivePlot.cpp
     src/ui/configuration/HeliCollectivePlot.h
     src/ui/configuration/HeliVisualization.cpp
@@ -2413,6 +2421,70 @@ if(BUILD_TESTING)
     add_test(NAME configtradheli4view_tests
         COMMAND configtradheli4view_tests)
     set_tests_properties(configtradheli4view_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(configframeclasstypeviewmodel_tests
+        tests/test_configframeclasstypeviewmodel.cpp
+        src/ui/configuration/ConfigFrameClassTypeViewModel.cpp
+        src/ui/configuration/ConfigFrameClassTypeViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configframeclasstypeviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configframeclasstypeviewmodel_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configframeclasstypeviewmodel_tests
+        COMMAND configframeclasstypeviewmodel_tests)
+
+    add_executable(configframetypeviewmodel_tests
+        tests/test_configframetypeviewmodel.cpp
+        src/ui/configuration/ConfigFrameTypeViewModel.cpp
+        src/ui/configuration/ConfigFrameTypeViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configframetypeviewmodel_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configframetypeviewmodel_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME configframetypeviewmodel_tests
+        COMMAND configframetypeviewmodel_tests)
+
+    add_executable(configframeviews_tests
+        tests/test_configframeviews.cpp
+        src/ui/configuration/ConfigFrameClassTypeView.cpp
+        src/ui/configuration/ConfigFrameClassTypeView.h
+        src/ui/configuration/ConfigFrameClassTypeViewModel.cpp
+        src/ui/configuration/ConfigFrameClassTypeViewModel.h
+        src/ui/configuration/ConfigFrameTypeView.cpp
+        src/ui/configuration/ConfigFrameTypeView.h
+        src/ui/configuration/ConfigFrameTypeViewModel.cpp
+        src/ui/configuration/ConfigFrameTypeViewModel.h
+        src/ui/configuration/ParamField.h
+    )
+    target_include_directories(configframeviews_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
+    )
+    target_link_libraries(configframeviews_tests PRIVATE
+        apm_parameter_core
+        Qt::Core
+        Qt::Gui
+        Qt::Test
+        Qt::Widgets
+    )
+    add_test(NAME configframeviews_tests COMMAND configframeviews_tests)
+    set_tests_properties(configframeviews_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
