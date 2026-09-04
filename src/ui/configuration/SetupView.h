@@ -40,6 +40,8 @@ signals:
 public slots:
     void advModeChanged(bool advanced);
     bool showDeveloperTools();
+    /** Rebuilds lazy action pages after MainWindow registers shared TOOLS. */
+    void applicationToolActionsReady();
 
 private slots:
     void activeUASSet(UASInterface *uas);

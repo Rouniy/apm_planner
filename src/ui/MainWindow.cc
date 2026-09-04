@@ -701,6 +701,12 @@ void MainWindow::buildMissionPlannerToolsMenu()
     ui.menuTools->menuAction()->setVisible(true);
     m_mainWindowHeader->setConnectionOptionsAction(
         findChild<QAction *>(QStringLiteral("actionConnectionOptions")));
+    if (hardwareSetupView) {
+        // Setup can restore an action-backed lazy page before the TOOLS QAction
+        // catalogue exists. Recreate only those pages now so implemented tools
+        // never remain disabled for the lifetime of the application.
+        hardwareSetupView->applicationToolActionsReady();
+    }
 }
 
 void MainWindow::disableTLogReplayBar()

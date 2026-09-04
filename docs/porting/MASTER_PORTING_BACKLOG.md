@@ -65,8 +65,9 @@ Run Step/Takeoff executor с immutable revalidation, общей Swarm/COMMAND_AC
 резервацией и fail-closed partial/uncertain состояниями; focused и полный
 194-test suite проходят, новый X11 smoke ещё не зафиксирован. Дальнейшая Swarm
 работа перенесена за оставшиеся single-vehicle Tools; сначала исправляется
-регрессия action-binding в SETUP Advanced Tools, затем портируются остальные
-одиночные диалоги, после чего приоритет переходит к Settings/CONFIG.
+регрессия action-binding в SETUP Advanced/Developer Tools исправлена и покрыта
+page-before-actions тестом; теперь портируются остальные одиночные диалоги,
+после чего приоритет переходит к Settings/CONFIG.
 Оставшиеся специализированные Tools сохраняются в точном меню, но
 включаются только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
 Qt Widgets и доверенный QML API можно сочетать по назначению.

@@ -7,6 +7,7 @@
 #include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAbstractSlider>
+#include <QAction>
 #include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QCoreApplication>
@@ -317,6 +318,92 @@ int RunSetupRouteRuntimeAudit()
                           .arg(pageId)
                           .arg(semanticScore));
     }
+
+    // Reproduce the production startup regression: the saved Advanced Tools
+    // page can be restored before MainWindow builds its shared TOOLS QAction
+    // catalogue. Both lazy pages must recover when actions become available.
+    QPointer<QWidget> oldAdvanced(
+        backstage->page(QStringLiteral("ConfigAdvancedView")));
+    QPointer<QWidget> oldDeveloper(
+        backstage->page(QStringLiteral("ConfigDeveloperToolsView")));
+    const QStringList sharedActionNames = {
+        QStringLiteral("actionMavlinkInspector"),
+        QStringLiteral("actionMavlinkMirror"),
+        QStringLiteral("actionNmeaOutput"),
+        QStringLiteral("actionCotOutput"),
+        QStringLiteral("actionFollowMe"),
+        QStringLiteral("actionExternalGuided"),
+        QStringLiteral("actionMovingBase"),
+        QStringLiteral("actionMapTileCache"),
+        QStringLiteral("actionDataFlashSpectrogram"),
+        QStringLiteral("actionProximity"),
+        QStringLiteral("actionMavlinkDeviceOperations"),
+        QStringLiteral("actionTerrain3D"),
+        QStringLiteral("actionOsdVideoOverlay")
+    };
+    for (const QString &objectName : sharedActionNames) {
+        auto *action = new QAction(&host);
+        action->setObjectName(objectName);
+    }
+    setup.applicationToolActionsReady();
+    result.Expect(oldAdvanced.isNull(),
+                  QStringLiteral("Advanced Tools retained its pre-action page"));
+    result.Expect(oldDeveloper.isNull(),
+                  QStringLiteral("Developer Tools retained its pre-action page"));
+
+    const QStringList advancedButtons = {
+        QStringLiteral("MAVLinkInspectorButton"),
+        QStringLiteral("MavlinkMirrorButton"),
+        QStringLiteral("NmeaButton"),
+        QStringLiteral("CotTakButton"),
+        QStringLiteral("FollowMeButton"),
+        QStringLiteral("ExternalGuidedButton"),
+        QStringLiteral("MovingBaseButton"),
+        QStringLiteral("MapTileCacheButton"),
+        QStringLiteral("SpectrogramButton"),
+        QStringLiteral("ProximityButton")
+    };
+    QAbstractButton *advancedNavigation = backstage->findChild<QAbstractButton *>(
+        QStringLiteral("ConfigAdvancedView"));
+    if (advancedNavigation) {
+        advancedNavigation->click();
+    }
+    QWidget *advancedPage = backstage->page(
+        QStringLiteral("ConfigAdvancedView"));
+    for (const QString &objectName : advancedButtons) {
+        QAbstractButton *tool = advancedPage
+            ? advancedPage->findChild<QAbstractButton *>(objectName) : nullptr;
+        result.Expect(tool && tool->isEnabled(),
+                      QStringLiteral("restored Advanced tool %1 is disabled")
+                          .arg(objectName));
+    }
+
+    QAbstractButton *developerNavigation = backstage->findChild<QAbstractButton *>(
+        QStringLiteral("ConfigDeveloperToolsView"));
+    if (developerNavigation) {
+        developerNavigation->click();
+    }
+    QWidget *developerPage = backstage->page(
+        QStringLiteral("ConfigDeveloperToolsView"));
+    const QStringList developerButtons = {
+        QStringLiteral("MavlinkDeviceOperationsButton"),
+        QStringLiteral("Terrain3dViewButton")
+    };
+    for (const QString &objectName : developerButtons) {
+        QAbstractButton *tool = developerPage
+            ? developerPage->findChild<QAbstractButton *>(objectName) : nullptr;
+        result.Expect(tool && tool->isEnabled(),
+                      QStringLiteral("restored Developer tool %1 is disabled")
+                          .arg(objectName));
+    }
+#ifdef APM_HAS_QT_MULTIMEDIA
+    QAbstractButton *osdVideo = developerPage
+        ? developerPage->findChild<QAbstractButton *>(
+              QStringLiteral("OsdVideoTelemetryOverlayButton"))
+        : nullptr;
+    result.Expect(osdVideo && osdVideo->isEnabled(),
+                  QStringLiteral("restored Developer OSD Video is disabled"));
+#endif
 
     // Optical Flow is intentionally the smallest retained legacy page and is
     // therefore the strongest regression probe for an accidentally blank

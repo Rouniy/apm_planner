@@ -763,6 +763,19 @@ bool SetupView::showDeveloperTools()
     return m_backstage->setCurrentPage(kDeveloperTools);
 }
 
+void SetupView::applicationToolActionsReady()
+{
+    if (!m_backstage) {
+        return;
+    }
+    const QString selectedPage = m_backstage->currentPageId();
+    m_backstage->resetPage(kAdvancedTools);
+    m_backstage->resetPage(kDeveloperTools);
+    if (selectedPage == kAdvancedTools || selectedPage == kDeveloperTools) {
+        m_backstage->restoreInitialPage(selectedPage);
+    }
+}
+
 void SetupView::activeUASSet(UASInterface *uas)
 {
     const bool targetChanged = m_uas != uas;
