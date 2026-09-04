@@ -247,6 +247,8 @@ set(SOURCES
     src/comm/DroneCanMavlinkTransport.h
     src/comm/AdsbIdentificationClient.cpp
     src/comm/AdsbIdentificationClient.h
+    src/comm/CompassCalibrationService.cpp
+    src/comm/CompassCalibrationService.h
     src/comm/Esp8266ParameterClient.cpp
     src/comm/Esp8266ParameterClient.h
     src/comm/ExactLinkTransmitter.cpp
@@ -2523,6 +2525,16 @@ if(BUILD_TESTING)
 
     add_executable(configcompassview_tests
         tests/test_configcompassview.cpp
+        src/comm/CompassCalibrationService.cpp
+        src/comm/CompassCalibrationService.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
         src/ui/configuration/ConfigCompassView.cpp
         src/ui/configuration/ConfigCompassView.h
         src/ui/configuration/ConfigCompassViewModel.cpp
@@ -3568,6 +3580,33 @@ if(BUILD_TESTING)
     )
     add_test(NAME vehicle_command_service_tests
              COMMAND vehicle_command_service_tests)
+
+    add_executable(compass_calibration_service_tests
+        tests/test_compasscalibrationservice.cpp
+        src/comm/CompassCalibrationService.cpp
+        src/comm/CompassCalibrationService.h
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(compass_calibration_service_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(compass_calibration_service_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME compass_calibration_service_tests
+             COMMAND compass_calibration_service_tests)
 
     add_executable(parameter_service_tests
         tests/test_parameterservice.cpp

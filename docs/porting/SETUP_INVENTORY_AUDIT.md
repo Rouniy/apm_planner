@@ -64,9 +64,12 @@ Its useful basic fields remain, while Live, Onboard and CompassMot calibration
 actions are disabled: the inherited dialogs bind the global active vehicle/link,
 the live path can zero more offsets than it reconstructs, and the onboard path
 can accept a failed result. The separate native `Compass` route now supplies
-the current parameter/discovery/priority workflow with exact-target writes;
-its onboard, large-vehicle and from-log calibration surface stays present but
-explicitly disabled until a pinned-link calibration service is ported. Range Finder
+the current parameter/discovery/priority workflow with exact-target writes plus
+an application-owned pinned-target onboard and Large Vehicle calibration
+service. Start/Accept/Cancel/fixed-yaw are ACK-gated, multi-compass completion
+waits for the stable reported mask, and ambiguous command outcomes cannot be
+retried on the same generation. `Calibrate from Log` alone stays explicitly
+disabled until the separate OfflineMagFit workflow is ported. Range Finder
 supports one old `RNGFND_*` instance, Airspeed
 exposes only the old enable/use/pin choices, Optical Flow is only a
 `FLOW_ENABLE` checkbox, and Camera Gimbal is the old single `MNT_*` surface.

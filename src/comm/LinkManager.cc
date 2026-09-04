@@ -41,6 +41,7 @@ This file is part of the APM_PLANNER project
 #include "UDPClientLink.h"
 #include "TCPLink.h"
 #include "UASObject.h"
+#include "CompassCalibrationService.h"
 #include "ExactLinkTransmitter.h"
 #include "MavFtpService.h"
 #include "ParameterService.h"
@@ -117,6 +118,10 @@ LinkManager::LinkManager(QObject *parent) :
     m_vehicleCommandService = new VehicleCommandService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_vehicleCommandService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
+    m_compassCalibrationService = new CompassCalibrationService(
+        m_vehicleTargetManager, m_vehicleCommandService, this);
+    m_compassCalibrationService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
     m_parameterService = new ParameterService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
@@ -307,6 +312,7 @@ void LinkManager::shutdown()
     // Flush any open MAVFTP session while exact-link lookup and the physical
     // transport are still available. No terminal signal is needed during
     // application shutdown.
+    m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
 
     // Make every outbound lookup fail and detach ingress. Links remain live
@@ -317,6 +323,7 @@ void LinkManager::shutdown()
     for (auto it = links.constBegin(); it != links.constEnd(); ++it) {
         const int linkId = it.key();
         LinkInterface *link = it.value();
+        m_compassCalibrationService->forgetLink(linkId);
         m_vehicleTargetManager->removeLink(linkId);
         m_vehicleCommandService->forgetLink(linkId);
         m_parameterService->forgetLink(linkId);
@@ -595,6 +602,11 @@ VehicleCommandService *LinkManager::vehicleCommandService() const
     return m_vehicleCommandService;
 }
 
+CompassCalibrationService *LinkManager::compassCalibrationService() const
+{
+    return m_compassCalibrationService;
+}
+
 ParameterService *LinkManager::parameterService() const
 {
     return m_parameterService;
@@ -689,6 +701,7 @@ void LinkManager::removeLink(int linkId)
     // Give MAVFTP one bounded best-effort Terminate/Reset while the exact
     // target and physical-link lookup are still valid.
     m_mavFtpService->forgetLink(linkId);
+    m_compassCalibrationService->forgetLink(linkId);
 
     // Fail exact-link lookups and detach ingress before the worker begins
     // shutting down. Deleting a still-running QThread is undefined and was a
@@ -840,6 +853,7 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
     }
     if (link) {
         m_vehicleCommandService->observeMessage(link->getId(), message);
+        m_compassCalibrationService->observeMessage(link->getId(), message);
         m_parameterService->observeMessage(link->getId(), message);
         m_mavFtpService->observeMessage(link->getId(), message);
         // MP10 propagates RADIO/RADIO_STATUS to every vehicle on the link; the

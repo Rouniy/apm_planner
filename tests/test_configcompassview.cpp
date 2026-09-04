@@ -1,16 +1,23 @@
 #include <QtTest>
 
+#include "comm/CompassCalibrationService.h"
+#include "comm/ExactLinkTransmitter.h"
+#include "comm/VehicleCommandService.h"
+#include "comm/VehicleTargetManager.h"
 #include "ui/configuration/ConfigCompassView.h"
 
 #include <QBuffer>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QImage>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPainter>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -98,6 +105,72 @@ QVariant priorityValue(const QVariantList &changes, const QString &name) {
   }
   return {};
 }
+
+VehicleEndpoint calibrationEndpoint() {
+  VehicleEndpoint endpoint;
+  endpoint.linkId = 17;
+  endpoint.systemId = 42;
+  endpoint.componentId = 1;
+  endpoint.linkName = QStringLiteral("Test Link");
+  endpoint.componentName = QStringLiteral("AUTOPILOT1");
+  return endpoint;
+}
+
+mavlink_message_t commandAck(MAV_CMD command, MAV_RESULT result) {
+  mavlink_command_ack_t payload{};
+  payload.command = static_cast<quint16>(command);
+  payload.result = static_cast<quint8>(result);
+  payload.target_system = 255;
+  payload.target_component = MAV_COMP_ID_MISSIONPLANNER;
+  mavlink_message_t message{};
+  mavlink_msg_command_ack_encode(42, 1, &message, &payload);
+  return message;
+}
+
+mavlink_message_t calibrationProgress(int percent) {
+  mavlink_mag_cal_progress_t payload{};
+  payload.compass_id = 0;
+  payload.cal_mask = 1;
+  payload.cal_status = MAG_CAL_RUNNING_STEP_ONE;
+  payload.completion_pct = static_cast<quint8>(percent);
+  mavlink_message_t message{};
+  mavlink_msg_mag_cal_progress_encode(42, 1, &message, &payload);
+  return message;
+}
+
+mavlink_message_t calibrationReport(bool autosaved) {
+  mavlink_mag_cal_report_t payload{};
+  payload.compass_id = 0;
+  payload.cal_mask = 1;
+  payload.cal_status = MAG_CAL_SUCCESS;
+  payload.autosaved = autosaved ? 1 : 0;
+  payload.ofs_x = 1.0F;
+  payload.ofs_y = 2.0F;
+  payload.ofs_z = 3.0F;
+  payload.fitness = 4.0F;
+  mavlink_message_t message{};
+  mavlink_msg_mag_cal_report_encode(42, 1, &message, &payload);
+  return message;
+}
+
+struct CalibrationHarness {
+  VehicleTargetManager targets;
+  QVector<QByteArray> frames;
+  ExactLinkTransmitter transmitter;
+  VehicleCommandService commands;
+  CompassCalibrationService service;
+
+  CalibrationHarness()
+      : transmitter([this](int, const QByteArray &bytes) {
+          frames.append(bytes);
+          return true;
+        }),
+        commands(&targets, &transmitter), service(&targets, &commands) {
+    targets.observeEndpoint(calibrationEndpoint(), true);
+  }
+
+  VehicleTargetLease lease() const { return targets.acquireTarget(); }
+};
 } // namespace
 
 class ConfigCompassViewTest final : public QObject {
@@ -106,6 +179,12 @@ class ConfigCompassViewTest final : public QObject {
 private slots:
   void surfaceIsCompleteBeforeSnapshot();
   void snapshotHydratesWithoutWrites();
+  void exactCalibrationContextEnablesSafeSurface();
+  void calibrationStateDrivesButtonsProgressAndResult();
+  void calibrationRebootGateDefaultsToCancel();
+  void calibrationRebootAckClearsExactServiceLatch();
+  void generationChangeReleasesCalibrationUiForNewTarget();
+  void fixedYawDialogDefaultsToCancelAndValidatesHeading();
   void armedAndPendingDisableEdits();
   void selectedRowMoveUsesExactModelRow();
   void rebootDefaultsToCancel();
@@ -163,24 +242,29 @@ void ConfigCompassViewTest::surfaceIsCompleteBeforeSnapshot() {
   QVERIFY(view.findChild<QDoubleSpinBox *>(
       QStringLiteral("compassEditor_COMPASS_ORIENT")));
 
-  const QStringList calibrationButtons{
+  const QStringList gatedCalibrationButtons{
       QStringLiteral("compassCalStart"), QStringLiteral("compassCalAccept"),
-      QStringLiteral("compassCalCancel"), QStringLiteral("compassCalFromLog"),
+      QStringLiteral("compassCalCancel"),
       QStringLiteral("compassLargeVehicleMagCal")};
-  for (const QString &name : calibrationButtons) {
+  for (const QString &name : gatedCalibrationButtons) {
     QPushButton *const button = view.findChild<QPushButton *>(name);
     QVERIFY2(button, qPrintable(name));
     QVERIFY(!button->isEnabled());
-    QVERIFY(button->toolTip().contains(
-        QStringLiteral("exact-target compass calibration")));
   }
+  QPushButton *const fromLog =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalFromLog"));
+  QVERIFY(fromLog && !fromLog->isEnabled());
+  QVERIFY(fromLog->toolTip().contains(QStringLiteral("offline mag-fit")));
+  QVERIFY(view.findChild<QLabel *>(
+      QStringLiteral("compassCalTargetStatus")));
+  QPlainTextEdit *const result =
+      view.findChild<QPlainTextEdit *>(QStringLiteral("compassCalResult"));
+  QVERIFY(result && result->isReadOnly());
   for (int index = 1; index <= 3; ++index) {
     QProgressBar *const progress = view.findChild<QProgressBar *>(
         QStringLiteral("compassCalProgress%1").arg(index));
     QVERIFY(progress);
     QVERIFY(!progress->isEnabled());
-    QVERIFY(progress->toolTip().contains(
-        QStringLiteral("exact-target compass calibration")));
   }
 
   QVERIFY(!view.findChild<QPushButton *>(QStringLiteral("compassRefresh"))
@@ -231,6 +315,285 @@ void ConfigCompassViewTest::snapshotHydratesWithoutWrites() {
            3);
   QVERIFY(view.findChild<QPushButton *>(QStringLiteral("compassReboot"))
               ->isEnabled());
+}
+
+void ConfigCompassViewTest::exactCalibrationContextEnablesSafeSurface() {
+  CalibrationHarness harness;
+  ConfigCompassView view;
+  view.setCatalog(catalogFixture(), true);
+  view.setParameterSnapshot(snapshot(), 1, true);
+  view.setConnected(true);
+  view.setArmed(false);
+  view.setCalibrationContext(&harness.service, harness.lease());
+  view.show();
+  QApplication::processEvents();
+
+  auto *start =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalStart"));
+  auto *accept =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalAccept"));
+  auto *cancel =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalCancel"));
+  auto *fromLog =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalFromLog"));
+  auto *large = view.findChild<QPushButton *>(
+      QStringLiteral("compassLargeVehicleMagCal"));
+  QVERIFY(start && start->isEnabled());
+  QVERIFY(large && large->isEnabled());
+  QVERIFY(accept && !accept->isEnabled());
+  QVERIFY(cancel && !cancel->isEnabled());
+  QVERIFY(fromLog && !fromLog->isEnabled());
+  QVERIFY(fromLog->toolTip().contains(QStringLiteral("offline mag-fit")));
+  QVERIFY(!start->toolTip().contains(QStringLiteral("unavailable")));
+  QVERIFY(!large->toolTip().contains(QStringLiteral("unavailable")));
+
+  QLabel *const target = view.findChild<QLabel *>(
+      QStringLiteral("compassCalTargetStatus"));
+  QVERIFY(target);
+  QVERIFY(target->text().contains(QStringLiteral("link 17")));
+  QVERIFY(target->text().contains(QStringLiteral("system 42")));
+  QVERIFY(target->text().contains(QStringLiteral("component 1")));
+  QVERIFY(target->text().contains(
+      QStringLiteral("generation %1").arg(harness.lease().generation)));
+
+  for (int index = 1; index <= 3; ++index) {
+    QProgressBar *const progress = view.findChild<QProgressBar *>(
+        QStringLiteral("compassCalProgress%1").arg(index));
+    QVERIFY(progress && progress->isEnabled());
+    QCOMPARE(progress->value(), 0);
+  }
+
+  view.setArmed(true);
+  QApplication::processEvents();
+  QVERIFY(!start->isEnabled());
+  QVERIFY(!large->isEnabled());
+  view.setArmed(false);
+  view.setParameterSnapshot(snapshot(), 1, false);
+  QApplication::processEvents();
+  QVERIFY(!start->isEnabled());
+  QVERIFY(!large->isEnabled());
+}
+
+void ConfigCompassViewTest::calibrationStateDrivesButtonsProgressAndResult() {
+  CalibrationHarness harness;
+  ConfigCompassView view;
+  view.setCatalog(catalogFixture(), true);
+  view.setParameterSnapshot(snapshot(), 1, true);
+  view.setConnected(true);
+  view.setCalibrationContext(&harness.service, harness.lease());
+  view.show();
+  QApplication::processEvents();
+
+  auto *start =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalStart"));
+  auto *accept =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalAccept"));
+  auto *cancel =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalCancel"));
+  auto *result =
+      view.findChild<QPlainTextEdit *>(QStringLiteral("compassCalResult"));
+  auto *firstProgress = view.findChild<QProgressBar *>(
+      QStringLiteral("compassCalProgress1"));
+  QVERIFY(start && accept && cancel && result && firstProgress);
+
+  start->click();
+  QCOMPARE(harness.service.state(),
+           CompassCalibrationService::State::StartPending);
+  QCOMPARE(harness.frames.size(), 1);
+  QVERIFY(!start->isEnabled());
+  QVERIFY(!accept->isEnabled());
+  QVERIFY(!cancel->isEnabled());
+  QVERIFY(result->toPlainText().contains(
+      QStringLiteral("Starting onboard magnetometer calibration")));
+
+  harness.commands.observeMessage(
+      17, commandAck(MAV_CMD_DO_START_MAG_CAL, MAV_RESULT_ACCEPTED));
+  QCOMPARE(harness.service.state(),
+           CompassCalibrationService::State::Running);
+  QVERIFY(cancel->isEnabled());
+  view.setArmed(true);
+  QVERIFY(cancel->isEnabled());
+  view.setArmed(false);
+  harness.service.observeMessage(17, calibrationProgress(37));
+  QCOMPARE(firstProgress->value(), 37);
+
+  harness.service.observeMessage(17, calibrationReport(false));
+  QCOMPARE(harness.service.state(),
+           CompassCalibrationService::State::AwaitingAccept);
+  QCOMPARE(firstProgress->value(), 100);
+  QVERIFY(accept->isEnabled());
+  QVERIFY(cancel->isEnabled());
+  QVERIFY(result->toPlainText().contains(QStringLiteral("MAG_CAL_SUCCESS")));
+
+  accept->click();
+  QCOMPARE(harness.service.state(),
+           CompassCalibrationService::State::AcceptPending);
+  QCOMPARE(harness.frames.size(), 2);
+  QVERIFY(!accept->isEnabled());
+  QVERIFY(!cancel->isEnabled());
+}
+
+void ConfigCompassViewTest::calibrationRebootGateDefaultsToCancel() {
+  CalibrationHarness harness;
+  ConfigCompassView view;
+  view.setCatalog(catalogFixture(), true);
+  view.setParameterSnapshot(snapshot(), 1, true);
+  view.setConnected(true);
+  view.setCalibrationContext(&harness.service, harness.lease());
+  view.show();
+  QApplication::processEvents();
+
+  QTableView *const table =
+      view.findChild<QTableView *>(QStringLiteral("compassTable"));
+  QPushButton *const moveUp =
+      view.findChild<QPushButton *>(QStringLiteral("compassMoveUp"));
+  table->selectRow(1);
+  table->setCurrentIndex(table->model()->index(1, 0));
+  QApplication::processEvents();
+  QSignalSpy writes(&view, &ConfigCompassView::writeRequested);
+  moveUp->click();
+  QCOMPARE(writes.count(), 1);
+  const quint64 writeRequestId = writes.first().at(0).toULongLong();
+  const int changeCount = writes.first().at(2).toList().size();
+  view.parameterWriteSubmitted(writeRequestId, 77);
+  view.parameterBatchCompleted(77, changeCount, 0);
+  QVERIFY(view.viewModel()->RebootRequired());
+
+  QSignalSpy rebootRequests(&view, &ConfigCompassView::rebootRequested);
+  bool inspected = false;
+  QTimer::singleShot(0, &view, [&inspected]() {
+    auto *confirmation =
+        qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+    QVERIFY(confirmation);
+    QCOMPARE(confirmation->objectName(),
+             QStringLiteral("compassRebootConfirmation"));
+    QCOMPARE(confirmation->standardButton(confirmation->defaultButton()),
+             QMessageBox::Cancel);
+    inspected = true;
+    confirmation->reject();
+  });
+  view.findChild<QPushButton *>(QStringLiteral("compassCalStart"))->click();
+  QVERIFY(inspected);
+  QCOMPARE(rebootRequests.count(), 0);
+  QCOMPARE(harness.frames.size(), 0);
+  QCOMPARE(harness.service.state(), CompassCalibrationService::State::Idle);
+}
+
+void ConfigCompassViewTest::calibrationRebootAckClearsExactServiceLatch() {
+  CalibrationHarness harness;
+  ConfigCompassView view;
+  view.setCatalog(catalogFixture(), true);
+  view.setParameterSnapshot(snapshot(), 1, true);
+  view.setConnected(true);
+  const VehicleTargetLease lease = harness.lease();
+  view.setCalibrationContext(&harness.service, lease);
+  view.show();
+  QApplication::processEvents();
+
+  QCOMPARE(harness.service.start(lease, false),
+           CompassCalibrationService::RequestResult::Started);
+  harness.commands.observeMessage(
+      17, commandAck(MAV_CMD_DO_START_MAG_CAL, MAV_RESULT_ACCEPTED));
+  harness.service.observeMessage(17, calibrationReport(true));
+  QVERIFY(harness.service.rebootRequiredFor(lease));
+
+  QSignalSpy rebootRequests(&view, &ConfigCompassView::rebootRequested);
+  bool inspected = false;
+  QTimer::singleShot(0, &view, [&inspected]() {
+    auto *confirmation =
+        qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+    QVERIFY(confirmation);
+    QCOMPARE(confirmation->standardButton(confirmation->defaultButton()),
+             QMessageBox::Cancel);
+    inspected = true;
+    confirmation->done(QMessageBox::Yes);
+  });
+  view.findChild<QPushButton *>(QStringLiteral("compassReboot"))->click();
+  QVERIFY(inspected);
+  QCOMPARE(rebootRequests.count(), 1);
+  const quint64 requestId = rebootRequests.first().at(0).toULongLong();
+  view.rebootSubmitted(requestId);
+  view.rebootAcknowledged(requestId, true);
+  QVERIFY(!harness.service.rebootRequiredFor(lease));
+  QCOMPARE(harness.service.state(), CompassCalibrationService::State::Idle);
+}
+
+void ConfigCompassViewTest::generationChangeReleasesCalibrationUiForNewTarget() {
+  CalibrationHarness harness;
+  ConfigCompassView view;
+  view.setCatalog(catalogFixture(), true);
+  view.setParameterSnapshot(snapshot(), 1, true);
+  view.setConnected(true);
+  const VehicleTargetLease first = harness.lease();
+  view.setCalibrationContext(&harness.service, first);
+  view.show();
+  QApplication::processEvents();
+
+  harness.service.setTimeoutsForTesting(20, 500, 500);
+  QCOMPARE(harness.service.start(first, false),
+           CompassCalibrationService::RequestResult::Started);
+  QTRY_COMPARE_WITH_TIMEOUT(
+      harness.service.state(),
+      CompassCalibrationService::State::OutcomeUncertain, 200);
+
+  VehicleEndpoint second = calibrationEndpoint();
+  second.linkId = 18;
+  second.systemId = 43;
+  second.linkName = QStringLiteral("Second Link");
+  harness.targets.observeEndpoint(second);
+  QVERIFY(harness.targets.selectTarget(18, 43, 1));
+  QCOMPARE(harness.service.state(), CompassCalibrationService::State::Idle);
+  QVERIFY(!harness.service.hasActiveTarget());
+  QApplication::processEvents();
+  QVERIFY(!view.findChild<QPushButton *>(QStringLiteral("compassCalStart"))
+               ->isEnabled());
+
+  view.setCalibrationContext(&harness.service, harness.targets.acquireTarget());
+  QApplication::processEvents();
+  auto *start =
+      view.findChild<QPushButton *>(QStringLiteral("compassCalStart"));
+  auto *large = view.findChild<QPushButton *>(
+      QStringLiteral("compassLargeVehicleMagCal"));
+  QVERIFY(start && start->isEnabled());
+  QVERIFY(large && large->isEnabled());
+  QVERIFY(view.findChild<QLabel *>(QStringLiteral("compassCalTargetStatus"))
+              ->text()
+              .contains(QStringLiteral("system 43")));
+}
+
+void ConfigCompassViewTest::fixedYawDialogDefaultsToCancelAndValidatesHeading() {
+  CalibrationHarness harness;
+  ConfigCompassView view;
+  view.setCatalog(catalogFixture(), true);
+  view.setParameterSnapshot(snapshot(), 1, true);
+  view.setConnected(true);
+  view.setCalibrationContext(&harness.service, harness.lease());
+  view.show();
+  QApplication::processEvents();
+
+  bool inspected = false;
+  QTimer::singleShot(0, &view, [&inspected]() {
+    auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+    QVERIFY(dialog);
+    QCOMPARE(dialog->objectName(), QStringLiteral("compassFixedYawDialog"));
+    auto *heading = dialog->findChild<QDoubleSpinBox *>(
+        QStringLiteral("compassFixedYawHeading"));
+    QVERIFY(heading);
+    QCOMPARE(heading->minimum(), 0.0);
+    QCOMPARE(heading->maximum(), 360.0);
+    auto *buttons = dialog->findChild<QDialogButtonBox *>(
+        QStringLiteral("compassFixedYawButtons"));
+    QVERIFY(buttons);
+    QCOMPARE(buttons->button(QDialogButtonBox::Cancel)->isDefault(), true);
+    inspected = true;
+    dialog->reject();
+  });
+  view.findChild<QPushButton *>(
+          QStringLiteral("compassLargeVehicleMagCal"))
+      ->click();
+  QVERIFY(inspected);
+  QCOMPARE(harness.frames.size(), 0);
+  QCOMPARE(harness.service.state(), CompassCalibrationService::State::Idle);
 }
 
 void ConfigCompassViewTest::armedAndPendingDisableEdits() {
@@ -345,13 +708,23 @@ void ConfigCompassViewTest::rebootDefaultsToCancel() {
 }
 
 void ConfigCompassViewTest::destructionDoesNotEmitWrite() {
+  CalibrationHarness harness;
   auto *view = new ConfigCompassView;
   view->setCatalog(catalogFixture(), true);
   view->setParameterSnapshot(snapshot(), 1, true);
   view->setConnected(true);
+  const VehicleTargetLease lease = harness.lease();
+  view->setCalibrationContext(&harness.service, lease);
   QSignalSpy writes(view, &ConfigCompassView::writeRequested);
+  QCOMPARE(harness.service.start(lease, false),
+           CompassCalibrationService::RequestResult::Started);
+  harness.commands.observeMessage(
+      17, commandAck(MAV_CMD_DO_START_MAG_CAL, MAV_RESULT_ACCEPTED));
+  QCOMPARE(harness.frames.size(), 1);
   delete view;
   QCOMPARE(writes.count(), 0);
+  QCOMPARE(harness.frames.size(), 1);
+  QCOMPARE(harness.service.state(), CompassCalibrationService::State::Running);
 }
 
 QTEST_MAIN(ConfigCompassViewTest)

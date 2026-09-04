@@ -2,16 +2,22 @@
 #define CONFIGCOMPASSVIEW_H
 
 #include "ConfigCompassViewModel.h"
+#include "comm/VehicleEndpoint.h"
 
 #include <QHash>
+#include <QMetaObject>
+#include <QPointer>
 #include <QWidget>
 
 class QCheckBox;
 class QDoubleSpinBox;
 class QLabel;
+class QPlainTextEdit;
+class QProgressBar;
 class QPushButton;
 class QTableView;
 class QVBoxLayout;
+class CompassCalibrationService;
 
 class ConfigCompassView final : public QWidget {
   Q_OBJECT
@@ -30,6 +36,8 @@ public:
                        int preferredComponent, bool completeSnapshot);
   void setConnected(bool connected);
   void setArmed(bool armed);
+  void setCalibrationContext(CompassCalibrationService *service,
+                             const VehicleTargetLease &target);
 
 public slots:
   void parameterChanged(int componentId, const QString &name,
@@ -60,8 +68,17 @@ private:
   void syncFieldValues();
   void syncFlags();
   void syncState();
+  void syncCalibrationState();
   void updateMoveButtons();
-  void confirmAndRequestReboot();
+  bool confirmAndRequestReboot(bool calibrationTriggered = false);
+  void startCalibration();
+  void acceptCalibration();
+  void cancelCalibration();
+  void startFixedYawCalibration();
+  void showCalibrationRequestResult(const QString &action, int result);
+  bool calibrationBaseReady() const;
+  bool calibrationTargetMatchesService() const;
+  static QString calibrationStateText(int state);
   static bool valuesEqual(const QVariant &left, const QVariant &right);
 
   ConfigCompassViewModel *m_viewModel = nullptr;
@@ -81,6 +98,21 @@ private:
   QPushButton *m_quickPixhawk = nullptr;
   QPushButton *m_refresh = nullptr;
   QLabel *m_status = nullptr;
+  QPushButton *m_calStart = nullptr;
+  QPushButton *m_calAccept = nullptr;
+  QPushButton *m_calCancel = nullptr;
+  QPushButton *m_calFromLog = nullptr;
+  QPushButton *m_largeVehicleCal = nullptr;
+  QProgressBar *m_calProgress[3] = {nullptr, nullptr, nullptr};
+  QLabel *m_calibrationTargetStatus = nullptr;
+  QPlainTextEdit *m_calibrationResult = nullptr;
+  QPointer<CompassCalibrationService> m_calibrationService;
+  VehicleTargetLease m_calibrationTarget;
+  QMetaObject::Connection m_calibrationChangedConnection;
+  QMetaObject::Connection m_calibrationDestroyedConnection;
+  QString m_calibrationRequestOutcome;
+  quint64 m_calibrationRebootRequestId = 0;
+  bool m_recordCalibrationRebootRequest = false;
 };
 
 #endif // CONFIGCOMPASSVIEW_H

@@ -1,8 +1,12 @@
 #include "ConfigCompassView.h"
 
+#include "comm/CompassCalibrationService.h"
+
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFrame>
 #include <QGridLayout>
@@ -12,6 +16,7 @@
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
@@ -24,8 +29,12 @@
 #include <cmath>
 
 namespace {
-const QString kCalibrationUnavailable = QStringLiteral(
-    "Not yet ported: exact-target compass calibration is unavailable.");
+bool sameTarget(const VehicleTargetLease &left,
+                const VehicleTargetLease &right) {
+  return left.isValid() && right.isValid() &&
+         left.generation == right.generation &&
+         left.endpoint.sameIdentity(right.endpoint);
+}
 
 void clearLayout(QLayout *layout) {
   while (QLayoutItem *item = layout->takeAt(0)) {
@@ -71,11 +80,17 @@ ConfigCompassView::ConfigCompassView(QWidget *parent)
   connect(m_viewModel, &ConfigCompassViewModel::refreshRequested, this,
           &ConfigCompassView::refreshRequested);
   connect(m_viewModel, &ConfigCompassViewModel::rebootRequested, this,
-          &ConfigCompassView::rebootRequested);
+          [this](quint64 requestId) {
+            if (m_recordCalibrationRebootRequest) {
+              m_calibrationRebootRequestId = requestId;
+            }
+            emit rebootRequested(requestId);
+          });
 
   rebuildFields();
   syncFlags();
   syncState();
+  syncCalibrationState();
 }
 
 ConfigCompassView::~ConfigCompassView() = default;
@@ -99,6 +114,29 @@ void ConfigCompassView::setConnected(bool connected) {
 }
 
 void ConfigCompassView::setArmed(bool armed) { m_viewModel->setArmed(armed); }
+
+void ConfigCompassView::setCalibrationContext(
+    CompassCalibrationService *service, const VehicleTargetLease &target) {
+  QObject::disconnect(m_calibrationChangedConnection);
+  QObject::disconnect(m_calibrationDestroyedConnection);
+  m_calibrationService = service;
+  m_calibrationTarget = target;
+  m_calibrationRequestOutcome.clear();
+
+  if (service) {
+    m_calibrationChangedConnection =
+        connect(service, &CompassCalibrationService::changed, this,
+                &ConfigCompassView::syncCalibrationState);
+    m_calibrationDestroyedConnection =
+        connect(service, &QObject::destroyed, this, [this]() {
+          m_calibrationService = nullptr;
+          m_calibrationRequestOutcome =
+              tr("Compass calibration service is unavailable.");
+          syncCalibrationState();
+        });
+  }
+  syncCalibrationState();
+}
 
 void ConfigCompassView::parameterChanged(int componentId, const QString &name,
                                          const QVariant &value) {
@@ -146,16 +184,28 @@ void ConfigCompassView::rebootSubmitted(quint64 requestId) {
 void ConfigCompassView::rebootSubmissionFailed(quint64 requestId,
                                                const QString &reason) {
   m_viewModel->rebootSubmissionFailed(requestId, reason);
+  if (requestId == m_calibrationRebootRequestId) {
+    m_calibrationRebootRequestId = 0;
+  }
 }
 
 void ConfigCompassView::rebootAcknowledged(quint64 requestId, bool accepted,
                                            const QString &reason) {
   m_viewModel->rebootAcknowledged(requestId, accepted, reason);
+  if (requestId == m_calibrationRebootRequestId) {
+    if (accepted && m_calibrationService) {
+      m_calibrationService->clearRebootRequired(m_calibrationTarget);
+    }
+    m_calibrationRebootRequestId = 0;
+  }
 }
 
 void ConfigCompassView::rebootCancelled(quint64 requestId,
                                         const QString &reason) {
   m_viewModel->rebootCancelled(requestId, reason);
+  if (requestId == m_calibrationRebootRequestId) {
+    m_calibrationRebootRequestId = 0;
+  }
 }
 
 void ConfigCompassView::buildUi() {
@@ -263,49 +313,60 @@ void ConfigCompassView::buildUi() {
   auto *calibration = new QGroupBox(tr("Onboard Mag Calibration"), content);
   calibration->setObjectName(QStringLiteral("compassCalibrationGroup"));
   auto *calibrationLayout = new QVBoxLayout(calibration);
-  auto *unavailable = new QLabel(
-      tr("Not yet ported: exact-target compass calibration is unavailable."),
-      calibration);
-  unavailable->setObjectName(QStringLiteral("compassCalibrationUnavailable"));
-  unavailable->setWordWrap(true);
-  calibrationLayout->addWidget(unavailable);
+  m_calibrationTargetStatus = new QLabel(calibration);
+  m_calibrationTargetStatus->setObjectName(
+      QStringLiteral("compassCalTargetStatus"));
+  m_calibrationTargetStatus->setWordWrap(true);
+  calibrationLayout->addWidget(m_calibrationTargetStatus);
   auto *calibrationActions = new QHBoxLayout;
-  const QList<QPair<QString, QString>> calibrationButtons{
-      {QStringLiteral("compassCalStart"), tr("Start")},
-      {QStringLiteral("compassCalAccept"), tr("Accept")},
-      {QStringLiteral("compassCalCancel"), tr("Cancel")},
-      {QStringLiteral("compassCalFromLog"), tr("Calibrate from Log…")}};
-  for (const auto &definition : calibrationButtons) {
-    auto *button = new QPushButton(definition.second, calibration);
-    button->setObjectName(definition.first);
-    button->setEnabled(false);
-    button->setToolTip(kCalibrationUnavailable);
-    calibrationActions->addWidget(button);
-  }
+  m_calStart = new QPushButton(tr("Start"), calibration);
+  m_calStart->setObjectName(QStringLiteral("compassCalStart"));
+  calibrationActions->addWidget(m_calStart);
+  m_calAccept = new QPushButton(tr("Accept"), calibration);
+  m_calAccept->setObjectName(QStringLiteral("compassCalAccept"));
+  calibrationActions->addWidget(m_calAccept);
+  m_calCancel = new QPushButton(tr("Cancel"), calibration);
+  m_calCancel->setObjectName(QStringLiteral("compassCalCancel"));
+  calibrationActions->addWidget(m_calCancel);
+  m_calFromLog = new QPushButton(tr("Calibrate from Log…"), calibration);
+  m_calFromLog->setObjectName(QStringLiteral("compassCalFromLog"));
+  m_calFromLog->setEnabled(false);
+  m_calFromLog->setToolTip(tr(
+      "Calibrate from Log is a separate offline mag-fit workflow and is "
+      "not available from exact-target onboard calibration."));
+  calibrationActions->addWidget(m_calFromLog);
   calibrationActions->addStretch(1);
   calibrationLayout->addLayout(calibrationActions);
   auto *progressGrid = new QGridLayout;
   for (int index = 0; index < 3; ++index) {
     progressGrid->addWidget(
         new QLabel(tr("Mag %1").arg(index + 1), calibration), index, 0);
-    auto *progress = new QProgressBar(calibration);
-    progress->setObjectName(
+    m_calProgress[index] = new QProgressBar(calibration);
+    m_calProgress[index]->setObjectName(
         QStringLiteral("compassCalProgress%1").arg(index + 1));
-    progress->setRange(0, 100);
-    progress->setValue(0);
-    progress->setEnabled(false);
-    progress->setToolTip(kCalibrationUnavailable);
-    progressGrid->addWidget(progress, index, 1);
+    m_calProgress[index]->setRange(0, 100);
+    m_calProgress[index]->setValue(0);
+    m_calProgress[index]->setFormat(tr("%p%"));
+    progressGrid->addWidget(m_calProgress[index], index, 1);
   }
   calibrationLayout->addLayout(progressGrid);
+  auto *resultLabel = new QLabel(tr("Calibration result"), calibration);
+  resultLabel->setObjectName(QStringLiteral("compassCalResultLabel"));
+  calibrationLayout->addWidget(resultLabel);
+  m_calibrationResult = new QPlainTextEdit(calibration);
+  m_calibrationResult->setObjectName(QStringLiteral("compassCalResult"));
+  m_calibrationResult->setReadOnly(true);
+  m_calibrationResult->setMinimumHeight(84);
+  m_calibrationResult->setMaximumHeight(150);
+  calibrationLayout->addWidget(m_calibrationResult);
   layout->addWidget(calibration);
 
-  auto *largeVehicle = new QPushButton(tr("Large Vehicle MagCal"), content);
-  largeVehicle->setObjectName(QStringLiteral("compassLargeVehicleMagCal"));
-  largeVehicle->setEnabled(false);
-  largeVehicle->setToolTip(kCalibrationUnavailable);
-  largeVehicle->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-  layout->addWidget(largeVehicle, 0, Qt::AlignLeft);
+  m_largeVehicleCal =
+      new QPushButton(tr("Large Vehicle MagCal"), content);
+  m_largeVehicleCal->setObjectName(
+      QStringLiteral("compassLargeVehicleMagCal"));
+  m_largeVehicleCal->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  layout->addWidget(m_largeVehicleCal, 0, Qt::AlignLeft);
 
   auto *advanced = new QGroupBox(tr("Advanced compass settings"), content);
   advanced->setObjectName(QStringLiteral("compassAdvancedGroup"));
@@ -380,7 +441,11 @@ void ConfigCompassView::buildUi() {
     }
   });
   connect(m_reboot, &QPushButton::clicked, this,
-          &ConfigCompassView::confirmAndRequestReboot);
+          [this]() {
+            confirmAndRequestReboot(
+                m_calibrationService &&
+                m_calibrationService->rebootRequiredFor(m_calibrationTarget));
+          });
   connect(m_writeDeclination, &QPushButton::clicked, this, [this]() {
     if (!m_viewModel->writeDeclinationDegrees(m_declination->value())) {
       syncFieldValues();
@@ -391,6 +456,14 @@ void ConfigCompassView::buildUi() {
           &ConfigCompassViewModel::quickPixhawk);
   connect(m_refresh, &QPushButton::clicked, m_viewModel,
           &ConfigCompassViewModel::Refresh);
+  connect(m_calStart, &QPushButton::clicked, this,
+          &ConfigCompassView::startCalibration);
+  connect(m_calAccept, &QPushButton::clicked, this,
+          &ConfigCompassView::acceptCalibration);
+  connect(m_calCancel, &QPushButton::clicked, this,
+          &ConfigCompassView::cancelCalibration);
+  connect(m_largeVehicleCal, &QPushButton::clicked, this,
+          &ConfigCompassView::startFixedYawCalibration);
 }
 
 void ConfigCompassView::rebuildFields() {
@@ -573,7 +646,147 @@ void ConfigCompassView::syncState() {
   m_compassStatus->setText(m_viewModel->CompassStatus());
   m_compassStatus->setVisible(!m_viewModel->CompassStatus().isEmpty());
   m_status->setText(m_viewModel->Status());
+  syncCalibrationState();
   updateMoveButtons();
+}
+
+bool ConfigCompassView::calibrationBaseReady() const {
+  return m_calibrationService && m_calibrationTarget.isValid() &&
+         m_viewModel->Connected() && m_viewModel->SnapshotComplete() &&
+         m_viewModel->SnapshotReady() &&
+         m_viewModel->ComponentId() ==
+             m_calibrationTarget.endpoint.componentId &&
+         !m_viewModel->Armed() && !m_viewModel->Busy() &&
+         !m_viewModel->ReconciliationRequired() &&
+         !m_viewModel->RebootOutcomeUncertain();
+}
+
+bool ConfigCompassView::calibrationTargetMatchesService() const {
+  if (!m_calibrationService || !m_calibrationTarget.isValid()) {
+    return false;
+  }
+  if (!m_calibrationService->isCurrentTarget(m_calibrationTarget)) {
+    return false;
+  }
+  return !m_calibrationService->hasActiveTarget() ||
+         sameTarget(m_calibrationTarget,
+                    m_calibrationService->activeTarget());
+}
+
+QString ConfigCompassView::calibrationStateText(int value) {
+  using State = CompassCalibrationService::State;
+  switch (static_cast<State>(value)) {
+  case State::Idle:
+    return tr("Idle");
+  case State::StartPending:
+    return tr("Waiting for start acknowledgement");
+  case State::Running:
+    return tr("Calibration running");
+  case State::AwaitingAccept:
+    return tr("Calibration complete; awaiting acceptance");
+  case State::AcceptPending:
+    return tr("Waiting for acceptance acknowledgement");
+  case State::CancelPending:
+    return tr("Waiting for cancellation acknowledgement");
+  case State::FixedYawPending:
+    return tr("Waiting for fixed-yaw acknowledgement");
+  case State::CompletedNeedsReboot:
+    return tr("Calibration saved; reboot required");
+  case State::FixedYawCompleted:
+    return tr("Fixed-yaw calibration complete");
+  case State::Failed:
+    return tr("Calibration failed");
+  case State::OutcomeUncertain:
+    return tr("Onboard calibration outcome uncertain");
+  }
+  return tr("Unknown calibration state");
+}
+
+void ConfigCompassView::syncCalibrationState() {
+  if (!m_calStart || !m_calibrationTargetStatus || !m_calibrationResult) {
+    return;
+  }
+
+  const bool exactContext =
+      m_calibrationService && m_calibrationTarget.isValid();
+  const bool targetMatches = calibrationTargetMatchesService();
+  QString targetText;
+  if (m_calibrationTarget.isValid()) {
+    targetText = tr("Selected target: link %1, system %2, component %3, "
+                    "generation %4.")
+                     .arg(m_calibrationTarget.endpoint.linkId)
+                     .arg(m_calibrationTarget.endpoint.systemId)
+                     .arg(m_calibrationTarget.endpoint.componentId)
+                     .arg(m_calibrationTarget.generation);
+  } else {
+    targetText = tr("No exact vehicle target is selected.");
+  }
+
+  if (!m_calibrationService) {
+    targetText += tr(" Compass calibration service is unavailable.");
+  } else if (!targetMatches) {
+    targetText +=
+        tr(" The calibration service is bound to a different exact target.");
+  } else {
+    targetText += tr(" State: %1.")
+                      .arg(calibrationStateText(
+                          static_cast<int>(m_calibrationService->state())));
+  }
+  m_calibrationTargetStatus->setText(targetText);
+
+  const bool baseReady = calibrationBaseReady() && targetMatches;
+  bool mayBegin = false;
+  bool mayAccept = false;
+  bool mayCancel = false;
+  if (m_calibrationService && targetMatches) {
+    const CompassCalibrationService::State state =
+        m_calibrationService->state();
+    mayBegin = !m_calibrationService->isBusy() &&
+               !m_calibrationService->isOnboardActive() &&
+               state != CompassCalibrationService::State::OutcomeUncertain;
+    mayAccept =
+        state == CompassCalibrationService::State::AwaitingAccept;
+    mayCancel = m_calibrationService->hasActiveTarget() &&
+                sameTarget(m_calibrationTarget,
+                           m_calibrationService->activeTarget()) &&
+                m_calibrationService->canCancel();
+  }
+
+  m_calStart->setEnabled(baseReady && mayBegin);
+  m_calAccept->setEnabled(baseReady && mayAccept);
+  // Cancel is a recovery action. A stale/incomplete parameter snapshot or a
+  // concurrent parameter write must not hide it while the exact command
+  // service still owns an onboard session.
+  m_calCancel->setEnabled(exactContext && targetMatches &&
+                          m_viewModel->Connected() && mayCancel);
+  const bool rebootRequired =
+      m_viewModel->RebootRequired() ||
+      (m_calibrationService &&
+       m_calibrationService->rebootRequiredFor(m_calibrationTarget));
+  m_largeVehicleCal->setEnabled(baseReady && mayBegin && !rebootRequired);
+  m_largeVehicleCal->setToolTip(
+      rebootRequired ? tr("Reboot the selected vehicle before starting "
+                          "fixed-yaw calibration.")
+                     : QString());
+
+  const bool showServiceState = exactContext && targetMatches;
+  for (int index = 0; index < 3; ++index) {
+    m_calProgress[index]->setEnabled(showServiceState);
+    m_calProgress[index]->setValue(
+        showServiceState ? m_calibrationService->progress(index) : 0);
+  }
+
+  QString result;
+  if (showServiceState) {
+    result = m_calibrationService->resultText();
+  }
+  if (!m_calibrationRequestOutcome.isEmpty()) {
+    if (!result.isEmpty()) {
+      result += QLatin1Char('\n');
+    }
+    result += m_calibrationRequestOutcome;
+  }
+  m_calibrationResult->setPlainText(result);
 }
 
 void ConfigCompassView::updateMoveButtons() {
@@ -584,16 +797,157 @@ void ConfigCompassView::updateMoveButtons() {
                          current.row() + 1 < m_viewModel->rowCount());
 }
 
-void ConfigCompassView::confirmAndRequestReboot() {
+bool ConfigCompassView::confirmAndRequestReboot(bool calibrationTriggered) {
   QMessageBox confirm(QMessageBox::Question, tr("Reboot"),
                       tr("Reboot the selected vehicle now?"),
                       QMessageBox::Yes | QMessageBox::Cancel, this);
   confirm.setObjectName(QStringLiteral("compassRebootConfirmation"));
   confirm.setDefaultButton(QMessageBox::Cancel);
   confirm.setEscapeButton(QMessageBox::Cancel);
-  if (confirm.exec() == QMessageBox::Yes) {
-    m_viewModel->Reboot();
+  if (confirm.exec() != QMessageBox::Yes) {
+    return false;
   }
+
+  m_recordCalibrationRebootRequest = calibrationTriggered;
+  const bool requested = m_viewModel->Reboot();
+  m_recordCalibrationRebootRequest = false;
+  if (!requested && calibrationTriggered) {
+    m_calibrationRequestOutcome =
+        tr("The reboot request could not be submitted.");
+    syncCalibrationState();
+  }
+  return requested;
+}
+
+void ConfigCompassView::startCalibration() {
+  if (!calibrationBaseReady() || !calibrationTargetMatchesService()) {
+    return;
+  }
+  if (m_viewModel->RebootRequired() ||
+      m_calibrationService->rebootRequiredFor(m_calibrationTarget)) {
+    confirmAndRequestReboot(
+        m_calibrationService->rebootRequiredFor(m_calibrationTarget));
+    return;
+  }
+  const auto result =
+      m_calibrationService->start(m_calibrationTarget, m_viewModel->Armed());
+  showCalibrationRequestResult(
+      tr("Start calibration"), static_cast<int>(result));
+}
+
+void ConfigCompassView::acceptCalibration() {
+  if (!m_calibrationService || !calibrationTargetMatchesService()) {
+    return;
+  }
+  const auto result =
+      m_calibrationService->accept(m_viewModel->Armed());
+  showCalibrationRequestResult(
+      tr("Accept calibration"), static_cast<int>(result));
+}
+
+void ConfigCompassView::cancelCalibration() {
+  if (!m_calibrationService || !calibrationTargetMatchesService()) {
+    return;
+  }
+  const auto result = m_calibrationService->cancel();
+  showCalibrationRequestResult(
+      tr("Cancel calibration"), static_cast<int>(result));
+}
+
+void ConfigCompassView::startFixedYawCalibration() {
+  if (!calibrationBaseReady() || !calibrationTargetMatchesService() ||
+      m_viewModel->RebootRequired() ||
+      m_calibrationService->rebootRequiredFor(m_calibrationTarget)) {
+    return;
+  }
+
+  QDialog dialog(this);
+  dialog.setObjectName(QStringLiteral("compassFixedYawDialog"));
+  dialog.setWindowTitle(tr("Large Vehicle MagCal"));
+  auto *layout = new QVBoxLayout(&dialog);
+  auto *instruction = new QLabel(
+      tr("Enter the vehicle's true heading from 0 to 360 degrees for the "
+         "selected exact target. GPS lock is required; use true, not magnetic, "
+         "heading."),
+      &dialog);
+  instruction->setWordWrap(true);
+  layout->addWidget(instruction);
+  auto *heading = new QDoubleSpinBox(&dialog);
+  heading->setObjectName(QStringLiteral("compassFixedYawHeading"));
+  heading->setRange(0.0, 360.0);
+  heading->setDecimals(2);
+  heading->setSingleStep(1.0);
+  heading->setSuffix(tr("°"));
+  layout->addWidget(heading);
+  auto *buttons = new QDialogButtonBox(
+      QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  buttons->setObjectName(QStringLiteral("compassFixedYawButtons"));
+  buttons->button(QDialogButtonBox::Cancel)->setDefault(true);
+  buttons->button(QDialogButtonBox::Ok)->setDefault(false);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(buttons);
+  if (dialog.exec() != QDialog::Accepted) {
+    return;
+  }
+
+  const auto result = m_calibrationService->fixedYaw(
+      m_calibrationTarget, heading->value(), m_viewModel->Armed());
+  showCalibrationRequestResult(
+      tr("Fixed-yaw calibration"), static_cast<int>(result));
+}
+
+void ConfigCompassView::showCalibrationRequestResult(const QString &action,
+                                                      int value) {
+  using Result = CompassCalibrationService::RequestResult;
+  switch (static_cast<Result>(value)) {
+  case Result::Started:
+    m_calibrationRequestOutcome.clear();
+    break;
+  case Result::Busy:
+    m_calibrationRequestOutcome = tr("%1 was not submitted: another compass "
+                                     "operation is active.")
+                                      .arg(action);
+    break;
+  case Result::InvalidTarget:
+    m_calibrationRequestOutcome =
+        tr("%1 was not submitted: the exact target is no longer current.")
+            .arg(action);
+    break;
+  case Result::Armed:
+    m_calibrationRequestOutcome =
+        tr("%1 was not submitted because the vehicle is armed.").arg(action);
+    break;
+  case Result::InvalidHeading:
+    m_calibrationRequestOutcome =
+        tr("%1 was not submitted: heading must be from 0 to 360 degrees.")
+            .arg(action);
+    break;
+  case Result::RebootRequired:
+    m_calibrationRequestOutcome =
+        tr("%1 was not submitted because a reboot is required.").arg(action);
+    break;
+  case Result::InvalidState:
+    m_calibrationRequestOutcome =
+        tr("%1 is not valid in the current calibration state.").arg(action);
+    break;
+  case Result::OutcomeUncertain:
+    m_calibrationRequestOutcome =
+        tr("%1 was not submitted because the previous outcome is uncertain.")
+            .arg(action);
+    break;
+  case Result::TransportUnavailable:
+    m_calibrationRequestOutcome =
+        tr("%1 was not submitted because the exact transport is unavailable.")
+            .arg(action);
+    break;
+  case Result::ShuttingDown:
+    m_calibrationRequestOutcome =
+        tr("%1 was not submitted because the service is shutting down.")
+            .arg(action);
+    break;
+  }
+  syncCalibrationState();
 }
 
 bool ConfigCompassView::valuesEqual(const QVariant &left,

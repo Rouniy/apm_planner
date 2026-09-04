@@ -41,6 +41,7 @@
 #include "ConfigRawParams.h"
 #include "FrameDefaultCatalogService.h"
 #include "comm/AdsbIdentificationClient.h"
+#include "comm/CompassCalibrationService.h"
 #include "comm/DroneCanGetNodeInfoClient.h"
 #include "comm/DroneCanGetSetClient.h"
 #include "comm/DroneCanMavlinkTransport.h"
@@ -2993,6 +2994,8 @@ QWidget *SetupView::createCompassPage(QWidget *parent)
         ? links->vehicleTargetManager() : nullptr;
     VehicleCommandService *const commands = links
         ? links->vehicleCommandService() : nullptr;
+    CompassCalibrationService *const compassCalibration = links
+        ? links->compassCalibrationService() : nullptr;
     const VehicleTargetLease expectedTarget = targets
         ? targets->acquireTarget() : VehicleTargetLease{};
     const int expectedComponent = expectedTarget.isValid()
@@ -3005,6 +3008,7 @@ QWidget *SetupView::createCompassPage(QWidget *parent)
 
     auto *page = new ConfigCompassView(parent);
     m_compassPage = page;
+    page->setCalibrationContext(compassCalibration, expectedTarget);
     page->setCatalog(catalog, enforceMetadataRanges);
     page->setParameterSnapshot(
         parameterSnapshot(expectedComponent), expectedComponent,

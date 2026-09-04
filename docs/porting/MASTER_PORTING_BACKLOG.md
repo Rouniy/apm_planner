@@ -11,7 +11,7 @@
 Проверенная Linux-точка после нативного текущего Compass-среза:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 133 из 133 тестов;
+- проходят 134 из 134 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -297,12 +297,15 @@ Rally; после cancel/target switch нет поздних изменений;
   пакетами, не включая кнопки заранее.
 - Elevation Sources и Mission Command List: native/package evidence.
 - SETUP OSD: live 24-write full/partial path и profile gate.
+- Current Compass: parameter/priority, onboard multi-compass и Large Vehicle
+  fixed-yaw slices сделаны; остаются physical-hardware evidence, OfflineMagFit
+  и отдельный Compass/Motor route.
 
 #### 5B. Исправить partial legacy pages
 
 - Setup shell/order/profile gating;
 - Install Firmware и legacy firmware route;
-- Frame Class/Type, Accel, Compass/Compass Legacy/Compass Motor;
+- Frame Class/Type, Accel, Compass Legacy/Compass Motor;
 - Radio Input, Flight Modes, FailSafe;
 - Battery Monitor 1, Range Finder, Airspeed;
 - GPS Inject, DroneCAN, Joystick, Mount, Optical Flow;
