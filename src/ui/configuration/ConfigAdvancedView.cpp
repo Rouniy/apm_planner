@@ -33,8 +33,9 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     AddToolAction(tr("Cursor-on-Target / TAK"),
                   QStringLiteral("CotTakButton"),
                   QStringLiteral("actionCotOutput"));
-    AddUnavailableAction(tr("Follow Me"),
-                         QStringLiteral("FollowMeButton"), notPorted);
+    AddToolAction(tr("Follow Me"),
+                  QStringLiteral("FollowMeButton"),
+                  QStringLiteral("actionFollowMe"));
     AddToolAction(tr("External Guided"),
                   QStringLiteral("ExternalGuidedButton"),
                   QStringLiteral("actionExternalGuided"));

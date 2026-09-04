@@ -2,6 +2,7 @@
 #include "logging.h"
 #include "QGCMapToolBar.h"
 #include "MapTileSourceFactory.h"
+#include "MovingBaseMapMarkerItem.h"
 #include "PlannerMeasurementOverlay.h"
 #include "UASInterface.h"
 #include "UASManager.h"
@@ -26,6 +27,7 @@ bool isPlannerCoordinateValid(double latitude, double longitude)
             && latitude >= -90.0 && latitude <= 90.0
             && longitude >= -180.0 && longitude <= 180.0;
 }
+
 }
 
 QGCMapWidget::QGCMapWidget(const QString &settingsGroup,
@@ -64,6 +66,8 @@ QGCMapWidget::QGCMapWidget(const QString &settingsGroup,
             this, &QGCMapWidget::redrawPlannerLines);
     connect(map, &mapcontrol::MapGraphicItem::mapChanged,
             this, &QGCMapWidget::redrawPlannerMeasurement);
+    connect(map, &mapcontrol::MapGraphicItem::mapChanged,
+            this, &QGCMapWidget::refreshMovingBaseMarker);
     offlineMode = true;
     // Widget is inactive until shown
     defaultGuidedRelativeAlt = 100.0; // Default set to 100m
@@ -288,6 +292,7 @@ void QGCMapWidget::mouseReleaseEvent(QMouseEvent *event)
 
 QGCMapWidget::~QGCMapWidget()
 {
+    clearMovingBase();
     clearPlannerGraphics();
     delete m_plannerMeasurementGroup;
     m_plannerMeasurementGroup = nullptr;
@@ -595,6 +600,50 @@ void QGCMapWidget::clearPlannerHome()
         return;
     m_plannerHomeValid = false;
     rebuildPlannerGraphics();
+}
+
+void QGCMapWidget::setMovingBase(const MapCoordinate &position,
+                                 const QString &tag)
+{
+    if (!IsMovingBaseMapPositionRenderable(
+            position.latitude, position.longitude, position.altitude)) {
+        clearMovingBase();
+        return;
+    }
+
+    m_movingBaseCoordinate = position;
+    m_movingBaseTag = tag.simplified();
+    if (!m_movingBaseMarker) {
+        m_movingBaseMarker = new MovingBaseMapMarkerItem(map);
+    }
+    m_movingBaseMarker->setFix(position.altitude, m_movingBaseTag);
+    refreshMovingBaseMarker();
+}
+
+void QGCMapWidget::clearMovingBase()
+{
+    delete m_movingBaseMarker;
+    m_movingBaseMarker = nullptr;
+    m_movingBaseCoordinate = {};
+    m_movingBaseTag.clear();
+}
+
+QString QGCMapWidget::movingBaseLabel() const
+{
+    return hasMovingBaseMarker()
+        ? m_movingBaseMarker->detailText()
+        : QString();
+}
+
+void QGCMapWidget::refreshMovingBaseMarker()
+{
+    if (!m_movingBaseMarker || !map) {
+        return;
+    }
+    const core::Point local = map->FromLatLngToLocal(
+        internals::PointLatLng(m_movingBaseCoordinate.latitude,
+                               m_movingBaseCoordinate.longitude));
+    m_movingBaseMarker->setPos(local.X(), local.Y());
 }
 
 void QGCMapWidget::setPlannerSelection(int seq)

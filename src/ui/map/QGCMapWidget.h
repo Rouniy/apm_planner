@@ -14,6 +14,7 @@ class UASInterface;
 class UASWaypointManager;
 class Waypoint;
 class QContextMenuEvent;
+class MovingBaseMapMarkerItem;
 typedef mapcontrol::WayPointItem WayPointItem;
 
 /**
@@ -43,6 +44,16 @@ public:
     bool missionPlanningEnabled() const { return m_missionPlanningEnabled; }
     int CurrentZoomLevel() const;
     internals::RectLatLng VisibleTileExtent() const;
+    bool hasMovingBaseMarker() const
+    {
+        return m_movingBaseMarker != nullptr;
+    }
+    MapCoordinate movingBaseCoordinate() const
+    {
+        return m_movingBaseCoordinate;
+    }
+    QString movingBaseTag() const { return m_movingBaseTag; }
+    QString movingBaseLabel() const;
 
 signals:
     void homePositionChanged(double latitude, double longitude, double altitude);
@@ -103,6 +114,8 @@ public slots:
     void redrawWaypointLines(int uas);
     /** @brief Update the home position on the map */
     void updateHomePosition(double latitude, double longitude, double altitude);
+    void setMovingBase(const MapCoordinate &position, const QString &tag);
+    void clearMovingBase();
     /** @brief Set update rate limit */
     void setUpdateRateLimit(float seconds);
     /** @brief Cache visible region to harddisk */
@@ -165,6 +178,7 @@ private:
     void redrawPlannerMeasurement();
     int plannerWaypointSequenceAt(const QPoint &viewportPosition) const;
     void updateLegacyWaypointVisibility();
+    void refreshMovingBaseMarker();
     QColor plannerColor() const;
 
     void shiftOtherSelectedWaypoints(mapcontrol::WayPointItem* selectedWaypoint,
@@ -236,6 +250,9 @@ protected:
     mapcontrol::WayPointItem *m_plannerHomeIcon = nullptr;
     QGraphicsItemGroup *m_plannerLineGroup = nullptr;
     QGraphicsItemGroup *m_plannerMeasurementGroup = nullptr;
+    MovingBaseMapMarkerItem *m_movingBaseMarker = nullptr;
+    MapCoordinate m_movingBaseCoordinate;
+    QString m_movingBaseTag;
     QString m_settingsGroup;
 
 };

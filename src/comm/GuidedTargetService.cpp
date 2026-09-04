@@ -102,6 +102,33 @@ GuidedTargetService::RequestResult GuidedTargetService::start(
     if (!isValidTarget(initialTarget)) {
         return RequestResult::InvalidPosition;
     }
+    SessionToken reservedSession;
+    const RequestResult reserved = reserve(owner, target, &reservedSession);
+    if (reserved != RequestResult::Started) {
+        return reserved;
+    }
+
+    const RequestResult sent = submit(reservedSession, initialTarget);
+    if (sent != RequestResult::Sent) {
+        return sent;
+    }
+    if (sessionOut && sessionMatches(reservedSession)) {
+        *sessionOut = reservedSession;
+    }
+    return RequestResult::Started;
+}
+
+GuidedTargetService::RequestResult GuidedTargetService::reserve(
+    QObject *owner, const VehicleTargetLease &target,
+    SessionToken *sessionOut)
+{
+    if (sessionOut) {
+        *sessionOut = SessionToken{};
+    }
+    if (!owner || owner == this || owner->thread() != thread()
+        || QThread::currentThread() != thread()) {
+        return RequestResult::InvalidOwner;
+    }
     clearExpiredUncertainEndpoints();
     if (hasActiveSession()) {
         return RequestResult::Busy;
@@ -130,9 +157,15 @@ GuidedTargetService::RequestResult GuidedTargetService::start(
             handleOwnerDestroyed(sessionGeneration);
         });
 
-    const RequestResult sent = sendTarget(initialTarget);
-    if (sent != RequestResult::Sent) {
-        return sent;
+    m_state = State::Reserved;
+    m_statusText = tr(
+        "Guided channel reserved for the exact vehicle; waiting for the "
+        "first valid target.");
+    publishStateAndStatus();
+    if (!hasActiveSession()
+        || m_session.generation != sessionGeneration) {
+        return m_lastFinishedSessionGeneration == sessionGeneration
+            ? m_lastFinishedResult : RequestResult::InvalidSession;
     }
     if (sessionOut && m_session.generation == sessionGeneration) {
         *sessionOut = m_session;
@@ -269,6 +302,8 @@ QString GuidedTargetService::stateDescription(State state)
     switch (state) {
     case State::Idle:
         return tr("Idle");
+    case State::Reserved:
+        return tr("Reserved; waiting for a target");
     case State::AwaitingAcknowledgement:
         return tr("Awaiting acknowledgement");
     case State::Active:
@@ -485,7 +520,7 @@ void GuidedTargetService::handleCommandTimeout()
     finishWithUncertainOutcome(
         RequestResult::OutcomeUncertain,
         tr("The guided command received no terminal acknowledgement after %1 "
-           "send attempts. External Guided stopped; the endpoint is held "
+           "send attempts. Guided updates stopped; the endpoint is held "
            "briefly to isolate a late acknowledgement.")
             .arg(MaximumSendAttempts),
         true);
@@ -503,7 +538,7 @@ void GuidedTargetService::handleRetryDrainExpired()
     m_hasQueuedTarget = false;
     m_state = State::Active;
     m_statusText = tr(
-        "Retry acknowledgement drain completed; External Guided remains active.");
+        "Retry acknowledgement drain completed; guided updates remain active.");
     publishStateAndStatus();
     if (!sessionMatches(session) || m_state != State::Active) {
         return;

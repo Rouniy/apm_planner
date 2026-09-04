@@ -46,11 +46,13 @@ then dispatches Plane to the native Q controller/INS page and Copter/Heli to
 the retained legacy ATC/PSC/WPNAV editor.
 
 The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
-all 16 MP10 actions are present, seven open working shared tools and nine are
-visibly disabled. `DataFlash Spectrogram` now opens the same complete modeless
-window as TOOLS; `Warning Manager` and `FFT` remain unported, and `FFT Setup`
-is also still a missing direct SETUP page. They must not be counted as working
-merely because every direct CONFIG route has a factory.
+all 16 MP10 actions are present, nine open working shared tools and seven are
+visibly disabled. MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target /
+TAK, DataFlash Spectrogram, External Guided, Follow Me, Map Tile Cache and
+Proximity reuse working application actions. `Warning Manager` and `FFT`
+remain unported, and `FFT Setup` is also still a missing direct SETUP page.
+They must not be counted as working merely because every direct CONFIG route
+has a factory.
 
 The legacy `Heli Setup` route is capability-gated by the exact MP10
 `H_SWASH_TYPE` marker; current `H_SW_TYPE` vehicles use the separate native
@@ -89,8 +91,13 @@ Working settings in the first native slice are Alt/Dist units, the shared
 Basic/Advanced/Custom DisplayView profile, exact restart-scoped dual Startup
 UDP listeners, the Qt map renderer, audio mute, GCS heartbeat, MAVLink
 logging, DataFlash/tlog directories, beta update channel and system proxy.
-The two production entry points share one application-owned model, so one
-open page cannot overwrite stale UDP/beta state from another.
+The CONFIG → Planner page and the dormant standalone settings dialog share one
+application-owned model, so the duplicate cannot overwrite stale UDP/beta
+state if triggered programmatically. It is not a production entry point:
+`actionSettings` is absent from the visible header, menu and shortcuts, even
+though invoking it from code creates a real non-empty `ConfigPlannerView`
+dialog. MP10 likewise has only the CONFIG → Planner route, so the correct
+follow-up is to remove the dead Qt duplicate rather than expose a new route.
 
 The four live slices add twelve direct MP10 controls, bringing the working
 native-equivalent count to 21 of 64: `Enable HUD Overlay`, `Enable Speech`,
@@ -148,10 +155,11 @@ DATA and renders its error STATUSTEXT on the native HUD before a clean exit
 (`/tmp/apm-status-smoke.Ucj2NV`).
 
 The remaining MP10 controls are not represented as fake toggles. Language,
-speed/OSD color, speech level and the vario consumer,
+theme/theme editor, speed/OSD color, speech level and the vario consumer,
 safety-confirmed flight shortcuts,
-connect policies, the five target-safe telemetry rates and GCS identity, map
-vectors/overlays/cache/external ADS-B, and the remaining advanced policies are
+connect policies, the five target-safe telemetry rates and GCS identity,
+distance-to-home display, track length, map vectors/overlays/cache/external
+ADS-B, and the remaining advanced policies are
 called out in their corresponding section. Useful old APM Planner themes,
 file paths and seven-rate telemetry editor remain reachable through an
 explicitly named Legacy dialog; dead reconnect/donate/titlebar/low-power and
@@ -179,7 +187,10 @@ neither active MP10 route instantiates it.
 The 15 direct CONFIG routes now all create a truthful non-empty page for their
 supported vehicle contexts. Planner Settings is the next broad control-level
 gap: all nine sections are present, but many of the audited 64 controls are
-still explicitly unavailable.
+still explicitly unavailable. The first route-level cleanup is to remove the
+orphaned standalone `actionSettings` and keep CONFIG → Planner as the sole
+MP10-compatible route, then add a production click-through that instantiates
+every visible CONFIG row and proves its page is non-empty.
 
 ## SETUP cross-check
 

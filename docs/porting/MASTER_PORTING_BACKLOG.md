@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain и External Guided-срезов:
+Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided и Follow Me-срезов:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 154 из 154 теста;
+- проходят 160 из 160 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -30,10 +30,10 @@
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 28 | 17 | 11 | 56 |
 | CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 11 | 2 | 17 | 30 |
+| TOOLS | 12 | 2 | 16 | 30 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **56** | **38** | **34** | **128** |
+| **Итого** | **57** | **38** | **33** | **128** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -55,7 +55,7 @@
 совпадения других страниц.
 
 Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
-Spectrogram, 3D Terrain View и External Guided; текущий пользовательский приоритет — продолжать основные Tools,
+Spectrogram, 3D Terrain View, External Guided и Follow Me; текущий пользовательский приоритет — продолжать основные Tools,
 после чего перейти к Settings/CONFIG и их функциональным vertical slices.
 Оставшиеся специализированные Tools сохраняются в точном меню, но включаются
 только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
@@ -97,7 +97,7 @@ Qt Widgets и доверенный QML API можно сочетать по на
 - Antenna Tracker, FFT, OpenDroneID, secure boot/signing, CubeID;
 - DroneCAN inspector/write, traditional heli, PX4Flow, REPL и MAVFTP;
 - SFTP logs, mag fit, georeference, terrain maker;
-- Follow Me, external guided, moving base, formation/swarm;
+- Follow Me и external guided имеют основные безопасные срезы; moving base и formation/swarm отсутствуют как завершённые workflow;
 - NMEA/CoT output, MAVLink serial/TCP bridge и serial pass-through;
 - OSD video overlay, Microdrone и translation editor; Device Operations уже
   имеет основной modeless/exact-target workflow, но ещё ждёт hardware/native
@@ -396,6 +396,12 @@ dirty state никогда не переносится на новый target.
 - External Guided: основной modeless/bounded-file/exact-target/ACK-gated срез
   сделан; остаются legacy Plane/current=2 и position-target fallback с честной
   семантикой результата, reference screenshot, older-autopilot и native-platform evidence;
+- Follow Me: основной modeless/manual+serial-NMEA/exact-target/ACK-gated срез
+  сделан и доступен из TOOLS/SETUP Advanced; остаются physical-serial/vehicle,
+  older-autopilot, reference screenshot и native-platform evidence;
+- Moving Base: endpoint-aware store и общий cyan `BASE` map marker созданы как
+  foundation; action остаётся выключенным до input transports,
+  persistence, bounded diagnostics и Flight Data wiring;
 - Device Operations: основной modeless/exact-target срез сделан; остаются
   hardware/native evidence и визуальная полировка;
 - QML Plugin Manager: широкая документация и API coverage.
@@ -406,7 +412,7 @@ dirty state никогда не переносится на новый target.
 - Offline Mag Fit;
 - Photo/video GeoRef;
 - Terrain Maker;
-- Follow Me, Moving Base;
+- Moving Base (foundation без включённого action);
 - Formation Control и четыре swarm workflow;
 - MAVLink Serial/TCP Bridge;
 - OSD Video Overlay;

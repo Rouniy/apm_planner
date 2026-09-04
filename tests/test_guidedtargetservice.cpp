@@ -139,6 +139,8 @@ class GuidedTargetServiceTest final : public QObject
 
 private slots:
     void wirePayloadRejectsNullIslandAndTruncatesCoordinates();
+    void reservationClaimsOwnerWithoutSendingUntilSubmit();
+    void reservationPublishIsReentrancySafe();
     void positionAndHeartbeatValidationFailClosed();
     void unsettledAndStaleLeasesFailClosed();
     void exactAckAndInProgressExtendTimeout();
@@ -210,6 +212,62 @@ wirePayloadRejectsNullIslandAndTruncatesCoordinates()
     QCOMPARE(second.x, qint32(123456789));
     QCOMPARE(second.y, qint32(-456789123));
     QCOMPARE(second.z, 51.25F);
+}
+
+void GuidedTargetServiceTest::
+reservationClaimsOwnerWithoutSendingUntilSubmit()
+{
+    Fixture fixture;
+    const VehicleTargetLease lease = fixture.selectFresh(endpoint(9));
+    QObject owner;
+    QObject competingOwner;
+    GuidedTargetService::SessionToken session;
+
+    QCOMPARE(fixture.service.reserve(&owner, lease, &session),
+             GuidedTargetService::RequestResult::Started);
+    QVERIFY(session.isValid());
+    QCOMPARE(fixture.service.state(), GuidedTargetService::State::Reserved);
+    QCOMPARE(fixture.frames.size(), 0);
+    QCOMPARE(fixture.service.reserve(&competingOwner, lease),
+             GuidedTargetService::RequestResult::Busy);
+
+    QCOMPARE(fixture.service.submit(session, kInitialTarget),
+             GuidedTargetService::RequestResult::Sent);
+    QCOMPARE(fixture.service.state(),
+             GuidedTargetService::State::AwaitingAcknowledgement);
+    QCOMPARE(fixture.frames.size(), 1);
+    QCOMPARE(fixture.commandAt(0).param2,
+             float(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE));
+
+    fixture.acknowledge(MAV_RESULT_ACCEPTED);
+    QCOMPARE(fixture.service.state(), GuidedTargetService::State::Active);
+    QCOMPARE(fixture.service.stop(session),
+             GuidedTargetService::RequestResult::Stopped);
+    QCOMPARE(fixture.service.state(), GuidedTargetService::State::Idle);
+}
+
+void GuidedTargetServiceTest::reservationPublishIsReentrancySafe()
+{
+    Fixture fixture;
+    const VehicleTargetLease lease = fixture.selectFresh(endpoint(9));
+    QObject *owner = new QObject;
+    GuidedTargetService::SessionToken session;
+    const QMetaObject::Connection connection = QObject::connect(
+        &fixture.service, &GuidedTargetService::stateChanged,
+        &fixture.service, [&](GuidedTargetService::State state) {
+            if (state == GuidedTargetService::State::Reserved) {
+                delete owner;
+                owner = nullptr;
+            }
+        });
+
+    QCOMPARE(fixture.service.reserve(owner, lease, &session),
+             GuidedTargetService::RequestResult::Stopped);
+    QObject::disconnect(connection);
+    QVERIFY(!session.isValid());
+    QVERIFY(!fixture.service.hasActiveSession());
+    QCOMPARE(fixture.frames.size(), 0);
+    QCOMPARE(fixture.service.state(), GuidedTargetService::State::Idle);
 }
 
 void GuidedTargetServiceTest::positionAndHeartbeatValidationFailClosed()

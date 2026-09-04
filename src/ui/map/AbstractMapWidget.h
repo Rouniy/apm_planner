@@ -104,6 +104,13 @@ public:
     virtual void CacheVisibleRegion() = 0;
     virtual void UpdateHomePosition(double latitude, double longitude,
                                     double altitude) = 0;
+    virtual void SetMovingBase(const MapCoordinate &position,
+                               const QString &tag)
+    {
+        Q_UNUSED(position)
+        Q_UNUSED(tag)
+    }
+    virtual void ClearMovingBase() {}
 
     virtual void SetMissionPlanningEnabled(bool enabled) = 0;
     virtual void SetPlannerRows(

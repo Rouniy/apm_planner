@@ -54,6 +54,9 @@ public:
     void CacheVisibleRegion() override;
     void UpdateHomePosition(double latitude, double longitude,
                             double altitude) override;
+    void SetMovingBase(const MapCoordinate &position,
+                       const QString &tag) override;
+    void ClearMovingBase() override;
     void SetMissionPlanningEnabled(bool enabled) override;
     void SetPlannerRows(
         const QVector<WpRowData> &rows,

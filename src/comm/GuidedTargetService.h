@@ -49,6 +49,7 @@ public:
 
     enum class State {
         Idle,
+        Reserved,
         AwaitingAcknowledgement,
         Active,
         Draining,
@@ -105,6 +106,16 @@ public:
                         const VehicleTargetLease &target,
                         const Target &initialTarget,
                         SessionToken *sessionOut = nullptr);
+    /**
+     * Claims the process-wide guided channel without sending a position.
+     *
+     * Follow Me uses this while waiting for the first valid NMEA fix.  The
+     * reservation is still bound to the exact target generation and owner;
+     * submit() sends the first target and stop() releases it.
+     */
+    RequestResult reserve(QObject *owner,
+                          const VehicleTargetLease &target,
+                          SessionToken *sessionOut = nullptr);
     RequestResult submit(const SessionToken &session,
                          const Target &target);
     RequestResult stop(const SessionToken &session);

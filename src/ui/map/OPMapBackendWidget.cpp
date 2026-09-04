@@ -122,6 +122,19 @@ void OPMapBackendWidget::GoHome() { if (m_map) m_map->goHome(); }
 void OPMapBackendWidget::LastPosition() { if (m_map) m_map->lastPosition(); }
 void OPMapBackendWidget::CacheVisibleRegion() { if (m_map) m_map->cacheVisibleRegion(); }
 void OPMapBackendWidget::UpdateHomePosition(double latitude, double longitude, double altitude) { if (m_map) m_map->updateHomePosition(latitude, longitude, altitude); }
+void OPMapBackendWidget::SetMovingBase(const MapCoordinate &position,
+                                       const QString &tag)
+{
+    if (m_map) {
+        m_map->setMovingBase(position, tag);
+    }
+}
+void OPMapBackendWidget::ClearMovingBase()
+{
+    if (m_map) {
+        m_map->clearMovingBase();
+    }
+}
 void OPMapBackendWidget::SetMissionPlanningEnabled(bool enabled) { if (m_map) m_map->setMissionPlanningEnabled(enabled); }
 void OPMapBackendWidget::SetPlannerRows(const QVector<WpRowData> &rows, FlightPlannerMissionModel::MissionStore store) { if (m_map) m_map->setPlannerRows(rows, store); }
 void OPMapBackendWidget::SetPlannerAltitudePresentation(double multiplier, const QString &unit) { if (m_map) m_map->setPlannerAltitudePresentation(multiplier, unit); }

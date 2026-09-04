@@ -267,6 +267,10 @@ set(SOURCES
     src/comm/ExactLinkTransmitter.h
     src/comm/GuidedTargetService.cpp
     src/comm/GuidedTargetService.h
+    src/comm/FollowMeGpsInput.cpp
+    src/comm/FollowMeGpsInput.h
+    src/comm/MovingBasePositionStore.cpp
+    src/comm/MovingBasePositionStore.h
     src/comm/MavFtpProtocol.cpp
     src/comm/MavFtpProtocol.h
     src/comm/MavFtpService.cpp
@@ -286,6 +290,10 @@ set(SOURCES
     src/comm/MAVLinkDecoder.h
     src/comm/MAVLinkFrameParser.cpp
     src/comm/MAVLinkFrameParser.h
+    src/comm/NmeaGgaParser.cpp
+    src/comm/NmeaGgaParser.h
+    src/comm/NmeaLineFramer.cpp
+    src/comm/NmeaLineFramer.h
     src/comm/MavlinkMirrorOutput.cpp
     src/comm/MavlinkMirrorOutput.h
     src/comm/MavlinkMirrorService.cpp
@@ -623,6 +631,9 @@ set(SOURCES
     src/ui/ExternalGuidedWindow.cpp
     src/ui/ExternalGuidedWindow.h
     src/ui/ExternalGuidedWindowIntegration.cpp
+    src/ui/FollowMeWindow.cpp
+    src/ui/FollowMeWindow.h
+    src/ui/FollowMeWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/Terrain3DWindow.cpp
@@ -1071,6 +1082,8 @@ set(SOURCES
     src/ui/map/MapPrefetchService.h
     src/ui/map/MapWidgetFactory.cpp
     src/ui/map/MapWidgetFactory.h
+    src/ui/map/MovingBaseMapMarkerItem.cpp
+    src/ui/map/MovingBaseMapMarkerItem.h
     src/ui/map/OPMapBackendWidget.cpp
     src/ui/map/OPMapBackendWidget.h
     src/ui/map/MapTileSourceFactory.cpp
@@ -2333,6 +2346,133 @@ if(BUILD_TESTING)
     )
     add_test(NAME guidedtargetservice_tests
         COMMAND guidedtargetservice_tests)
+
+    add_executable(nmeaggaparser_tests
+        tests/test_nmeaggaparser.cpp
+        src/comm/NmeaGgaParser.cpp
+        src/comm/NmeaGgaParser.h
+    )
+    target_include_directories(nmeaggaparser_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(nmeaggaparser_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME nmeaggaparser_tests COMMAND nmeaggaparser_tests)
+
+    add_executable(nmealineframer_tests
+        tests/test_nmealineframer.cpp
+        src/comm/NmeaLineFramer.cpp
+        src/comm/NmeaLineFramer.h
+    )
+    target_include_directories(nmealineframer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(nmealineframer_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME nmealineframer_tests COMMAND nmealineframer_tests)
+
+    add_executable(followmegpsinput_tests
+        tests/test_followmegpsinput.cpp
+        src/comm/FollowMeGpsInput.cpp
+        src/comm/FollowMeGpsInput.h
+        src/comm/NmeaGgaParser.cpp
+        src/comm/NmeaGgaParser.h
+        src/comm/NmeaLineFramer.cpp
+        src/comm/NmeaLineFramer.h
+    )
+    target_include_directories(followmegpsinput_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(followmegpsinput_tests PRIVATE
+        Qt::Core
+        Qt::SerialPort
+        Qt::Test
+    )
+    add_test(NAME followmegpsinput_tests COMMAND followmegpsinput_tests)
+
+    add_executable(followmewindow_tests
+        tests/test_followmewindow.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/FollowMeGpsInput.cpp
+        src/comm/FollowMeGpsInput.h
+        src/comm/GuidedTargetService.cpp
+        src/comm/GuidedTargetService.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/NmeaGgaParser.cpp
+        src/comm/NmeaGgaParser.h
+        src/comm/NmeaLineFramer.cpp
+        src/comm/NmeaLineFramer.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/FollowMeWindow.cpp
+        src/ui/FollowMeWindow.h
+    )
+    target_include_directories(followmewindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(followmewindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::SerialPort
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME followmewindow_tests COMMAND followmewindow_tests)
+    set_tests_properties(followmewindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(movingbasepositionstore_tests
+        tests/test_movingbasepositionstore.cpp
+        src/comm/MovingBasePositionStore.cpp
+        src/comm/MovingBasePositionStore.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(movingbasepositionstore_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(movingbasepositionstore_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME movingbasepositionstore_tests
+        COMMAND movingbasepositionstore_tests)
+
+    add_executable(movingbasemapmarker_tests
+        tests/test_movingbasemapmarker.cpp
+        src/ui/map/MovingBaseMapMarkerItem.cpp
+        src/ui/map/MovingBaseMapMarkerItem.h
+    )
+    target_include_directories(movingbasemapmarker_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/map
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core
+    )
+    target_link_libraries(movingbasemapmarker_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME movingbasemapmarker_tests COMMAND movingbasemapmarker_tests)
+    set_tests_properties(movingbasemapmarker_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 
     add_executable(externalguidedwindow_tests
         tests/test_externalguidedwindow.cpp
