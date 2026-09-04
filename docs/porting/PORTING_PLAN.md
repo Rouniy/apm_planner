@@ -246,6 +246,16 @@ current endpoint cache are available to trusted QML as
 `APMPlanner.parameterService`, while `APMPlanner.vehicleCommandService` exposes
 exact `COMMAND_LONG`.
 
+Swarm executors use a separate exact-operation boundary on the same service:
+one owner reserves the complete immutable endpoint set before reading or
+writing, and every submit revalidates the lease, physical route and one
+absolute deadline immediately before transmission. Runtime parameter type is
+established by an exact read, not guessed from an alias. Any uncertain write
+quarantines the endpoint plus parameter name independent of the requested
+value/type, suppresses late echoes and blocks conflicting exact or legacy work
+for the bounded isolation period. Recent direct-index/cancelled legacy traffic
+also establishes a bounded fence before a new exact reservation may begin.
+
 `ConfigBatteryMonitoring2View` is now a transport-free Qt page rather than an
 `AP2ConfigWidget` consumer. `SetupView` supplies its authoritative BATT2
 snapshot, exact-link BATTERY2/BATTERY_STATUS telemetry and one-item serialized
@@ -297,7 +307,7 @@ with an incoming ArduPilot heartbeat and Alt+F4 exits cleanly with status 0.
 ## Delivery sequence and gates
 
 1. **Baseline and inventory**
-   - Freeze the 127-row parity manifest and reference commit.
+   - Freeze the 129-row parity manifest and reference commit.
    - Keep the Qt 5 build/tests green. An optional Qt 6 configure path is only a
      forward-compatibility diagnostic and is not a product-completeness gate.
    - Gate: manifest has an owner/status/evidence rule for every row.
