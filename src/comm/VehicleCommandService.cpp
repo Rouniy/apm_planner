@@ -433,12 +433,20 @@ VehicleCommandService::submitExactCommandLong(
     token.command = request.command;
     const int requestedTimeout = request.acknowledgementTimeoutMs > 0
         ? request.acknowledgementTimeoutMs : m_exactCommandTimeoutMs;
+    const int requestedMaximumLifetime = request.maximumLifetimeMs > 0
+        ? request.maximumLifetimeMs
+        : DefaultExactCommandMaximumLifetimeMs;
+    const qint64 submittedAtMs = m_exactClock.elapsed();
     PendingExactCommand pending;
     pending.token = token;
     pending.localSystemId = m_localSystemId;
     pending.localComponentId = m_localComponentId;
     pending.timeoutMs = qBound(1, requestedTimeout, MaximumExactTimeoutMs);
-    pending.deadlineMs = m_exactClock.elapsed() + pending.timeoutMs;
+    const int maximumLifetimeMs = qBound(
+        1, requestedMaximumLifetime, MaximumExactTimeoutMs);
+    pending.absoluteDeadlineMs = submittedAtMs + maximumLifetimeMs;
+    pending.deadlineMs = qMin(
+        submittedAtMs + pending.timeoutMs, pending.absoluteDeadlineMs);
     pending.frameAttempted = true;
 
     // Install the waiter before the writer.  Test transports and in-process
@@ -816,6 +824,17 @@ bool VehicleCommandService::observeExactAcknowledgement(
             acknowledgement.target_system,
             acknowledgement.target_component,
             pending->localSystemId, pending->localComponentId)) {
+        const qint64 acknowledgedAtMs = m_exactClock.elapsed();
+        if (acknowledgedAtMs >= pending->absoluteDeadlineMs) {
+            finishExactCommand(
+                transactionId,
+                ExactTerminalResult::TimedOutOutcomeUncertain,
+                -1, 255, 0, 0, 0,
+                QStringLiteral(
+                    "The exact command maximum lifetime expired; command outcome is uncertain."),
+                true);
+            return true;
+        }
         const SwarmVehicleInstanceLease acknowledgedLease =
             pending->token.lease;
         if (!leaseIsCurrent(acknowledgedLease)) {
@@ -837,7 +856,9 @@ bool VehicleCommandService::observeExactAcknowledgement(
             return true;
         }
         if (acknowledgement.result == MAV_RESULT_IN_PROGRESS) {
-            pending->deadlineMs = m_exactClock.elapsed() + pending->timeoutMs;
+            pending->deadlineMs = qMin(
+                acknowledgedAtMs + pending->timeoutMs,
+                pending->absoluteDeadlineMs);
             const ExactCommandToken token = pending->token;
             scheduleExactDeadline();
             emit exactCommandProgress(
@@ -959,7 +980,8 @@ void VehicleCommandService::scheduleExactDeadline()
     qint64 earliest = std::numeric_limits<qint64>::max();
     for (const PendingExactCommand &pending
          : std::as_const(m_pendingExactCommands)) {
-        earliest = qMin(earliest, pending.deadlineMs);
+        earliest = qMin(
+            earliest, qMin(pending.deadlineMs, pending.absoluteDeadlineMs));
     }
     const qint64 remaining = qMax<qint64>(
         1, earliest - m_exactClock.elapsed());
@@ -997,12 +1019,19 @@ void VehicleCommandService::handleExactDeadline()
     std::sort(expired.begin(), expired.end());
     for (quint64 transactionId : expired) {
         if (m_pendingExactCommands.contains(transactionId)) {
+            const PendingExactCommand pending =
+                m_pendingExactCommands.value(transactionId);
+            const bool maximumLifetimeExpired =
+                pending.absoluteDeadlineMs <= now;
             finishExactCommand(
                 transactionId,
                 ExactTerminalResult::TimedOutOutcomeUncertain,
                 -1, 255, 0, 0, 0,
-                QStringLiteral(
-                    "The acknowledgement deadline expired; command outcome is uncertain."),
+                maximumLifetimeExpired
+                    ? QStringLiteral(
+                        "The exact command maximum lifetime expired; command outcome is uncertain.")
+                    : QStringLiteral(
+                        "The acknowledgement deadline expired; command outcome is uncertain."),
                 true);
         }
     }

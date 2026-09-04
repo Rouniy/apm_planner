@@ -73,6 +73,10 @@ public:
         std::array<float, 7> params{};
         // Values <= 0 select DefaultExactCommandTimeoutMs.
         int acknowledgementTimeoutMs = 0;
+        // Values <= 0 select DefaultExactCommandMaximumLifetimeMs. This
+        // absolute lifetime is captured at submission and is never extended
+        // by MAV_RESULT_IN_PROGRESS acknowledgements.
+        int maximumLifetimeMs = 0;
     };
 
     struct ExactCommandToken
@@ -143,6 +147,8 @@ public:
     };
 
     static constexpr int DefaultExactCommandTimeoutMs = 2000;
+    static constexpr int DefaultExactCommandMaximumLifetimeMs =
+        10 * 60 * 1000;
     static constexpr int DefaultExactQuarantineMs = 6000;
 
     explicit VehicleCommandService(VehicleTargetManager *targetManager,
@@ -245,6 +251,7 @@ private:
         quint8 localSystemId = 0;
         quint8 localComponentId = 0;
         qint64 deadlineMs = 0;
+        qint64 absoluteDeadlineMs = 0;
         int timeoutMs = DefaultExactCommandTimeoutMs;
         bool frameAttempted = false;
     };

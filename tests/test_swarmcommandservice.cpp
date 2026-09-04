@@ -31,8 +31,9 @@ VehicleEndpoint endpoint(int linkId, int systemId,
 
 mavlink_message_t heartbeat(int systemId,
                             int componentId = MAV_COMP_ID_AUTOPILOT1,
-                            quint32 customMode = 17,
-                            quint8 baseMode = 0)
+                            quint32 customMode = 4,
+                            quint8 baseMode =
+                                MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)
 {
     mavlink_heartbeat_t payload{};
     payload.autopilot = MAV_AUTOPILOT_ARDUPILOTMEGA;
@@ -249,8 +250,13 @@ private slots:
     void requiredTelemetryMustBeFreshBeforeCommands_data();
     void requiredTelemetryMustBeFreshBeforeCommands();
     void positionTargetsUseExactMasksTargetsAndPhysicalLinks();
+    void normalPositionTargetsRejectAnyMemberOutsideExactGuided();
     void positionTargetsRejectNullIslandAfterWireRounding();
     void positionBatchRateLimitUsesInjectedClock();
+    void urgentModeChangeDuringCallbackCannotLeakPhysicalFrame();
+    void urgentDispatchWhileNormalSlotIsPending();
+    void urgentDispatchAdvancesNormalDeadline();
+    void urgentPartialReportIdentifiesEveryTargetExactly();
     void secondTransportFailureReportsPartialBatch();
     void synchronousCancellationCannotInterleaveNewSession();
     void routeCancellationCannotLeakPhysicalFrame();
@@ -576,6 +582,48 @@ positionTargetsUseExactMasksTargetsAndPhysicalLinks()
 }
 
 void SwarmCommandServiceTest::
+normalPositionTargetsRejectAnyMemberOutsideExactGuided()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease lease = fixture.addVehicle(5, 51);
+    const quint8 misleadingGuidedFlags = static_cast<quint8>(
+        MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED);
+    QVERIFY(fixture.registry.observeMessage(
+        5, fixture.sessions.value(5),
+        heartbeat(51, MAV_COMP_ID_AUTOPILOT1, 5,
+                  misleadingGuidedFlags)));
+
+    SwarmCommandMember anyModeMember = member(1, lease);
+    QVERIFY(anyModeMember.flightMode
+            == SwarmCommandMember::FlightModeRequirement::Any);
+    QObject owner;
+    SwarmCommandSessionToken token;
+    QCOMPARE(fixture.service.reserve(
+                 &owner, {anyModeMember}, 10, &token),
+             SwarmCommandService::Result::Reserved);
+
+    SwarmPositionTarget target;
+    target.slotId = 1;
+    target.latitudeDegrees = 35.0;
+    target.longitudeDegrees = 33.0;
+    target.relativeAltitudeM = 25.0F;
+    const SwarmCommandService::BatchReport report =
+        fixture.service.sendPositionTargets(token, {target});
+
+    QCOMPARE(report.result,
+             SwarmCommandService::Result::RejectedBeforeSend);
+    QCOMPARE(report.members.size(), 1);
+    QCOMPARE(report.members.at(0).slotId, 1);
+    QCOMPARE(report.members.at(0).result,
+             SwarmCommandService::Result::RejectedBeforeSend);
+    QCOMPARE(report.members.at(0).framesPlanned, 0);
+    QCOMPARE(report.members.at(0).framesSent, 0);
+    QVERIFY(report.detail.contains(QStringLiteral("Loiter")));
+    QCOMPARE(fixture.writeAttempts, 0);
+    QCOMPARE(fixture.frames.size(), 0);
+}
+
+void SwarmCommandServiceTest::
 positionTargetsRejectNullIslandAfterWireRounding()
 {
     Fixture fixture;
@@ -665,6 +713,225 @@ void SwarmCommandServiceTest::positionBatchRateLimitUsesInjectedClock()
     QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
              SwarmCommandService::Result::SentAll);
     QCOMPARE(fixture.frames.size(), 7);
+}
+
+void SwarmCommandServiceTest::
+urgentModeChangeDuringCallbackCannotLeakPhysicalFrame()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease lease = fixture.addVehicle(3, 31);
+    QObject owner;
+    SwarmCommandSessionToken token;
+    // Position-target safety is a property of the dispatch API, even if a
+    // caller omitted the redundant session-level mode requirement.
+    QCOMPARE(fixture.service.reserve(
+                 &owner, {member(1, lease)}, 4, &token),
+             SwarmCommandService::Result::Reserved);
+
+    const quint8 misleadingGuidedFlags = static_cast<quint8>(
+        MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED);
+    int routeCalls = 0;
+    bool modeUpdateAccepted = false;
+    fixture.routeHook = [&](const SwarmVehicleInstanceLease &, QString *error) {
+        ++routeCalls;
+        if (error) {
+            error->clear();
+        }
+        if (routeCalls == 2) {
+            // The first call belongs to whole-session preflight. The second
+            // is the last injected callback before this target's write.
+            modeUpdateAccepted = fixture.registry.observeMessage(
+                3, fixture.sessions.value(3),
+                heartbeat(31, MAV_COMP_ID_AUTOPILOT1, 5,
+                          misleadingGuidedFlags));
+        }
+        return true;
+    };
+
+    SwarmPositionTarget target;
+    target.slotId = 1;
+    target.latitudeDegrees = 35.0;
+    target.longitudeDegrees = 33.0;
+    target.relativeAltitudeM = 20.0F;
+    const SwarmCommandService::BatchReport report =
+        fixture.service.sendPositionTargets(
+            token, {target},
+            SwarmCommandService::PositionTargetPriority::Urgent);
+
+    QCOMPARE(routeCalls, 2);
+    QVERIFY(modeUpdateAccepted);
+    QCOMPARE(report.result,
+             SwarmCommandService::Result::RejectedBeforeSend);
+    QVERIFY(report.detail.contains(QStringLiteral("Loiter")));
+    QCOMPARE(fixture.writeAttempts, 0);
+    QCOMPARE(fixture.frames.size(), 0);
+
+    // A rejected physical-write attempt still consumed the urgent slot. This
+    // prevents a caller from turning callback failures into an unbounded
+    // immediate retry loop once GUIDED is restored.
+    QVERIFY(fixture.registry.observeMessage(
+        3, fixture.sessions.value(3),
+        heartbeat(31, MAV_COMP_ID_AUTOPILOT1, 4,
+                  MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)));
+    fixture.routeHook = {};
+    QCOMPARE(fixture.service.sendPositionTargets(
+                 token, {target},
+                 SwarmCommandService::PositionTargetPriority::Urgent).result,
+             SwarmCommandService::Result::RateLimited);
+    QCOMPARE(fixture.writeAttempts, 0);
+}
+
+void SwarmCommandServiceTest::urgentDispatchWhileNormalSlotIsPending()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease lease = fixture.addVehicle(5, 51);
+    QObject owner;
+    SwarmCommandSessionToken token;
+    QCOMPARE(fixture.service.reserve(
+                 &owner, {member(1, lease)}, 4, &token),
+             SwarmCommandService::Result::Reserved);
+
+    SwarmPositionTarget target;
+    target.slotId = 1;
+    target.latitudeDegrees = 35.0;
+    target.longitudeDegrees = 33.0;
+    target.relativeAltitudeM = 25.0F;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+
+    fixture.serviceNowMs = 1001;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::RateLimited);
+    QCOMPARE(fixture.service.sendPositionTargets(
+                 token, {target},
+                 SwarmCommandService::PositionTargetPriority::Urgent).result,
+             SwarmCommandService::Result::SentAll);
+    QCOMPARE(fixture.frames.size(), 2);
+
+    fixture.serviceNowMs = 1098;
+    QCOMPARE(fixture.service.sendPositionTargets(
+                 token, {target},
+                 SwarmCommandService::PositionTargetPriority::Urgent).result,
+             SwarmCommandService::Result::RateLimited);
+    QCOMPARE(fixture.frames.size(), 2);
+
+    QCOMPARE(fixture.service.sendPositionTargets(
+                 token, {target},
+                 static_cast<SwarmCommandService::PositionTargetPriority>(
+                     99)).result,
+             SwarmCommandService::Result::InvalidPlan);
+    QCOMPARE(fixture.frames.size(), 2);
+}
+
+void SwarmCommandServiceTest::urgentDispatchAdvancesNormalDeadline()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease lease = fixture.addVehicle(5, 51);
+    QObject owner;
+    SwarmCommandSessionToken token;
+    QCOMPARE(fixture.service.reserve(
+                 &owner, {member(1, lease)}, 4, &token),
+             SwarmCommandService::Result::Reserved);
+
+    SwarmPositionTarget target;
+    target.slotId = 1;
+    target.latitudeDegrees = 35.0;
+    target.longitudeDegrees = 33.0;
+    target.relativeAltitudeM = 25.0F;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+
+    // The first normal slot would have reopened at 1250 ms. Urgent is
+    // independent and accepted at 1248 ms, then moves normal to 1498 ms.
+    fixture.serviceNowMs = 1248;
+    QCOMPARE(fixture.service.sendPositionTargets(
+                 token, {target},
+                 SwarmCommandService::PositionTargetPriority::Urgent).result,
+             SwarmCommandService::Result::SentAll);
+
+    fixture.serviceNowMs = 1495;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::RateLimited);
+    fixture.serviceNowMs = 1496;
+    QCOMPARE(fixture.service.sendPositionTargets(token, {target}).result,
+             SwarmCommandService::Result::SentAll);
+    QCOMPARE(fixture.frames.size(), 3);
+}
+
+void SwarmCommandServiceTest::
+urgentPartialReportIdentifiesEveryTargetExactly()
+{
+    Fixture fixture;
+    const SwarmVehicleInstanceLease first = fixture.addVehicle(3, 31);
+    const SwarmVehicleInstanceLease second = fixture.addVehicle(6, 61);
+    const SwarmVehicleInstanceLease third = fixture.addVehicle(9, 91);
+    QObject owner;
+    SwarmCommandSessionToken token;
+    QCOMPARE(fixture.service.reserve(
+                 &owner,
+                 {member(1, first), member(2, second), member(3, third)},
+                 4, &token),
+             SwarmCommandService::Result::Reserved);
+
+    const quint8 misleadingGuidedFlags = static_cast<quint8>(
+        MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED);
+    bool firstTargetWritten = false;
+    bool secondModeUpdateAccepted = false;
+    fixture.onWrite = [&]() { firstTargetWritten = true; };
+    fixture.routeHook = [&](const SwarmVehicleInstanceLease &candidate,
+                            QString *error) {
+        if (error) {
+            error->clear();
+        }
+        if (firstTargetWritten && candidate.sameInstance(second)
+            && !secondModeUpdateAccepted) {
+            secondModeUpdateAccepted = fixture.registry.observeMessage(
+                6, fixture.sessions.value(6),
+                heartbeat(61, MAV_COMP_ID_AUTOPILOT1, 5,
+                          misleadingGuidedFlags));
+        }
+        return true;
+    };
+
+    SwarmPositionTarget firstTarget;
+    firstTarget.slotId = 1;
+    firstTarget.latitudeDegrees = 35.0;
+    firstTarget.longitudeDegrees = 33.0;
+    firstTarget.relativeAltitudeM = 20.0F;
+    SwarmPositionTarget secondTarget = firstTarget;
+    secondTarget.slotId = 2;
+    SwarmPositionTarget thirdTarget = firstTarget;
+    thirdTarget.slotId = 3;
+    const SwarmCommandService::BatchReport report =
+        fixture.service.sendPositionTargets(
+            token, {thirdTarget, firstTarget, secondTarget},
+            SwarmCommandService::PositionTargetPriority::Urgent);
+
+    QVERIFY(secondModeUpdateAccepted);
+    QCOMPARE(report.result, SwarmCommandService::Result::PartialSend);
+    QCOMPARE(report.members.size(), 3);
+    QCOMPARE(report.members.at(0).slotId, 1);
+    QCOMPARE(report.members.at(0).framesPlanned, 1);
+    QCOMPARE(report.members.at(0).framesSent, 1);
+    QCOMPARE(report.members.at(0).result,
+             SwarmCommandService::Result::SentAll);
+    QCOMPARE(report.members.at(1).slotId, 2);
+    QCOMPARE(report.members.at(1).framesPlanned, 1);
+    QCOMPARE(report.members.at(1).framesSent, 0);
+    QCOMPARE(report.members.at(1).result,
+             SwarmCommandService::Result::RejectedBeforeSend);
+    QVERIFY(report.members.at(1).detail.contains(QStringLiteral("Loiter")));
+    QCOMPARE(report.members.at(2).slotId, 3);
+    QCOMPARE(report.members.at(2).framesPlanned, 1);
+    QCOMPARE(report.members.at(2).framesSent, 0);
+    QCOMPARE(report.members.at(2).result,
+             SwarmCommandService::Result::RejectedBeforeSend);
+    QVERIFY(report.members.at(2).detail.contains(
+        QStringLiteral("Not attempted")));
+    QCOMPARE(report.detail, report.members.at(1).detail);
+    QCOMPARE(fixture.writeAttempts, 1);
+    QCOMPARE(fixture.frames.size(), 1);
+    QCOMPARE(fixture.frames.at(0).linkId, 3);
 }
 
 void SwarmCommandServiceTest::secondTransportFailureReportsPartialBatch()

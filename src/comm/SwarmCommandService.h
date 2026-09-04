@@ -80,6 +80,12 @@ class SwarmCommandService final : public QObject
     Q_OBJECT
 
 public:
+    enum class PositionTargetPriority {
+        Normal,
+        Urgent
+    };
+    Q_ENUM(PositionTargetPriority)
+
     enum class Result {
         Reserved,
         SentAll,
@@ -158,6 +164,10 @@ public:
     BatchReport sendPositionTargets(
         const SwarmCommandSessionToken &token,
         const QVector<SwarmPositionTarget> &targets);
+    BatchReport sendPositionTargets(
+        const SwarmCommandSessionToken &token,
+        const QVector<SwarmPositionTarget> &targets,
+        PositionTargetPriority priority);
 
     bool hasActiveSession() const noexcept;
     quint64 activeSessionId() const noexcept { return m_active.id; }
@@ -166,6 +176,12 @@ signals:
     void sessionCancelled(qulonglong sessionId, QString reason);
 
 private:
+    enum class SendKind {
+        StreamRequest,
+        NormalPositionTarget,
+        UrgentPositionTarget
+    };
+
     struct ActiveSession
     {
         quint64 id = 0;
@@ -173,6 +189,7 @@ private:
         QVector<SwarmCommandMember> members;
         int maximumBatchHz = 0;
         qint64 nextBatchDueMs = -1;
+        qint64 nextUrgentBatchDueMs = -1;
         qint64 nextStreamRequestDueMs = -1;
         QMetaObject::Connection ownerDestroyed;
     };
@@ -190,6 +207,7 @@ private:
     bool tokenIsCurrent(const SwarmCommandSessionToken &token) const;
     bool validateMember(const SwarmCommandMember &member,
                         bool requireTelemetryFields,
+                        bool requireExactGuided,
                         Result *failure,
                         QString *error) const;
     bool validateAll(QList<SwarmTelemetrySnapshot> *snapshots,
@@ -205,7 +223,7 @@ private:
     BatchReport sendMessages(
         const SwarmCommandSessionToken &token,
         const QVector<QPair<SwarmCommandMember, mavlink_message_t>> &messages,
-        bool rateLimited,
+        SendKind kind,
         bool requireTelemetryFields);
     BatchReport requestStreams(
         const SwarmCommandSessionToken &token,

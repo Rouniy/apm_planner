@@ -25,6 +25,26 @@ constexpr quint16 CleanPositionOnlyMask = CleanPositionVelocityMask
     | POSITION_TARGET_TYPEMASK_VX_IGNORE
     | POSITION_TARGET_TYPEMASK_VY_IGNORE
     | POSITION_TARGET_TYPEMASK_VZ_IGNORE;
+constexpr qint64 UrgentBatchIntervalMs = 100;
+constexpr qint64 StreamRequestIntervalMs = 1000;
+constexpr qint64 SchedulerJitterToleranceMs = 2;
+
+qint64 saturatedAdd(qint64 value, qint64 increment)
+{
+    return value > std::numeric_limits<qint64>::max() - increment
+        ? std::numeric_limits<qint64>::max()
+        : value + increment;
+}
+
+qint64 nextLogicalDeadline(
+    qint64 current, qint64 nextDue, qint64 minimumInterval)
+{
+    const qint64 deadlineAfterOne = nextDue < 0
+        ? -1 : saturatedAdd(nextDue, minimumInterval);
+    return nextDue < 0 || current >= deadlineAfterOne
+        ? saturatedAdd(current, minimumInterval)
+        : deadlineAfterOne;
+}
 
 } // namespace
 
@@ -206,7 +226,8 @@ SwarmCommandService::Result SwarmCommandService::reserve(
         // only exact identity and heartbeat; operation preflight applies the
         // full field requirements.
         Result memberFailure = Result::StaleLease;
-        if (!validateMember(member, false, &memberFailure, &memberError)) {
+        if (!validateMember(member, false, false,
+                            &memberFailure, &memberError)) {
             if (error) {
                 *error = memberError;
             }
@@ -218,7 +239,8 @@ SwarmCommandService::Result SwarmCommandService::reserve(
             }
             return Result::UnsafeRoute;
         }
-        if (!validateMember(member, false, &memberFailure, &memberError)) {
+        if (!validateMember(member, false, false,
+                            &memberFailure, &memberError)) {
             if (error) {
                 *error = memberError;
             }
@@ -257,6 +279,7 @@ SwarmCommandService::Result SwarmCommandService::reserve(
     m_active.members = members;
     m_active.maximumBatchHz = maximumBatchHz;
     m_active.nextBatchDueMs = -1;
+    m_active.nextUrgentBatchDueMs = -1;
     m_active.nextStreamRequestDueMs = -1;
     const quint64 capturedId = m_active.id;
     m_active.ownerDestroyed = connect(guardedOwner.data(), &QObject::destroyed, this,
@@ -331,21 +354,34 @@ SwarmCommandService::BatchReport SwarmCommandService::requestStreams(
                     *member, MAV_DATA_STREAM_EXTRA1, rateHz)));
         }
     }
-    return sendMessages(token, messages, false, false);
+    return sendMessages(
+        token, messages, SendKind::StreamRequest, false);
 }
 
 SwarmCommandService::BatchReport SwarmCommandService::sendPositionTargets(
     const SwarmCommandSessionToken &token,
     const QVector<SwarmPositionTarget> &targets)
 {
+    return sendPositionTargets(
+        token, targets, PositionTargetPriority::Normal);
+}
+
+SwarmCommandService::BatchReport SwarmCommandService::sendPositionTargets(
+    const SwarmCommandSessionToken &token,
+    const QVector<SwarmPositionTarget> &targets,
+    PositionTargetPriority priority)
+{
     if (!tokenIsCurrent(token)) {
         return preflightReport(token.id, Result::InvalidSession,
                                QStringLiteral("The swarm session is no longer active."),
                                false);
     }
-    if (targets.isEmpty()) {
+    if (targets.isEmpty()
+        || (priority != PositionTargetPriority::Normal
+            && priority != PositionTargetPriority::Urgent)) {
         return preflightReport(token.id, Result::InvalidPlan,
-                               QStringLiteral("No position targets were supplied."));
+                               QStringLiteral(
+                                   "The position-target dispatch is invalid."));
     }
 
     QVector<SwarmPositionTarget> orderedTargets = targets;
@@ -372,7 +408,10 @@ SwarmCommandService::BatchReport SwarmCommandService::sendPositionTargets(
         unique.insert(target.slotId);
         messages.append(qMakePair(*member, positionMessage(*member, target)));
     }
-    return sendMessages(token, messages, true, true);
+    const SendKind kind = priority == PositionTargetPriority::Urgent
+        ? SendKind::UrgentPositionTarget
+        : SendKind::NormalPositionTarget;
+    return sendMessages(token, messages, kind, true);
 }
 
 bool SwarmCommandService::hasActiveSession() const noexcept
@@ -488,7 +527,7 @@ bool SwarmCommandService::tokenIsCurrent(
 
 bool SwarmCommandService::validateMember(
     const SwarmCommandMember &member, bool requireTelemetryFields,
-    Result *failure, QString *error) const
+    bool requireExactGuided, Result *failure, QString *error) const
 {
     if (failure) {
         *failure = Result::StaleLease;
@@ -510,8 +549,9 @@ bool SwarmCommandService::validateMember(
         return false;
     }
     const SwarmTelemetryRequirements &required = member.required;
-    if (member.flightMode
-            == SwarmCommandMember::FlightModeRequirement::ArduPilotGuided
+    if ((requireExactGuided
+         || member.flightMode
+             == SwarmCommandMember::FlightModeRequirement::ArduPilotGuided)
         && !SwarmFlightMode::isExactGuided(snapshot)) {
         if (failure) {
             *failure = Result::RejectedBeforeSend;
@@ -630,7 +670,7 @@ bool SwarmCommandService::validateAll(
     for (const SwarmCommandMember &member : members) {
         QString memberError;
         Result memberFailure = Result::StaleLease;
-        if (!validateMember(member, requireTelemetryFields,
+        if (!validateMember(member, requireTelemetryFields, false,
                             &memberFailure, &memberError)) {
             if (error) {
                 *error = memberError;
@@ -656,7 +696,7 @@ bool SwarmCommandService::validateAll(
             }
             return false;
         }
-        if (!validateMember(member, requireTelemetryFields,
+        if (!validateMember(member, requireTelemetryFields, false,
                             &memberFailure, &memberError)) {
             if (error) {
                 *error = memberError;
@@ -739,7 +779,7 @@ SwarmCommandService::BatchReport SwarmCommandService::preflightReport(
 SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
     const SwarmCommandSessionToken &token,
     const QVector<QPair<SwarmCommandMember, mavlink_message_t>> &messages,
-    bool rateLimited, bool requireTelemetryFields)
+    SendKind kind, bool requireTelemetryFields)
 {
     if (!tokenIsCurrent(token)) {
         return preflightReport(token.id, Result::InvalidSession,
@@ -762,22 +802,42 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
         return preflightReport(
             token.id, validationFailure, error);
     }
+    const bool requireExactGuided = kind != SendKind::StreamRequest;
+    if (requireExactGuided) {
+        // A session may also contain a non-commanded ground leader. Require
+        // GUIDED only for members that will receive a position setpoint, but
+        // establish that invariant for the complete target batch before any
+        // rate slot is consumed or physical write is attempted.
+        for (const auto &message : messages) {
+            if (!validateMember(message.first, requireTelemetryFields, true,
+                                &validationFailure, &error)) {
+                return preflightReport(
+                    token.id, validationFailure, error);
+            }
+        }
+    }
     const qint64 current = nowMs();
-    const qint64 nextDue = rateLimited
-        ? m_active.nextBatchDueMs : m_active.nextStreamRequestDueMs;
-    const qint64 minimumInterval = rateLimited
-        ? (1000 + m_active.maximumBatchHz - 1) / m_active.maximumBatchHz
-        : 1000;
+    const qint64 normalInterval =
+        (1000 + m_active.maximumBatchHz - 1) / m_active.maximumBatchHz;
+    qint64 nextDue = -1;
+    qint64 minimumInterval = normalInterval;
+    switch (kind) {
+    case SendKind::StreamRequest:
+        nextDue = m_active.nextStreamRequestDueMs;
+        minimumInterval = StreamRequestIntervalMs;
+        break;
+    case SendKind::NormalPositionTarget:
+        nextDue = m_active.nextBatchDueMs;
+        break;
+    case SendKind::UrgentPositionTarget:
+        nextDue = m_active.nextUrgentBatchDueMs;
+        minimumInterval = UrgentBatchIntervalMs;
+        break;
+    }
     // QTimer commonly delivers a nominal 100 ms tick one or two milliseconds
     // early.  Anchor accepted writes to a logical deadline instead of the
     // early wall-clock sample: this preserves the long-term maximum rate
     // without dropping an entire 10 Hz Waypoint/Follow Leader batch.
-    constexpr qint64 SchedulerJitterToleranceMs = 2;
-    const auto saturatedAdd = [](qint64 value, qint64 increment) {
-        return value > std::numeric_limits<qint64>::max() - increment
-            ? std::numeric_limits<qint64>::max()
-            : value + increment;
-    };
     if (nextDue >= 0
         && saturatedAdd(current, SchedulerJitterToleranceMs) < nextDue) {
         return preflightReport(
@@ -787,16 +847,31 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
     // Consume the rate slot before the first callback/physical write. A
     // partially sent batch must not be retried as an unbounded burst.
     if (m_active.id == capturedId) {
-        const qint64 deadlineAfterOne = nextDue < 0
-            ? -1 : saturatedAdd(nextDue, minimumInterval);
-        const qint64 nextLogicalDue = nextDue < 0
-            || current >= deadlineAfterOne
-            ? saturatedAdd(current, minimumInterval)
-            : deadlineAfterOne;
-        if (rateLimited) {
-            m_active.nextBatchDueMs = nextLogicalDue;
-        } else {
+        const qint64 nextLogicalDue = nextLogicalDeadline(
+            current, nextDue, minimumInterval);
+        switch (kind) {
+        case SendKind::StreamRequest:
             m_active.nextStreamRequestDueMs = nextLogicalDue;
+            break;
+        case SendKind::NormalPositionTarget:
+            m_active.nextBatchDueMs = nextLogicalDue;
+            break;
+        case SendKind::UrgentPositionTarget: {
+            m_active.nextUrgentBatchDueMs = nextLogicalDue;
+            // Urgent traffic has an independent 10 Hz admission gate so it
+            // can preempt a pending normal slot. Once admitted, hold normal
+            // traffic for its configured interval after the logical urgent
+            // send time, preventing repeated urgent/normal burst pairs.
+            const qint64 deadlineAfterOne = nextDue < 0
+                ? -1 : saturatedAdd(nextDue, minimumInterval);
+            const qint64 logicalSendTime = nextDue < 0
+                || current >= deadlineAfterOne ? current : nextDue;
+            const qint64 normalAfterUrgent = saturatedAdd(
+                logicalSendTime, normalInterval);
+            m_active.nextBatchDueMs = std::max(
+                m_active.nextBatchDueMs, normalAfterUrgent);
+            break;
+        }
         }
     }
 
@@ -828,27 +903,40 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
                 return candidate.slotId == member.slotId;
             });
         Q_ASSERT(item != report.members.end());
-        if (!tokenIsCurrent(token)) {
-            item->result = Result::RejectedBeforeSend;
-            item->detail = error.isEmpty()
-                ? QStringLiteral("The swarm session changed during transmission.")
-                : error;
+        const auto rejectBeforeSend = [&](Result memberResult,
+                                          const QString &detail) {
+            item->result = memberResult;
+            item->detail = detail;
             report.result = sentCount == 0
-                ? Result::RejectedBeforeSend : Result::PartialSend;
-            report.detail = item->detail;
+                ? memberResult : Result::PartialSend;
+            report.detail = detail;
+        };
+        if (!tokenIsCurrent(token)) {
+            rejectBeforeSend(
+                Result::RejectedBeforeSend, error.isEmpty()
+                ? QStringLiteral("The swarm session changed during transmission.")
+                : error);
             break;
         }
         Result memberFailure = Result::StaleLease;
         if (!validateMember(member, requireTelemetryFields,
-                            &memberFailure, &error)
-            || !validateRoute(member, &error) || !transmitter) {
-            item->result = Result::RejectedBeforeSend;
-            item->detail = error.isEmpty()
-                ? QStringLiteral("The exact vehicle route changed before transmission.")
-                : error;
-            report.result = sentCount == 0
-                ? Result::RejectedBeforeSend : Result::PartialSend;
-            report.detail = item->detail;
+                            requireExactGuided,
+                            &memberFailure, &error)) {
+            rejectBeforeSend(memberFailure, error);
+            break;
+        }
+        if (!validateRoute(member, &error)) {
+            rejectBeforeSend(
+                Result::UnsafeRoute, error.isEmpty()
+                    ? QStringLiteral(
+                        "The exact vehicle route changed before transmission.")
+                    : error);
+            break;
+        }
+        if (!transmitter) {
+            rejectBeforeSend(
+                Result::TransportUnavailable,
+                QStringLiteral("Exact MAVLink transmission is unavailable."));
             break;
         }
         // RouteValidator is an injected callback and may synchronously retire
@@ -857,20 +945,32 @@ SwarmCommandService::BatchReport SwarmCommandService::sendMessages(
         QString postRouteError;
         Result postRouteFailure = Result::StaleLease;
         if (!validateMember(member, requireTelemetryFields,
-                            &postRouteFailure, &postRouteError)
-            || !tokenIsCurrent(token)
+                            requireExactGuided,
+                            &postRouteFailure, &postRouteError)) {
+            rejectBeforeSend(postRouteFailure, postRouteError);
+            break;
+        }
+        if (!tokenIsCurrent(token)) {
+            rejectBeforeSend(
+                Result::RejectedBeforeSend,
+                QStringLiteral(
+                    "The swarm session changed during route validation."));
+            break;
+        }
+        if (!m_registry
             || m_registry->currentLinkSessionEpoch(
                    member.lease.endpoint.linkId)
-                != member.lease.linkSessionEpoch
-            || !transmitter) {
-            item->result = Result::RejectedBeforeSend;
-            item->detail = postRouteError.isEmpty()
-                ? QStringLiteral(
-                    "The exact vehicle session changed during route validation.")
-                : postRouteError;
-            report.result = sentCount == 0
-                ? Result::RejectedBeforeSend : Result::PartialSend;
-            report.detail = item->detail;
+                != member.lease.linkSessionEpoch) {
+            rejectBeforeSend(
+                Result::StaleLease,
+                QStringLiteral(
+                    "The exact vehicle session changed during route validation."));
+            break;
+        }
+        if (!transmitter) {
+            rejectBeforeSend(
+                Result::TransportUnavailable,
+                QStringLiteral("Exact MAVLink transmission is unavailable."));
             break;
         }
         const ExactLinkTransmitter::SendResult sent =

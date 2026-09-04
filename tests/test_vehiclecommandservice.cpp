@@ -83,11 +83,12 @@ bool containsLease(
 }
 
 VehicleCommandService::ExactCommandRequest exactRequest(
-    MAV_CMD command, int timeoutMs = 0)
+    MAV_CMD command, int timeoutMs = 0, int maximumLifetimeMs = 0)
 {
     VehicleCommandService::ExactCommandRequest request;
     request.command = command;
     request.acknowledgementTimeoutMs = timeoutMs;
+    request.maximumLifetimeMs = maximumLifetimeMs;
     return request;
 }
 
@@ -114,6 +115,8 @@ private slots:
     void targetChangeInvalidatesPendingAcknowledgement();
     void exactReservationsAllowParallelDuplicateIdsAndOutOfOrderAcks();
     void exactAcknowledgementsAcceptZeroTargetsAndExtendInProgress();
+    void exactProgressExtendsInactivityWithinAbsoluteLifetime();
+    void exactContinuousProgressCannotExtendAbsoluteLifetime();
     void exactWaiterExistsBeforeSynchronousWriterAcknowledgement();
     void exactEndpointReservationAndPendingCommandAreExclusive();
     void exactRouteCallbackRetirementFailsBeforeWriter();
@@ -549,6 +552,121 @@ exactAcknowledgementsAcceptZeroTargetsAndExtendInProgress()
     QCOMPARE(finished.count(), 2);
     QCOMPARE(reportAt(finished, 1).acknowledgementTargetSystem, 250);
     QCOMPARE(reportAt(finished, 1).acknowledgementTargetComponent, 190);
+}
+
+void VehicleCommandServiceTest::
+exactProgressExtendsInactivityWithinAbsoluteLifetime()
+{
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    VehicleCommandService service(&targets, &transmitter);
+    service.setLocalIdentity(250, 190);
+    const SwarmVehicleInstanceLease lease = swarmLease(27, 71, 100);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+
+    QObject owner;
+    VehicleCommandService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QSignalSpy progress(
+        &service, &VehicleCommandService::exactCommandProgress);
+    QSignalSpy finished(
+        &service, &VehicleCommandService::exactCommandFinished);
+
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease,
+                 exactRequest(MAV_CMD_DO_CHANGE_SPEED, 80, 300)),
+             VehicleCommandService::ExactSubmitResult::Started);
+    QTest::qWait(50);
+    service.observeMessage(
+        27, commandAck(71, 100, MAV_CMD_DO_CHANGE_SPEED,
+                       MAV_RESULT_IN_PROGRESS, 250, 190, 42));
+    QCOMPARE(progress.count(), 1);
+    QCOMPARE(finished.count(), 0);
+
+    // This is beyond the original 80 ms inactivity deadline but remains
+    // inside both the renewed inactivity window and immutable 300 ms bound.
+    QTest::qWait(50);
+    QCOMPARE(finished.count(), 0);
+    service.observeMessage(
+        27, commandAck(71, 100, MAV_CMD_DO_CHANGE_SPEED,
+                       MAV_RESULT_ACCEPTED));
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(reportAt(finished, 0).terminalResult,
+             VehicleCommandService::ExactTerminalResult::
+                 AcknowledgedAccepted);
+}
+
+void VehicleCommandServiceTest::
+exactContinuousProgressCannotExtendAbsoluteLifetime()
+{
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    VehicleCommandService service(&targets, &transmitter);
+    service.setLocalIdentity(250, 190);
+    service.setExactQuarantineForTesting(500);
+    const SwarmVehicleInstanceLease lease = swarmLease(28, 72, 101);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+
+    QObject owner;
+    VehicleCommandService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QSignalSpy progress(
+        &service, &VehicleCommandService::exactCommandProgress);
+    QSignalSpy finished(
+        &service, &VehicleCommandService::exactCommandFinished);
+    QSignalSpy released(
+        &service, &VehicleCommandService::exactReservationReleased);
+
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease,
+                 exactRequest(MAV_CMD_NAV_GUIDED_ENABLE, 50, 160)),
+             VehicleCommandService::ExactSubmitResult::Started);
+    QVERIFY(service.releaseExactReservation(reservation));
+    QCOMPARE(released.count(), 0);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (finished.isEmpty() && elapsed.elapsed() < 400) {
+        QTest::qWait(15);
+        if (finished.isEmpty()) {
+            service.observeMessage(
+                28, commandAck(72, 101, MAV_CMD_NAV_GUIDED_ENABLE,
+                               MAV_RESULT_IN_PROGRESS, 250, 190, 50));
+        }
+    }
+
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(progress.count() >= 2);
+    const VehicleCommandService::ExactCommandReport report =
+        reportAt(finished, 0);
+    QCOMPARE(report.terminalResult,
+             VehicleCommandService::ExactTerminalResult::
+                 TimedOutOutcomeUncertain);
+    QVERIFY(report.frameAttempted);
+    QVERIFY(report.description.contains(
+        QStringLiteral("maximum lifetime"), Qt::CaseInsensitive));
+    QVERIFY(service.isExactCommandQuarantined(
+        lease, MAV_CMD_NAV_GUIDED_ENABLE));
+    QCOMPARE(released.count(), 1);
 }
 
 void VehicleCommandServiceTest::
