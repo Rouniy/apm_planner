@@ -265,6 +265,8 @@ set(SOURCES
     src/comm/Esp8266ParameterClient.h
     src/comm/ExactLinkTransmitter.cpp
     src/comm/ExactLinkTransmitter.h
+    src/comm/GuidedTargetService.cpp
+    src/comm/GuidedTargetService.h
     src/comm/MavFtpProtocol.cpp
     src/comm/MavFtpProtocol.h
     src/comm/MavFtpService.cpp
@@ -618,6 +620,9 @@ set(SOURCES
     src/ui/DeviceOperationsWindow.cpp
     src/ui/DeviceOperationsWindow.h
     src/ui/DeviceOperationsWindowIntegration.cpp
+    src/ui/ExternalGuidedWindow.cpp
+    src/ui/ExternalGuidedWindow.h
+    src/ui/ExternalGuidedWindowIntegration.cpp
     src/ui/MissionPlannerToolsMenu.cpp
     src/ui/MissionPlannerToolsMenu.h
     src/ui/Terrain3DWindow.cpp
@@ -627,6 +632,8 @@ set(SOURCES
     src/ui/terrain/Terrain3DCore.h
     src/ui/terrain/Terrain3DTelemetrySource.cpp
     src/ui/terrain/Terrain3DTelemetrySource.h
+    src/ui/tools/ExternalGuidedFile.cpp
+    src/ui/tools/ExternalGuidedFile.h
     src/ui/QGCMAVLinkLogPlayer.cc
     src/ui/QGCMAVLinkLogPlayer.h
     src/ui/QGCMAVLinkLogPlayer.ui
@@ -2282,6 +2289,84 @@ if(BUILD_TESTING)
     add_test(NAME configadvancedview_tests
         COMMAND configadvancedview_tests)
     set_tests_properties(configadvancedview_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(externalguidedfile_tests
+        tests/test_externalguidedfile.cpp
+        src/ui/tools/ExternalGuidedFile.cpp
+        src/ui/tools/ExternalGuidedFile.h
+    )
+    target_include_directories(externalguidedfile_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(externalguidedfile_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME externalguidedfile_tests
+        COMMAND externalguidedfile_tests)
+
+    add_executable(guidedtargetservice_tests
+        tests/test_guidedtargetservice.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/GuidedTargetService.cpp
+        src/comm/GuidedTargetService.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+    )
+    target_include_directories(guidedtargetservice_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(guidedtargetservice_tests PRIVATE
+        Qt::Core
+        Qt::Test
+    )
+    add_test(NAME guidedtargetservice_tests
+        COMMAND guidedtargetservice_tests)
+
+    add_executable(externalguidedwindow_tests
+        tests/test_externalguidedwindow.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/ExactLinkTransmitter.h
+        src/comm/GuidedTargetService.cpp
+        src/comm/GuidedTargetService.h
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/MAVLinkFrameParser.h
+        src/comm/VehicleCommandService.cpp
+        src/comm/VehicleCommandService.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/comm/VehicleTargetManager.cpp
+        src/comm/VehicleTargetManager.h
+        src/ui/ExternalGuidedWindow.cpp
+        src/ui/ExternalGuidedWindow.h
+        src/ui/tools/ExternalGuidedFile.cpp
+        src/ui/tools/ExternalGuidedFile.h
+    )
+    target_include_directories(externalguidedwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(externalguidedwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME externalguidedwindow_tests
+        COMMAND externalguidedwindow_tests)
+    set_tests_properties(externalguidedwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

@@ -43,6 +43,7 @@ This file is part of the APM_PLANNER project
 #include "UASObject.h"
 #include "CompassCalibrationService.h"
 #include "ExactLinkTransmitter.h"
+#include "GuidedTargetService.h"
 #include "MavFtpService.h"
 #include "ParameterService.h"
 #include "QGCUASParamManager.h"
@@ -118,6 +119,10 @@ LinkManager::LinkManager(QObject *parent) :
     m_vehicleCommandService = new VehicleCommandService(
         m_vehicleTargetManager, m_exactLinkTransmitter, this);
     m_vehicleCommandService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
+    m_guidedTargetService = new GuidedTargetService(
+        m_vehicleTargetManager, m_vehicleCommandService, this);
+    m_guidedTargetService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
     m_compassCalibrationService = new CompassCalibrationService(
         m_vehicleTargetManager, m_vehicleCommandService,
@@ -325,6 +330,7 @@ void LinkManager::shutdown()
         const int linkId = it.key();
         LinkInterface *link = it.value();
         m_compassCalibrationService->forgetLink(linkId);
+        m_guidedTargetService->forgetLink(linkId);
         m_vehicleTargetManager->removeLink(linkId);
         m_vehicleCommandService->forgetLink(linkId);
         m_parameterService->forgetLink(linkId);
@@ -601,6 +607,11 @@ RadioStatusMonitor *LinkManager::radioStatusMonitor() const
 VehicleCommandService *LinkManager::vehicleCommandService() const
 {
     return m_vehicleCommandService;
+}
+
+GuidedTargetService *LinkManager::guidedTargetService() const
+{
+    return m_guidedTargetService;
 }
 
 CompassCalibrationService *LinkManager::compassCalibrationService() const
@@ -1091,6 +1102,7 @@ void LinkManager::invalidateLinkSession(int linkId)
     }
     m_mavFtpService->forgetLink(linkId);
     m_compassCalibrationService->forgetLink(linkId);
+    m_guidedTargetService->forgetLink(linkId);
     m_vehicleTargetManager->removeLink(linkId);
     m_vehicleCommandService->forgetLink(linkId);
     m_parameterService->forgetLink(linkId);

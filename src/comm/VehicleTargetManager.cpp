@@ -15,9 +15,13 @@ void VehicleTargetManager::observeHeartbeat(
     int autopilot, int vehicleType)
 {
     if (endpoint.isValid()) {
-        m_heartbeats.insert(endpoint,
-                            HeartbeatSnapshot{m_monotonicClock.elapsed(), armed,
-                                              autopilot, vehicleType});
+        const quint64 generation =
+            m_currentIdentity.sameIdentity(endpoint)
+            ? m_targetGeneration : 0;
+        m_heartbeats.insert(
+            endpoint,
+            HeartbeatSnapshot{m_monotonicClock.elapsed(), generation, armed,
+                              autopilot, vehicleType});
     }
 }
 
@@ -29,6 +33,7 @@ bool VehicleTargetManager::hasFreshHeartbeat(
     }
     const auto observed = m_heartbeats.constFind(lease.endpoint);
     return observed != m_heartbeats.constEnd()
+        && observed->targetGeneration == lease.generation
         && m_monotonicClock.elapsed() - observed->observedMs <= maximumAgeMs;
 }
 
@@ -37,6 +42,7 @@ bool VehicleTargetManager::heartbeatArmed(
 {
     const auto observed = m_heartbeats.constFind(lease.endpoint);
     return lease.isValid() && observed != m_heartbeats.constEnd()
+        && observed->targetGeneration == lease.generation
         && observed->armed;
 }
 
@@ -45,6 +51,7 @@ int VehicleTargetManager::heartbeatAutopilot(
 {
     const auto observed = m_heartbeats.constFind(lease.endpoint);
     return lease.isValid() && observed != m_heartbeats.constEnd()
+        && observed->targetGeneration == lease.generation
         ? observed->autopilot : -1;
 }
 
@@ -53,6 +60,7 @@ int VehicleTargetManager::heartbeatVehicleType(
 {
     const auto observed = m_heartbeats.constFind(lease.endpoint);
     return lease.isValid() && observed != m_heartbeats.constEnd()
+        && observed->targetGeneration == lease.generation
         ? observed->vehicleType : -1;
 }
 

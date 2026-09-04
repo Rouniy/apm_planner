@@ -34,6 +34,7 @@ private slots:
     void visibleComponentsHaveStableNumericOrderAndLabels();
     void observationIsIdempotentAndMetadataCanChange();
     void selectionLeaseRejectsStaleGeneration();
+    void heartbeatFreshnessBelongsToTheSelectedTargetEpoch();
     void nestedSelectionSignalsStayOrderedAndSettleOnce();
     void removingSelectedLinkInvalidatesWithoutFallback();
     void missionPlannerComponentRemainsObservableButIsNotAutoSelected();
@@ -160,6 +161,30 @@ void VehicleTargetManagerTest::selectionLeaseRejectsStaleGeneration()
     QVERIFY(!manager.selectTargetIfGeneration(
         1, 1, 1, first.generation));
     QCOMPARE(manager.acquireTarget().endpoint.linkId, 2);
+}
+
+void VehicleTargetManagerTest::heartbeatFreshnessBelongsToTheSelectedTargetEpoch()
+{
+    VehicleTargetManager manager;
+    const VehicleEndpoint first = endpoint(1, 1, 1);
+    const VehicleEndpoint second = endpoint(2, 1, 1);
+    QVERIFY(manager.observeEndpoint(first, true));
+    QVERIFY(manager.observeEndpoint(second));
+
+    VehicleTargetLease lease = manager.acquireTarget();
+    manager.observeHeartbeat(first, false, 3, 2);
+    QVERIFY(manager.hasFreshHeartbeat(lease, 3000));
+    QCOMPARE(manager.heartbeatAutopilot(lease), 3);
+
+    QVERIFY(manager.selectTarget(2, 1, 1));
+    QVERIFY(manager.selectTarget(1, 1, 1));
+    lease = manager.acquireTarget();
+    QVERIFY(!manager.hasFreshHeartbeat(lease, 3000));
+    QCOMPARE(manager.heartbeatAutopilot(lease), -1);
+
+    manager.observeHeartbeat(first, true, 3, 2);
+    QVERIFY(manager.hasFreshHeartbeat(lease, 3000));
+    QVERIFY(manager.heartbeatArmed(lease));
 }
 
 void VehicleTargetManagerTest::nestedSelectionSignalsStayOrderedAndSettleOnce()

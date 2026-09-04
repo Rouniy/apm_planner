@@ -35,8 +35,9 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
                   QStringLiteral("actionCotOutput"));
     AddUnavailableAction(tr("Follow Me"),
                          QStringLiteral("FollowMeButton"), notPorted);
-    AddUnavailableAction(tr("External Guided"),
-                         QStringLiteral("ExternalGuidedButton"), notPorted);
+    AddToolAction(tr("External Guided"),
+                  QStringLiteral("ExternalGuidedButton"),
+                  QStringLiteral("actionExternalGuided"));
     AddUnavailableAction(tr("Moving Base"),
                          QStringLiteral("MovingBaseButton"), notPorted);
     AddToolAction(tr("Map Tile Cache"),

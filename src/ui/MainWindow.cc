@@ -49,6 +49,7 @@ This file is part of the QGROUNDCONTROL project
 #include "SerialOutputNMEAWindow.h"
 #include "SerialOutputCotWindow.h"
 #include "DeviceOperationsWindow.h"
+#include "ExternalGuidedWindow.h"
 #include "MissionPlannerToolsMenu.h"
 #include "QGCMapTool.h"
 #include "QGCStatusBar.h"
@@ -650,6 +651,8 @@ void MainWindow::buildMissionPlannerToolsMenu()
                     [this]() { MapCacheView::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionTerrain3D"),
                     [this]() { Terrain3DWindow::OpenWindow(this); });
+    handlers.insert(QStringLiteral("actionExternalGuided"),
+                    [this]() { ExternalGuidedWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionLinkStatistics"),
                     [this]() { LinkStatsWindow::OpenWindow(this); });
     handlers.insert(QStringLiteral("actionConnectionOptions"),

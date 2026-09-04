@@ -164,11 +164,11 @@ struct Fixture
         const VehicleEndpoint selected = endpoint(
             linkId, systemId, componentId);
         targets.observeEndpoint(selected);
+        transmitter.setMotorStopLinkEligible(linkId, true);
+        targets.selectTarget(linkId, systemId, componentId);
         targets.observeHeartbeat(
             selected, false, MAV_AUTOPILOT_ARDUPILOTMEGA,
             MAV_TYPE_QUADROTOR);
-        transmitter.setMotorStopLinkEligible(linkId, true);
-        targets.selectTarget(linkId, systemId, componentId);
         return targets.acquireTarget();
     }
 

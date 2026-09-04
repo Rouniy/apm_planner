@@ -55,6 +55,7 @@ This file is part of the APM_PLANNER project
 #include "UASObject.h"
 class VehicleTargetManager;
 class VehicleCommandService;
+class GuidedTargetService;
 class CompassCalibrationService;
 class ExactLinkTransmitter;
 class RadioStatusMonitor;
@@ -84,6 +85,7 @@ public:
     // Link-scoped SiK RADIO_STATUS / legacy RADIO statistics (MP10 localsnrdb).
     RadioStatusMonitor *radioStatusMonitor() const;
     VehicleCommandService *vehicleCommandService() const;
+    GuidedTargetService *guidedTargetService() const;
     CompassCalibrationService *compassCalibrationService() const;
     ParameterService *parameterService() const;
     MavFtpServiceInterface *mavFtpService() const;
@@ -176,6 +178,7 @@ private:
     ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;
+    GuidedTargetService *m_guidedTargetService = nullptr;
     CompassCalibrationService *m_compassCalibrationService = nullptr;
     ParameterService *m_parameterService = nullptr;
     MavFtpService *m_mavFtpService = nullptr;

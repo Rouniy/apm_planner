@@ -90,6 +90,7 @@ private:
     QList<VehicleEndpoint> m_endpoints;
     struct HeartbeatSnapshot {
         qint64 observedMs = 0;
+        quint64 targetGeneration = 0;
         bool armed = false;
         int autopilot = -1;
         int vehicleType = -1;

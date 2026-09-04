@@ -8,10 +8,10 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после DataFlash Spectrogram и 3D Terrain-срезов:
+Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain и External Guided-срезов:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 151 из 151 теста;
+- проходят 154 из 154 теста;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт
@@ -30,10 +30,10 @@
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 28 | 17 | 11 | 56 |
 | CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 10 | 2 | 18 | 30 |
+| TOOLS | 11 | 2 | 17 | 30 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **55** | **38** | **35** | **128** |
+| **Итого** | **56** | **38** | **34** | **128** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -55,7 +55,7 @@
 совпадения других страниц.
 
 Основной TOOLS/диалоговый поток доведён через Device Operations, DataFlash
-Spectrogram и 3D Terrain View; текущий пользовательский приоритет — продолжать основные Tools,
+Spectrogram, 3D Terrain View и External Guided; текущий пользовательский приоритет — продолжать основные Tools,
 после чего перейти к Settings/CONFIG и их функциональным vertical slices.
 Оставшиеся специализированные Tools сохраняются в точном меню, но включаются
 только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
@@ -391,7 +391,11 @@ dirty state никогда не переносится на новый target.
   сделан; остаются reference screenshot и native-platform evidence;
 - Terrain 3D: основной modeless/exact-target/software-rendered DEM/camera/
   hover/cancellation срез сделан; остаются imagery через единый tile cache,
-  exact-target guided click, reference screenshot и native-platform evidence;
+  guided click через существующий shared service с current-altitude/confirmation,
+  reference screenshot и native-platform evidence;
+- External Guided: основной modeless/bounded-file/exact-target/ACK-gated срез
+  сделан; остаются legacy Plane/current=2 и position-target fallback с честной
+  семантикой результата, reference screenshot, older-autopilot и native-platform evidence;
 - Device Operations: основной modeless/exact-target срез сделан; остаются
   hardware/native evidence и визуальная полировка;
 - QML Plugin Manager: широкая документация и API coverage.
@@ -402,7 +406,7 @@ dirty state никогда не переносится на новый target.
 - Offline Mag Fit;
 - Photo/video GeoRef;
 - Terrain Maker;
-- Follow Me, External Guided, Moving Base;
+- Follow Me, Moving Base;
 - Formation Control и четыре swarm workflow;
 - MAVLink Serial/TCP Bridge;
 - OSD Video Overlay;
