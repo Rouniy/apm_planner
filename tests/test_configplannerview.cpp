@@ -35,6 +35,7 @@ class ConfigPlannerViewTest final : public QObject
 private slots:
     void initTestCase();
     void exactNineSectionsArePresentAndNonEmpty();
+    void pendingControlDisclosuresAreExact();
     void constructionDoesNotPersistDefaults();
     void defaultViewsShareApplicationModel();
     void modelPersistsOwnedSettingsAndEmitsLiveUnitRequests();
@@ -120,6 +121,55 @@ void ConfigPlannerViewTest::exactNineSectionsArePresentAndNonEmpty()
         QStringLiteral("FlightShortcutsPendingNote")));
     QVERIFY(view.findChild<QLabel *>(
         QStringLiteral("TelemetryRatesPendingNote")));
+}
+
+void ConfigPlannerViewTest::pendingControlDisclosuresAreExact()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("settings.ini")),
+                       QSettings::IniFormat);
+    DisplayViewProfileService profiles(
+        &settings, directory.filePath(QStringLiteral("custom.displayview")));
+    ConfigPlannerViewModel model(&settings, &profiles);
+    ConfigPlannerView view(&model);
+
+    auto *layoutLabel = view.findChild<QLabel *>(
+        QStringLiteral("DisplayLayoutLabel"));
+    auto *layout = view.findChild<QComboBox *>(
+        QStringLiteral("CMB_displayview"));
+    auto *display = view.findChild<QLabel *>(
+        QStringLiteral("DisplayPendingNote"));
+    auto *waypoints = view.findChild<QLabel *>(
+        QStringLiteral("WaypointsConnectPendingNote"));
+    auto *telemetry = view.findChild<QLabel *>(
+        QStringLiteral("TelemetryRatesPendingNote"));
+    QVERIFY(layoutLabel);
+    QVERIFY(layout);
+    QVERIFY(display);
+    QVERIFY(waypoints);
+    QVERIFY(telemetry);
+
+    QCOMPARE(layoutLabel->text(), QStringLiteral("Layout"));
+    QCOMPARE(layout->toolTip(), QStringLiteral(
+        "Controls the shared Basic/Advanced/Custom CONFIG and SETUP "
+        "visibility profile; it does not change the color theme."));
+    QCOMPARE(display->text(), QStringLiteral(
+        "MP10 UI language, color Theme, Edit Custom theme editor, speed "
+        "units and OSD color do not yet have complete Qt consumers. The "
+        "Layout selector above changes only the shared CONFIG/SETUP "
+        "visibility profile. Useful legacy Qt appearance choices remain "
+        "available in Legacy options."));
+    QCOMPARE(waypoints->text(), QStringLiteral(
+        "MP10 waypoint-on-connect, distance-to-home Flight Data display, "
+        "map rotation, USB reset, ESP32 RTS reset and no-RC policies do "
+        "not yet have Qt consumers."));
+    QCOMPARE(telemetry->text(), QStringLiteral(
+        "The five MP10 grouped stream rates, Track Length and target-safe "
+        "parameter refresh are not ported. GCS sysid has a persisted "
+        "startup consumer, but no safe native editor until every outbound "
+        "service can be updated atomically. The different seven-rate APM "
+        "Planner editor remains available in Legacy options."));
 }
 
 void ConfigPlannerViewTest::defaultViewsShareApplicationModel()

@@ -420,11 +420,6 @@
     <string>Meta+R</string>
    </property>
   </action>
-  <action name="actionSettings">
-   <property name="text">
-    <string>Settings</string>
-   </property>
-  </action>
   <action name="actionFullscreen">
    <property name="text">
     <string>Fullscreen</string>

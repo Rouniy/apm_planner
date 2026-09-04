@@ -196,8 +196,6 @@ public slots:
     /** @brief Shows an info message as popup or as widget */
     void showInfoMessage(const QString& title, const QString& message);
 
-    /** @brief Show the application settings */
-    void showSettings();
     /** @brief Show the current PLAN mission elevation profile. */
     void showMissionElevation();
     /** @brief Open a new modeless MAVLink inspector tool window. */
@@ -517,7 +515,6 @@ protected:
     QMap<int, QDockWidget*> hilDocks;
 
     // Popup widgets
-    QPointer<QDialog> settingsDialog;
     QPointer<JoystickWidget> joystickWidget;
 
     QPointer<JoystickInput> joystick;

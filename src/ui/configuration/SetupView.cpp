@@ -373,6 +373,10 @@ SetupView::SetupView(QWidget *parent)
 
 SetupView::~SetupView()
 {
+    // Never instantiate a fallback page while the page graph is shutting
+    // down. resetPage() otherwise follows normal interactive selection.
+    m_backstage->setAutomaticSelectionEnabled(false);
+
     // Destroy pages with active transports while Setup's transport pointers
     // are still alive, so they can send their final stop commands safely.
     // Heli4 deactivation submits H_SV_MAN=0 while its exact target binding is
@@ -391,6 +395,20 @@ SetupView::~SetupView()
     m_backstage->resetPage(kADSB);
     m_backstage->resetPage(kESP8266);
     m_backstage->resetPage(kCompassMotor);
+
+    // QWidget destroys child pages only from its base-class destructor, after
+    // SetupView's QPointer/unique_ptr members have already been destroyed.
+    // Several production factories keep weak references to their content or
+    // depend on Setup-owned services while a QScrollArea tears the content
+    // down. Destroy every remaining lazy page now, while those owners are
+    // still alive. The explicit critical resets above preserve their required
+    // shutdown order; resetPage() is a no-op for pages already released.
+    const QStringList pageIds = m_backstage->pageIds();
+    for (const QString &pageId : pageIds) {
+        if (m_backstage->isPageCreated(pageId)) {
+            m_backstage->resetPage(pageId);
+        }
+    }
 }
 
 void SetupView::buildPages()

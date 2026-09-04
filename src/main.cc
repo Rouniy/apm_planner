@@ -44,6 +44,17 @@ This file is part of the QGROUNDCONTROL project
 #include <QStringConverter>
 #endif
 
+#ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
+#include "SetupRouteRuntimeAudit.h"
+
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTemporaryDir>
+
+#include <cstring>
+#include <memory>
+#endif
+
 /* SDL does ugly things to main() */
 #ifdef main
 #undef main
@@ -118,6 +129,31 @@ void loggingMessageHandler(QtMsgType type, const QMessageLogContext &context, co
  */
 int main(int argc, char *argv[])
 {
+#ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
+    bool setupRouteAuditRequested = false;
+    for (int index = 1; index < argc; ++index) {
+        if (std::strcmp(argv[index], "--setup-route-audit") == 0) {
+            setupRouteAuditRequested = true;
+            break;
+        }
+    }
+
+    std::unique_ptr<QTemporaryDir> setupRouteAuditSettings;
+    if (setupRouteAuditRequested) {
+        // The audit constructs production pages but must not observe or mutate
+        // the operator's settings and writable application-data directories.
+        QStandardPaths::setTestModeEnabled(true);
+        setupRouteAuditSettings.reset(new QTemporaryDir);
+        if (!setupRouteAuditSettings->isValid()) {
+            std::cerr << "SETUP route audit: temporary settings directory failed"
+                      << std::endl;
+            return 2;
+        }
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
+                           setupRouteAuditSettings->path());
+    }
+#endif
+
 // install the message handler
 #ifdef Q_OS_WIN
     //qInstallMsgHandler( msgHandler );
@@ -139,6 +175,12 @@ int main(int argc, char *argv[])
 
     // Init application
     QGCCore core(argc, argv);
+
+#ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
+    if (setupRouteAuditRequested) {
+        return RunSetupRouteRuntimeAudit();
+    }
+#endif
 
     // Init logging
     // create filename and path for logfile like "apmlog_20160529.txt"

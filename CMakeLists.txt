@@ -1522,6 +1522,32 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(BUILD_TESTING)
+    # Run the complete SETUP factory audit inside the production executable so
+    # it reuses the application's already-compiled object graph. The audit mode
+    # constructs no MainWindow, blocks page lifecycle side effects and exits
+    # before the normal application event loop starts.
+    target_sources(${APM_PLANNER_TARGET} PRIVATE
+        tests/SetupRouteRuntimeAudit.cpp
+        tests/SetupRouteRuntimeAudit.h
+    )
+    target_include_directories(${APM_PLANNER_TARGET} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
+        APM_SETUP_ROUTE_RUNTIME_AUDIT=1
+    )
+    add_custom_target(setupviewroutes_tests
+        DEPENDS ${APM_PLANNER_TARGET}
+    )
+    add_test(NAME setupviewroutes_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --setup-route-audit
+    )
+    set_tests_properties(setupviewroutes_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE
+        TIMEOUT 30
+    )
+
     add_executable(queuedspeechcontroller_tests
         tests/test_queuedspeechcontroller.cpp
         src/audio/QueuedSpeechController.cpp

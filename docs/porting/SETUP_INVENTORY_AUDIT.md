@@ -145,16 +145,23 @@ There are no null factories in active SETUP, but a concrete factory can still
 be misleading. The native Frame pages build their complete unavailable state
 before any firmware or parameter callback and therefore replace the combined
 `FrameTypeConfig` blank/stale lifecycle on the active route. `Optical Flow` is
-non-empty but near-placeholder functionality and remains the first production
-navigation case the SETUP click/reset test must expose.
+non-empty but near-placeholder functionality and is the reset/recreate probe
+in the production audit.
 
-The required navigation regression test must lock:
+`setupviewroutes_tests` constructs the real hidden production `SetupView` in
+an isolated BUILD_TESTING process. It locks the 43 page IDs and three group
+IDs in production order, invokes every real factory through its navigation
+button, checks current/checked/stack ownership and semantic non-empty content,
+then resets and recreates Optical Flow. Backstage lifecycle signals are
+blocked, so the audit does not start page network or hardware operations. The
+test also exposed and now covers Setup teardown ordering: all created pages
+are reset while the derived services, leases and weak owners are still alive.
 
-- the 43 Qt page IDs and three group IDs in production order;
-- a non-null concrete widget after activating every visible page;
+Still required as a separate visibility-matrix regression:
+
 - offline, connected, partial-parameter and advanced-mode visibility;
 - Copter, Plane, Rover, Heli and tracker profile transitions;
-- fallback selection after the current page is hidden or reset.
+- fallback selection when profile/vehicle gates hide the current page.
 
 New MP10 routes should be added only as complete vertical slices. Useful
 legacy pages and `QML Plugins` stay registered and are classified separately

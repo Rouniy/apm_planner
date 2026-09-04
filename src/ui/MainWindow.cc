@@ -94,8 +94,6 @@ This file is part of the QGROUNDCONTROL project
 #include "ConnectionOptionsWindow.h"
 #include "ConfigView.h"
 #include "SetupView.h"
-#include "configuration/ConfigPlannerView.h"
-#include "configuration/ConfigPlannerViewIntegration.h"
 #include "configuration/DisplayViewProfile.h"
 #include "configuration/QmlPluginManagerView.h"
 #include "TerminalConsole.h"
@@ -118,7 +116,6 @@ This file is part of the QGROUNDCONTROL project
 #include <QApplication>
 #include <QDockWidget>
 #include <QDialog>
-#include <QFrame>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QLineEdit>
@@ -127,7 +124,6 @@ This file is part of the QGROUNDCONTROL project
 #include <QNetworkInterface>
 #include <QMessageBox>
 #include <QScreen>
-#include <QScrollArea>
 #include <QShortcut>
 #include <QStyle>
 #include <QVBoxLayout>
@@ -2708,9 +2704,6 @@ void MainWindow::connectCommonActions()
     // Configuration
     // Joystick
     connect(ui.actionJoystickSettings, SIGNAL(triggered()), this, SLOT(configure()));
-    // Application Settings
-    connect(ui.actionSettings, SIGNAL(triggered()), this, SLOT(showSettings()));
-
     if (isAdvancedMode)
     {
         ui.menuPerspectives->menuAction()->setVisible(true);
@@ -2785,32 +2778,6 @@ void MainWindow::configure()
         joystickWidget = new JoystickWidget(joystick);
     }
     joystickWidget->show();
-}
-
-void MainWindow::showSettings()
-{
-    if (settingsDialog) {
-        settingsDialog->show();
-        settingsDialog->raise();
-        settingsDialog->activateWindow();
-        return;
-    }
-    settingsDialog = new QDialog(this);
-    settingsDialog->setAttribute(Qt::WA_DeleteOnClose);
-    settingsDialog->setWindowTitle(tr("Planner Settings"));
-    auto *layout = new QVBoxLayout(settingsDialog);
-    layout->setContentsMargins(0, 0, 0, 0);
-    auto *scroll = new QScrollArea(settingsDialog);
-    scroll->setObjectName(QStringLiteral("PlannerSettingsScroll"));
-    scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    auto *settingsWidget = new ConfigPlannerView(nullptr, scroll);
-    BindConfigPlannerViewToApplication(settingsWidget);
-    scroll->setWidget(settingsWidget);
-    layout->addWidget(scroll);
-    settingsDialog->resize(920, 780);
-    settingsDialog->show();
 }
 
 void MainWindow::showMissionElevation()

@@ -46,10 +46,10 @@ then dispatches Plane to the native Q controller/INS page and Copter/Heli to
 the retained legacy ATC/PSC/WPNAV editor.
 
 The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
-all 16 MP10 actions are present, nine open working shared tools and seven are
+all 16 MP10 actions are present, ten open working shared tools and six are
 visibly disabled. MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target /
-TAK, DataFlash Spectrogram, External Guided, Follow Me, Map Tile Cache and
-Proximity reuse working application actions. `Warning Manager` and `FFT`
+TAK, DataFlash Spectrogram, External Guided, Follow Me, Moving Base, Map Tile
+Cache and Proximity reuse working application actions. `Warning Manager` and `FFT`
 remain unported, and `FFT Setup` is also still a missing direct SETUP page.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
@@ -91,13 +91,10 @@ Working settings in the first native slice are Alt/Dist units, the shared
 Basic/Advanced/Custom DisplayView profile, exact restart-scoped dual Startup
 UDP listeners, the Qt map renderer, audio mute, GCS heartbeat, MAVLink
 logging, DataFlash/tlog directories, beta update channel and system proxy.
-The CONFIG → Planner page and the dormant standalone settings dialog share one
-application-owned model, so the duplicate cannot overwrite stale UDP/beta
-state if triggered programmatically. It is not a production entry point:
-`actionSettings` is absent from the visible header, menu and shortcuts, even
-though invoking it from code creates a real non-empty `ConfigPlannerView`
-dialog. MP10 likewise has only the CONFIG → Planner route, so the correct
-follow-up is to remove the dead Qt duplicate rather than expose a new route.
+CONFIG → Planner is now the sole native Planner Settings route and owns one
+application-wide model. The old dormant `actionSettings`, its duplicate
+top-level dialog and their stale-overwrite risk have been removed. This
+matches MP10, which likewise exposes Planner only through CONFIG.
 
 The four live slices add twelve direct MP10 controls, bringing the working
 native-equivalent count to 21 of 64: `Enable HUD Overlay`, `Enable Speech`,
@@ -187,10 +184,9 @@ neither active MP10 route instantiates it.
 The 15 direct CONFIG routes now all create a truthful non-empty page for their
 supported vehicle contexts. Planner Settings is the next broad control-level
 gap: all nine sections are present, but many of the audited 64 controls are
-still explicitly unavailable. The first route-level cleanup is to remove the
-orphaned standalone `actionSettings` and keep CONFIG → Planner as the sole
-MP10-compatible route, then add a production click-through that instantiates
-every visible CONFIG row and proves its page is non-empty.
+still explicitly unavailable. The orphaned standalone `actionSettings` has
+been removed, so the next route-level check is a production click-through
+that instantiates every visible CONFIG row and proves its page is non-empty.
 
 ## SETUP cross-check
 

@@ -1,0 +1,356 @@
+#include "SetupRouteRuntimeAudit.h"
+
+#include "ui/BackstageView.h"
+#include "ui/configuration/SetupView.h"
+#include "ui/configuration/PlannerStartupUdpOptions.h"
+
+#include <QAbstractButton>
+#include <QAbstractItemView>
+#include <QAbstractSlider>
+#include <QAbstractSpinBox>
+#include <QComboBox>
+#include <QCoreApplication>
+#include <QDebug>
+#include <QGroupBox>
+#include <QLabel>
+#include <QLayout>
+#include <QLineEdit>
+#include <QPlainTextEdit>
+#include <QPointer>
+#include <QProgressBar>
+#include <QSettings>
+#include <QSet>
+#include <QSignalBlocker>
+#include <QStackedWidget>
+#include <QTabWidget>
+#include <QTextEdit>
+#include <QWidget>
+
+namespace {
+
+const QString kInstallFirmware = QStringLiteral("InstallFirmwareView");
+const QString kMandatoryGroup = QStringLiteral("MandatoryHardwareGroup");
+const QString kOptionalGroup = QStringLiteral("OptionalHardwareGroup");
+const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
+const QString kOpticalFlow = QStringLiteral("ConfigOptFlowView");
+
+QStringList ExpectedPageIds()
+{
+    return {
+        kInstallFirmware,
+        QStringLiteral("ConfigTradHeli4View"),
+        QStringLiteral("ConfigFrameClassTypeView"),
+        QStringLiteral("ConfigFrameTypeView"),
+        QStringLiteral("ConfigDefaultSettingsView"),
+        QStringLiteral("ConfigAccelCalibrationView"),
+        QStringLiteral("ConfigCompassView"),
+        QStringLiteral("ConfigCompassLegacyView"),
+        QStringLiteral("ConfigRadioInputView"),
+        QStringLiteral("ConfigRadioOutputView"),
+        QStringLiteral("ConfigSerialView"),
+        QStringLiteral("ConfigESCCalibrationView"),
+        QStringLiteral("ConfigFlightModesView"),
+        QStringLiteral("ConfigFailSafeView"),
+        QStringLiteral("ConfigInitialParamsView"),
+        QStringLiteral("ConfigHWIDView"),
+        QStringLiteral("ConfigADSBView"),
+        QStringLiteral("ConfigGpsInjectView"),
+        QStringLiteral("SikRadioView"),
+        QStringLiteral("ConfigGPSOrderView"),
+        QStringLiteral("ConfigBatteryMonitoringView"),
+        QStringLiteral("ConfigBatteryMonitoring2View"),
+        QStringLiteral("ConfigDroneCanView"),
+        QStringLiteral("ConfigCompassMotView"),
+        QStringLiteral("ConfigRangeFinderView"),
+        QStringLiteral("ConfigAirspeedView"),
+        kOpticalFlow,
+        QStringLiteral("ConfigHWOSDView"),
+        QStringLiteral("ConfigMountView"),
+        QStringLiteral("ConfigMotorTestView"),
+        QStringLiteral("ConfigHWBTView"),
+        QStringLiteral("ConfigParachuteView"),
+        QStringLiteral("ConfigHWESP8266View"),
+        QStringLiteral("ConfigAntennaTrackerView"),
+        QStringLiteral("AntennaTrackerUIView"),
+        QStringLiteral("ConfigHWCANView"),
+        QStringLiteral("MavFTPUIView"),
+        QStringLiteral("ConfigAdvancedView"),
+        QStringLiteral("ConfigElevationSourcesView"),
+        QStringLiteral("ConfigDeveloperToolsView"),
+        QStringLiteral("ConfigMavCommandView"),
+        QStringLiteral("ConfigTerminalView"),
+        QStringLiteral("QmlPluginManagerView")
+    };
+}
+
+QStringList ExpectedNavigationOrder()
+{
+    QStringList result = ExpectedPageIds();
+    result.insert(1, kMandatoryGroup);
+    result.insert(18, kOptionalGroup);
+    result.insert(39, kAdvancedGroup);
+    return result;
+}
+
+QStringList NavigationOrder(QWidget *navigationContent)
+{
+    QStringList result;
+    if (!navigationContent || !navigationContent->layout()) {
+        return result;
+    }
+
+    QLayout *const layout = navigationContent->layout();
+    for (int index = 0; index < layout->count(); ++index) {
+        QWidget *const widget = layout->itemAt(index)->widget();
+        if (!widget) {
+            continue;
+        }
+        const QString groupId = widget->property("groupId").toString();
+        const QString pageId = widget->property("pageId").toString();
+        if (!groupId.isEmpty()) {
+            result.append(groupId);
+        } else if (!pageId.isEmpty()) {
+            result.append(pageId);
+        }
+    }
+    return result;
+}
+
+int SemanticContentScore(QWidget *page)
+{
+    int score = 0;
+    const QList<QWidget *> descendants = page->findChildren<QWidget *>();
+    for (QWidget *const widget : descendants) {
+        // isHidden() detects controls deliberately suppressed by page state but
+        // does not reject descendants merely because the audit host is never
+        // shown. Disabled offline controls are still truthful page content.
+        if (!widget || widget->isHidden()) {
+            continue;
+        }
+        if (const auto *label = qobject_cast<const QLabel *>(widget)) {
+            if (!label->text().trimmed().isEmpty()) {
+                ++score;
+            }
+            continue;
+        }
+        if (const auto *button =
+                qobject_cast<const QAbstractButton *>(widget)) {
+            if (!button->text().trimmed().isEmpty()) {
+                ++score;
+            }
+            continue;
+        }
+        if (const auto *group = qobject_cast<const QGroupBox *>(widget)) {
+            if (!group->title().trimmed().isEmpty()) {
+                ++score;
+            }
+            continue;
+        }
+        if (qobject_cast<const QAbstractItemView *>(widget)
+            || qobject_cast<const QLineEdit *>(widget)
+            || qobject_cast<const QComboBox *>(widget)
+            || qobject_cast<const QAbstractSpinBox *>(widget)
+            || qobject_cast<const QAbstractSlider *>(widget)
+            || qobject_cast<const QTextEdit *>(widget)
+            || qobject_cast<const QPlainTextEdit *>(widget)
+            || qobject_cast<const QTabWidget *>(widget)) {
+            score += 2;
+            continue;
+        }
+        if (qobject_cast<const QProgressBar *>(widget)) {
+            ++score;
+        }
+    }
+    return score;
+}
+
+class AuditResult final
+{
+public:
+    void Expect(bool condition, const QString &message)
+    {
+        if (condition) {
+            return;
+        }
+        ++m_failures;
+        qCritical().noquote() << QStringLiteral("SETUP route audit: %1")
+                                    .arg(message);
+    }
+
+    int exitCode() const { return m_failures == 0 ? 0 : 1; }
+    int failures() const { return m_failures; }
+
+private:
+    int m_failures = 0;
+};
+
+void ConfigureIsolatedSettings()
+{
+    QSettings settings;
+    settings.setFallbacksEnabled(false);
+    settings.clear();
+    settings.setValue(
+        QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey), false);
+    settings.beginGroup(QStringLiteral("AUTO_UPDATE"));
+    settings.setValue(QStringLiteral("ENABLED"), false);
+    settings.endGroup();
+    settings.sync();
+}
+
+} // namespace
+
+int RunSetupRouteRuntimeAudit()
+{
+    ConfigureIsolatedSettings();
+
+    AuditResult result;
+    QWidget host;
+    SetupView setup(&host);
+    BackstageView *const backstage = setup.findChild<BackstageView *>(
+        QStringLiteral("BackstageView"));
+    result.Expect(backstage != nullptr,
+                  QStringLiteral("production BackstageView was not created"));
+    if (!backstage) {
+        return result.exitCode();
+    }
+
+    // Route activation can start network catalog loads or device workflows.
+    // Blocking only Backstage lifecycle signals retains the production button,
+    // lazy-factory, selection and stack code while preventing those side
+    // effects. No control inside any created page is invoked by this audit.
+    const QSignalBlocker lifecycleBlocker(backstage);
+
+    const QStringList expectedPages = ExpectedPageIds();
+    result.Expect(expectedPages.size() == 43,
+                  QStringLiteral("the audit baseline itself is not 43 pages"));
+    result.Expect(backstage->pageIds() == expectedPages,
+                  QStringLiteral("production page ID/order mismatch\nexpected: %1\nactual:   %2")
+                      .arg(expectedPages.join(QStringLiteral(", ")),
+                           backstage->pageIds().join(QStringLiteral(", "))));
+
+    QWidget *const navigationContent = backstage->findChild<QWidget *>(
+        QStringLiteral("backstageNavigationContent"));
+    const QStringList navigationOrder = NavigationOrder(navigationContent);
+    const QStringList expectedNavigation = ExpectedNavigationOrder();
+    result.Expect(expectedNavigation.size() == 46,
+                  QStringLiteral("the navigation baseline itself is not 46 entries"));
+    result.Expect(navigationOrder == expectedNavigation,
+                  QStringLiteral("production page/group order mismatch\nexpected: %1\nactual:   %2")
+                      .arg(expectedNavigation.join(QStringLiteral(", ")),
+                           navigationOrder.join(QStringLiteral(", "))));
+
+    const QStringList groupIds = {
+        kMandatoryGroup, kOptionalGroup, kAdvancedGroup
+    };
+    for (const QString &groupId : groupIds) {
+        result.Expect(backstage->setGroupVisible(groupId, true),
+                      QStringLiteral("missing group %1").arg(groupId));
+        result.Expect(backstage->setGroupExpanded(groupId, true),
+                      QStringLiteral("could not expand group %1").arg(groupId));
+    }
+    for (const QString &pageId : expectedPages) {
+        result.Expect(bool(backstage->pageDefinition(pageId).factory),
+                      QStringLiteral("route %1 has no production factory")
+                          .arg(pageId));
+        result.Expect(backstage->setPageVisible(pageId, true),
+                      QStringLiteral("could not expose route %1 for audit")
+                          .arg(pageId));
+    }
+
+    QStackedWidget *const stack = backstage->findChild<QStackedWidget *>(
+        QStringLiteral("backstagePageStack"));
+    result.Expect(stack != nullptr,
+                  QStringLiteral("production page stack was not created"));
+    if (!stack) {
+        return result.exitCode();
+    }
+
+    QSet<QWidget *> createdPages;
+    for (const QString &pageId : expectedPages) {
+        QAbstractButton *const button =
+            backstage->findChild<QAbstractButton *>(pageId);
+        result.Expect(button != nullptr,
+                      QStringLiteral("route %1 has no navigation button")
+                          .arg(pageId));
+        if (!button) {
+            continue;
+        }
+        result.Expect(button->isEnabled(),
+                      QStringLiteral("route button %1 is disabled")
+                          .arg(pageId));
+        button->click();
+
+        QWidget *const page = backstage->page(pageId);
+        result.Expect(backstage->currentPageId() == pageId,
+                      QStringLiteral("click did not select route %1")
+                          .arg(pageId));
+        result.Expect(button->isChecked(),
+                      QStringLiteral("selected button %1 is not checked")
+                          .arg(pageId));
+        result.Expect(page != nullptr,
+                      QStringLiteral("factory for %1 returned null")
+                          .arg(pageId));
+        if (!page) {
+            continue;
+        }
+
+        result.Expect(!createdPages.contains(page),
+                      QStringLiteral("route %1 reused another route's widget")
+                          .arg(pageId));
+        createdPages.insert(page);
+        result.Expect(page->property("pageId").toString() == pageId,
+                      QStringLiteral("route %1 lost its pageId ownership")
+                          .arg(pageId));
+        result.Expect(page->parentWidget() == stack,
+                      QStringLiteral("route %1 is not owned by the page stack")
+                          .arg(pageId));
+        result.Expect(stack->indexOf(page) >= 0,
+                      QStringLiteral("route %1 is absent from the page stack")
+                          .arg(pageId));
+        result.Expect(stack->currentWidget() == page,
+                      QStringLiteral("route %1 is not the displayed stack page")
+                          .arg(pageId));
+
+        const int semanticScore = SemanticContentScore(page);
+        result.Expect(semanticScore >= 2,
+                      QStringLiteral("route %1 is semantically blank (score %2)")
+                          .arg(pageId)
+                          .arg(semanticScore));
+    }
+
+    // Optical Flow is intentionally the smallest retained legacy page and is
+    // therefore the strongest regression probe for an accidentally blank
+    // factory. Also exercise the production reset/fallback/recreate path.
+    QAbstractButton *const opticalButton =
+        backstage->findChild<QAbstractButton *>(kOpticalFlow);
+    result.Expect(opticalButton != nullptr,
+                  QStringLiteral("Optical Flow navigation button disappeared"));
+    if (opticalButton) {
+        opticalButton->click();
+        QPointer<QWidget> oldOpticalPage(backstage->page(kOpticalFlow));
+        result.Expect(!oldOpticalPage.isNull(),
+                      QStringLiteral("Optical Flow page was not created"));
+        result.Expect(backstage->resetPage(kOpticalFlow),
+                      QStringLiteral("Optical Flow page reset failed"));
+        result.Expect(oldOpticalPage.isNull(),
+                      QStringLiteral("Optical Flow reset retained the old widget"));
+        result.Expect(backstage->currentPageId() == kInstallFirmware,
+                      QStringLiteral("reset did not select the first visible fallback"));
+        opticalButton->click();
+        QWidget *const recreated = backstage->page(kOpticalFlow);
+        result.Expect(recreated != nullptr,
+                      QStringLiteral("Optical Flow factory did not recreate"));
+        if (recreated) {
+            result.Expect(stack->currentWidget() == recreated,
+                          QStringLiteral("recreated Optical Flow page is not current"));
+            result.Expect(SemanticContentScore(recreated) >= 2,
+                          QStringLiteral("recreated Optical Flow page is blank"));
+        }
+    }
+
+    if (result.failures() == 0) {
+        qInfo().noquote()
+            << QStringLiteral("SETUP route audit: 43 pages + 3 groups passed");
+    }
+    return result.exitCode();
+}

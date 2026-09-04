@@ -11,7 +11,7 @@
 Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided и Follow Me-срезов:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
-- проходят 165 из 165 тестов;
+- проходят 166 из 166 тестов;
 - реальный X11-запуск показывает точный заголовок
   `APM Planner 3.0.0 (...) — APM Planner`;
 - DATA, PLAN и SETUP открываются, карта DATA работает, SETUP OSD создаёт

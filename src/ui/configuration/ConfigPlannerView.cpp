@@ -73,7 +73,11 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
                       static_cast<int>(DisplayViewPreset::Advanced));
     m_layout->addItem(tr("Custom"),
                       static_cast<int>(DisplayViewPreset::Custom));
-    m_layoutLabel = new QLabel(tr("Theme / Layout"), display);
+    m_layoutLabel = new QLabel(tr("Layout"), display);
+    m_layoutLabel->setObjectName(QStringLiteral("DisplayLayoutLabel"));
+    m_layout->setToolTip(tr(
+        "Controls the shared Basic/Advanced/Custom CONFIG and SETUP "
+        "visibility profile; it does not change the color theme."));
     displayForm->addRow(m_layoutLabel, m_layout);
     m_layoutStatus = new QLabel(display);
     m_layoutStatus->setObjectName(QStringLiteral("DisplayLayoutStatus"));
@@ -91,8 +95,11 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     }
     displayForm->addRow(tr("Message Severity"), m_messageSeverity);
     auto *displayMissing = new QLabel(
-        tr("UI language, speed units and OSD color do not yet have complete "
-           "Qt consumers."), display);
+        tr("MP10 UI language, color Theme, Edit Custom theme editor, speed "
+           "units and OSD color do not yet have complete Qt consumers. The "
+           "Layout selector above changes only the shared CONFIG/SETUP "
+           "visibility profile. Useful legacy Qt appearance choices remain "
+           "available in Legacy options."), display);
     displayMissing->setObjectName(QStringLiteral("DisplayPendingNote"));
     displayMissing->setProperty("portingUnavailable", true);
     displayMissing->setWordWrap(true);
@@ -184,8 +191,9 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     waypointLayout->addWidget(m_heartbeat);
     addUnavailableNote(
         waypointLayout,
-        tr("MP10 waypoint-on-connect, map rotation, USB reset, ESP32 RTS "
-           "reset and no-RC policies do not yet have Qt consumers."),
+        tr("MP10 waypoint-on-connect, distance-to-home Flight Data display, "
+           "map rotation, USB reset, ESP32 RTS reset and no-RC policies do "
+           "not yet have Qt consumers."),
         QStringLiteral("WaypointsConnectPendingNote"));
 
     QGroupBox *startup = addSection(
@@ -222,9 +230,11 @@ ConfigPlannerView::ConfigPlannerView(ConfigPlannerViewModel *viewModel,
     auto *telemetryLayout = new QVBoxLayout(telemetry);
     addUnavailableNote(
         telemetryLayout,
-        tr("The five MP10 grouped stream rates and target-safe parameter "
-           "refresh are not ported. The different seven-rate APM Planner "
-           "editor remains available in Legacy options."),
+        tr("The five MP10 grouped stream rates, Track Length and target-safe "
+           "parameter refresh are not ported. GCS sysid has a persisted "
+           "startup consumer, but no safe native editor until every outbound "
+           "service can be updated atomically. The different seven-rate APM "
+           "Planner editor remains available in Legacy options."),
         QStringLiteral("TelemetryRatesPendingNote"));
     auto *legacyTelemetry = new QPushButton(
         tr("Open Legacy APM Planner options…"), telemetry);
