@@ -44,7 +44,9 @@ struct SwarmWaypointLeaderFollower
  *
  * `sequence` is the MAVState dictionary key used by MP10.  Coordinates retain
  * their wire representation so mission confirmation signatures do not depend
- * on a lossy presentation conversion.
+ * on a lossy presentation conversion.  Mission-path construction accepts only
+ * GLOBAL_RELATIVE_ALT/INT navigation destinations.  An unsupported-frame
+ * sequence-zero Home may contribute its horizontal coordinate only.
  */
 struct SwarmWaypointLeaderMissionItem
 {

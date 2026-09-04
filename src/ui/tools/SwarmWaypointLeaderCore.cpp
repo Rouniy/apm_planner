@@ -205,6 +205,12 @@ bool finiteInRange(double value, double minimum, double maximum)
     return std::isfinite(value) && value >= minimum && value <= maximum;
 }
 
+bool isRelativeAltitudeFrame(int frame)
+{
+    return frame == MAV_FRAME_GLOBAL_RELATIVE_ALT
+        || frame == MAV_FRAME_GLOBAL_RELATIVE_ALT_INT;
+}
+
 void clearError(QString *error)
 {
     if (error) {
@@ -324,11 +330,25 @@ bool SwarmWaypointLeaderMissionPath::build(
     QVector<Vertex> vertices;
     double cumulativeM = 0.0;
     SwarmWaypointLeaderMissionItem previous = ordered.constFirst();
+    bool previousIsHorizontalOriginOnly =
+        !isRelativeAltitudeFrame(previous.frame);
+    if (previousIsHorizontalOriginOnly && previous.sequence != 0) {
+        return fail(error, QStringLiteral(
+            "The air-master mission starts at sequence %1 in unsupported frame %2; only sequence 0 may provide a horizontal origin.")
+            .arg(previous.sequence)
+            .arg(previous.frame));
+    }
     for (int index = 1; index < ordered.size(); ++index) {
         const SwarmWaypointLeaderMissionItem item = ordered.at(index);
         if (item.command != MAV_CMD_NAV_WAYPOINT
             && item.command != MAV_CMD_NAV_SPLINE_WAYPOINT) {
             continue;
+        }
+        if (!isRelativeAltitudeFrame(item.frame)) {
+            return fail(error, QStringLiteral(
+                "The air-master mission navigation destination at sequence %1 uses unsupported frame %2; only GLOBAL_RELATIVE_ALT and GLOBAL_RELATIVE_ALT_INT are accepted.")
+                .arg(item.sequence)
+                .arg(item.frame));
         }
 
         SwarmFollowPathPoint startPoint{
@@ -339,8 +359,7 @@ bool SwarmWaypointLeaderMissionPath::build(
             item.latitudeE7 / 1.0e7,
             item.longitudeE7 / 1.0e7,
             item.relativeAltitudeM};
-        if (std::abs(startPoint.relativeAltitudeM)
-                <= std::numeric_limits<double>::epsilon()) {
+        if (previousIsHorizontalOriginOnly) {
             startPoint.relativeAltitudeM = destination.relativeAltitudeM;
         }
         if (!SwarmFollowPathTrail::isValidPoint(startPoint)
@@ -356,12 +375,14 @@ bool SwarmWaypointLeaderMissionPath::build(
         }
         if (segmentM <= SwarmFollowPathTrail::MinimumSampleDistanceM) {
             previous = item;
+            previousIsHorizontalOriginOnly = false;
             continue;
         }
         if (segmentM > MaximumMissionSegmentM) {
-            // Preserve MP10's official behavior: the rejected destination
-            // does not become the start of the following leg.
-            continue;
+            return fail(error, QStringLiteral(
+                "The air-master mission leg ending at sequence %1 exceeds the %2 m maximum.")
+                .arg(item.sequence)
+                .arg(MaximumMissionSegmentM, 0, 'f', 0));
         }
 
         if (vertices.isEmpty()) {
@@ -374,12 +395,13 @@ bool SwarmWaypointLeaderMissionPath::build(
         cumulativeM += segmentM;
         vertices.append({cumulativeM, destination});
         previous = item;
+        previousIsHorizontalOriginOnly = false;
     }
 
     if (vertices.size() < 2
         || cumulativeM <= SwarmFollowPathTrail::MinimumSampleDistanceM) {
         return fail(error, QStringLiteral(
-            "The air-master mission contains no usable waypoint legs under 5 km."));
+            "The air-master mission contains no usable waypoint legs."));
     }
 
     path->m_vertices = std::move(vertices);

@@ -94,7 +94,8 @@ double distance(const SwarmFollowPathPoint &left,
 
 SwarmWaypointLeaderMissionItem missionItem(
     int sequence, const SwarmFollowPathPoint &point,
-    quint16 command = MAV_CMD_NAV_WAYPOINT, int frame = 6)
+    quint16 command = MAV_CMD_NAV_WAYPOINT,
+    int frame = MAV_FRAME_GLOBAL_RELATIVE_ALT_INT)
 {
     SwarmWaypointLeaderMissionItem item;
     item.sequence = sequence;
@@ -267,7 +268,7 @@ class SwarmWaypointLeaderCoreTest final : public QObject
 private slots:
     void defaultsRangesAndIntentAckPolicyMatchMp10();
     void missionPathIsCompactInterpolatedAndSignatureExact();
-    void missionFilteringBoundsAndUpdateSemanticsMatchMp10();
+    void missionFramesFilteringAndBoundsAreFailClosed();
     void closestLineAndVGeometryAreDeterministic();
     void exactGroupRolesMissionAndFreshFieldsAreValidatedBeforeIntents();
     void initializationRequestsFiveHertzAndUsesParameterAliases();
@@ -348,9 +349,9 @@ missionPathIsCompactInterpolatedAndSignatureExact()
     SwarmWaypointLeaderMissionSnapshot missionData;
     missionData.airMaster = airLease;
     missionData.items = {
-        {0, MAV_CMD_NAV_WAYPOINT, 6,
+        {0, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
          350000000, 330000000, 10.0F},
-        {1, MAV_CMD_NAV_WAYPOINT, 6,
+        {1, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
          350001000, 330000000, 20.0F}
     };
     SwarmWaypointLeaderMissionPath path;
@@ -380,27 +381,78 @@ missionPathIsCompactInterpolatedAndSignatureExact()
 }
 
 void SwarmWaypointLeaderCoreTest::
-missionFilteringBoundsAndUpdateSemanticsMatchMp10()
+missionFramesFilteringAndBoundsAreFailClosed()
 {
     const SwarmVehicleInstanceLease airLease = lease(2, 2);
     QString error;
     SwarmWaypointLeaderMissionPath path;
 
-    SwarmWaypointLeaderMissionSnapshot zeroStart;
-    zeroStart.airMaster = airLease;
-    zeroStart.items = {
-        missionItem(0, offsetPoint(0.0, 0.0, 0.0)),
-        missionItem(1, offsetPoint(20.0, 0.0, 30.0)),
+    SwarmWaypointLeaderMissionSnapshot homeOrigin;
+    homeOrigin.airMaster = airLease;
+    homeOrigin.items = {
+        missionItem(0, offsetPoint(0.0, 0.0, 1200.0),
+                    MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL),
+        missionItem(1, offsetPoint(20.0, 0.0, 30.0),
+                    MAV_CMD_NAV_WAYPOINT,
+                    MAV_FRAME_GLOBAL_RELATIVE_ALT),
         missionItem(2, offsetPoint(30.0, 0.0, 40.0),
-                    MAV_CMD_DO_CHANGE_SPEED),
+                    MAV_CMD_DO_CHANGE_SPEED,
+                    MAV_FRAME_GLOBAL_TERRAIN_ALT_INT),
         missionItem(3, offsetPoint(40.0, 0.0, 50.0))
     };
     QVERIFY2(SwarmWaypointLeaderMissionPath::build(
-        zeroStart, &path, &error), qPrintable(error));
+        homeOrigin, &path, &error), qPrintable(error));
     QCOMPARE(path.profile().size(), 3);
     QCOMPARE(path.start().relativeAltitudeM, 30.0);
     // The non-navigation item does not become the next leg's origin.
     QVERIFY(std::abs(path.lengthM() - 40.0) < 0.3);
+
+    SwarmWaypointLeaderMissionSnapshot relativeZero;
+    relativeZero.airMaster = airLease;
+    relativeZero.items = {
+        missionItem(0, offsetPoint(0.0, 0.0, 0.0)),
+        missionItem(1, offsetPoint(20.0, 0.0, 30.0),
+                    MAV_CMD_NAV_WAYPOINT,
+                    MAV_FRAME_GLOBAL_RELATIVE_ALT)
+    };
+    QVERIFY2(SwarmWaypointLeaderMissionPath::build(
+        relativeZero, &path, &error), qPrintable(error));
+    QCOMPARE(path.start().relativeAltitudeM, 0.0);
+
+    const QVector<int> rejectedDestinationFrames{
+        MAV_FRAME_GLOBAL,
+        MAV_FRAME_GLOBAL_INT,
+        MAV_FRAME_GLOBAL_TERRAIN_ALT,
+        MAV_FRAME_GLOBAL_TERRAIN_ALT_INT,
+        MAV_FRAME_LOCAL_NED
+    };
+    for (int frame : rejectedDestinationFrames) {
+        SwarmWaypointLeaderMissionSnapshot unsupportedDestination;
+        unsupportedDestination.airMaster = airLease;
+        unsupportedDestination.items = {
+            missionItem(0, offsetPoint(0.0, 0.0, 10.0)),
+            missionItem(1, offsetPoint(20.0, 0.0, 30.0),
+                        MAV_CMD_NAV_WAYPOINT, frame)
+        };
+        QVERIFY(!SwarmWaypointLeaderMissionPath::build(
+            unsupportedDestination, &path, &error));
+        QCOMPARE(error, QStringLiteral(
+            "The air-master mission navigation destination at sequence 1 uses unsupported frame %1; only GLOBAL_RELATIVE_ALT and GLOBAL_RELATIVE_ALT_INT are accepted.")
+            .arg(frame));
+        QVERIFY(!path.isValid());
+    }
+
+    SwarmWaypointLeaderMissionSnapshot unsupportedNonHomeOrigin;
+    unsupportedNonHomeOrigin.airMaster = airLease;
+    unsupportedNonHomeOrigin.items = {
+        missionItem(1, offsetPoint(0.0, 0.0, 10.0),
+                    MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL),
+        missionItem(2, offsetPoint(20.0, 0.0, 30.0))
+    };
+    QVERIFY(!SwarmWaypointLeaderMissionPath::build(
+        unsupportedNonHomeOrigin, &path, &error));
+    QCOMPARE(error, QStringLiteral(
+        "The air-master mission starts at sequence 1 in unsupported frame 0; only sequence 0 may provide a horizontal origin."));
 
     SwarmWaypointLeaderMissionSnapshot longLeg;
     longLeg.airMaster = airLease;
@@ -409,33 +461,31 @@ missionFilteringBoundsAndUpdateSemanticsMatchMp10()
         missionItem(1, offsetPoint(6000.0, 0.0, 10.0)),
         missionItem(2, offsetPoint(100.0, 0.0, 10.0))
     };
-    QVERIFY2(SwarmWaypointLeaderMissionPath::build(
-        longLeg, &path, &error), qPrintable(error));
-    QVERIFY(std::abs(path.lengthM() - 100.0) < 0.5);
-
-    longLeg.items = {
-        missionItem(0, offsetPoint(0.0, 0.0, 10.0)),
-        missionItem(1, offsetPoint(6000.0, 0.0, 10.0))
-    };
     QVERIFY(!SwarmWaypointLeaderMissionPath::build(
         longLeg, &path, &error));
-    QVERIFY(error.contains(QStringLiteral("under 5 km")));
+    QCOMPARE(error, QStringLiteral(
+        "The air-master mission leg ending at sequence 1 exceeds the 5000 m maximum."));
+    QVERIFY(!path.isValid());
 
     SwarmWaypointLeaderMissionSnapshot duplicate = mission(airLease);
     duplicate.items[1].sequence = 0;
     QVERIFY(!SwarmWaypointLeaderMissionPath::build(
         duplicate, &path, &error));
-    QVERIFY(error.contains(QStringLiteral("duplicate")));
+    QCOMPARE(error, QStringLiteral(
+        "The air-master mission contains a duplicate sequence."));
 
     SwarmWaypointLeaderMissionSnapshot invalid;
     invalid.airMaster = airLease;
     invalid.items = {
-        {0, MAV_CMD_NAV_WAYPOINT, 6, 0, 0, 10.0F},
-        {1, MAV_CMD_NAV_WAYPOINT, 6, 0, 100, 10.0F}
+        {0, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+         0, 0, 10.0F},
+        {1, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+         0, 100, 10.0F}
     };
     QVERIFY(!SwarmWaypointLeaderMissionPath::build(
         invalid, &path, &error));
-    QVERIFY(error.contains(QStringLiteral("invalid waypoint")));
+    QCOMPARE(error, QStringLiteral(
+        "The air-master mission contains an invalid waypoint coordinate or altitude."));
 }
 
 void SwarmWaypointLeaderCoreTest::

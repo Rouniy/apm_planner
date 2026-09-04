@@ -661,6 +661,8 @@ set(SOURCES
     src/ui/SwarmFollowLeaderWindowIntegration.cpp
     src/ui/WaypointLeaderProfileControl.cpp
     src/ui/WaypointLeaderProfileControl.h
+    src/ui/SwarmWaypointLeaderWindow.cpp
+    src/ui/SwarmWaypointLeaderWindow.h
     src/comm/SwarmFlightMode.h
     src/ui/MovingBaseWindow.cpp
     src/ui/MovingBaseWindow.h
@@ -707,6 +709,8 @@ set(SOURCES
     src/ui/tools/SwarmFollowPathCore.h
     src/ui/tools/SwarmFollowLeaderCore.cpp
     src/ui/tools/SwarmFollowLeaderCore.h
+    src/ui/tools/SwarmWaypointLeaderCore.cpp
+    src/ui/tools/SwarmWaypointLeaderCore.h
     src/ui/tools/PropagationTelemetrySource.cpp
     src/ui/tools/PropagationTelemetrySource.h
     src/ui/QGCMAVLinkLogPlayer.cc
@@ -2715,6 +2719,39 @@ if(BUILD_TESTING)
     add_test(NAME waypointleaderprofilecontrol_tests
         COMMAND waypointleaderprofilecontrol_tests)
     set_tests_properties(waypointleaderprofilecontrol_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(swarmwaypointleaderwindow_tests
+        tests/test_swarmwaypointleaderwindow.cpp
+        src/ui/SwarmWaypointLeaderWindow.cpp
+        src/ui/SwarmWaypointLeaderWindow.h
+        src/ui/WaypointLeaderProfileControl.cpp
+        src/ui/WaypointLeaderProfileControl.h
+        src/ui/tools/SwarmWaypointLeaderCore.cpp
+        src/ui/tools/SwarmWaypointLeaderCore.h
+        src/ui/tools/SwarmFollowPathCore.cpp
+        src/ui/tools/SwarmFollowPathCore.h
+        src/ui/tools/SwarmFormationCore.cpp
+        src/ui/tools/SwarmFormationCore.h
+        src/comm/SwarmFlightMode.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+    )
+    target_include_directories(swarmwaypointleaderwindow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
+    )
+    target_link_libraries(swarmwaypointleaderwindow_tests PRIVATE
+        Qt::Core
+        Qt::Gui
+        Qt::Widgets
+        Qt::Test
+    )
+    add_test(NAME swarmwaypointleaderwindow_tests
+        COMMAND swarmwaypointleaderwindow_tests)
+    set_tests_properties(swarmwaypointleaderwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
