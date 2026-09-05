@@ -60,9 +60,15 @@ binding exact/legacy TX and authenticated RX. Internal offline configuration
 creates `mavlink-signing/signing-clock.state` and `signing-link-ids.state` under
 the writable application data directory; ordinary unprotected connections do not.
 These hold timestamp reservations and stable profile IDs, never signing secrets.
-No new QSettings key is counted. Persisted protected-profile/key-selection policy,
-the default vault path, off-thread unlock and modeless Add/Use/Delete/Disable
-workflow remain gates in `MAVLINK_SIGNING_PORT.md`. The master passphrase is never
+Manual `LINKMANAGER/LINKS` rows now persist `profileId` and `signingRequired`;
+`MAVLinkSigning/Profiles/ID/fingerprint` stores strict SHA256 metadata and
+`MAVLinkSigning/StartupRequiredPorts/PORT` guards automatic UDP restoration.
+Required profiles restore locked before connection; corrupt/missing hinted
+policies stay blocked. The application-owned asynchronous vault service uses
+`mavlink-signing/authkeys.vault`, without implicitly creating a vault. These
+infrastructure settings do not increase the direct Planner-control count.
+Modeless Add/Use/Delete/Disable and provisioning remain gates in
+`MAVLINK_SIGNING_PORT.md`. The master passphrase is never
 persisted; OpenSSL Crypto remains a required build dependency.
 
 Warning Manager persists compatible `warnings.xml` under the writable application

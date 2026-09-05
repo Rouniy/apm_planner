@@ -269,16 +269,24 @@ bool MAVLinkSigningManager::protectLink(
         key, QCryptographicHash::Sha256);
     const auto existing = m_bindings.constFind(linkId);
     if (existing != m_bindings.constEnd()) {
-        // Renaming even a friendly alias is an explicit future offline policy
-        // transition. Idempotence cannot silently mutate visible provenance.
-        if (existing->connectionProfileId == connectionProfileId
-            && existing->keyName == keyName && existing->context
-            && existing->context->fingerprint == fingerprint) {
-            return true;
+        if (existing->connectionProfileId != connectionProfileId
+            || existing->expectedFingerprint != fingerprint) {
+            setError(error, QStringLiteral(
+                "The link already has a different protected signing policy."));
+            return false;
         }
-        setError(error, QStringLiteral(
-            "The link already has a different protected signing policy."));
-        return false;
+        if (existing->context) {
+            // Renaming even a friendly alias is an explicit future offline
+            // policy transition. Idempotence cannot silently mutate visible
+            // provenance.
+            if (existing->keyName == keyName
+                && existing->context->fingerprint == fingerprint) {
+                return true;
+            }
+            setError(error, QStringLiteral(
+                "The link already has a different protected signing policy."));
+            return false;
+        }
     }
     for (auto binding = m_bindings.constBegin();
          binding != m_bindings.constEnd(); ++binding) {
@@ -345,8 +353,65 @@ bool MAVLinkSigningManager::protectLink(
     Binding binding;
     binding.connectionProfileId = std::move(connectionProfileId);
     binding.keyName = std::move(keyName);
+    binding.expectedFingerprint = fingerprint;
     binding.signingLinkId = signingLinkId;
     binding.context = std::move(context);
+    if (existing == m_bindings.constEnd()) {
+        m_bindings.insert(linkId, std::move(binding));
+    } else {
+        m_bindings[linkId] = std::move(binding);
+    }
+    return true;
+}
+
+bool MAVLinkSigningManager::requireSigning(
+    int linkId, const QString &connectionProfileId,
+    const QByteArray &expectedFingerprint, QString *error)
+{
+    if (error) error->clear();
+    if (!onOwnerThread()) {
+        setError(error, QStringLiteral(
+            "Signing policy may only be changed on its owning thread."));
+        return false;
+    }
+    if (linkId < 0 || m_epochs.value(linkId, 0) != 0) {
+        setError(error, QStringLiteral(
+            "A signing requirement can only be selected for an offline link."));
+        return false;
+    }
+    if (!validIdentity(connectionProfileId, MaximumProfileBytes,
+                       QStringLiteral("Connection profile"), error)
+        || expectedFingerprint.size()
+            != QCryptographicHash::hashLength(QCryptographicHash::Sha256)) {
+        if (error && error->isEmpty()) {
+            *error = QStringLiteral(
+                "Expected signing-key fingerprint must contain 32 bytes.");
+        }
+        return false;
+    }
+
+    const auto existing = m_bindings.constFind(linkId);
+    if (existing != m_bindings.constEnd()) {
+        if (existing->connectionProfileId == connectionProfileId
+            && existing->expectedFingerprint == expectedFingerprint) {
+            return true;
+        }
+        setError(error, QStringLiteral(
+            "The link already has a different protected signing policy."));
+        return false;
+    }
+    for (auto binding = m_bindings.constBegin();
+         binding != m_bindings.constEnd(); ++binding) {
+        if (binding->connectionProfileId == connectionProfileId) {
+            setError(error, QStringLiteral(
+                "The connection profile is already bound to another link."));
+            return false;
+        }
+    }
+
+    Binding binding;
+    binding.connectionProfileId = connectionProfileId;
+    binding.expectedFingerprint = expectedFingerprint;
     m_bindings.insert(linkId, std::move(binding));
     return true;
 }
@@ -417,7 +482,8 @@ bool MAVLinkSigningManager::signFrame(
         return false;
     }
     return binding->context->session->signFrame(
-        input, binding->signingLinkId, unixMs, signedFrame, error);
+        input, static_cast<quint8>(binding->signingLinkId), unixMs,
+        signedFrame, error);
 }
 
 MAVLinkSigningManager::Verification MAVLinkSigningManager::verifyFrame(
@@ -454,12 +520,14 @@ MAVLinkSigningManager::LinkStatus MAVLinkSigningManager::status(int linkId) cons
     const auto binding = m_bindings.constFind(linkId);
     if (binding == m_bindings.constEnd()) return result;
     result.protectedLink = true;
+    result.keyAvailable = binding->context && binding->context->session
+        && binding->context->session->isReady();
     result.connectionProfileId = binding->connectionProfileId;
     result.keyName = binding->keyName;
     result.signingLinkId = binding->signingLinkId;
+    result.keyFingerprint = QString::fromLatin1(
+        binding->expectedFingerprint.toHex());
     if (binding->context) {
-        result.keyFingerprint = QString::fromLatin1(
-            binding->context->fingerprint.toHex());
         if (binding->context->session) {
             result.counters = binding->context->session->counters();
         }

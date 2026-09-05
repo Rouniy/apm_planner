@@ -66,11 +66,14 @@ int LinkManagerFactory::addSerialConnection()
 
     connect(link,SIGNAL(timeoutTriggered(LinkInterface*)),lmgr,SLOT(linkTimeoutTriggered(LinkInterface*)));
 
+    const int id = link->getId();
+    const QPointer<LinkInterface> guard(link);
     lmgr->addLink(link);
-    return link->getId();
+    return guard && lmgr->getLink(id) == guard.data() ? id : -1;
 }
 
-int LinkManagerFactory::addSerialConnection(QString port,int baud)
+int LinkManagerFactory::addSerialConnection(QString port,int baud,
+    const LinkManager::ConnectionProfile &profile)
 {
     LinkManager *lmgr = LinkManager::instance();
     if (lmgr->isShuttingDown()) {
@@ -84,12 +87,15 @@ int LinkManagerFactory::addSerialConnection(QString port,int baud)
     link->setPortName(port);
     link->setBaudRate(baud);
 
-    lmgr->addLink(link);
-    return link->getId();
+    const int id = link->getId();
+    const QPointer<LinkInterface> guard(link);
+    lmgr->addLink(link, profile);
+    return guard && lmgr->getLink(id) == guard.data() ? id : -1;
 
 }
 int LinkManagerFactory::addUdpConnection(QHostAddress addr, int port,
-                                         bool retryOnBindFailure)
+                                         bool retryOnBindFailure,
+                                         const LinkManager::ConnectionProfile &profile)
 {
     LinkManager *lmgr = LinkManager::instance();
     if (lmgr->isShuttingDown()) {
@@ -108,13 +114,17 @@ int LinkManagerFactory::addUdpConnection(QHostAddress addr, int port,
         }, Qt::QueuedConnection);
     }
 
-    lmgr->addLink(link);
-    link->connect();
-    return link->getId();
+    const int id = link->getId();
+    const QPointer<LinkInterface> guard(link);
+    lmgr->addLink(link, profile);
+    if (!guard || lmgr->getLink(id) != guard.data()) return -1;
+    lmgr->connectLink(id);
+    return guard && lmgr->getLink(id) == guard.data() ? id : -1;
 
 }
 
-int LinkManagerFactory::addUdpClientConnection(QHostAddress addr,int port)
+int LinkManagerFactory::addUdpClientConnection(QHostAddress addr,int port,
+    const LinkManager::ConnectionProfile &profile)
 {
     LinkManager *lmgr = LinkManager::instance();
     if (lmgr->isShuttingDown()) {
@@ -123,11 +133,14 @@ int LinkManagerFactory::addUdpClientConnection(QHostAddress addr,int port)
     UDPClientLink* link = new UDPClientLink(addr,port);
     connectLinkSignals(link, lmgr);
 
-    lmgr->addLink(link);
-    return link->getId();
+    const int id = link->getId();
+    const QPointer<LinkInterface> guard(link);
+    lmgr->addLink(link, profile);
+    return guard && lmgr->getLink(id) == guard.data() ? id : -1;
 }
 
-int LinkManagerFactory::addTcpConnection(QHostAddress addr, QString hostName, int port,bool asServer)
+int LinkManagerFactory::addTcpConnection(QHostAddress addr, QString hostName, int port,bool asServer,
+    const LinkManager::ConnectionProfile &profile)
 {
     LinkManager *lmgr = LinkManager::instance();
     if (lmgr->isShuttingDown()) {
@@ -138,10 +151,13 @@ int LinkManagerFactory::addTcpConnection(QHostAddress addr, QString hostName, in
 
     connectLinkSignals(link, lmgr);
 
-    lmgr->addLink(link);
+    const int id = link->getId();
+    const QPointer<LinkInterface> guard(link);
+    lmgr->addLink(link, profile);
+    if (!guard || lmgr->getLink(id) != guard.data()) return -1;
     if (asServer)
     {
-        link->connect();
+        lmgr->connectLink(id);
     }
-    return link->getId();
+    return guard && lmgr->getLink(id) == guard.data() ? id : -1;
 }

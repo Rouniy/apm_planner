@@ -61,6 +61,9 @@ This file is part of the APM_PLANNER project
 #include "VehicleCommandService.h"
 #include "VehicleEndpoint.h"
 #include "VehicleTargetManager.h"
+#include "services/MavlinkSigningProfiles.h"
+#include "services/MavAuthKeyService.h"
+#include <QCryptographicHash>
 #include "ui/configuration/PlannerStartupUdpOptions.h"
 #include <QApplication>
 #include <QPointer>
@@ -70,6 +73,7 @@ This file is part of the APM_PLANNER project
 #include <QDateTime>
 #include <QDir>
 #include <QThread>
+#include <algorithm>
 
 namespace
 {
@@ -140,14 +144,18 @@ LinkManager::LinkManager(QObject *parent) :
         }, this);
     m_exactLinkTransmitter->setFrameSigner(
         [this](int linkId, const QByteArray &frame, QByteArray *output) {
-            return !m_shuttingDown && m_signingManager->signFrame(
+            return !m_shuttingDown && signingReady(linkId) && m_signingManager->signFrame(
                 linkId, currentPhysicalLinkSession(linkId), frame,
                 QDateTime::currentMSecsSinceEpoch(), output);
         });
     connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionBegan,
             this, [this](int id, qulonglong epoch) {
-        m_signingManager->beginEpoch(id, epoch);
-        m_exactLinkTransmitter->setSigningRequired(id, m_signingManager->protectedLink(id));
+        if (!signingReady(id) || !m_signingManager->beginEpoch(id, epoch)) {
+            invalidateLinkSession(id);
+            disconnectLink(id);
+            return;
+        }
+        m_exactLinkTransmitter->setSigningRequired(id, signingRequired(id));
         m_exactLinkTransmitter->setLinkSessionEpoch(id, epoch);
         emit physicalLinkSessionBegan(id, epoch);
     });
@@ -374,7 +382,7 @@ bool LinkManager::singleEndpointRouteIsEligible(
     LinkInterface *const link = getLink(endpoint.linkId);
     if (m_shuttingDown || !endpoint.isValid() || epoch == 0 || !link || !link->isConnected()
         || currentPhysicalLinkSession(link->getId()) != epoch
-        || !isCurrentPhysicalIngress(link)) {
+        || !isCurrentPhysicalIngress(link) || !signingReady(endpoint.linkId)) {
         if (error) *error = tr("The selected physical link is unavailable or its peer changed.");
         return false;
     }
@@ -475,7 +483,8 @@ void LinkManager::reloadSettings()
                 if (!hasExplicitStartupUdp
                     && udp->getPort()
                         == PlannerStartupUdpOptions::DefaultPrimaryPort
-                    && udp->getHosts().isEmpty()) {
+                    && udp->getHosts().isEmpty() && !signingRequired(i.key())
+                    && connectionProfile(i.key()).id.startsWith(QStringLiteral("startup-udp-"))) {
                     legacyStartupUdpCandidates.append(i.key());
                 }
             }
@@ -496,13 +505,15 @@ void LinkManager::reloadSettings()
             continue;
         }
         const int linkId = LinkManagerFactory::addUdpConnection(
-            QHostAddress::Any, port, false);
+            QHostAddress::Any, port, false,
+            ConnectionProfile{QStringLiteral("startup-udp-%1").arg(port),
+                settings.contains(QStringLiteral("MAVLinkSigning/StartupRequiredPorts/%1").arg(port)), {}});
         if (linkId >= 0) {
             m_startupUdpLinkIds.insert(linkId);
             existingUdpPorts.insert(port);
         }
     }
-    if (migratedLegacyStartupUdp) {
+    if (migratedLegacyStartupUdp || m_connectionRestoreError.isEmpty()) {
         // Rewrite the manual-link array immediately. A later settings change
         // or abnormal exit must not resurrect the adopted legacy listener.
         saveSettings();
@@ -579,6 +590,7 @@ void LinkManager::shutdown()
         return;
     }
     m_shuttingDown = true;
+    if (m_mavAuthKeyService) m_mavAuthKeyService->shutdown();
 
     // Stop exact multi-vehicle dispatch while every reservation, endpoint
     // session and physical route is still available for orderly cancellation.
@@ -699,84 +711,163 @@ void LinkManager::shutdown()
 
 void LinkManager::loadSettings()
 {
+    struct StoredLink {
+        QString type;
+        QVariantMap values;
+        QList<QPair<QString, int>> hosts;
+        ConnectionProfile profile;
+        bool legacyIdentity = false;
+    };
+    QVector<StoredLink> stored;
     QSettings settings;
-    settings.beginGroup("LINKMANAGER");
-    m_mavlinkLoggingEnabled = settings.value("LOGGING",true).toBool();
-    int linkssize = settings.beginReadArray("LINKS");
-    for (int i=0;i<linkssize;i++)
-    {
-        settings.setArrayIndex(i);
-        QString type = settings.value("type").toString();
-        if (type == "SERIAL_LINK")
-        {
-            QString port = settings.value("port").toString();
-            int baud = settings.value("baud").toInt();
-            if (baud < 0 || baud > 12500000)
-            {
-                //Bad baud rate.
-                baud = 115200;
-            }
-
-            LinkManagerFactory::addSerialConnection(port,baud);
-        }
-        else if (type == "UDP_LINK")
-        {
-            int port = settings.value("port").toInt();
-            int linkid = LinkManagerFactory::addUdpConnection(QHostAddress::Any,port);
-            UDPLink *iface = qobject_cast<UDPLink*>(getLink(linkid));
-
-            int hostcount = settings.beginReadArray("HOSTS");
-            for (int j=0;j<hostcount;++j)
-            {
-                settings.setArrayIndex(j);
-                QString host = settings.value("host").toString();
-                int port = settings.value("port").toInt();
-                iface->addHost(tr("%1:%2").arg(host).arg(port));
-            }
-            settings.endArray(); // HOSTS
-        }
-        else if (type == "TCP_LINK")
-        {
-            QHostAddress hostAddress(settings.value("host").toString());
-            QString hostName = settings.value("hostname").toString();
-            int port = settings.value("port").toInt();
-            bool asServer = settings.value("asServer").toBool();
-            LinkManagerFactory::addTcpConnection(hostAddress, hostName, port, asServer);
-        }
-        else if (type == "UDP_CLIENT_LINK")
-        {
-            QString host = settings.value("host").toString();
-            int port = settings.value("port").toInt();
-            LinkManagerFactory::addUdpClientConnection(QHostAddress(host),port);
-        }
+    // Never let normalization redirect a corrupt startup listener to a new,
+    // unsigned default profile. Validate before ANY saved listener can open.
+    for (const char *key : {PlannerStartupUdpOptions::PrimaryPortSettingKey,
+                            PlannerStartupUdpOptions::AlternatePortSettingKey}) {
+        if (!settings.contains(QLatin1String(key))) continue;
+        bool valid = false;
+        const int port = settings.value(QLatin1String(key)).toInt(&valid);
+        if (!valid || port < 1 || port > 65535)
+            m_connectionRestoreError = tr("Stored startup UDP port is invalid; automatic connections are blocked.");
     }
-    settings.endArray(); // HOSTS
-    int portsize = settings.beginReadArray("PORTBAUDPAIRS");
-    for (int i=0;i<portsize;i++)
-    {
+    if (settings.contains(QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey))) {
+        const QString enabled = settings.value(QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey))
+            .toString().trimmed().toLower();
+        if (enabled != "true" && enabled != "false" && enabled != "1" && enabled != "0")
+            m_connectionRestoreError = tr("Stored startup UDP switch is invalid; automatic connections are blocked.");
+    }
+    settings.beginGroup("LINKMANAGER");
+    m_mavlinkLoggingEnabled = settings.value("LOGGING", true).toBool();
+    const int count = settings.beginReadArray("LINKS");
+    if (count < 0 || count > 256)
+        m_connectionRestoreError = tr("Connection settings exceed the supported profile limit.");
+    for (int i = 0; i < qBound(0, count, 256); ++i) {
+        settings.setArrayIndex(i);
+        StoredLink item;
+        item.type = settings.value("type").toString();
+        if (item.type != "SERIAL_LINK" && item.type != "UDP_LINK"
+            && item.type != "TCP_LINK" && item.type != "UDP_CLIENT_LINK")
+            m_connectionRestoreError = tr("Unsupported stored connection profile type; settings were not rewritten.");
+        for (const QString &key : {QString("port"), QString("baud"), QString("host"),
+                                  QString("hostname"), QString("asServer")})
+            item.values.insert(key, settings.value(key));
+        item.profile.id = settings.value("profileId").toString();
+        item.legacyIdentity = !settings.contains("profileId") && !settings.contains("signingRequired");
+        const QString required = settings.value("signingRequired", false).toString();
+        item.profile.signingRequired = required == QStringLiteral("true");
+        if (required != QStringLiteral("true") && required != QStringLiteral("false"))
+            item.profile.error = tr("Malformed signing requirement in connection settings.");
+        if (item.profile.id.isEmpty()) {
+            if (settings.contains("profileId") || item.profile.signingRequired)
+                item.profile.error = tr("Stored signing profile identity is missing.");
+            else
+                item.profile.id = MavlinkSigningProfiles::newProfileId();
+        }
+        if (!MavlinkSigningProfiles::validProfileId(item.profile.id))
+            item.profile.error = tr("Stored connection profile identity is invalid.");
+        if (item.type == "UDP_LINK") {
+            const int hostCount = settings.beginReadArray("HOSTS");
+            if (hostCount < 0 || hostCount > 256)
+                item.profile.error = tr("Stored UDP peer list exceeds its limit.");
+            for (int j = 0; j < qBound(0, hostCount, 256); ++j) {
+                settings.setArrayIndex(j);
+                item.hosts.append({settings.value("host").toString(), settings.value("port").toInt()});
+            }
+            settings.endArray();
+        }
+        stored.append(item);
+    }
+    settings.endArray();
+    const int portCount = settings.beginReadArray("PORTBAUDPAIRS");
+    for (int i = 0; i < qBound(0, portCount, 256); ++i) {
         settings.setArrayIndex(i);
         m_portToBaudMap[settings.value("port").toString()] = settings.value("baud").toInt();
     }
-    settings.endArray(); // PORTBAUDPAIRS
+    settings.endArray();
     settings.endGroup();
+    if (settings.status() != QSettings::NoError)
+        m_connectionRestoreError = tr("Connection settings are unreadable or malformed.");
+
+    // Adopt only the old implicit, identity-less default. Never discard a
+    // canonical manual UUID merely because it happens to use port 14550.
+    QList<int> legacyDefaults;
+    if (!PlannerStartupUdpOptions::hasExplicitConfiguration(settings)) {
+        for (int i = 0; i < stored.size(); ++i) {
+            const auto &item = stored.at(i);
+            if (item.legacyIdentity && item.profile.error.isEmpty()
+                && item.type == "UDP_LINK" && item.values.value("port").toInt() == 14550
+                && item.hosts.isEmpty()) legacyDefaults.append(i);
+        }
+    }
+    if (legacyDefaults.size() == 1)
+        stored[legacyDefaults.first()].profile.id = QStringLiteral("startup-udp-14550");
+
+    // A saved manual listener must not hide a required startup-port policy by
+    // occupying its port before the startup pass gets to inspect that policy.
+    for (auto &item : stored) {
+        if (item.type != "UDP_LINK") continue;
+        const int port = item.values.value("port").toInt();
+        const QString startupId = QStringLiteral("startup-udp-%1").arg(port);
+        const auto startupPolicy = MavlinkSigningProfiles::load(settings, startupId,
+            settings.contains(QStringLiteral("MAVLinkSigning/StartupRequiredPorts/%1").arg(port)));
+        if (startupPolicy.required && item.profile.id != startupId)
+            item.profile.error = tr("Manual UDP listener conflicts with a required startup signing profile.");
+    }
+    // Validate the complete identity set before a factory may start a listener.
+    QHash<QString, int> identities;
+    for (const auto &item : stored) ++identities[item.profile.id];
+    for (auto &item : stored) {
+        if (identities.value(item.profile.id) > 1)
+            item.profile.error = tr("Duplicate stored connection profile identity.");
+        if (!m_connectionRestoreError.isEmpty()) item.profile.error = m_connectionRestoreError;
+    }
+    for (const auto &item : stored) {
+        const int port = item.values.value("port").toInt();
+        if (item.type == "SERIAL_LINK") {
+            int baud = item.values.value("baud").toInt();
+            if (baud < 0 || baud > 12500000) baud = 115200;
+            LinkManagerFactory::addSerialConnection(item.values.value("port").toString(), baud, item.profile);
+        } else if (item.type == "UDP_LINK") {
+            const int id = LinkManagerFactory::addUdpConnection(QHostAddress::Any, port, true, item.profile);
+            if (auto *udp = qobject_cast<UDPLink *>(getLink(id))) {
+                for (const auto &host : item.hosts)
+                    udp->addHost(QStringLiteral("%1:%2").arg(host.first).arg(host.second));
+            }
+        } else if (item.type == "TCP_LINK") {
+            LinkManagerFactory::addTcpConnection(QHostAddress(item.values.value("host").toString()),
+                item.values.value("hostname").toString(), port,
+                item.values.value("asServer").toBool(), item.profile);
+        } else if (item.type == "UDP_CLIENT_LINK") {
+            LinkManagerFactory::addUdpClientConnection(QHostAddress(item.values.value("host").toString()), port, item.profile);
+        }
+    }
 }
 
-void LinkManager::saveSettings()
+bool LinkManager::saveSettings()
 {
+    if (!m_connectionRestoreError.isEmpty()) return false;
+    for (const auto &profile : m_connectionProfiles)
+        if (!profile.error.isEmpty()) return false; // Preserve quarantined input verbatim.
     QSet<QString> knownHosts;
 
     QSettings settings;
     settings.beginGroup("LINKMANAGER");
     settings.setValue("LOGGING",m_mavlinkLoggingEnabled);
+    settings.remove("LINKS"); // Do not retain stale type/endpoint fields in reused slots.
     settings.beginWriteArray("LINKS");
     int index = 0;
     for (QMap<int,LinkInterface*>::const_iterator i= m_connectionMap.constBegin();i!=m_connectionMap.constEnd();i++)
     {
-        if (m_startupUdpLinkIds.contains(i.key())) {
+        if (m_startupUdpLinkIds.contains(i.key())
+            || i.value()->getLinkType() == LinkInterface::UNKNOWN_LINK
+            || i.value()->getLinkType() == LinkInterface::SIM_LINK) {
             continue;
         }
         settings.setArrayIndex(index++);
         settings.setValue("linkid",i.value()->getId());
+        const auto profile = connectionProfile(i.key());
+        settings.setValue("profileId", profile.id);
+        settings.setValue("signingRequired", signingRequired(i.key()));
         if (i.value()->getLinkType() == LinkInterface::SERIAL_LINK)
         {
             SerialConnection *link = qobject_cast<SerialConnection*>(i.value());
@@ -839,6 +930,7 @@ void LinkManager::saveSettings()
     settings.endArray(); // PORTBAUDPAIRS
     settings.endGroup();
     settings.sync();
+    return settings.status() == QSettings::NoError;
 }
 
 void LinkManager::setLogSubDirectory(const QString& dir)
@@ -1013,7 +1105,7 @@ LinkInterface::LinkType LinkManager::getLinkType(int linkid)
 }
 
 
-void LinkManager::addLink(LinkInterface *link)
+void LinkManager::addLink(LinkInterface *link, const ConnectionProfile &requestedProfile)
 {
     if (m_shuttingDown || !link) {
         QLOG_WARN() << "Ignoring link added during terminal shutdown";
@@ -1021,10 +1113,47 @@ void LinkManager::addLink(LinkInterface *link)
     }
     QPointer<LinkInterface> guardedLink(link);
     const int linkId = link->getId();
+    if (m_connectionMap.contains(linkId)) {
+        QLOG_WARN() << "Ignoring duplicate physical link registration" << linkId;
+        return;
+    }
     const bool alreadyConnected = link->isConnected();
     const LinkInterface::LinkType linkType = link->getLinkType();
+    ConnectionProfile profile = requestedProfile;
+    if (profile.id.isEmpty()) {
+        if (profile.signingRequired) profile.error = tr("Required signing profile identity is missing.");
+        profile.id = MavlinkSigningProfiles::newProfileId();
+    }
+    QSettings settings;
+    const auto policy = MavlinkSigningProfiles::load(settings, profile.id, profile.signingRequired);
+    profile.signingRequired = policy.required;
+    if (!policy.error.isEmpty()) profile.error = policy.error;
+    if (!m_connectionRestoreError.isEmpty()) profile.error = m_connectionRestoreError;
+    QList<int> duplicateLinks;
+    for (auto it = m_connectionProfiles.begin(); it != m_connectionProfiles.end(); ++it) {
+        if (it.key() != linkId && it->id == profile.id) {
+            profile.error = tr("Duplicate connection profile identity; signing policy is quarantined.");
+            it->error = profile.error;
+            it->signingRequired = true;
+            m_exactLinkTransmitter->setSigningRequired(it.key(), true);
+            duplicateLinks.append(it.key());
+        }
+    }
+    if (profile.signingRequired && profile.error.isEmpty()
+        && !m_signingManager->requireSigning(linkId, profile.id, policy.fingerprint, &profile.error)) {
+        if (profile.error.isEmpty()) profile.error = tr("Cannot restore required signing policy.");
+    }
+    if (!profile.error.isEmpty()) profile.signingRequired = true;
+    m_connectionProfiles.insert(linkId, profile);
+    m_exactLinkTransmitter->setSigningRequired(linkId, profile.signingRequired);
     m_connectionMap.insert(linkId, link);
-    if (alreadyConnected && !qobject_cast<UDPLink *>(link)) {
+    for (int duplicateId : duplicateLinks) {
+        disconnectLink(duplicateId);
+        if (!guardedLink || m_shuttingDown || getLink(linkId) != guardedLink.data()) return;
+    }
+    if (alreadyConnected && !signingReady(linkId)) {
+        link->disconnect();
+    } else if (alreadyConnected && !qobject_cast<UDPLink *>(link)) {
         activateLinkSession(link);
     } else {
         m_exactLinkTransmitter->setMotorStopLinkEligible(
@@ -1052,7 +1181,8 @@ LinkInterface* LinkManager::getLink(int linkId) const
 
 bool LinkManager::isCurrentPhysicalIngress(LinkInterface *link) const
 {
-    if (m_shuttingDown || !link || getLink(link->getId()) != link) return false;
+    if (m_shuttingDown || !link || getLink(link->getId()) != link
+        || !signingReady(link->getId())) return false;
     if (auto *udp = qobject_cast<UDPLink *>(link)) {
         const quint64 revision = udp->peerSnapshot().revision;
         return revision != 0 && revision == m_udpIngressRevision.value(link->getId());
@@ -1064,7 +1194,7 @@ void LinkManager::receiveUdpDatagram(UDPLink *link, const QByteArray &bytes,
                                      quint64 peerRevision)
 {
     if (m_shuttingDown || !link || getLink(link->getId()) != link
-        || !link->isConnected() || peerRevision == 0
+        || !link->isConnected() || !signingReady(link->getId()) || peerRevision == 0
         || link->peerSnapshot().revision != peerRevision) return;
     const QPointer<UDPLink> guardedLink(link);
     const int id = link->getId();
@@ -1087,13 +1217,13 @@ void LinkManager::receiveUdpDatagram(UDPLink *link, const QByteArray &bytes,
 bool LinkManager::writeRawBytes(int linkId, const QByteArray &bytes)
 {
     if (QThread::currentThread() != thread() || m_shuttingDown
-        || !m_signingManager->rawWritesAllowed(linkId)) return false;
+        || signingRequired(linkId) || !m_signingManager->rawWritesAllowed(linkId)) return false;
     return writeBytesToTransport(linkId, bytes);
 }
 
 bool LinkManager::writeBytesToTransport(int linkId, const QByteArray &bytes)
 {
-    if (QThread::currentThread() != thread() || m_shuttingDown) return false;
+    if (QThread::currentThread() != thread() || m_shuttingDown || !signingReady(linkId)) return false;
     const QPointer<LinkManager> self(this);
     QPointer<LinkInterface> link(m_connectionMap.value(linkId, nullptr));
     if (!link || !link->isConnected() || bytes.isEmpty()) {
@@ -1149,6 +1279,34 @@ const MAVLinkSigningManager *LinkManager::signingManager() const
     return m_signingManager.get();
 }
 
+LinkManager::ConnectionProfile LinkManager::connectionProfile(int linkId) const
+{ return m_connectionProfiles.value(linkId); }
+
+bool LinkManager::signingRequired(int linkId) const
+{
+    const auto profile = m_connectionProfiles.constFind(linkId);
+    return m_signingManager->protectedLink(linkId)
+        || (profile != m_connectionProfiles.cend() && (profile->signingRequired || !profile->error.isEmpty()));
+}
+
+bool LinkManager::signingReady(int linkId) const
+{
+    const auto profile = m_connectionProfiles.constFind(linkId);
+    if (profile == m_connectionProfiles.cend() || !profile->error.isEmpty()) return false;
+    return !signingRequired(linkId) || m_signingManager->status(linkId).keyAvailable;
+}
+
+MavAuthKeyService *LinkManager::mavAuthKeyService()
+{
+    if (m_shuttingDown || QThread::currentThread() != thread()) return nullptr;
+    if (!m_mavAuthKeyService) {
+        const QString directory = QDir(AppPaths::writableDataDirectory()).filePath(QStringLiteral("mavlink-signing"));
+        if (!AppPaths::ensureDirectory(directory)) return nullptr;
+        m_mavAuthKeyService = new MavAuthKeyService(QDir(directory).filePath(QStringLiteral("authkeys.vault")), this);
+    }
+    return m_mavAuthKeyService;
+}
+
 bool LinkManager::configureSigning(int linkId, const QString &connectionProfileId,
                                    const QString &keyName, const QByteArray &key,
                                    QString *error)
@@ -1162,6 +1320,46 @@ bool LinkManager::configureSigning(int linkId, const QString &connectionProfileI
     if (m_shuttingDown || !link || link->isConnected()
         || currentPhysicalLinkSession(linkId) != 0) {
         if (error) *error = tr("Disconnect the physical link before selecting its signing key.");
+        return false;
+    }
+    auto profile = m_connectionProfiles.find(linkId);
+    if (profile == m_connectionProfiles.end() || profile->id != connectionProfileId
+        || !profile->error.isEmpty() || key.size() != 32
+        || std::all_of(key.cbegin(), key.cend(), [](char c) { return c == 0; })) {
+        if (error) *error = tr("Invalid key, mismatched profile or quarantined signing configuration.");
+        return false;
+    }
+    // Publish the stable connection identity before its security record. A
+    // crash after publishing the requirement must restore this same identity.
+    if (!saveSettings()) {
+        if (error) *error = tr("Cannot persist the connection identity before protecting it.");
+        return false;
+    }
+    const QByteArray fingerprint = QCryptographicHash::hash(key, QCryptographicHash::Sha256);
+    QSettings settings;
+    const auto existing = MavlinkSigningProfiles::load(settings, connectionProfileId, profile->signingRequired);
+    if (!existing.error.isEmpty() || (existing.required && existing.fingerprint != fingerprint)) {
+        if (error) *error = existing.error.isEmpty() ? tr("The connection requires a different signing key.") : existing.error;
+        return false;
+    }
+    // Once publication is attempted, an I/O error has uncertain durability.
+    // Keep this process blocked too; never reconnect unsigned after a failure.
+    profile->signingRequired = true;
+    m_exactLinkTransmitter->setSigningRequired(linkId, true);
+    if (!MavlinkSigningProfiles::saveRequired(settings, connectionProfileId, fingerprint, &profile->error)) {
+        if (profile->error.isEmpty()) profile->error = tr("Signing policy publication failed.");
+        if (error) *error = profile->error;
+        return false;
+    }
+    if (connectionProfileId.startsWith(QStringLiteral("startup-udp-"))) {
+        settings.setValue(QStringLiteral("MAVLinkSigning/StartupRequiredPorts/%1")
+            .arg(connectionProfileId.mid(12)), true);
+        settings.sync();
+    }
+    if (!m_signingManager->requireSigning(linkId, connectionProfileId, fingerprint, &profile->error)
+        || settings.status() != QSettings::NoError || !saveSettings()) {
+        if (profile->error.isEmpty()) profile->error = tr("Signing requirement could not be safely persisted.");
+        if (error) *error = profile->error;
         return false;
     }
     const QString directory = QDir(AppPaths::writableDataDirectory())
@@ -1179,6 +1377,8 @@ bool LinkManager::configureSigning(int linkId, const QString &connectionProfileI
 MAVLinkSigningManager::Verification LinkManager::verifyIncomingFrame(
     int linkId, quint64 epoch, const QByteArray &frame)
 {
+    if (!signingReady(linkId)) return {MAVLinkSigningManager::VerifyVerdict::NotReady,
+        tr("Unlock and select the required signing key while the link is disconnected.")};
     return m_signingManager->verifyFrame(linkId, epoch, frame,
                                          QDateTime::currentMSecsSinceEpoch());
 }
@@ -1217,6 +1417,7 @@ void LinkManager::removeLink(int linkId)
     // second shutdown-crash path when a connection was removed at runtime.
     m_connectionMap.remove(linkId);
     m_signingManager->removeLink(linkId);
+    m_connectionProfiles.remove(linkId);
     m_exactLinkTransmitter->setSigningRequired(linkId, false);
     m_udpIngressRevision.remove(linkId);
     m_startupUdpLinkIds.remove(linkId);
@@ -1242,6 +1443,7 @@ void LinkManager::removeLink(int linkId)
 
 bool LinkManager::connectLink(int index)
 {
+    if (m_shuttingDown || !signingReady(index)) return false;
     if (m_connectionMap.contains(index))
     {
         return m_connectionMap.value(index)->connect();
@@ -1623,6 +1825,10 @@ void LinkManager::linkConnected(LinkInterface* link)
         return;
     }
     const int linkId = link->getId();
+    if (m_shuttingDown || !signingReady(linkId)) {
+        disconnectLink(linkId);
+        return;
+    }
     if (qobject_cast<UDPLink *>(link)) {
         // A bound listening socket is not a peer session. Its first stamped
         // datagram establishes the exact physical identity before parsing.
@@ -1664,6 +1870,10 @@ bool LinkManager::activateLinkSession(LinkInterface *link)
         || m_connectionMap.value(link->getId(), nullptr) != link) {
         return false;
     }
+    if (!signingReady(link->getId())) {
+        disconnectLink(link->getId());
+        return false;
+    }
     QPointer<LinkInterface> guardedLink(link);
     const int linkId = link->getId();
     const QString linkName = link->getShortName();
@@ -1673,7 +1883,7 @@ bool LinkManager::activateLinkSession(LinkInterface *link)
     // disconnected(LinkInterface*) signal. A new connected signal is always
     // an epoch boundary for every parser and exact-target service.
     invalidateLinkSession(linkId);
-    if (m_shuttingDown || !guardedLink
+    if (m_shuttingDown || !guardedLink || !signingReady(linkId)
         || m_connectionMap.value(linkId, nullptr) != guardedLink.data()
         || !guardedLink->isConnected()
         || m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId) != 0) {

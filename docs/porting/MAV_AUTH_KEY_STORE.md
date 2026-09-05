@@ -1,12 +1,32 @@
 # MAVLink signing-key vault foundation
 
+## Asynchronous application service (2026-09-05)
+
+`MavAuthKeyService` now wraps this synchronous store in one dedicated worker
+thread, lazily owned by `LinkManager`. Its default path is
+`mavlink-signing/authkeys.vault` under writable application data. Construction
+does not create or overwrite a vault. Create/unlock/add/remove/lock admit one
+operation at a time; refusal returns token 0. Metadata-only completion signals
+never carry keys. Explicit `requestKey` callbacks run on the owner thread after
+the token returns, including when admission observers run nested event loops.
+The service cleans its own key/input buffers; retained caller copies remain the
+caller's responsibility. Foreign-thread mutation is refused.
+
+Window closure does not destroy this application-owned service. Terminal
+shutdown hides names, drains the one admitted operation, cancels pending secret
+delivery and joins without terminating the worker or pumping GUI events.
+Existing transport keys are separate from vault state: locking the vault cannot
+silently make a protected link unsigned. Worker/vault tests are not evidence of
+a completed Signing dialog; modeless key management and vehicle provisioning
+remain disabled and unimplemented.
+
 `MavAuthKeyStore` is a standalone, thread-confined encrypted key repository.
 It does **not** enable MAVLink signing, transmit SETUP_SIGNING, choose a vehicle,
 alter the parser/transmitter or make the Advanced Tools Signing button usable.
 Production transport/signature verification now uses an application-owned
 manager described in `MAVLINK_SIGNING_PORT.md`; this vault is not yet its UI
-key provider. Explicit selection, persisted fail-closed protection and the
-operator-facing Signing workflow remain separate integration requirements.
+key provider. Persisted fail-closed protection is implemented in that manager;
+operator key selection and the Signing dialog remain integration requirements.
 
 Reference inspected: MP10 `ExtLibs/ArduPilot/Mavlink/MAVAuthKeys.cs` and
 `MavAuthKeyStore.cs`, plus `MissionPlanner.Tests/MavAuthKeyStoreTests.cs`.

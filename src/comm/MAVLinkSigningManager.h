@@ -47,6 +47,7 @@ public:
 
     struct LinkStatus {
         bool protectedLink = false;
+        bool keyAvailable = false;
         quint64 activeEpoch = 0;
         QString connectionProfileId;
         QString keyName;
@@ -65,6 +66,9 @@ public:
     bool protectLink(int linkId, QString connectionProfileId, QString keyName,
                      const QByteArray &key, qint64 unixMs,
                      QString *error = nullptr);
+    bool requireSigning(int linkId, const QString &connectionProfileId,
+                        const QByteArray &expectedFingerprint,
+                        QString *error = nullptr);
     bool beginEpoch(int linkId, quint64 epoch, QString *error = nullptr);
     bool endEpoch(int linkId, quint64 epoch, QString *error = nullptr);
     void removeLink(int linkId);
@@ -87,7 +91,8 @@ private:
     struct Binding {
         QString connectionProfileId;
         QString keyName;
-        quint8 signingLinkId = 0;
+        QByteArray expectedFingerprint;
+        int signingLinkId = -1;
         std::shared_ptr<Context> context;
     };
 

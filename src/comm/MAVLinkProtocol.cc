@@ -106,7 +106,7 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
             return false;
         }
         if (version == 1U && m_connectionManager
-            && m_connectionManager->signingManager()->protectedLink(linkId)) {
+            && m_connectionManager->signingRequired(linkId)) {
             // An unsigned radio diagnostic or old capability bit must never
             // downgrade an explicitly protected physical link.
             return true;
@@ -136,7 +136,7 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
         if (decodeState == MAVLINK_FRAMING_INCOMPLETE
             && !linkState->decodedFirstPacket
             && !(m_connectionManager
-                 && m_connectionManager->signingManager()->protectedLink(linkId)))
+                 && m_connectionManager->signingRequired(linkId)))
         {
             linkState->nonMavlinkCount++;
             if (linkState->nonMavlinkCount > 2000

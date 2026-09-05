@@ -77,12 +77,18 @@ class MavlinkComponentRegistry;
 class Px4FlowService;
 class MavFtpService;
 class MavFtpServiceInterface;
+class MavAuthKeyService;
 class QGCUASParamManager;
 class LinkManager : public QObject
 {
     friend class LinkManagerFactory;
     Q_OBJECT
 public:
+    struct ConnectionProfile {
+        QString id;
+        bool signingRequired = false;
+        QString error;
+    };
     explicit LinkManager(QObject *parent = nullptr);
     static LinkManager* instance();
     ~LinkManager();
@@ -127,7 +133,12 @@ public:
     UASInterface* getUas(int id);
     UASInterface* createUAS(MAVLinkProtocol* mavlink, LinkInterface* link, int sysid, mavlink_heartbeat_t* heartbeat, QObject* parent = nullptr);
 
-    void addLink(LinkInterface *link);
+    void addLink(LinkInterface *link, const ConnectionProfile &profile);
+    void addLink(LinkInterface *link) { addLink(link, ConnectionProfile{}); }
+    ConnectionProfile connectionProfile(int linkId) const;
+    bool signingRequired(int linkId) const;
+    bool signingReady(int linkId) const;
+    MavAuthKeyService *mavAuthKeyService();
     QList<int> getLinks() const;
 
     LinkInterface* getLink(int linkId) const;
@@ -213,7 +224,7 @@ private:
     bool writeSequencedFrame(int linkId, const QByteArray &frame);
     bool writeBytesToTransport(int linkId, const QByteArray &bytes);
     void loadSettings();
-    void saveSettings();
+    bool saveSettings();
     bool activateLinkSession(LinkInterface *link);
     void invalidateLinkSession(int linkId);
     bool exactVehicleRouteIsEligible(
@@ -232,6 +243,9 @@ private:
     // connection definitions. Excluding them from LINKMANAGER/LINKS makes the
     // enable switch effective on the next restart.
     QSet<int> m_startupUdpLinkIds;
+    QHash<int, ConnectionProfile> m_connectionProfiles;
+    QString m_connectionRestoreError;
+    MavAuthKeyService *m_mavAuthKeyService = nullptr;
     QScopedPointer<MAVLinkDecoder> m_mavlinkDecoder;
     QScopedPointer<MAVLinkProtocol> m_mavlinkProtocol;
     std::unique_ptr<MAVLinkSigningManager> m_signingManager;

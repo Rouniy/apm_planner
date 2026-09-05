@@ -3,8 +3,9 @@
 This is **not an enabled vehicle-signing tool yet**. Advanced Tools remains
 14/16. Production transport now binds `apm_mavlink_signing`, but only an internal
 offline `LinkManager::configureSigning` API selects a key for an already
-provisioned vehicle. There is no operator UI or persisted protected-profile
-policy yet. Ordinary links are still unprotected: a signature's presence alone
+provisioned vehicle. Required profiles now persist and restore locked before
+connection, but there is no operator UI/provisioning workflow yet. Ordinary
+unconfigured links are still unprotected: a signature's presence alone
 does not imply authentication. Bootloader Ed25519 signing is a different workflow.
 
 ## Reference and deliberate corrections
@@ -142,10 +143,10 @@ mutates the live signing clock; explicit unverified-signature UI remains a gap.
 
 ## Required next integration gates
 
-1. Persist protected-profile/key-selection policy and restore it fail-closed
-   before connection, including locked/missing/corrupt vault states. The current
-   internal binding is process-local and must not be advertised as a complete
-   operator security configuration. Locking/deleting a vault key must not silently
+1. Connect the persisted fail-closed policy to the operator key-selection UI,
+   including locked/missing/corrupt vault states. The current internal binding
+   must not be advertised as a complete operator security configuration.
+   Locking/deleting a vault key must not silently
    turn a protected link unsigned. RX history is RAM-only: process restart admits
    the one-minute new-stream replay window characterized by tests. Persistent RX
    high-water or a documented release policy remains before stronger claims.
@@ -168,6 +169,52 @@ mutates the live signing clock; explicit unverified-signature UI remains a gap.
 
 The broader port objective remains unchanged: full functionality first,
 recognizable MP10 visuals afterwards, Settings/CONFIG next and Swarm last.
+
+## Persisted-profile and asynchronous-vault slice, 2026-09-05
+
+Manual connections persist canonical lowercase UUID `profileId` and a
+`signingRequired` hint in `LINKMANAGER/LINKS`. Automatic UDP listeners use
+`startup-udp-PORT`, with an independent presence-only
+`MAVLinkSigning/StartupRequiredPorts/PORT` hint. The same QSettings file holds
+`MAVLinkSigning/Profiles/ID/fingerprint`: exactly 64 lowercase SHA256 hex
+characters, with no key, seed, master password or friendly vault alias.
+Record/group existence means required. Missing hinted or malformed metadata,
+duplicate identities and conflicting manual/startup-port definitions are
+quarantined, not normalized to an unsigned connection. All saved rows are
+validated before any factory auto-connects. Corrupt settings are not rewritten.
+Legacy identity-less default-UDP adoption assigns the deterministic identity
+before opening; an existing manual UUID is never silently relabeled or omitted.
+
+`requireSigning` installs a locked binding without a key, timestamp-file write
+or registry-slot allocation. Restart/re-add never implicitly reuses a retained
+key context. Correct offline key selection activates the binding; wrong keys
+leave it locked. Factory auto-connect, direct transport reconnect, session
+activation, raw writes, exact/legacy TX and RX all check the requirement.
+Publication failure leaves the current process blocked even when disk-write
+durability is uncertain. No remove-policy/rekey/reset API is provided; deleting
+a connection leaves its policy and allocated signing-ID record intact.
+These settings are corruption/crash defenses, not protection against a malicious
+same-user settings rollback or deletion of both identity and policy.
+
+`LinkManager` lazily owns `MavAuthKeyService` at
+`mavlink-signing/authkeys.vault`. The dedicated worker owns the synchronous store;
+only one bounded operation is admitted, KDF/file work stays off the GUI thread,
+and secret export uses an explicit owner-thread callback, not a Qt signal.
+Completion cannot overtake the returned token even during nested event loops.
+Shutdown drains the admitted job, cancels key delivery and joins the worker.
+Active transport key contexts are independent of vault lock/window lifetime.
+Fingerprint-based key choice, modeless Add/Use/Delete/Disable and exact fresh
+disarmed no-ACK provisioning remain subsequent integration work. Advanced stays
+14/16; no network SITL keys are changed by these isolated fixtures.
+
+Verification: full Qt5/audio build, focused 7/7 and full 236/236 CTest pass
+(18.61 seconds). Production runtime covers real settings reload, direct
+transport reconnect, missing/corrupt policy, duplicate and startup/manual-port
+collision before `newLink`, locked UDP/TCP factories and offline matching-key
+activation. The same audit exits0 under X11. Ordinary network SITL smoke also
+exits0: Quick current/Home and resize remain functional, with one Home reply,
+625 positions, 418 SYS_STATUS and 418 BATTERY_STATUS records and zero BAD_DATA
+in independent TLOG parsing. Evidence: `/tmp/apm-signing-profiles.jrT00E/`.
 
 ## Transport checkpoint, 2026-09-05
 

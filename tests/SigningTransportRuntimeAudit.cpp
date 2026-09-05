@@ -10,15 +10,22 @@
 #include "comm/MAVLinkSigningClock.h"
 #include "comm/MAVLinkSigningManager.h"
 #include "comm/RadioStatusMonitor.h"
+#include "services/MavlinkSigningProfiles.h"
+#include "ui/configuration/PlannerStartupUdpOptions.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QHostAddress>
 #include <QPointer>
+#include <QSettings>
 #include <QSignalBlocker>
+#include <QTcpServer>
 #include <QThread>
+#include <QUdpSocket>
 #include <QVector>
 
 #include <algorithm>
@@ -29,7 +36,39 @@ namespace {
 
 constexpr int FirstAuditLinkId = 910001;
 constexpr int SecondAuditLinkId = 910002;
+constexpr int MissingPolicyLinkId = 910003;
+constexpr int CorruptPolicyLinkId = 910004;
+constexpr int DuplicatePolicyFirstLinkId = 910005;
+constexpr int DuplicatePolicySecondLinkId = 910006;
 constexpr int WaitTimeoutMs = 1000;
+
+const QString PrimaryProfileId =
+    QStringLiteral("75a4a7e8-5ee0-4fd3-a47d-f464e0d151a1");
+const QString SecondaryProfileId =
+    QStringLiteral("8c37a8ab-8e06-4e0c-8c5a-3e70ba924127");
+const QString MissingProfileId =
+    QStringLiteral("d7b7390d-d6ea-47a3-8b24-b42b6bbaf014");
+const QString CorruptProfileId =
+    QStringLiteral("e95852ee-809c-403e-bfe2-2aacfc64248b");
+const QString DuplicateProfileId =
+    QStringLiteral("a79e88c1-f4e2-41d0-a58e-a8153af23043");
+const QString TcpServerProfileId =
+    QStringLiteral("11c9098e-2156-456c-b7b2-5d69609b2623");
+const QString RestartUdpProfileId =
+    QStringLiteral("5f038b27-c17f-4be9-8a02-d388cb975a48");
+const QString DuplicateRestoreProfileId =
+    QStringLiteral("b00a099c-f77e-48fd-8413-754f87f73128");
+const QString CollisionManualProfileId =
+    QStringLiteral("bb442861-3ece-4b70-803c-b7772756e5a2");
+
+struct StoredUdpDefinition
+{
+    quint16 port = 0;
+    QString profileId;
+    bool includeIdentity = true;
+    bool signingRequired = false;
+    bool includeRequirement = true;
+};
 
 class AuditLink final : public LinkInterface
 {
@@ -162,6 +201,86 @@ QByteArray signingKey()
         key.append(static_cast<char>(0x31 + index));
     }
     return key;
+}
+
+QByteArray alternateSigningKey()
+{
+    QByteArray key;
+    key.reserve(32);
+    for (int index = 0; index < 32; ++index) {
+        key.append(static_cast<char>(0x71 + index));
+    }
+    return key;
+}
+
+QByteArray keyFingerprint(const QByteArray &key)
+{
+    return QCryptographicHash::hash(key, QCryptographicHash::Sha256);
+}
+
+LinkManager::ConnectionProfile requiredProfile(const QString &id)
+{
+    LinkManager::ConnectionProfile profile;
+    profile.id = id;
+    profile.signingRequired = true;
+    return profile;
+}
+
+bool saveRequiredProfile(const QString &id, const QByteArray &fingerprint,
+                         QString *error = nullptr)
+{
+    QSettings settings;
+    return MavlinkSigningProfiles::saveRequired(
+        settings, id, fingerprint, error);
+}
+
+quint16 unusedUdpPort()
+{
+    QUdpSocket socket;
+    if (!socket.bind(QHostAddress::AnyIPv4, 0,
+                     QUdpSocket::DontShareAddress)) {
+        return 0;
+    }
+    return socket.localPort();
+}
+
+quint16 unusedTcpPort()
+{
+    QTcpServer server;
+    if (!server.listen(QHostAddress::LocalHost, 0)) {
+        return 0;
+    }
+    return server.serverPort();
+}
+
+void replaceStoredUdpLinks(const QList<StoredUdpDefinition> &definitions)
+{
+    QSettings settings;
+    settings.remove(QStringLiteral("LINKMANAGER"));
+    settings.remove(QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey));
+    settings.remove(QLatin1String(PlannerStartupUdpOptions::PrimaryPortSettingKey));
+    settings.remove(QLatin1String(PlannerStartupUdpOptions::AlternatePortSettingKey));
+    settings.remove(QStringLiteral("MAVLinkSigning/StartupRequiredPorts"));
+    settings.beginGroup(QStringLiteral("LINKMANAGER"));
+    settings.beginWriteArray(QStringLiteral("LINKS"));
+    for (int index = 0; index < definitions.size(); ++index) {
+        const StoredUdpDefinition &definition = definitions.at(index);
+        settings.setArrayIndex(index);
+        settings.setValue(QStringLiteral("type"),
+                          QStringLiteral("UDP_LINK"));
+        settings.setValue(QStringLiteral("port"), definition.port);
+        if (definition.includeIdentity) {
+            settings.setValue(QStringLiteral("profileId"),
+                              definition.profileId);
+        }
+        if (definition.includeRequirement) {
+            settings.setValue(QStringLiteral("signingRequired"),
+                              definition.signingRequired);
+        }
+    }
+    settings.endArray();
+    settings.endGroup();
+    settings.sync();
 }
 
 QByteArray wireBytes(const mavlink_message_t &message)
@@ -360,6 +479,14 @@ struct IngressSnapshot
     }
 };
 
+struct NewLinkSnapshot
+{
+    int id = -1;
+    LinkInterface::LinkType type = LinkInterface::UNKNOWN_LINK;
+    LinkManager::ConnectionProfile profile;
+    bool connected = false;
+};
+
 } // namespace
 
 int RunSigningTransportRuntimeAudit()
@@ -395,38 +522,155 @@ int RunSigningTransportRuntimeAudit()
         return result.exitCode();
     }
 
+    const QByteArray key = signingKey();
+    const QByteArray fingerprint = keyFingerprint(key);
+    QString profileError;
+    result.expect(saveRequiredProfile(PrimaryProfileId, fingerprint,
+                                      &profileError),
+                  QStringLiteral("primary required profile could not be staged: %1")
+                      .arg(profileError));
+    profileError.clear();
+    result.expect(saveRequiredProfile(SecondaryProfileId, fingerprint,
+                                      &profileError),
+                  QStringLiteral("secondary required profile could not be staged: %1")
+                      .arg(profileError));
+
     QPointer<AuditLink> firstLink(new AuditLink(FirstAuditLinkId));
-    QPointer<AuditLink> secondLink(new AuditLink(SecondAuditLinkId));
     // This runtime-only function is a narrow friend of LinkManagerFactory so
     // the fake exercises the same queued ingress and typed lifecycle wiring as
     // every production transport without widening the public factory API.
     LinkManagerFactory::connectLinkSignals(firstLink.data(), links);
-    LinkManagerFactory::connectLinkSignals(secondLink.data(), links);
     {
         const QSignalBlocker blockManagerSignals(links);
-        links->addLink(firstLink.data());
-        links->addLink(secondLink.data());
+        links->addLink(firstLink.data(), requiredProfile(PrimaryProfileId));
     }
-    result.expect(links->getLink(FirstAuditLinkId) == firstLink.data()
-                      && links->getLink(SecondAuditLinkId) == secondLink.data(),
-                  QStringLiteral("disconnected fake links were not registered"));
-    result.expect(links->currentPhysicalLinkSession(FirstAuditLinkId) == 0
-                      && links->currentPhysicalLinkSession(SecondAuditLinkId) == 0,
-                  QStringLiteral("offline fake links acquired physical epochs"));
+    LinkManager::ConnectionProfile firstProfile =
+        links->connectionProfile(FirstAuditLinkId);
+    result.expect(links->getLink(FirstAuditLinkId) == firstLink.data(),
+                  QStringLiteral("required fake link was not registered"));
+    result.expect(firstProfile.id == PrimaryProfileId
+                      && firstProfile.signingRequired
+                      && firstProfile.error.isEmpty()
+                      && links->signingRequired(FirstAuditLinkId)
+                      && !links->signingReady(FirstAuditLinkId),
+                  QStringLiteral("persisted requirement was not restored locked"));
+    result.expect(links->currentPhysicalLinkSession(FirstAuditLinkId) == 0,
+                  QStringLiteral("locked fake link acquired a physical epoch"));
+    result.expect(!links->connectLink(FirstAuditLinkId)
+                      && firstLink && !firstLink->isConnected(),
+                  QStringLiteral("locked required link opened before key activation"));
+    result.expect(firstLink && !links->writeRawBytes(
+                                  FirstAuditLinkId,
+                                  QByteArrayLiteral("locked raw secret"))
+                      && firstLink->writes().isEmpty(),
+                  QStringLiteral("locked required link admitted a raw write"));
 
-    const QByteArray key = signingKey();
+    QString initialActivationError;
+    result.expect(links->configureSigning(
+                      FirstAuditLinkId, firstProfile.id,
+                      QStringLiteral("Runtime Audit Pre-removal Key"), key,
+                      &initialActivationError)
+                      && links->signingReady(FirstAuditLinkId),
+                  QStringLiteral("initial offline profile activation failed: %1")
+                      .arg(initialActivationError));
+
+    // Removing a transient link must not erase its stable policy or retain an
+    // active key implicitly. Re-adding the same connection profile is locked
+    // again until an operator supplies the matching key while it is offline.
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->removeLink(FirstAuditLinkId);
+    }
+    result.expect(firstLink.isNull(),
+                  QStringLiteral("first locked fake link was not deleted"));
+    firstLink = new AuditLink(FirstAuditLinkId);
+    LinkManagerFactory::connectLinkSignals(firstLink.data(), links);
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->addLink(firstLink.data(), requiredProfile(PrimaryProfileId));
+    }
+    firstProfile = links->connectionProfile(FirstAuditLinkId);
+    result.expect(firstLink && firstProfile.id == PrimaryProfileId
+                      && firstProfile.signingRequired
+                      && firstProfile.error.isEmpty()
+                      && links->signingRequired(FirstAuditLinkId)
+                      && !links->signingReady(FirstAuditLinkId),
+                  QStringLiteral("re-added persisted profile reused a key without activation"));
+
+    QObject lockedIngressScope;
+    int lockedPackets = 0;
+    int lockedFrames = 0;
+    int lockedObserved = 0;
+    QObject::connect(
+        protocol, &MAVLinkProtocol::packetReceived, &lockedIngressScope,
+        [&](LinkInterface *link, mavlink_message_t) {
+            if (link && link->getId() == FirstAuditLinkId) ++lockedPackets;
+        });
+    QObject::connect(
+        protocol, &MAVLinkProtocol::frameReceived, &lockedIngressScope,
+        [&](int linkId, const QByteArray &) {
+            if (linkId == FirstAuditLinkId) ++lockedFrames;
+        });
+    QObject::connect(
+        links, &LinkManager::mavlinkMessageObserved, &lockedIngressScope,
+        [&](int linkId, qulonglong, mavlink_message_t) {
+            if (linkId == FirstAuditLinkId) ++lockedObserved;
+        });
+    // Exercise defense in depth against a transport reconnect which bypasses
+    // connectLink(). It must be closed before an epoch or parser fan-out can
+    // arise; otherwise a transport-owned retry could evade the startup gate.
+    firstLink->connect();
+    processFor(1);
+    if (firstLink) {
+        const QByteArray lockedFrame = nativeFrame(
+            namedValueMessage(241, 154, 7), 241, 154, 17, false, key, 71,
+            currentSigningTimestamp());
+        firstLink->inject(lockedFrame);
+    }
+    processFor();
+    result.expect(firstLink && !firstLink->isConnected()
+                      && links->currentPhysicalLinkSession(FirstAuditLinkId) == 0,
+                  QStringLiteral("direct reconnect bypass left a locked transport open"));
+    result.expect(lockedPackets == 0 && lockedFrames == 0
+                      && lockedObserved == 0,
+                  QStringLiteral("locked restored profile admitted inbound MAVLink"));
+
     QString signingError;
+    const QByteArray wrongKey = alternateSigningKey();
+    result.expect(!links->configureSigning(
+                      FirstAuditLinkId, firstProfile.id,
+                      QStringLiteral("Runtime Audit Wrong Key"), wrongKey,
+                      &signingError)
+                      && !signingError.isEmpty()
+                      && links->signingRequired(FirstAuditLinkId)
+                      && !links->signingReady(FirstAuditLinkId)
+                      && !links->connectLink(FirstAuditLinkId),
+                  QStringLiteral("wrong key did not leave the restored profile locked"));
+    signingError.clear();
     const bool firstConfigured = links->configureSigning(
-        FirstAuditLinkId,
-        QStringLiteral("apm-runtime-audit-signing-primary-v1"),
+        FirstAuditLinkId, firstProfile.id,
         QStringLiteral("Runtime Audit Shared Key"), key, &signingError);
     result.expect(firstConfigured,
                   QStringLiteral("first offline signing configuration failed: %1")
                       .arg(signingError));
+
+    QPointer<AuditLink> secondLink(new AuditLink(SecondAuditLinkId));
+    LinkManagerFactory::connectLinkSignals(secondLink.data(), links);
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->addLink(secondLink.data(), requiredProfile(SecondaryProfileId));
+    }
+    const LinkManager::ConnectionProfile secondProfile =
+        links->connectionProfile(SecondAuditLinkId);
+    result.expect(secondProfile.id == SecondaryProfileId
+                      && secondProfile.signingRequired
+                      && secondProfile.error.isEmpty()
+                      && links->signingRequired(SecondAuditLinkId)
+                      && !links->signingReady(SecondAuditLinkId),
+                  QStringLiteral("second persisted requirement was not restored locked"));
     signingError.clear();
     const bool secondConfigured = links->configureSigning(
-        SecondAuditLinkId,
-        QStringLiteral("apm-runtime-audit-signing-secondary-v1"),
+        SecondAuditLinkId, secondProfile.id,
         QStringLiteral("Runtime Audit Shared Key Alias"), key, &signingError);
     result.expect(secondConfigured,
                   QStringLiteral("second offline signing configuration failed: %1")
@@ -483,8 +727,7 @@ int RunSigningTransportRuntimeAudit()
 
     signingError.clear();
     result.expect(!links->configureSigning(
-                      FirstAuditLinkId,
-                      QStringLiteral("apm-runtime-audit-signing-primary-v1"),
+                      FirstAuditLinkId, firstProfile.id,
                       QStringLiteral("Runtime Audit Shared Key"), key,
                       &signingError)
                       && !signingError.isEmpty(),
@@ -821,6 +1064,490 @@ int RunSigningTransportRuntimeAudit()
                       && links->getLink(FirstAuditLinkId) == nullptr
                       && links->getLink(SecondAuditLinkId) == nullptr,
                   QStringLiteral("LinkManager did not safely delete fake links"));
+
+    // A required hint is fail-closed when its separate secret-free policy is
+    // missing or malformed. The diagnostic belongs to the connection profile;
+    // it must not be normalized into an unsigned definition on registration.
+    {
+        QSettings settings;
+        settings.setValue(
+            QStringLiteral("MAVLinkSigning/Profiles/%1/fingerprint")
+                .arg(CorruptProfileId),
+            QStringLiteral("NOT-a-canonical-sha256-fingerprint"));
+        settings.sync();
+    }
+    QPointer<AuditLink> missingLink(new AuditLink(MissingPolicyLinkId));
+    QPointer<AuditLink> corruptLink(new AuditLink(CorruptPolicyLinkId));
+    LinkManagerFactory::connectLinkSignals(missingLink.data(), links);
+    LinkManagerFactory::connectLinkSignals(corruptLink.data(), links);
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->addLink(missingLink.data(), requiredProfile(MissingProfileId));
+        links->addLink(corruptLink.data(), requiredProfile(CorruptProfileId));
+    }
+    const LinkManager::ConnectionProfile missingProfile =
+        links->connectionProfile(MissingPolicyLinkId);
+    const LinkManager::ConnectionProfile corruptProfile =
+        links->connectionProfile(CorruptPolicyLinkId);
+    result.expect(missingProfile.id == MissingProfileId
+                      && missingProfile.signingRequired
+                      && !missingProfile.error.isEmpty()
+                      && links->signingRequired(MissingPolicyLinkId)
+                      && !links->signingReady(MissingPolicyLinkId)
+                      && !links->connectLink(MissingPolicyLinkId),
+                  QStringLiteral("missing required fingerprint did not fail closed"));
+    result.expect(corruptProfile.id == CorruptProfileId
+                      && corruptProfile.signingRequired
+                      && !corruptProfile.error.isEmpty()
+                      && links->signingRequired(CorruptPolicyLinkId)
+                      && !links->signingReady(CorruptPolicyLinkId)
+                      && !links->connectLink(CorruptPolicyLinkId),
+                  QStringLiteral("corrupt required fingerprint did not fail closed"));
+    transmitter->setOutboundVersion(MissingPolicyLinkId, 1);
+    transmitter->setOutboundVersion(CorruptPolicyLinkId, 1);
+    result.expect(transmitter->outboundVersion(MissingPolicyLinkId) == 2U
+                      && transmitter->outboundVersion(CorruptPolicyLinkId) == 2U,
+                  QStringLiteral("invalid required profiles allowed MAVLink 1 downgrade"));
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->removeLink(MissingPolicyLinkId);
+        links->removeLink(CorruptPolicyLinkId);
+    }
+    result.expect(missingLink.isNull() && corruptLink.isNull(),
+                  QStringLiteral("invalid-policy fake links were not deleted"));
+
+    profileError.clear();
+    result.expect(saveRequiredProfile(DuplicateProfileId, fingerprint,
+                                      &profileError),
+                  QStringLiteral("duplicate-profile fixture could not be staged: %1")
+                      .arg(profileError));
+    QPointer<AuditLink> duplicateFirst(
+        new AuditLink(DuplicatePolicyFirstLinkId));
+    QPointer<AuditLink> duplicateSecond(
+        new AuditLink(DuplicatePolicySecondLinkId));
+    LinkManagerFactory::connectLinkSignals(duplicateFirst.data(), links);
+    LinkManagerFactory::connectLinkSignals(duplicateSecond.data(), links);
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->addLink(duplicateFirst.data(),
+                       requiredProfile(DuplicateProfileId));
+        links->addLink(duplicateSecond.data(),
+                       requiredProfile(DuplicateProfileId));
+    }
+    const LinkManager::ConnectionProfile duplicateFirstProfile =
+        links->connectionProfile(DuplicatePolicyFirstLinkId);
+    const LinkManager::ConnectionProfile duplicateSecondProfile =
+        links->connectionProfile(DuplicatePolicySecondLinkId);
+    result.expect(duplicateFirstProfile.signingRequired
+                      && duplicateSecondProfile.signingRequired
+                      && (!duplicateFirstProfile.error.isEmpty()
+                          || !duplicateSecondProfile.error.isEmpty())
+                      && !links->signingReady(DuplicatePolicyFirstLinkId)
+                      && !links->signingReady(DuplicatePolicySecondLinkId)
+                      && !links->connectLink(DuplicatePolicyFirstLinkId)
+                      && !links->connectLink(DuplicatePolicySecondLinkId),
+                  QStringLiteral("duplicate connection profile did not block every link"));
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->removeLink(DuplicatePolicyFirstLinkId);
+        links->removeLink(DuplicatePolicySecondLinkId);
+    }
+    result.expect(duplicateFirst.isNull() && duplicateSecond.isNull(),
+                  QStringLiteral("duplicate-profile fake links were not deleted"));
+
+    // Factory auto-connect paths are the critical startup boundary. A locked
+    // listener may be represented in the manager, but it must not bind the OS
+    // socket before the exact expected key has been activated.
+    const quint16 udpPort = unusedUdpPort();
+    result.expect(udpPort != 0,
+                  QStringLiteral("could not reserve an ephemeral UDP audit port"));
+    const QString udpProfileId =
+        QStringLiteral("startup-udp-%1").arg(udpPort);
+    profileError.clear();
+    result.expect(udpPort != 0
+                      && saveRequiredProfile(udpProfileId, fingerprint,
+                                             &profileError),
+                  QStringLiteral("startup UDP profile could not be staged: %1")
+                      .arg(profileError));
+    const int udpLinkId = udpPort == 0
+        ? -1
+        : LinkManagerFactory::addUdpConnection(
+              QHostAddress::AnyIPv4, udpPort, false,
+              requiredProfile(udpProfileId));
+    processFor(75);
+    QUdpSocket udpProbe;
+    const bool udpPortRemainedFree = udpPort != 0
+        && udpProbe.bind(QHostAddress::AnyIPv4, udpPort,
+                         QUdpSocket::DontShareAddress);
+    result.expect(udpLinkId >= 0 && links->getLink(udpLinkId)
+                      && !links->getLinkConnected(udpLinkId)
+                      && links->signingRequired(udpLinkId)
+                      && !links->signingReady(udpLinkId)
+                      && !links->connectLink(udpLinkId)
+                      && udpPortRemainedFree,
+                  QStringLiteral("locked startup UDP factory opened its listener"));
+    udpProbe.close();
+    if (udpLinkId >= 0 && links->getLink(udpLinkId)) {
+        const QSignalBlocker blockManagerSignals(links);
+        links->removeLink(udpLinkId);
+    }
+
+    const quint16 tcpPort = unusedTcpPort();
+    result.expect(tcpPort != 0,
+                  QStringLiteral("could not reserve an ephemeral TCP audit port"));
+    profileError.clear();
+    result.expect(tcpPort != 0
+                      && saveRequiredProfile(TcpServerProfileId, fingerprint,
+                                             &profileError),
+                  QStringLiteral("TCP server profile could not be staged: %1")
+                      .arg(profileError));
+    const int tcpLinkId = tcpPort == 0
+        ? -1
+        : LinkManagerFactory::addTcpConnection(
+              QHostAddress::LocalHost, QStringLiteral("127.0.0.1"),
+              tcpPort, true, requiredProfile(TcpServerProfileId));
+    processFor(75);
+    QTcpServer tcpProbe;
+    const bool tcpPortRemainedFree = tcpPort != 0
+        && tcpProbe.listen(QHostAddress::LocalHost, tcpPort);
+    result.expect(tcpLinkId >= 0 && links->getLink(tcpLinkId)
+                      && !links->getLinkConnected(tcpLinkId)
+                      && links->signingRequired(tcpLinkId)
+                      && !links->signingReady(tcpLinkId)
+                      && !links->connectLink(tcpLinkId)
+                      && tcpPortRemainedFree,
+                  QStringLiteral("locked TCP server factory opened its listener"));
+    tcpProbe.close();
+    if (tcpLinkId >= 0 && links->getLink(tcpLinkId)) {
+        const QSignalBlocker blockManagerSignals(links);
+        links->removeLink(tcpLinkId);
+    }
+
+    // QSettings owns only stable policy metadata. Friendly vault aliases and
+    // key material must never be copied into the connection/profile records.
+    {
+        QSettings settings;
+        settings.sync();
+        const MavlinkSigningProfiles::Policy persistedPrimary =
+            MavlinkSigningProfiles::load(settings, PrimaryProfileId, true);
+        result.expect(persistedPrimary.required
+                          && persistedPrimary.error.isEmpty()
+                          && persistedPrimary.fingerprint == fingerprint,
+                      QStringLiteral("required profile fingerprint did not round-trip"));
+        const QByteArray rawKey = key;
+        const QByteArray hexKey = key.toHex();
+        bool secretOrAliasStored = false;
+        for (const QString &settingKey : settings.allKeys()) {
+            const QByteArray stored =
+                settings.value(settingKey).toString().toUtf8();
+            if (stored == rawKey || stored == hexKey
+                || stored.contains("Runtime Audit")) {
+                secretOrAliasStored = true;
+                break;
+            }
+        }
+        result.expect(!secretOrAliasStored,
+                      QStringLiteral("QSettings persisted a signing secret or key alias"));
+    }
+
+    // Let the constructor's one-shot reload expire before exercising explicit
+    // restart fixtures, then remove every default/runtime link. The audit's
+    // QSettings and application-data roots are isolated by main().
+    processFor(600);
+    const auto removeAllLinks = [&]() {
+        const QList<int> ids = links->getLinks();
+        const QSignalBlocker blockManagerSignals(links);
+        for (int id : ids) {
+            if (links->getLink(id)) links->removeLink(id);
+        }
+    };
+    const auto invokeReload = [&]() {
+        const bool invoked = QMetaObject::invokeMethod(
+            links, "reloadSettings", Qt::DirectConnection);
+        result.expect(invoked,
+                      QStringLiteral("reloadSettings could not be invoked"));
+        return invoked;
+    };
+    removeAllLinks();
+
+    // Real LINKS restoration: the required profile must be installed before
+    // the factory emits newLink or attempts its automatic UDP connection.
+    const quint16 restartPort = unusedUdpPort();
+    result.expect(restartPort != 0,
+                  QStringLiteral("could not reserve restart UDP fixture port"));
+    profileError.clear();
+    result.expect(restartPort != 0
+                      && saveRequiredProfile(RestartUdpProfileId, fingerprint,
+                                             &profileError),
+                  QStringLiteral("restart UDP profile could not be staged: %1")
+                      .arg(profileError));
+    replaceStoredUdpLinks({StoredUdpDefinition{
+        restartPort, RestartUdpProfileId, true, true, true}});
+    {
+        QSettings settings;
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey), false);
+        settings.sync();
+    }
+    QVector<NewLinkSnapshot> restartObserved;
+    QObject restartObserver;
+    QObject::connect(links, &LinkManager::newLink, &restartObserver,
+                     [&](int id) {
+        LinkInterface *const link = links->getLink(id);
+        restartObserved.append({id,
+            link ? link->getLinkType() : LinkInterface::UNKNOWN_LINK,
+            links->connectionProfile(id),
+            link && link->isConnected()});
+    });
+    invokeReload();
+    processFor(75);
+    NewLinkSnapshot restoredUdp;
+    for (const NewLinkSnapshot &snapshot : restartObserved) {
+        if (snapshot.profile.id == RestartUdpProfileId) {
+            restoredUdp = snapshot;
+            break;
+        }
+    }
+    QUdpSocket restartProbe;
+    const bool restartPortFree = restartPort != 0
+        && restartProbe.bind(QHostAddress::AnyIPv4, restartPort,
+                             QUdpSocket::DontShareAddress);
+    const LinkManager::ConnectionProfile restoredProfile =
+        links->connectionProfile(restoredUdp.id);
+    result.expect(restoredUdp.id >= 0
+                      && restoredUdp.type == LinkInterface::UDP_LINK
+                      && !restoredUdp.connected
+                      && restoredProfile.id == RestartUdpProfileId
+                      && restoredProfile.signingRequired
+                      && restoredProfile.error.isEmpty()
+                      && links->signingRequired(restoredUdp.id)
+                      && !links->signingReady(restoredUdp.id)
+                      && !links->getLinkConnected(restoredUdp.id)
+                      && restartPortFree,
+                  QStringLiteral("LINKS required UDP policy was not restored before connect"));
+    restartProbe.close();
+    removeAllLinks();
+
+    // The complete duplicate identity set must be quarantined before the first
+    // corresponding newLink signal; a first row must never briefly bind while
+    // parsing later rows.
+    const quint16 duplicateRestorePort = unusedUdpPort();
+    result.expect(duplicateRestorePort != 0,
+                  QStringLiteral("could not reserve duplicate restore port"));
+    profileError.clear();
+    result.expect(saveRequiredProfile(DuplicateRestoreProfileId, fingerprint,
+                                      &profileError),
+                  QStringLiteral("duplicate restore profile could not be staged: %1")
+                      .arg(profileError));
+    replaceStoredUdpLinks({
+        StoredUdpDefinition{duplicateRestorePort,
+                            DuplicateRestoreProfileId, true, true, true},
+        StoredUdpDefinition{duplicateRestorePort,
+                            DuplicateRestoreProfileId, true, true, true}});
+    {
+        QSettings settings;
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey), false);
+        settings.sync();
+    }
+    QVector<NewLinkSnapshot> duplicateRestoreObserved;
+    QObject duplicateRestoreObserver;
+    QObject::connect(links, &LinkManager::newLink,
+                     &duplicateRestoreObserver, [&](int id) {
+        LinkInterface *const link = links->getLink(id);
+        const LinkManager::ConnectionProfile profile =
+            links->connectionProfile(id);
+        if (profile.id == DuplicateRestoreProfileId) {
+            duplicateRestoreObserved.append({id,
+                link ? link->getLinkType() : LinkInterface::UNKNOWN_LINK,
+                profile, link && link->isConnected()});
+        }
+    });
+    invokeReload();
+    processFor(75);
+    bool duplicateRestoreBlocked = duplicateRestoreObserved.size() == 2;
+    for (const NewLinkSnapshot &snapshot : duplicateRestoreObserved) {
+        duplicateRestoreBlocked = duplicateRestoreBlocked
+            && snapshot.type == LinkInterface::UDP_LINK
+            && snapshot.profile.signingRequired
+            && !snapshot.profile.error.isEmpty()
+            && !snapshot.connected
+            && !links->signingReady(snapshot.id)
+            && !links->getLinkConnected(snapshot.id);
+    }
+    QUdpSocket duplicateRestoreProbe;
+    const bool duplicateRestorePortFree = duplicateRestorePort != 0
+        && duplicateRestoreProbe.bind(
+            QHostAddress::AnyIPv4, duplicateRestorePort,
+            QUdpSocket::DontShareAddress);
+    result.expect(duplicateRestoreBlocked && duplicateRestorePortFree,
+                  QStringLiteral("duplicate LINKS identities were not quarantined before notification"));
+    duplicateRestoreProbe.close();
+    removeAllLinks();
+
+    // A canonical manual UUID on a required startup port is not the startup
+    // signing profile. It must not occupy the port and hide the locked listener.
+    const quint16 collisionPort = unusedUdpPort();
+    result.expect(collisionPort != 0,
+                  QStringLiteral("could not reserve startup collision port"));
+    const QString collisionStartupProfileId =
+        QStringLiteral("startup-udp-%1").arg(collisionPort);
+    profileError.clear();
+    result.expect(collisionPort != 0
+                      && saveRequiredProfile(collisionStartupProfileId,
+                                             fingerprint, &profileError),
+                  QStringLiteral("startup collision policy could not be staged: %1")
+                      .arg(profileError));
+    replaceStoredUdpLinks({StoredUdpDefinition{
+        collisionPort, CollisionManualProfileId, true, false, true}});
+    {
+        QSettings settings;
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey), true);
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::PrimaryPortSettingKey),
+            collisionPort);
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::AlternatePortSettingKey),
+            collisionPort);
+        settings.setValue(
+            QStringLiteral("MAVLinkSigning/StartupRequiredPorts/%1")
+                .arg(collisionPort), true);
+        settings.sync();
+    }
+    QVector<NewLinkSnapshot> collisionObserved;
+    QObject collisionObserver;
+    QObject::connect(links, &LinkManager::newLink, &collisionObserver,
+                     [&](int id) {
+        LinkInterface *const link = links->getLink(id);
+        const LinkManager::ConnectionProfile profile =
+            links->connectionProfile(id);
+        if (profile.id == CollisionManualProfileId) {
+            collisionObserved.append({id,
+                link ? link->getLinkType() : LinkInterface::UNKNOWN_LINK,
+                profile, link && link->isConnected()});
+        }
+    });
+    invokeReload();
+    processFor(75);
+    QUdpSocket collisionProbe;
+    const bool collisionPortFree = collisionPort != 0
+        && collisionProbe.bind(QHostAddress::AnyIPv4, collisionPort,
+                               QUdpSocket::DontShareAddress);
+    result.expect(collisionObserved.size() == 1
+                      && collisionObserved.first().profile.signingRequired
+                      && !collisionObserved.first().profile.error.isEmpty()
+                      && !collisionObserved.first().connected
+                      && !links->signingReady(collisionObserved.first().id)
+                      && collisionPortFree,
+                  QStringLiteral("unsigned manual UDP hid a required startup profile"));
+    collisionProbe.close();
+    removeAllLinks();
+
+    // The sole identity-less legacy default is assigned its deterministic
+    // startup identity before the factory can connect. Protect both default
+    // ports because no explicit startup setting may exist during this migration.
+    profileError.clear();
+    result.expect(saveRequiredProfile(QStringLiteral("startup-udp-14550"),
+                                      fingerprint, &profileError),
+                  QStringLiteral("legacy startup 14550 policy could not be staged: %1")
+                      .arg(profileError));
+    profileError.clear();
+    result.expect(saveRequiredProfile(QStringLiteral("startup-udp-14551"),
+                                      fingerprint, &profileError),
+                  QStringLiteral("legacy startup 14551 policy could not be staged: %1")
+                      .arg(profileError));
+    replaceStoredUdpLinks({StoredUdpDefinition{
+        14550, {}, false, false, false}});
+    {
+        QSettings settings;
+        settings.setValue(
+            QStringLiteral("MAVLinkSigning/StartupRequiredPorts/14550"), true);
+        settings.setValue(
+            QStringLiteral("MAVLinkSigning/StartupRequiredPorts/14551"), true);
+        settings.sync();
+    }
+    QVector<NewLinkSnapshot> legacyObserved;
+    QObject legacyObserver;
+    QObject::connect(links, &LinkManager::newLink, &legacyObserver,
+                     [&](int id) {
+        LinkInterface *const link = links->getLink(id);
+        const LinkManager::ConnectionProfile profile =
+            links->connectionProfile(id);
+        if (profile.id.startsWith(QStringLiteral("startup-udp-"))) {
+            legacyObserved.append({id,
+                link ? link->getLinkType() : LinkInterface::UNKNOWN_LINK,
+                profile, link && link->isConnected()});
+        }
+    });
+    invokeReload();
+    processFor(75);
+    bool sawLegacy14550 = false;
+    bool allLegacyStartupLocked = !legacyObserved.isEmpty();
+    for (const NewLinkSnapshot &snapshot : legacyObserved) {
+        sawLegacy14550 = sawLegacy14550
+            || snapshot.profile.id == QStringLiteral("startup-udp-14550");
+        allLegacyStartupLocked = allLegacyStartupLocked
+            && snapshot.profile.signingRequired
+            && snapshot.profile.error.isEmpty()
+            && !snapshot.connected
+            && !links->signingReady(snapshot.id)
+            && !links->getLinkConnected(snapshot.id);
+    }
+    result.expect(sawLegacy14550 && allLegacyStartupLocked,
+                  QStringLiteral("legacy UDP 14550 was not safely mapped before connect"));
+    removeAllLinks();
+
+    // Keep the global restore error fixture last: it intentionally poisons all
+    // later automatic connections for this process. Normalization must not turn
+    // a malformed port into an unsigned listener on either default port.
+    const quint16 malformedAlternatePort = unusedUdpPort();
+    result.expect(malformedAlternatePort != 0,
+                  QStringLiteral("could not reserve malformed startup fixture port"));
+    replaceStoredUdpLinks({});
+    {
+        QSettings settings;
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::EnabledSettingKey), true);
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::PrimaryPortSettingKey),
+            QStringLiteral("not-a-port"));
+        settings.setValue(
+            QLatin1String(PlannerStartupUdpOptions::AlternatePortSettingKey),
+            malformedAlternatePort);
+        settings.sync();
+    }
+    QVector<NewLinkSnapshot> malformedObserved;
+    QObject malformedObserver;
+    QObject::connect(links, &LinkManager::newLink, &malformedObserver,
+                     [&](int id) {
+        LinkInterface *const link = links->getLink(id);
+        malformedObserved.append({id,
+            link ? link->getLinkType() : LinkInterface::UNKNOWN_LINK,
+            links->connectionProfile(id),
+            link && link->isConnected()});
+    });
+    invokeReload();
+    processFor(75);
+    bool allMalformedBlocked = !malformedObserved.isEmpty();
+    for (const NewLinkSnapshot &snapshot : malformedObserved) {
+        allMalformedBlocked = allMalformedBlocked
+            && snapshot.profile.signingRequired
+            && !snapshot.profile.error.isEmpty()
+            && !snapshot.connected
+            && !links->signingReady(snapshot.id)
+            && !links->getLinkConnected(snapshot.id);
+    }
+    QUdpSocket malformedProbe;
+    const bool malformedAlternateFree = malformedAlternatePort != 0
+        && malformedProbe.bind(QHostAddress::AnyIPv4,
+                               malformedAlternatePort,
+                               QUdpSocket::DontShareAddress);
+    result.expect(allMalformedBlocked && malformedAlternateFree,
+                  QStringLiteral("malformed startup port opened a normalized listener"));
+    malformedProbe.close();
+    removeAllLinks();
+
     processFor(1);
     return result.exitCode();
 }

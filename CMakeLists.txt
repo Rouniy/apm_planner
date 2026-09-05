@@ -184,6 +184,10 @@ add_library(apm_mavlink_signing STATIC
     src/comm/MAVLinkSigningSession.h
     src/services/MavAuthKeyStore.cpp
     src/services/MavAuthKeyStore.h
+    src/services/MavAuthKeyService.cpp
+    src/services/MavAuthKeyService.h
+    src/services/MavlinkSigningProfiles.cpp
+    src/services/MavlinkSigningProfiles.h
 )
 target_include_directories(apm_mavlink_signing
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -6468,7 +6472,7 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
-    foreach(signing_test IN ITEMS mavlinksigningclock mavlinksigningsession mavlinksigningmanager mavauthkeystore)
+    foreach(signing_test IN ITEMS mavlinksigningclock mavlinksigningsession mavlinksigningmanager mavauthkeystore mavauthkeyservice mavlinksigningprofiles)
         add_executable(${signing_test}_tests tests/test_${signing_test}.cpp)
         target_link_libraries(${signing_test}_tests PRIVATE apm_mavlink_signing Qt::Test)
         add_test(NAME ${signing_test}_tests COMMAND ${signing_test}_tests)

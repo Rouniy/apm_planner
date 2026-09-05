@@ -24,7 +24,40 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): **Quick resize and missing Home acquisition**.
+Latest slice (2026-09-05): **Persisted locked Signing profiles and async vault**.
+Manual UUID/startup-UDP identities and strict fingerprint/required-hint metadata
+now restore before any factory connection. Missing/corrupt policies, duplicate
+profiles and manual/startup port collisions stay blocked, including direct
+transport reconnect, RX/TX/raw writes. Offline activation requires the matching
+key; restart/re-add never implicitly borrows a retained key context. Uncertain
+policy-publication failure also blocks the current process.
+
+The application-owned vault service runs one bounded operation in a dedicated
+worker, keeps KDF/file work off the GUI thread and delivers keys only through
+explicit callbacks after token return. Nested-loop, callback-deletion, foreign
+thread and shutdown cases are covered. Qt5/audio build and **236/236 tests pass
+(18.61 seconds)**; focused signing/profile/vault tests are 7/7. Real X11 runs the
+same production transport and settings-restoration audit with exit0. Evidence:
+`/tmp/apm-signing-profiles.jrT00E/`. Claude TCP c201/c202 and independent Codex
+reviews informed the pre-connect gates and async admission fixes.
+
+Ordinary network SITL on UDP14550 also passes real X11 smoke: Quick shows
+0.00 A/current and about 0.01 m/Home, and grows/shrinks at 1120x720 -> 1600x950
+-> 1120x720. Independent TLOG parsing finds one HOME_POSITION, 625 positions,
+418 each SYS_STATUS/BATTERY_STATUS with current0 and zero BAD_DATA. The smoke
+application exited0; no test window remains and no vehicle signing key was
+changed. Screenshots, logs and isolated configuration are in the same evidence
+directory. The ordinary serial profile saved a stable UUID and required=false.
+
+This is infrastructure, not a completed Signing tool: **Advanced remains 14/16**.
+Next: modeless key manager/local selection, then exact fresh-disarmed no-ACK
+provisioning and isolated signed SITL verification. Vault lock does not revoke
+transport keys. There is no supported policy removal/rekey/reset UI. A sticky
+global settings error blocks new connections for this process; any quarantined
+profile prevents rewriting settings/activating another key until repair/restart.
+Full Settings/CONFIG remains next; Swarm remains last.
+
+Previous slice (2026-09-05): **Quick resize and missing Home acquisition**.
 Adaptive description/number fonts now fit actual cell geometry, override the
 production 11px stylesheet and grow/shrink with window/splitter/layout changes.
 The user-reported DistToHome dash came from no explicit Home request on late

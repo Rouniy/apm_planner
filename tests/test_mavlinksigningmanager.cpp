@@ -66,6 +66,7 @@ class MAVLinkSigningManagerTest final : public QObject
 private slots:
     void unprotectedEpochPassesThroughWithoutCreatingState();
     void protectedLifecycleSignsAndVerifies();
+    void lockedRequirementBlocksUntilMatchingKeyIsAvailable();
     void sameKeyAliasesShareReplayContext();
     void retainedKeyContextsAreBoundedWithoutReplayReset();
     void stableProfileIdsSurviveRestartAndNeverRecycle();
@@ -121,6 +122,7 @@ void MAVLinkSigningManagerTest::protectedLifecycleSignsAndVerifies()
     QVERIFY(!manager.rawWritesAllowed(5));
     const auto offline = manager.status(5);
     QVERIFY(offline.protectedLink);
+    QVERIFY(offline.keyAvailable);
     QCOMPARE(offline.activeEpoch, quint64(0));
     QCOMPARE(offline.signingLinkId, 0);
     QCOMPARE(offline.connectionProfileId,
@@ -159,12 +161,79 @@ void MAVLinkSigningManagerTest::protectedLifecycleSignsAndVerifies()
     QVERIFY(!manager.rawWritesAllowed(5));
 }
 
+void MAVLinkSigningManagerTest::
+lockedRequirementBlocksUntilMatchingKeyIsAvailable()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    MAVLinkSigningManager manager(directory.path());
+    const QString profile = QStringLiteral("restart-profile");
+    const QByteArray secret = key('L');
+    const QByteArray fingerprint = QCryptographicHash::hash(
+        secret, QCryptographicHash::Sha256);
+
+    QVERIFY(manager.requireSigning(9, profile, fingerprint));
+    QVERIFY(manager.requireSigning(9, profile, fingerprint));
+    const auto locked = manager.status(9);
+    QVERIFY(locked.protectedLink);
+    QVERIFY(!locked.keyAvailable);
+    QCOMPARE(locked.connectionProfileId, profile);
+    QVERIFY(locked.keyName.isEmpty());
+    QCOMPARE(locked.keyFingerprint,
+             QString::fromLatin1(fingerprint.toHex()));
+    QCOMPARE(locked.signingLinkId, -1);
+    QVERIFY(!manager.rawWritesAllowed(9));
+    QVERIFY(!QFileInfo::exists(directory.filePath(
+        QStringLiteral("signing-clock.state"))));
+    QVERIFY(!QFileInfo::exists(directory.filePath(
+        QStringLiteral("signing-link-ids.state"))));
+
+    QVERIFY(manager.beginEpoch(9, 90));
+    QVERIFY(!manager.rawWritesAllowed(9));
+    QByteArray output("old");
+    QString error;
+    QVERIFY(!manager.signFrame(
+        9, 90, UnsignedHeartbeat, Now, &output, &error));
+    QVERIFY(output.isEmpty());
+    QCOMPARE(manager.verifyFrame(9, 90, UnsignedHeartbeat, Now).verdict,
+             MAVLinkSigningManager::VerifyVerdict::NotReady);
+    QVERIFY(!manager.protectLink(
+        9, profile, QStringLiteral("Loaded"), secret, Now, &error));
+    QVERIFY(!manager.status(9).keyAvailable);
+    QVERIFY(manager.endEpoch(9, 90));
+
+    QVERIFY(!manager.protectLink(
+        9, profile, QStringLiteral("Wrong"), key('M'), Now, &error));
+    QVERIFY(!manager.status(9).keyAvailable);
+    QVERIFY(!manager.rawWritesAllowed(9));
+    QVERIFY(manager.protectLink(
+        9, profile, QStringLiteral("Loaded"), secret, Now, &error));
+    const auto active = manager.status(9);
+    QVERIFY(active.protectedLink);
+    QVERIFY(active.keyAvailable);
+    QCOMPARE(active.keyName, QStringLiteral("Loaded"));
+    QCOMPARE(active.signingLinkId, 0);
+    QCOMPARE(active.keyFingerprint, locked.keyFingerprint);
+
+    QVERIFY(manager.beginEpoch(9, 91));
+    QVERIFY(manager.signFrame(
+        9, 91, UnsignedHeartbeat, Now, &output, &error));
+    QCOMPARE(manager.verifyFrame(9, 91, output, Now).verdict,
+             MAVLinkSigningManager::VerifyVerdict::Signed);
+}
+
 void MAVLinkSigningManagerTest::sameKeyAliasesShareReplayContext()
 {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     MAVLinkSigningManager manager(directory.path());
     const QByteArray shared = key('C');
+    const QByteArray sharedFingerprint = QCryptographicHash::hash(
+        shared, QCryptographicHash::Sha256);
+    QVERIFY(manager.requireSigning(
+        1, QStringLiteral("udp-client:first"), sharedFingerprint));
+    QVERIFY(manager.requireSigning(
+        2, QStringLiteral("tcp:second"), sharedFingerprint));
     QVERIFY(manager.protectLink(1, QStringLiteral("udp-client:first"),
                                 QStringLiteral("Alias One"), shared, Now));
     QVERIFY(manager.protectLink(2, QStringLiteral("tcp:second"),
@@ -295,6 +364,12 @@ void MAVLinkSigningManagerTest::profileCannotBackTwoPhysicalBindings()
     QVERIFY(directory.isValid());
     MAVLinkSigningManager manager(directory.path());
     const QByteArray secret = key('F');
+    const QByteArray fingerprint = QCryptographicHash::hash(
+        secret, QCryptographicHash::Sha256);
+    QVERIFY(manager.requireSigning(
+        1, QStringLiteral("same-profile"), fingerprint));
+    QVERIFY(!manager.requireSigning(
+        2, QStringLiteral("same-profile"), fingerprint));
     QVERIFY(manager.protectLink(1, QStringLiteral("same-profile"),
                                 QStringLiteral("First"), secret, Now));
     QVERIFY(!manager.protectLink(2, QStringLiteral("same-profile"),
@@ -397,6 +472,11 @@ void MAVLinkSigningManagerTest::pathAndInputValidationFailClosed()
                                QStringLiteral("Key"), QByteArray(32, 0), Now));
     QVERIFY(!valid.protectLink(1, QStringLiteral("profile"),
                                QStringLiteral("Key"), QByteArray(31, 1), Now));
+    QVERIFY(!valid.requireSigning(-1, QStringLiteral("profile"),
+                                  QByteArray(32, 1)));
+    QVERIFY(!valid.requireSigning(1, QString(), QByteArray(32, 1)));
+    QVERIFY(!valid.requireSigning(1, QStringLiteral("profile"),
+                                  QByteArray(31, 1)));
     QVERIFY(!valid.beginEpoch(-1, 1));
     QVERIFY(!valid.beginEpoch(1, 0));
     QVERIFY(!valid.rawWritesAllowed(-1));
@@ -409,13 +489,19 @@ void MAVLinkSigningManagerTest::foreignThreadCallsFailClosed()
     MAVLinkSigningManager manager(directory.path());
     std::atomic<bool> beginResult{true};
     std::atomic<bool> rawResult{true};
+    std::atomic<bool> requireResult{true};
+    const QByteArray fingerprint = QCryptographicHash::hash(
+        key('J'), QCryptographicHash::Sha256);
     std::thread worker([&]() {
         beginResult.store(manager.beginEpoch(1, 1));
         rawResult.store(manager.rawWritesAllowed(1));
+        requireResult.store(manager.requireSigning(
+            2, QStringLiteral("profile"), fingerprint));
     });
     worker.join();
     QVERIFY(!beginResult.load());
     QVERIFY(!rawResult.load());
+    QVERIFY(!requireResult.load());
     QVERIFY(manager.beginEpoch(1, 1));
 }
 
