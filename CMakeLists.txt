@@ -41,7 +41,7 @@ if(QT_VERSION_MAJOR EQUAL 5 AND QT_VERSION VERSION_LESS 5.10)
 endif()
 set(APM_QT_PACKAGE Qt${QT_VERSION_MAJOR})
 set(_apm_qt_required_components
-    Core Gui Widgets Network Svg Xml Sql SerialPort Quick PrintSupport Qml QuickWidgets
+    Core Gui Widgets Network Svg Xml Sql SerialPort Quick PrintSupport Qml QuickWidgets Concurrent
 )
 if(BUILD_TESTING)
     list(APPEND _apm_qt_required_components Test)
@@ -585,6 +585,11 @@ set(SOURCES
     src/ui/Loghandling/DataFlashFftAnalyzer.cpp
     src/ui/Loghandling/DataFlashFftAnalyzer.h
     src/ui/Loghandling/DataFlashFftService.cpp
+    src/ui/Loghandling/LogAnonymizer.cpp
+    src/ui/Loghandling/LogAnonymizeService.cpp
+    src/ui/Loghandling/DataFlashLogAnonymizer.cpp
+    src/ui/Loghandling/TelemetryLogAnonymizer.cpp
+    src/ui/AnonLogWindow.cpp
     src/ui/Loghandling/DataFlashFftService.h
     src/ui/ConfigFFTWindow.cpp
     src/ui/ConfigFFTWindow.h
@@ -1499,6 +1504,7 @@ target_include_directories(${APM_PLANNER_TARGET} PRIVATE
 target_link_libraries(${APM_PLANNER_TARGET}
     Threads::Threads
     Qt::Widgets
+    Qt::Concurrent
     Qt::Network
     Qt::Svg
     Qt::Xml
@@ -5363,6 +5369,31 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME tlogexportservice_tests COMMAND tlogexportservice_tests)
+
+    add_library(log_anonymizer_test_support STATIC
+        src/ui/Loghandling/LogAnonymizer.cpp
+        src/ui/Loghandling/LogAnonymizeService.cpp
+        src/ui/Loghandling/DataFlashLogAnonymizer.cpp
+        src/ui/Loghandling/TelemetryLogAnonymizer.cpp
+        src/ui/AnonLogWindow.cpp
+        src/comm/TlogReader.cpp
+        src/comm/MAVLinkFrameParser.cpp)
+    target_include_directories(log_anonymizer_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(log_anonymizer_test_support PUBLIC
+        Qt::Core Qt::Gui Qt::Widgets Qt::Concurrent)
+    add_executable(log_anonymizer_probe tests/manual/log_anonymizer_probe.cpp)
+    target_link_libraries(log_anonymizer_probe PRIVATE log_anonymizer_test_support)
+    foreach(anon_test IN ITEMS dataflashloganonymizer telemetryloganonymizer
+            loganonymizer anonlogwindow)
+        add_executable(${anon_test}_tests tests/test_${anon_test}.cpp)
+        target_link_libraries(${anon_test}_tests PRIVATE
+            log_anonymizer_test_support Qt::Test)
+        add_test(NAME ${anon_test}_tests COMMAND ${anon_test}_tests)
+        set_tests_properties(${anon_test}_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    endforeach()
 
     add_executable(mavlinklogwindow_tests
         tests/test_mavlinklogwindow.cpp

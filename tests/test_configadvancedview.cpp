@@ -53,13 +53,14 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
         &actionSource, QStringLiteral("actionProximity"));
     QAction *fft = makeAction(&actionSource, QStringLiteral("actionFftAnalysis"));
     QAction *paramGen = makeAction(&actionSource, QStringLiteral("actionParameterMetaDataRegeneration"));
+    QAction *anonAction = makeAction(&actionSource, QStringLiteral("actionAnonLog"));
 
     ConfigAdvancedView view(&actionSource);
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
-    QCOMPARE(view.ImplementedActionCount(), 12);
-    QVERIFY(view.Log().contains(QStringLiteral("12 of 16")));
+    QCOMPARE(view.ImplementedActionCount(), 13);
+    QVERIFY(view.Log().contains(QStringLiteral("13 of 16")));
     QSignalSpy paramGenSpy(paramGen, &QAction::triggered);
     auto *paramGenButton = view.findChild<QPushButton *>(QStringLiteral("ParamGenButton"));
     QVERIFY(paramGenButton && paramGenButton->isEnabled());
@@ -148,9 +149,11 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
         QStringLiteral("AnonLogButton"));
     auto *signing = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkSigningButton"));
-    QVERIFY(anonLog && !anonLog->isEnabled());
+    QVERIFY(anonLog && anonLog->isEnabled());
+    QSignalSpy anonSpy(anonAction, &QAction::triggered);
+    anonLog->click();
+    QCOMPARE(anonSpy.count(), 1);
     QVERIFY(signing && !signing->isEnabled());
-    QVERIFY(!anonLog->toolTip().isEmpty());
 }
 
 void ConfigAdvancedViewTest::tracksSharedActionAvailability()

@@ -80,6 +80,7 @@ class MAVLinkInspectorWindow;
 class HelpView;
 class SetupView;
 class ParameterMetaDataRegenerationService;
+class LogAnonymizeService;
 
 /**
  * @brief The LogWindowSingleton class is a helper class providing
@@ -571,6 +572,9 @@ private:
     void closeFftAnalysisWindows();
     void showParameterMetaDataRegeneration();
     void closeParameterMetaDataRegeneration();
+    void showAnonLog();
+    void closeAnonLog();
+    QPointer<LogAnonymizeService> m_logAnonymizeService;
     QPointer<ParameterMetaDataRegenerationService> m_parameterMetaDataRegeneration;
     void pruneMavlinkInspectorWindows();
 

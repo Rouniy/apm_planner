@@ -2,6 +2,8 @@
 #include "ui/ConfigFFTWindow.h"
 #include "ui/configuration/ConfigFFTView.h"
 #include "ui/configuration/ParameterMetaDataRegenerationWindow.h"
+#include "ui/AnonLogWindow.h"
+#include "ui/Loghandling/LogAnonymizeService.h"
 #include "InspectorRuntimeAudit.h"
 #include "LogDownloadRuntimeAudit.h"
 #include "FirmwarePageLifetimeAudit.h"
@@ -858,6 +860,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("actionDataFlashSpectrogram"),
         QStringLiteral("actionFftAnalysis"),
         QStringLiteral("actionParameterMetaDataRegeneration"),
+        QStringLiteral("actionAnonLog"),
         QStringLiteral("actionProximity"),
         QStringLiteral("actionMavlinkDeviceOperations"),
         QStringLiteral("actionTerrain3D"),
@@ -907,6 +910,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("SpectrogramButton"),
         QStringLiteral("FftButton"),
         QStringLiteral("ParamGenButton"),
+        QStringLiteral("AnonLogButton"),
         QStringLiteral("ProximityButton")
     };
     QAbstractButton *advancedNavigation = backstage->findChild<QAbstractButton *>(
@@ -1008,6 +1012,33 @@ int RunSetupRouteRuntimeAudit()
 
     auto *paramGenAction = main->findChild<QAction *>(
         QStringLiteral("actionParameterMetaDataRegeneration"));
+    auto *anonAction = main->findChild<QAction *>(QStringLiteral("actionAnonLog"));
+    result.Expect(anonAction && anonAction->isEnabled(),
+                  QStringLiteral("production Anon Log action is unavailable offline"));
+    if (anonAction) {
+        anonAction->trigger();
+        auto *window = main->findChild<AnonLogWindow *>();
+        result.Expect(window && window->isWindow() && window->isVisible()
+                          && window->windowModality() == Qt::NonModal
+                          && SemanticContentScore(window) >= 10,
+                      QStringLiteral("Anon Log did not open a concrete modeless window"));
+        if (window) {
+            QPointer<LogAnonymizeService> service(window->service());
+            result.Expect(service && service->parent() == main && !service->busy(),
+                          QStringLiteral("Anon Log started without confirmation or has wrong owner"));
+            anonAction->trigger();
+            result.Expect(main->findChildren<AnonLogWindow *>().size() == 1,
+                          QStringLiteral("Anon Log duplicated its application job observer"));
+            delete window;
+            result.Expect(service && !service->busy(),
+                          QStringLiteral("closing Anon Log destroyed its application service"));
+            anonAction->trigger();
+            auto *reopened = main->findChild<AnonLogWindow *>();
+            result.Expect(reopened && reopened->service() == service,
+                          QStringLiteral("reopening Anon Log lost its service state"));
+            delete reopened;
+        }
+    }
     result.Expect(paramGenAction && paramGenAction->isEnabled(),
                   QStringLiteral("production Param gen action is unavailable offline"));
     if (paramGenAction) {

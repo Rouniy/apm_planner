@@ -18,13 +18,45 @@ The immediate user-directed order is:
 
 1. Keep the fixed SETUP Advanced/Developer Tools action rebinding green, including MAVLink Inspector and every already implemented shared tool.
 2. Port the remaining non-swarm TOOLS dialogs/workflows for one vehicle; empty placeholders, no-op actions and accidentally disabled implemented forms are functional defects.
-3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 12/16 intended working actions.
+3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 13/16 intended working actions.
 4. Keep the Swarm family at the end of the active queue. Preserve its tested exact foundations without expanding them while single-vehicle workflows remain missing.
 5. Retain audited useful older APM Planner modules with honest Legacy/partial labels, track functional and GUI inaccuracies separately, and keep committing complete slices.
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): native **PX4Flow Setup**. The offline Optional Hardware
+Latest slice (2026-09-05): native **Advanced Tools Anon Log** for BIN, text LOG
+and MAVLink TLOG. One application-owned single-thread worker and a reusable
+760x740 modeless window now provide file selection, independent offsets,
+default-Cancel privacy/overwrite confirmation, progress, token cancellation and
+truthful counters/warnings. Source aliases cannot become destinations, source
+content is hashed before/after processing, and QSaveFile publishes only a
+successful complete result. This is coordinate obfuscation, not full sanitization.
+Advanced Tools is **13/16**; no new Setup page or top-level TOOLS item is added.
+
+Full Qt5/audio/Concurrent build and **225/225 tests** pass (16.70 seconds).
+Both real ArduPilot SITL BINs (90,112 and 5,275,648 bytes) process successfully;
+their known incomplete non-coordinate tails are preserved with warnings.
+Independent pymavlink checks verify 1,211 GPS records shifted by +0.25/-0.25
+degrees while altitude, speed, time and status remain unchanged. A final-build
+105,000,089-byte synthetic BIN run processes 14,000,000 coordinate values in
+5.16 seconds with 11,776 KiB maximum RSS. Real X11 verifies restored offline
+Advanced 13/16, BIN/LOG/TLOG publication, default Cancel, usable result geometry,
+close/reopen during processing, explicit cancellation preserving the prior
+destination SHA-256, and normal application exit 0 with another job active.
+Evidence: `/tmp/apm-anonlog.I5u4vQ/`; contracts, reproducible probe and remaining
+limits: `ANON_LOG_PORT.md`.
+
+Claude TCP reviews c190-c193 and three disjoint Codex streams caught and fixed
+signed-I coordinate semantics, real incomplete tails, ambiguous Alt inference,
+FMTU unit/multiplier redefinitions, unannotated RGPJ/RBCH/AIS coordinates,
+partially zero-trimmed MAVLink 2 scalar handling and out-of-coverage counters.
+The final independent review is REVIEW-OK. General BIN multiplier application,
+LOG's exact Lat/Lng-only coverage, additional TLOG coordinate messages,
+representative real TLOG/text logs and native/reference visuals remain explicit
+gaps. Signing still requires complete transport signing/verification before its
+vehicle-side enable action may become available.
+
+Previous slice (2026-09-05): native **PX4Flow Setup**. The offline Optional Hardware
 page now displays bounded RAW8U grayscale frames and performs exact typed
 VIDEO_ONLY reads/writes through the central parameter service. Its explicit
 generic-component selector is independent of the active autopilot. Physical and
@@ -120,8 +152,8 @@ refresh and normal application exit 0 with the tool open. Evidence:
 `/tmp/apm-download-logs.FmmrKU/`; details and remaining limits:
 `DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
 
-Next single-vehicle candidates, not Swarm: remaining Advanced gaps Anon Log, MAVLink Signing
-and Warning Manager; Support Proxy
+Next single-vehicle candidates, not Swarm: Warning Manager, then MAVLink Signing
+(transport and key storage before the dialog); Support Proxy
 is also a placeholder in MP10 itself. Settings/CONFIG follows these working
 single-vehicle surfaces. The eight absent Setup routes remain explicitly tracked.
 

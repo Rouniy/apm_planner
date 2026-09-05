@@ -19,8 +19,8 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     const QString notPorted = tr("This Mission Planner tool has not yet "
                                  "been ported to Qt.");
 
-    AddUnavailableAction(tr("Anon Log"),
-                         QStringLiteral("AnonLogButton"), notPorted);
+    AddToolAction(tr("Anon Log"), QStringLiteral("AnonLogButton"),
+                  QStringLiteral("actionAnonLog"));
     AddToolAction(tr("MAVLink Inspector"),
                   QStringLiteral("MAVLinkInspectorButton"),
                   QStringLiteral("actionMavlinkInspector"));

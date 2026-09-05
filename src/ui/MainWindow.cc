@@ -116,6 +116,8 @@ This file is part of the QGROUNDCONTROL project
 #include "ConfigFFTWindow.h"
 #include "AppPaths.h"
 #include "configuration/ParameterMetaDataRegenerationWindow.h"
+#include "AnonLogWindow.h"
+#include "Loghandling/LogAnonymizeService.h"
 #include "core/parameters/ParameterMetaDataRepository.h"
 #include "LogDownloadViewModel.h"
 #include "QGCCore.h"
@@ -626,6 +628,7 @@ MainWindow::~MainWindow()
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
     closeParameterMetaDataRegeneration();
+    closeAnonLog();
     closeLogDownloadWindows();
 
     closeTerminalConsole();
@@ -727,6 +730,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
     paramGenAction->setObjectName(QStringLiteral("actionParameterMetaDataRegeneration"));
     connect(paramGenAction, &QAction::triggered, this,
             &MainWindow::showParameterMetaDataRegeneration);
+    auto *anonLogAction = new QAction(tr("Anon Log"), this);
+    anonLogAction->setObjectName(QStringLiteral("actionAnonLog"));
+    anonLogAction->setToolTip(tr("Shift recognized coordinates in a copy of a BIN, LOG or TLOG file."));
+    connect(anonLogAction, &QAction::triggered, this, &MainWindow::showAnonLog);
     if (hardwareSetupView) {
         // Setup can restore an action-backed lazy page before the TOOLS QAction
         // catalogue exists. Recreate only those pages now so implemented tools
@@ -2154,6 +2161,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
     closeParameterMetaDataRegeneration();
+    closeAnonLog();
     closeLogDownloadWindows();
     if (logPlayer) {
         logPlayer->shutdown();
@@ -3088,6 +3096,28 @@ void MainWindow::showParameterMetaDataRegeneration()
     window->show();
     window->raise();
     window->activateWindow();
+}
+
+void MainWindow::showAnonLog()
+{
+    if (aboutToCloseFlag) return;
+    auto *window = findChild<AnonLogWindow *>();
+    if (!window) {
+        if (!m_logAnonymizeService)
+            m_logAnonymizeService = new LogAnonymizeService(this);
+        window = new AnonLogWindow(m_logAnonymizeService, this);
+    }
+    window->show();
+    window->raise();
+    window->activateWindow();
+}
+
+void MainWindow::closeAnonLog()
+{
+    const auto windows = findChildren<AnonLogWindow *>();
+    for (auto *window : windows) delete window;
+    delete m_logAnonymizeService.data();
+    m_logAnonymizeService = nullptr;
 }
 
 void MainWindow::closeParameterMetaDataRegeneration()
