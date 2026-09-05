@@ -41,6 +41,7 @@ This file is part of the APM_PLANNER project
 #include "ui_AP2DataPlot2D.h"
 
 #include <QWidget>
+#include <QPointer>
 #include <QProgressDialog>
 #include <QSortFilterProxyModel>
 #include <QTextBrowser>
@@ -173,7 +174,7 @@ private:
     qint64 m_currentIndex;
     qint64 m_startIndex; //epoch msecs since graphing started
     QAction *m_addGraphAction;
-    UASInterface *m_uas;
+    QPointer<UASInterface> m_uas;
     AP2DataPlotAxisDialog *m_axisGroupingDialog;
     bool m_tlogReplayEnabled;
 

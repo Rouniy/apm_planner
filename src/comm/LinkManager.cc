@@ -127,6 +127,32 @@ LinkManager::LinkManager(QObject *parent) :
     QObject(parent),
     m_mavlinkLoggingEnabled(true)
 {
+    // UASManager removes a vehicle from its public registry before scheduling
+    // deferred destruction. Retire our lookup synchronously at that logical
+    // lifetime boundary: otherwise a heartbeat on a newly-added link can find
+    // the still-alive, but already doomed, UAS and attach the new link to it.
+    // Compare object identity so a delayed notification can never erase a
+    // replacement which reused the same system id.
+    connect(UASManager::instance(), &UASManager::UASDeleted, this,
+            [this](UASInterface *removed) {
+        for (auto it = m_uasMap.begin(); it != m_uasMap.end(); ++it) {
+            if (it.value().data() != removed) {
+                continue;
+            }
+            const int systemId = it.key();
+            m_uasMap.erase(it);
+            // A retired UAS must not consume another heartbeat and reattach a
+            // new physical link while waiting for its deferred destruction.
+            if (m_mavlinkProtocol) {
+                QObject::disconnect(m_mavlinkProtocol.data(), nullptr, removed, nullptr);
+            }
+            // This object is the companion of the identity just retired. If
+            // createUAS() already installed a replacement, the m_uasMap
+            // identity comparison above fails and its companion is preserved.
+            delete m_uasObjectMap.take(systemId);
+            break;
+        }
+    });
     m_signingManager = std::make_unique<MAVLinkSigningManager>(
         QDir(AppPaths::writableDataDirectory()).filePath(QStringLiteral("mavlink-signing")));
     m_vehicleTargetManager = new VehicleTargetManager(this);
@@ -1127,6 +1153,7 @@ void LinkManager::addLink(LinkInterface *link, const ConnectionProfile &requeste
     QSettings settings;
     const auto policy = MavlinkSigningProfiles::load(settings, profile.id, profile.signingRequired);
     profile.signingRequired = policy.required;
+    profile.provisioningUnconfirmed = policy.provisioningUnconfirmed;
     if (!policy.error.isEmpty()) profile.error = policy.error;
     if (!m_connectionRestoreError.isEmpty()) profile.error = m_connectionRestoreError;
     QList<int> duplicateLinks;
@@ -1249,6 +1276,13 @@ bool LinkManager::writeSequencedFrame(int linkId, const QByteArray &frame)
     const quint64 epoch = currentPhysicalLinkSession(linkId);
     if (!link || !link->isConnected() || epoch == 0 || !isCurrentPhysicalIngress(link)) return false;
     const QByteArray &output = frame; // already signed once, before the writer callback
+    if (output.size() >= MAVLINK_NUM_HEADER_BYTES
+        && quint8(output[0]) == MAVLINK_STX && quint8(output[7]) == 0
+        && quint8(output[8]) == 1 && quint8(output[9]) == 0) {
+        // The private typed transmitter already validated/finalized this
+        // secret-bearing message. Do not copy its key into an observer parser.
+        return writeBytesToTransport(linkId, output);
+    }
     // Decode only our freshly finalized bytes for the post-write observer.
     // Live authentication always consumes the original ingress bytes instead.
     MAVLinkFrameParser parser;
@@ -1380,8 +1414,185 @@ MAVLinkSigningManager::Verification LinkManager::verifyIncomingFrame(
 {
     if (!signingReady(linkId)) return {MAVLinkSigningManager::VerifyVerdict::NotReady,
         tr("Unlock and select the required signing key while the link is disconnected.")};
-    return m_signingManager->verifyFrame(linkId, epoch, frame,
-                                         QDateTime::currentMSecsSinceEpoch());
+    const auto verification = m_signingManager->verifyFrame(linkId, epoch, frame,
+                                                           QDateTime::currentMSecsSinceEpoch());
+    // This runs before protocol packetReceived and every synchronous consumer.
+    // A signed flag on an unprotected link is not authentication, but it must
+    // conservatively refuse initial provisioning even inside nested observers.
+    if (verification.accepted() && epoch && epoch == currentPhysicalLinkSession(linkId)
+        && frame.size() >= MAVLINK_NUM_HEADER_BYTES && quint8(frame[0]) == MAVLINK_STX
+        && (quint8(frame[2]) & MAVLINK_IFLAG_SIGNED)
+        && quint8(frame[6]) == MAV_COMP_ID_AUTOPILOT1
+        && quint8(frame[7]) == 0 && quint8(frame[8]) == 0 && quint8(frame[9]) == 0)
+        m_observedSignedHeartbeatEpochs.insert(linkId, epoch);
+    if (verification.accepted() && epoch && epoch == currentPhysicalLinkSession(linkId)) {
+        quint32 messageId = 0xffffffffU;
+        if (frame.size() >= MAVLINK_NUM_HEADER_BYTES && quint8(frame[0]) == MAVLINK_STX)
+            messageId = quint8(frame[7]) | (quint32(quint8(frame[8])) << 8)
+                | (quint32(quint8(frame[9])) << 16);
+        else if (frame.size() >= 6 // MAVLink 1 header, including STX
+                 && quint8(frame[0]) == MAVLINK_STX_MAVLINK1)
+            messageId = quint8(frame[5]);
+        if (RadioStatusMonitor::IsRadioStatusMessage(messageId))
+            m_observedRadioEpochs.insert(linkId, epoch);
+    }
+    return verification;
+}
+
+bool LinkManager::prepareSigningProvisioning(int linkId, SigningProvisioningTarget *target,
+                                            QString *error) const
+{
+    if (target) *target = {};
+    if (QThread::currentThread() != thread()) {
+        if (error) *error = tr("Signing provisioning belongs to the link manager thread.");
+        return false;
+    }
+    if (m_signingProvisioningBusy) {
+        if (error) *error = tr("A signing transition is already being prepared.");
+        return false;
+    }
+    return captureSigningProvisioningTarget(linkId, target, true, error);
+}
+
+bool LinkManager::captureSigningProvisioningTarget(int linkId,
+    SigningProvisioningTarget *target, bool initialPolicy, QString *error) const
+{
+    if (target) *target = {};
+    if (error) error->clear();
+    const auto reject = [error](const QString &reason) {
+        if (error) *error = reason;
+        return false;
+    };
+    if (!target || QThread::currentThread() != thread() || m_shuttingDown)
+        return reject(tr("Signing provisioning is unavailable."));
+    const QPointer<LinkInterface> link(getLink(linkId));
+    const auto profile = connectionProfile(linkId);
+    if (!link || !link->isConnected() || !profile.error.isEmpty()
+        || !MavlinkSigningProfiles::validProfileId(profile.id)
+        || (initialPolicy && (signingRequired(linkId) || profile.provisioningUnconfirmed)))
+        return reject(tr("Initial provisioning requires an unprotected connected profile. Key change and retry are not supported."));
+    // Listeners and radio fan-out cannot be used to distribute an unencrypted
+    // secret. A client route is still NOT proof of trust: consent must require
+    // a dedicated private channel and an operator-known unprovisioned vehicle.
+    const auto type = link->getLinkType();
+    if (type != LinkInterface::SERIAL_LINK && type != LinkInterface::TCP_LINK
+        && type != LinkInterface::UDP_CLIENT_LINK)
+        return reject(tr("Use a dedicated private serial, TCP client or UDP client connection; host listeners are not provisioning routes."));
+    if (const auto *tcp = qobject_cast<TCPLink *>(link.data())) {
+        if (tcp->isServer()) return reject(tr("TCP listeners cannot provision a signing key."));
+    }
+    if (const auto *udp = qobject_cast<UDPClientLink *>(link.data())) {
+        const auto address = udp->getHostAddress();
+        if (address.isNull() || address.isMulticast() || address == QHostAddress::Broadcast
+            || address == QHostAddress::Any || address == QHostAddress::AnyIPv4
+            || address == QHostAddress::AnyIPv6)
+            return reject(tr("A unicast private endpoint is required; multicast and broadcast must not receive a signing key."));
+    }
+    const auto selected = m_vehicleTargetManager->acquireTarget();
+    if (m_observedRadioEpochs.value(linkId, 0) != 0
+        && m_observedRadioEpochs.value(linkId) == currentPhysicalLinkSession(linkId))
+        return reject(tr("Telemetry radio traffic was observed. Do not send a signing secret over radio; use a direct cable or trusted private wired connection."));
+    if (!m_vehicleTargetManager->isTargetGenerationSettled()
+        || !selected.isValid() || selected.endpoint.linkId != linkId
+        || selected.endpoint.componentId != MAV_COMP_ID_AUTOPILOT1)
+        return reject(tr("Select this connection's exact autopilot target in the main vehicle selector."));
+    SwarmTelemetrySnapshot snapshot;
+    if (!m_swarmTelemetryRegistry->acquireSnapshot(selected.endpoint, &snapshot, 3000)
+        || !snapshot.heartbeatValid || snapshot.armed
+        || snapshot.autopilot != MAV_AUTOPILOT_ARDUPILOTMEGA)
+        return reject(tr("A fresh disarmed ArduPilot heartbeat (at most 3 seconds old) is required."));
+    if (m_observedSignedHeartbeatEpochs.value(linkId, 0) == snapshot.lease.linkSessionEpoch)
+        return reject(tr("Signed heartbeat traffic was observed on this connection. Use the existing key locally; initial provisioning is refused."));
+    int vehicles = 0;
+    for (const auto &endpoint : m_swarmTelemetryRegistry->endpoints())
+        if (endpoint.linkId == linkId) ++vehicles;
+    if (vehicles != 1)
+        return reject(tr("Initial provisioning requires exactly one observed autopilot on the physical connection."));
+    if (!singleEndpointRouteIsEligible(selected.endpoint, snapshot.lease.linkSessionEpoch, error)) return false;
+    target->linkId = linkId;
+    target->profileId = profile.id;
+    target->identity = link;
+    target->revision = profile.revision;
+    target->targetGeneration = selected.generation;
+    target->linkSessionEpoch = snapshot.lease.linkSessionEpoch;
+    target->instanceEpoch = snapshot.lease.instanceEpoch;
+    target->systemId = quint8(selected.endpoint.systemId);
+    target->componentId = quint8(selected.endpoint.componentId);
+    return target->isValid();
+}
+
+bool LinkManager::provisionSigning(const SigningProvisioningTarget &expected,
+    const QString &keyName, const QByteArray &key, QString *error)
+{
+    if (error) error->clear();
+    SigningProvisioningTarget fresh;
+    if (!expected.isValid() || !prepareSigningProvisioning(expected.linkId, &fresh, error)
+        || fresh != expected) {
+        if (error && error->isEmpty()) *error = tr("The vehicle or connection changed after provisioning consent.");
+        return false;
+    }
+    if (key.size() != 32 || key == QByteArray(32, '\0') || keyName.isEmpty()
+        || keyName.toUtf8().size() > 128) {
+        if (error) *error = tr("Select a valid nonzero key from the encrypted local vault.");
+        return false;
+    }
+    const QPointer<LinkManager> self(this);
+    m_signingProvisioningBusy = true;
+    const auto reject = [self, error](const QString &reason) {
+        if (self) self->m_signingProvisioningBusy = false;
+        if (error) *error = reason;
+        return false;
+    };
+    // Persist the stable endpoint/profile BEFORE publishing the requirement.
+    if (!saveSettings()) return reject(tr("Cannot save the connection identity; no provisioning frame was sent."));
+    if (!self || !captureSigningProvisioningTarget(expected.linkId, &fresh, true, error)
+        || fresh != expected)
+        return reject(tr("The connection changed while preparing signing; no provisioning frame was sent."));
+
+    const QByteArray fingerprint = QCryptographicHash::hash(key, QCryptographicHash::Sha256);
+    auto &profile = m_connectionProfiles[expected.linkId];
+    // Publication may fail with uncertain durability. From this point even the
+    // current process must remain required/blocked, never revert to unsigned.
+    profile.signingRequired = true;
+    profile.provisioningUnconfirmed = true;
+    m_exactLinkTransmitter->setSigningRequired(expected.linkId, true);
+    QSettings settings;
+    if (!MavlinkSigningProfiles::beginInitialProvisioning(settings, expected.profileId,
+                                                         fingerprint, &profile.error)) {
+        if (profile.error.isEmpty()) profile.error = tr("Initial signing policy publication failed.");
+        return reject(profile.error + tr(" No provisioning frame was sent; the local profile remains blocked."));
+    }
+    if (!saveSettings()) {
+        profile.error = tr("Cannot persist the required-signing hint. No provisioning frame was sent; the profile remains blocked.");
+        return reject(profile.error);
+    }
+    const QString directory = QDir(AppPaths::writableDataDirectory()).filePath(QStringLiteral("mavlink-signing"));
+    quint64 timestamp = 0;
+    QString activationError;
+    if (!AppPaths::ensureDirectory(directory)
+        || !m_signingManager->protectUnprotectedLiveLink(expected.linkId, expected.linkSessionEpoch,
+            expected.profileId, keyName, key, QDateTime::currentMSecsSinceEpoch(), &timestamp, &activationError)) {
+        return reject((activationError.isEmpty() ? tr("Cannot activate the local signing key.") : activationError)
+            + tr(" No provisioning frame was sent. Disconnect and restore the selected key locally; the profile remains required."));
+    }
+    // Filesystem/key preparation cannot authorize a different endpoint or a
+    // newly armed vehicle. No event loop is pumped and there is no retry.
+    if (!self || !captureSigningProvisioningTarget(expected.linkId, &fresh, false, error)
+        || fresh != expected)
+        return reject(tr("The vehicle changed during preparation. No provisioning frame was sent; the profile remains signed-only."));
+    bool writerInvoked = false;
+    const auto sent = m_exactLinkTransmitter->sendSetupSigning(expected.linkId,
+        expected.linkSessionEpoch, QGC::MavlinkID(), QGC::ComponentID(),
+        expected.systemId, expected.componentId,
+        key, timestamp, &writerInvoked);
+    if (!self) return reject(tr("Signing outcome is unconfirmed; the application link manager was closed."));
+    m_signingProvisioningBusy = false;
+    if (sent != ExactLinkTransmitter::SendResult::Sent)
+        return reject(writerInvoked
+            ? tr("Provisioning transport failed after a possible write. Vehicle outcome is unconfirmed; the local profile remains signed-only. Do not retry blindly.")
+            : tr("Provisioning was not transmitted. The local profile remains signed-only; no unsigned fallback or automatic retry is performed."));
+    if (error) *error = tr("One provisioning frame was submitted. Vehicle outcome is unconfirmed: SETUP_SIGNING has no ACK. The local profile remains signed-only; signed traffic alone does not prove persistent provisioning.");
+    return true;
 }
 
 bool LinkManager::isUdpPortInUse(quint16 port) const
@@ -1408,10 +1619,13 @@ void LinkManager::removeLink(int linkId)
     if (!link) {
         return;
     }
+    const QPointer<LinkManager> self(this);
+    const QPointer<LinkInterface> guardedLink(link);
     // Give active exact-target services their final bounded write opportunity
     // while the physical-link lookup is still valid, then invalidate every
     // session before the link object can be reused or destroyed.
     invalidateLinkSession(linkId);
+    if (!self || !guardedLink || getLink(linkId) != guardedLink.data()) return;
 
     // Fail exact-link lookups and detach ingress before the worker begins
     // shutting down. Deleting a still-running QThread is undefined and was a
@@ -1429,6 +1643,20 @@ void LinkManager::removeLink(int linkId)
                    SLOT(receiveBytes(LinkInterface*,QByteArray)));
     }
     link->disconnect();
+    if (!self || !guardedLink) return;
+    // Detach every legacy vehicle while the LinkInterface is still a complete
+    // object. Waiting for QObject::destroyed is too late: removing the first
+    // UAS can select another UAS sharing this link, and its status widgets then
+    // invoke virtual methods on an already-destructed LinkInterface.
+    const auto vehicles = m_uasMap.values();
+    for (const auto &vehicle : vehicles) {
+        const QPointer<UAS> uas(qobject_cast<UAS *>(vehicle.data()));
+        if (uas && uas->getLinks()->contains(link)) {
+            QObject::disconnect(link, nullptr, uas.data(), nullptr);
+            uas->removeLink(link);
+            if (!self || !guardedLink) return;
+        }
+    }
     link->requestInterruption();
     link->quit();
     if (link->isRunning() && !link->wait(5000)) {
@@ -1436,8 +1664,9 @@ void LinkManager::removeLink(int linkId)
         link->wait();
     }
     delete link;
+    if (!self) return;
     emit linkRemoved(linkId);
-    if (!m_shuttingDown) {
+    if (self && !m_shuttingDown) {
         saveSettings();
     }
 }
@@ -1784,11 +2013,14 @@ UASInterface* LinkManager::createUAS(MAVLinkProtocol* mavlink, LinkInterface* li
     connect(mavlink,SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),obj,SLOT(messageReceived(LinkInterface*,mavlink_message_t)));
     delete m_uasObjectMap.take(sysid);
     m_uasObjectMap[sysid] = obj;
+    const QPointer<UASObject> guardedObject(obj);
     connect(uas, &QObject::destroyed, this,
-            [this, sysid, obj]() {
+            [this, sysid, guardedObject]() {
         // A replacement with the same sysid owns a different UASObject.  An
         // older vehicle's deferred destruction must not delete that object.
-        if (m_uasObjectMap.value(sysid, nullptr) == obj) {
+        // Logical retirement may already have deleted the companion, whose
+        // address could then be reused by the replacement before this callback.
+        if (guardedObject && m_uasObjectMap.value(sysid, nullptr) == guardedObject.data()) {
             delete m_uasObjectMap.take(sysid);
         }
     });
@@ -1911,6 +2143,8 @@ void LinkManager::invalidateLinkSession(int linkId)
     if (linkId < 0) {
         return;
     }
+    m_observedSignedHeartbeatEpochs.remove(linkId);
+    m_observedRadioEpochs.remove(linkId);
     const quint64 swarmSession =
         m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
     if (swarmSession != 0) {

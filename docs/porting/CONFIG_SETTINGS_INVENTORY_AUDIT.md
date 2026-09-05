@@ -46,13 +46,14 @@ then dispatches Plane to the native Q controller/INS page and Copter/Heli to
 the retained legacy ATC/PSC/WPNAV editor.
 
 The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
-all16 MP10 actions are present: fourteen complete shared workflows, one local-only
+all16 MP10 actions are present: fourteen complete shared workflows, one partial
 Signing workflow and one disabled Support Proxy. MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target /
 TAK, DataFlash Spectrogram, External Guided, Follow Me, Moving Base, Map Tile
 Cache and Proximity reuse working application actions. FFT, Param gen, Anon Log
 and Warning Manager now have native workflows; FFT Setup is also a direct page.
-Signing now opens a modeless local vault/key manager; vehicle provisioning and
-disable remain unavailable. Upstream-placeholder Support Proxy stays disabled.
+Signing opens a modeless vault/key manager plus explicit initial provisioning
+with an unconfirmed outcome; key change and disable remain unavailable.
+Upstream-placeholder Support Proxy stays disabled.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
 
@@ -69,9 +70,13 @@ policies stay blocked. The application-owned asynchronous vault service uses
 `mavlink-signing/authkeys.vault`, without implicitly creating a vault. These
 infrastructure settings do not increase the direct Planner-control count.
 Modeless create/unlock/lock/Add/Delete/offline Use locally now work. Vehicle
-provisioning/change/disable remain gates in `MAVLINK_SIGNING_PORT.md`.
+initial provisioning now publishes `MAVLinkSigning/Profiles/ID/provisioning`
+as the strict marker `initial-unconfirmed-v1` together with the required
+fingerprint before any possible write. It is preserved on restart/re-add and
+offline local activation, never interpreted as an ACK or cleared on signed RX.
+Reconciliation/change/disable remain gates in `MAVLINK_SIGNING_PORT.md`.
 The runtime connection revision used to cancel stale key loads is not persisted.
-No extra QSettings key or full Advanced action is counted for the local UI.
+This transition metadata is not an extra direct Planner control or full Advanced action.
 The master passphrase is never
 persisted; OpenSSL Crypto remains a required build dependency.
 

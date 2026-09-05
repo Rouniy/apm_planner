@@ -65,7 +65,7 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QCOMPARE(view.ImplementedActionCount(), 14);
     QCOMPARE(view.PartialActionCount(), 1);
     QVERIFY(view.Log().contains(QStringLiteral("14 of 16")));
-    QVERIFY(view.Log().contains(QStringLiteral("1 additional local-only tool")));
+    QVERIFY(view.Log().contains(QStringLiteral("1 additional partial tool")));
     QSignalSpy warningSpy(warningAction, &QAction::triggered);
     auto *warningButton = view.findChild<QPushButton *>(QStringLiteral("WarningManagerButton"));
     QVERIFY(warningButton && warningButton->isEnabled());

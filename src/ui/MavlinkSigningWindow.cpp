@@ -14,6 +14,8 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -43,9 +45,54 @@ bool sameConnection(const MavlinkSigningWindow::Connection &a,
     return a.identity && b.identity && a.identity == b.identity
         && a.linkId == b.linkId && a.profileId == b.profileId;
 }
-QLabel *plainLabel(const QString &name, QWidget *parent)
+bool eligibleForProvision(const MavlinkSigningWindow::Connection &connection)
 {
-    auto *label = new QLabel(parent);
+    const auto &target = connection.provisioningTarget;
+    return connection.connected && !connection.required && !connection.provisioningUnconfirmed
+        && connection.error.isEmpty() && connection.provisioningError.isEmpty() && target.isValid()
+        && target.linkId == connection.linkId && target.profileId == connection.profileId
+        && target.identity == connection.identity && target.revision == connection.revision;
+}
+class WrappedStatusLabel final : public QLabel
+{
+public:
+    explicit WrappedStatusLabel(QWidget *parent) : QLabel(parent)
+    {
+        setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    }
+    void updateMinimumHeight()
+    {
+        if (m_updatingHeight) return;
+        m_updatingHeight = true;
+        ensurePolished();
+        // QLabel::heightForWidth includes the widget's explicit minimum size.
+        // Remove our previous reservation before measuring shorter text, or
+        // each warning can only grow the label and never release that space.
+        // Raising the new minimum may synchronously resize the label, hence
+        // the guard above also prevents recursive layout measurement.
+        if (minimumHeight() != 0) setMinimumHeight(0);
+        const int required = qMax(0, heightForWidth(qMax(1, width())));
+        if (minimumHeight() != required) setMinimumHeight(required);
+        m_updatingHeight = false;
+    }
+    void setText(const QString &text)
+    {
+        QLabel::setText(text);
+        updateMinimumHeight();
+    }
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QLabel::resizeEvent(event);
+        updateMinimumHeight();
+    }
+private:
+    bool m_updatingHeight = false;
+};
+
+WrappedStatusLabel *plainLabel(const QString &name, QWidget *parent)
+{
+    auto *label = new WrappedStatusLabel(parent);
     label->setObjectName(name);
     label->setTextFormat(Qt::PlainText);
     label->setWordWrap(true);
@@ -65,13 +112,25 @@ MavlinkSigningWindow::MavlinkSigningWindow(MavAuthKeyService *service, Connectio
       m_activate(std::move(activate))
 {
     setObjectName(QStringLiteral("MavlinkSigningWindow"));
-    setWindowTitle(tr("MAVLink Signing — local keys (partial)"));
+    setWindowTitle(tr("MAVLink Signing — keys and initial provision (partial)"));
     setAttribute(Qt::WA_DeleteOnClose);
     resize(720, 720);
-    auto *layout = new QVBoxLayout(this);
+    auto *windowLayout = new QVBoxLayout(this);
+    windowLayout->setContentsMargins(0, 0, 0, 0);
+    auto *scroll = new QScrollArea(this);
+    scroll->setObjectName("SigningContentScroll");
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    auto *content = new QWidget(scroll);
+    content->setObjectName("SigningContent");
+    auto *layout = new QVBoxLayout(content);
+    layout->setSizeConstraint(QLayout::SetMinimumSize);
+    scroll->setWidget(content);
+    windowLayout->addWidget(scroll);
     auto *banner = plainLabel("SigningLocalOnlyBanner", this);
-    banner->setText(tr("LOCAL KEYS ONLY: this window does not send keys to a vehicle or change vehicle signing. "
-                       "Use locally selects a key for an already-provisioned, disconnected physical connection.\n"
+    banner->setText(tr("Use locally does not send keys to a vehicle: it selects an existing key for a disconnected connection. "
+                       "Initial provision is different: it sends a secret key in cleartext over a private, dedicated physical channel, "
+                       "without a vehicle acknowledgement. Rekey and disable are not available.\n"
                        "Signing authenticates; it does not encrypt telemetry. There is no recovery for a lost master password."));
     layout->addWidget(banner);
 
@@ -140,12 +199,13 @@ MavlinkSigningWindow::MavlinkSigningWindow(MavAuthKeyService *service, Connectio
     layout->addWidget(connectionGroup);
 
     auto *vehicleButtons = new QHBoxLayout;
-    auto *provision = button("SigningProvisionVehicle", tr("Provision vehicle (unavailable)"), this);
+    m_provision = button("SigningProvisionVehicle", tr("Initial provision vehicle…"), this);
     auto *disable = button("SigningDisableVehicle", tr("Disable vehicle signing (unavailable)"), this);
-    provision->setEnabled(false); disable->setEnabled(false);
-    provision->setToolTip(tr("Vehicle provisioning is not implemented in this local-only tool. No SETUP_SIGNING is sent."));
+    m_provision->setEnabled(false); disable->setEnabled(false);
+    m_provision->setToolTip(tr("Only for an operator-known unprovisioned vehicle on a private, dedicated channel, "
+                              "with a fresh disarmed target. Sends a cleartext key once, with no acknowledgement or automatic retry."));
     disable->setToolTip(tr("Vehicle signing cannot be disabled here. Deleting or locking a local key does not change the vehicle."));
-    vehicleButtons->addWidget(provision); vehicleButtons->addWidget(disable);
+    vehicleButtons->addWidget(m_provision); vehicleButtons->addWidget(disable);
     layout->addLayout(vehicleButtons);
     m_status = plainLabel("SigningOperationStatus", this);
     layout->addWidget(m_status);
@@ -163,6 +223,7 @@ MavlinkSigningWindow::MavlinkSigningWindow(MavAuthKeyService *service, Connectio
     connect(m_add, &QPushButton::clicked, this, &MavlinkSigningWindow::addKey);
     connect(m_delete, &QPushButton::clicked, this, &MavlinkSigningWindow::deleteKey);
     connect(m_use, &QPushButton::clicked, this, &MavlinkSigningWindow::useKey);
+    connect(m_provision, &QPushButton::clicked, this, &MavlinkSigningWindow::provisionVehicle);
     connect(m_keys, &QListWidget::currentRowChanged, this, [this] {
         if (!m_refreshing) { ++m_selectionRevision; refresh(); }
     });
@@ -187,7 +248,16 @@ MavlinkSigningWindow::MavlinkSigningWindow(MavAuthKeyService *service, Connectio
 }
 
 MavlinkSigningWindow::~MavlinkSigningWindow() { clearSecretInputs(); }
-void MavlinkSigningWindow::setStatus(const QString &text) { m_status->setText(text); }
+void MavlinkSigningWindow::setProvisioner(Activate callback)
+{
+    m_provisioner = std::move(callback);
+    ++m_selectionRevision;
+    refresh();
+}
+void MavlinkSigningWindow::setStatus(const QString &text)
+{
+    static_cast<WrappedStatusLabel *>(m_status)->setText(text);
+}
 void MavlinkSigningWindow::clearSecretInputs()
 {
     m_showSeed->setChecked(false);
@@ -274,15 +344,37 @@ void MavlinkSigningWindow::refresh()
     const bool usable = selected.identity && selected.linkId >= 0 && !selected.profileId.isEmpty()
         && !selected.connected && selected.error.isEmpty();
     m_use->setEnabled(alive && !busy && unlocked && m_keys->currentItem() && usable && bool(m_activate));
+    m_provision->setEnabled(alive && !busy && unlocked && m_keys->currentItem()
+        && bool(m_provisioner) && eligibleForProvision(selected));
     m_connectionStatus->setText(index < 0 ? tr("No physical connection is available.")
         : tr("%1 | %2 | %3\nProfile: %4\nRequired fingerprint: %5\nCurrent local key: %6\n"
              "Authenticated packets (shared key): %7%8")
-            .arg(selected.connected ? tr("Connected — disconnect before use") : tr("Disconnected"))
+            .arg(selected.connected ? tr("Connected — local key selection requires disconnect") : tr("Disconnected"))
             .arg(selected.required ? tr("Signing required") : tr("Not protected"))
             .arg(selected.ready ? tr("Local key ready") : tr("Local key not ready"))
             .arg(selected.profileId, selected.fingerprint.isEmpty() ? tr("none") : selected.fingerprint,
                  selected.keyName.isEmpty() ? tr("none") : selected.keyName)
             .arg(selected.signedReceived).arg(selected.error.isEmpty() ? QString() : "\n" + selected.error));
+    if (index >= 0) {
+        QString provisioningStatus;
+        if (selected.provisioningUnconfirmed)
+            provisioningStatus = tr("PROVISIONING UNCONFIRMED: a key transfer may have been attempted. "
+                "Vehicle acceptance and persistence are unknown. The local profile remains signed-only; "
+                "do not retry. No rekey, disable or recovery workflow is available.");
+        else if (!selected.provisioningError.isEmpty())
+            provisioningStatus = tr("Initial provision unavailable: %1").arg(selected.provisioningError);
+        else if (eligibleForProvision(selected))
+            provisioningStatus = tr("Initial provision candidate: system %1, component %2. "
+                "Fresh disarmed telemetry is unauthenticated, not proof of vehicle identity.")
+                .arg(selected.provisioningTarget.systemId).arg(selected.provisioningTarget.componentId);
+        if (!provisioningStatus.isEmpty())
+            m_connectionStatus->setText(m_connectionStatus->text() + "\n" + provisioningStatus);
+    }
+    // QGroupBox/layout minimumSizeHint does not reliably propagate a wrapped
+    // QLabel's height-for-width. Reserve every actual text line explicitly;
+    // the surrounding scroll area handles screens shorter than the content.
+    static_cast<WrappedStatusLabel *>(m_connectionStatus)->updateMinimumHeight();
+    static_cast<WrappedStatusLabel *>(m_vaultStatus)->updateMinimumHeight();
     m_refreshing = false;
 }
 
@@ -347,7 +439,7 @@ void MavlinkSigningWindow::deleteKey()
     question->open();
 }
 
-bool MavlinkSigningWindow::currentConnection(const Connection &expected, Connection *result)
+bool MavlinkSigningWindow::currentConnection(const Connection &expected, Connection *result, bool provisioning)
 {
     if (!expected.identity || expected.linkId < 0 || expected.profileId.isEmpty()) return false;
     const QPointer<MavlinkSigningWindow> guard(this);
@@ -358,9 +450,14 @@ bool MavlinkSigningWindow::currentConnection(const Connection &expected, Connect
     int matches = 0;
     for (const auto &item : current) {
         if (item.linkId != expected.linkId) continue;
-        if (!sameConnection(item, expected) || item.connected || !item.error.isEmpty()
+        if (!sameConnection(item, expected) || !item.error.isEmpty()
             || item.revision != expected.revision
-            || item.required != expected.required || item.fingerprint != expected.fingerprint) return false;
+            || item.required != expected.required || item.fingerprint != expected.fingerprint
+            || item.provisioningUnconfirmed != expected.provisioningUnconfirmed) return false;
+        if (provisioning) {
+            if (!eligibleForProvision(expected) || !eligibleForProvision(item)
+                || item.provisioningTarget != expected.provisioningTarget) return false;
+        } else if (item.connected) return false;
         *result = item;
         ++matches;
     }
@@ -439,6 +536,92 @@ void MavlinkSigningWindow::beginActivation(const Connection &expected, const QSt
             guard->setStatus(activated ? tr("Key selected locally; this connection remains signed-only across restart. "
                                             "No key was sent to the vehicle and no vehicle setting was changed.")
                 : activationError.isEmpty() ? tr("The local connection did not accept the key.") : activationError);
+        });
+    if (guard && !token) {
+        m_activationPending = false;
+        setStatus(service ? service->lastError() : tr("Vault service unavailable."));
+    }
+}
+
+void MavlinkSigningWindow::provisionVehicle()
+{
+    const int index = m_connection->currentIndex();
+    if (m_closed || !m_service || !m_provisioner || !m_keys->currentItem()
+        || index < 0 || index >= m_snapshot.size()) return;
+    const Connection expected = m_snapshot.at(index);
+    const QString keyName = m_keys->currentItem()->text();
+    const quint64 revision = ++m_selectionRevision;
+    const QPointer<MavlinkSigningWindow> guard(this);
+    Connection fresh;
+    if (!currentConnection(expected, &fresh, true)) {
+        if (guard) setStatus(tr("Initial provision cancelled: no current eligible, connected and disarmed exact target."));
+        return;
+    }
+    if (!guard || m_closed || revision != m_selectionRevision || !m_service) return;
+    auto *question = new QMessageBox(QMessageBox::Warning, tr("Send an initial signing key without acknowledgement?"),
+        tr("Connection: %1\nProfile: %2\nVehicle system: %3, component: %4\nSelected key: \"%5\"\n\n"
+           "Continue ONLY for an operator-known unprovisioned vehicle using a direct cable or trusted PRIVATE, DEDICATED wired connection. "
+           "Fresh disarmed heartbeat data is unauthenticated and does not prove vehicle identity. "
+           "Listening/broadcast links are not eligible.\n\n"
+           "The secret key is sent in CLEARTEXT: anyone observing this wire can steal it. "
+           "The change may affect ALL vehicle channels, not just this connection. "
+           "A hidden pre-existing key may be overwritten, preventing other ground stations from connecting; this is not a supported rekey operation.\n\n"
+           "There is NO ACKNOWLEDGEMENT. Submission is always UNCONFIRMED, even if signed telemetry appears. "
+           "The local profile remains signed-only across restart; there is no unsigned fallback. "
+           "Do not retry. This release has no retry, rekey, disable or recovery workflow.")
+            .arg(fresh.name, fresh.profileId).arg(fresh.provisioningTarget.systemId)
+            .arg(fresh.provisioningTarget.componentId).arg(keyName),
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    question->setObjectName("SigningProvisionConfirmation");
+    question->setTextFormat(Qt::PlainText);
+    question->setDefaultButton(QMessageBox::Cancel);
+    question->setEscapeButton(QMessageBox::Cancel);
+    question->button(QMessageBox::Yes)->setText(tr("Send key once — unconfirmed"));
+    question->setAttribute(Qt::WA_DeleteOnClose);
+    question->setWindowModality(Qt::WindowModal);
+    connect(question, &QMessageBox::finished, this, [guard, fresh, keyName, revision](int result) {
+        if (guard && !guard->m_closed && result == QMessageBox::Yes
+            && guard->m_selectionRevision == revision)
+            guard->beginProvisioning(fresh, keyName, revision);
+    });
+    question->open();
+}
+
+void MavlinkSigningWindow::beginProvisioning(const Connection &expected, const QString &keyName,
+                                            quint64 revision)
+{
+    const QPointer<MavlinkSigningWindow> guard(this);
+    Connection fresh;
+    if (m_closed || !m_service || !m_provisioner || revision != m_selectionRevision) return;
+    if (!currentConnection(expected, &fresh, true)) {
+        if (guard) setStatus(tr("Initial provision cancelled: target eligibility changed after confirmation."));
+        return;
+    }
+    if (!guard || m_closed || !m_service || revision != m_selectionRevision) return;
+    m_activationPending = true;
+    const QPointer<MavAuthKeyService> service = m_service;
+    const auto token = service->requestKey(keyName,
+        [guard, expected, keyName, revision](bool ok, const QByteArray &key, const QString &error) {
+            if (!guard || guard->m_closed) return;
+            if (!ok) { guard->setStatus(error); return; }
+            Connection current;
+            if (guard->m_selectionRevision != revision || !guard->currentConnection(expected, &current, true)) {
+                if (guard) guard->setStatus(tr("Initial provision cancelled: target, connection or selection changed."));
+                return;
+            }
+            if (!guard || guard->m_closed || guard->m_selectionRevision != revision) return;
+            const auto provisioner = guard->m_provisioner;
+            QString details;
+            bool submitted = false;
+            try { if (provisioner) submitted = provisioner(current, keyName, key, &details); }
+            catch (...) { details = tr("The provisioning handler did not finish normally; the vehicle state is unknown."); }
+            if (!guard || guard->m_closed) return;
+            guard->setStatus(submitted
+                ? tr("SUBMITTED — UNCONFIRMED. No vehicle acknowledgement exists; acceptance and persistence are unknown. "
+                     "The profile remains signed-only. Do not retry; no rekey, disable or recovery workflow is available.")
+                : tr("Provisioning was not confirmed. An attempt may have occurred; do not assume the vehicle is unchanged "
+                     "or fall back to unsigned traffic. %1").arg(details));
+            guard->refresh();
         });
     if (guard && !token) {
         m_activationPending = false;

@@ -66,6 +66,16 @@ public:
     bool protectLink(int linkId, QString connectionProfileId, QString keyName,
                      const QByteArray &key, qint64 unixMs,
                      QString *error = nullptr);
+    /**
+     * Installs the first local signing policy without ending an already-live,
+     * unprotected physical epoch. This is only for the no-ACK initial vehicle
+     * provisioning transition after its required/pending policy was durably
+     * published. Existing protected or locked bindings are never replaced.
+     */
+    bool protectUnprotectedLiveLink(
+        int linkId, quint64 expectedEpoch, QString connectionProfileId,
+        QString keyName, const QByteArray &key, qint64 unixMs,
+        quint64 *initialTimestamp, QString *error = nullptr);
     bool requireSigning(int linkId, const QString &connectionProfileId,
                         const QByteArray &expectedFingerprint,
                         QString *error = nullptr);
@@ -103,6 +113,11 @@ private:
     bool registryRevisionIsCurrent(QString *error) const;
     bool publishRegistry(const QMap<QString, quint8> &registry,
                          QString *error);
+    bool installBinding(int linkId, quint64 expectedLiveEpoch,
+                        bool initialLiveProvision,
+                        QString connectionProfileId, QString keyName,
+                        const QByteArray &key, qint64 unixMs,
+                        quint64 *initialTimestamp, QString *error);
     static bool validIdentity(const QString &value, int maximumBytes,
                               const QString &label, QString *error);
     static VerifyVerdict mapVerdict(MAVLinkSigningSession::Verdict verdict);

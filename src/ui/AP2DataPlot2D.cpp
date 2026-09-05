@@ -423,16 +423,18 @@ void AP2DataPlot2D::autoScrollClicked(bool checked)
 
 void AP2DataPlot2D::activeUASSet(UASInterface* uas)
 {
-    if (!uas)
-    {
-        return;
-    }
     if (m_uas)
     {
         disconnect(m_uas,SIGNAL(valueChanged(int,QString,QString,QVariant,quint64)),this,SLOT(valueChanged(int,QString,QString,QVariant,quint64)));
         disconnect(m_uas,SIGNAL(navModeChanged(int,int,QString)),this,SLOT(navModeChanged(int,int,QString)));
         disconnect(m_uas,SIGNAL(connected()),this,SLOT(connected()));
         disconnect(m_uas,SIGNAL(disconnected()),this,SLOT(disconnected()));
+    }
+    m_uas = uas;
+    if (!m_uas)
+    {
+        disconnected();
+        return;
     }
     m_currentIndex = QDateTime::currentMSecsSinceEpoch();
     m_startIndex = m_currentIndex;
@@ -466,7 +468,7 @@ void AP2DataPlot2D::disconnected()
 void AP2DataPlot2D::navModeChanged(int uasid, int mode, const QString& text)
 {
     Q_UNUSED(mode);
-    if (m_uas->getUASID() != uasid)
+    if (!m_uas || m_uas->getUASID() != uasid)
     {
         return;
     }
@@ -503,7 +505,7 @@ void AP2DataPlot2D::updateValue(const int uasId, const QString& name, const QStr
 {
     Q_UNUSED(msec)
     Q_UNUSED(unit)
-    if (m_uas->getUASID() != uasId)
+    if (!m_uas || m_uas->getUASID() != uasId)
     {
         return;
     }
@@ -914,4 +916,3 @@ void AP2DataPlot2D::logToKmlClicked()
         }
     }
 }
-

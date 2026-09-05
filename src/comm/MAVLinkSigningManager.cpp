@@ -239,15 +239,51 @@ bool MAVLinkSigningManager::protectLink(
     int linkId, QString connectionProfileId, QString keyName,
     const QByteArray &key, qint64 unixMs, QString *error)
 {
+    return installBinding(linkId, 0, false, std::move(connectionProfileId),
+                          std::move(keyName), key, unixMs, nullptr, error);
+}
+
+bool MAVLinkSigningManager::protectUnprotectedLiveLink(
+    int linkId, quint64 expectedEpoch, QString connectionProfileId,
+    QString keyName, const QByteArray &key, qint64 unixMs,
+    quint64 *initialTimestamp, QString *error)
+{
+    if (initialTimestamp) *initialTimestamp = 0;
+    if (!initialTimestamp) {
+        if (error) {
+            *error = QStringLiteral(
+                "An initial signing timestamp destination is required.");
+        }
+        return false;
+    }
+    return installBinding(linkId, expectedEpoch, true,
+                          std::move(connectionProfileId),
+                          std::move(keyName), key, unixMs,
+                          initialTimestamp, error);
+}
+
+bool MAVLinkSigningManager::installBinding(
+    int linkId, quint64 expectedLiveEpoch, bool initialLiveProvision,
+    QString connectionProfileId, QString keyName, const QByteArray &key,
+    qint64 unixMs, quint64 *initialTimestamp, QString *error)
+{
     if (error) error->clear();
+    if (initialTimestamp) *initialTimestamp = 0;
     if (!onOwnerThread()) {
         setError(error, QStringLiteral(
             "Signing policy may only be changed on its owning thread."));
         return false;
     }
-    if (linkId < 0 || m_epochs.value(linkId, 0) != 0) {
-        setError(error, QStringLiteral(
-            "A signing policy can only be selected for an offline link."));
+    const quint64 activeEpoch = m_epochs.value(linkId, 0);
+    if (linkId < 0
+        || (initialLiveProvision
+                ? expectedLiveEpoch == 0 || activeEpoch != expectedLiveEpoch
+                : activeEpoch != 0)) {
+        setError(error, initialLiveProvision
+            ? QStringLiteral(
+                "Initial signing provisioning requires the exact live unprotected epoch.")
+            : QStringLiteral(
+                "A signing policy can only be selected for an offline link."));
         return false;
     }
     if (!validIdentity(connectionProfileId, MaximumProfileBytes,
@@ -268,6 +304,11 @@ bool MAVLinkSigningManager::protectLink(
     const QByteArray fingerprint = QCryptographicHash::hash(
         key, QCryptographicHash::Sha256);
     const auto existing = m_bindings.constFind(linkId);
+    if (initialLiveProvision && existing != m_bindings.constEnd()) {
+        setError(error, QStringLiteral(
+            "Initial signing provisioning cannot replace an existing protected policy."));
+        return false;
+    }
     if (existing != m_bindings.constEnd()) {
         if (existing->connectionProfileId != connectionProfileId
             || existing->expectedFingerprint != fingerprint) {
@@ -328,6 +369,58 @@ bool MAVLinkSigningManager::protectLink(
         }
     }
 
+    quint64 provisionTimestamp = 0;
+    if (initialLiveProvision) {
+        // ArduPilot starts its outgoing signing clock sixty seconds beyond
+        // SETUP_SIGNING.initial_timestamp. Return the current clock value for
+        // that payload, then advance our shared durable floor by the same
+        // interval before exposing the live binding. The first signed frame is
+        // therefore just beyond the firmware clock, rather than two minutes
+        // beyond wall time.
+        constexpr quint64 FirmwareHeadroomTicks = 60ULL * 100ULL * 1000ULL;
+        constexpr quint64 MaximumFutureClockTicks =
+            60ULL * 60ULL * 100ULL * 1000ULL;
+        const quint64 current = m_clock->current(unixMs);
+        if (unixMs < MAVLinkSigningClock::EpochUnixMs) {
+            setError(error, QStringLiteral(
+                "Wall clock predates the MAVLink signing epoch."));
+            return false;
+        }
+        const quint64 milliseconds = static_cast<quint64>(
+            unixMs - MAVLinkSigningClock::EpochUnixMs);
+        if (milliseconds > MAVLinkSigningClock::MaxTimestamp / 100ULL) {
+            setError(error, QStringLiteral(
+                "Wall clock exceeds the MAVLink signing timestamp range."));
+            return false;
+        }
+        const quint64 wall = milliseconds * 100ULL;
+        if (current == 0 || current < wall
+            || current - wall > MaximumFutureClockTicks) {
+            setError(error, QStringLiteral(
+                "The retained signing clock is too far ahead for initial provisioning."));
+            return false;
+        }
+        if (current >= MAVLinkSigningClock::MaxTimestamp
+                - FirmwareHeadroomTicks) {
+            setError(error, QStringLiteral(
+                "Signing timestamp space cannot reserve provisioning headroom."));
+            return false;
+        }
+        provisionTimestamp = current;
+        if (!m_clock->observeVerified(
+                provisionTimestamp + FirmwareHeadroomTicks, unixMs, error)) {
+            return false;
+        }
+        // File operations above do not dispatch callbacks, nevertheless keep
+        // the exact physical lifetime an explicit admission invariant.
+        if (m_epochs.value(linkId, 0) != expectedLiveEpoch
+            || m_bindings.contains(linkId)) {
+            setError(error, QStringLiteral(
+                "The live link changed while its initial signing policy was prepared."));
+            return false;
+        }
+    }
+
     QMap<QString, quint8> prospectiveRegistry = m_registry;
     quint8 signingLinkId = 0;
     const auto registered = prospectiveRegistry.constFind(connectionProfileId);
@@ -361,6 +454,7 @@ bool MAVLinkSigningManager::protectLink(
     } else {
         m_bindings[linkId] = std::move(binding);
     }
+    if (initialTimestamp) *initialTimestamp = provisionTimestamp;
     return true;
 }
 

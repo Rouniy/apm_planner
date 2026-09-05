@@ -27,15 +27,17 @@ UASRawStatusView::UASRawStatusView(QWidget *parent) : QWidget(parent)
 }
 void UASRawStatusView::activeUASSet(UASInterface* uas)
 {
-    if (!uas)
-    {
-        return;
-    }
     if (m_uas)
     {
         disconnect(m_uas,SIGNAL(valueChanged(int,QString,QString,QVariant,quint64)),this,SLOT(valueChanged(int,QString,QString,QVariant,quint64)));
     }
     m_uas = uas;
+    valueMap.clear();
+    nameToUpdateWidgetMap.clear();
+    ui.tableWidget->clear();
+    ui.tableWidget->setRowCount(0);
+    m_tableDirty = true;
+    if (!m_uas) return;
     connect(m_uas,SIGNAL(valueChanged(int,QString,QString,QVariant,quint64)),this,SLOT(valueChanged(int,QString,QString,QVariant,quint64)));
 
 }
@@ -90,7 +92,7 @@ void UASRawStatusView::valueChanged(const int uasId, const QString& name, const 
 
 void UASRawStatusView::valueChanged(const int uasId, const QString& name, const QString& unit, const double value, const quint64 msec)
 {
-    Q_UNUSED(uasId)
+    if (!m_uas || m_uas->getUASID() != uasId) return;
     Q_UNUSED(unit)
     Q_UNUSED(msec)
     valueMap[name] = value;
@@ -111,6 +113,7 @@ void UASRawStatusView::updateTableTimerTick()
         bool good = false;
         while (!good)
         {
+            nameToUpdateWidgetMap.clear();
             ui.tableWidget->clear();
             ui.tableWidget->setRowCount(0);
             ui.tableWidget->setColumnCount(columncount);

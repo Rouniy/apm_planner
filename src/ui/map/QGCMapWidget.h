@@ -2,6 +2,7 @@
 #define QGCMAPWIDGET_H
 
 #include <QMap>
+#include <QPointer>
 #include <QTimer>
 #include <QVector>
 #include "AbstractMapWidget.h"
@@ -209,7 +210,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event);
     void contextMenuEvent(QContextMenuEvent *event) override;
 
-    UASWaypointManager* currWPManager; ///< The current waypoint manager
+    QPointer<UASWaypointManager> currWPManager; ///< The current waypoint manager
     bool offlineMode;
     QMap<Waypoint* , mapcontrol::WayPointItem*> waypointsToIcons;
     QMap<mapcontrol::WayPointItem*, Waypoint*> iconsToWaypoints;
@@ -236,7 +237,7 @@ protected:
     double defaultGuidedRelativeAlt;            ///< Default relative altitude for guided mode
     int defaultGuidedFrame;             ///< Default guided frame
     bool defaultGuidedAltFirstTimeSet;   ///< manages the first time set of guided alt
-    UASInterface *uas;                  ///< Currently selected UAS.
+    QPointer<UASInterface> uas;         ///< Currently selected UAS.
     // Atlantic Ocean near Africa, coordinate origin
     double m_lastZoom;
     double m_lastLat;

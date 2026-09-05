@@ -64,8 +64,8 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
                          QStringLiteral("SupportProxyButton"), notPorted);
 
     AppendLog(tr("%1 of %2 Mission Planner Advanced tools have complete workflows. "
-                 "%3 additional local-only tool is available; vehicle provisioning "
-                 "and disabling Signing are not yet available.")
+                 "%3 additional partial tool is available: Signing supports local keys and initial provisioning "
+                 "with an unconfirmed outcome. Key change and disabling remain unavailable.")
                   .arg(m_implementedActionCount)
                   .arg(ActionCount()).arg(m_partialActionCount));
 }

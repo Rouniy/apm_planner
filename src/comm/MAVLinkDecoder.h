@@ -40,6 +40,7 @@ This file is part of the APM_PLANNER project
 #include "LinkInterface.h"
 
 #include <QObject>
+#include <QPointer>
 #include <QThread>
 #include <QFile>
 #include <QMap>
@@ -87,7 +88,7 @@ private:
     QMap<int,quint64> onboardToGCSUnixTimeOffsetAndDelay;
 
     bool m_localDecode;   /// true if decoding logfiles.
-    UASInterface *mp_uas; /// pointer to active UAS. Can be null.
+    QPointer<UASInterface> mp_uas; /// guarded vehicle for the current decode.
 };
 
 #endif // NEW_MAVLINKDECODER_H

@@ -6,11 +6,14 @@
 #include <QCheckBox>
 #include <QCryptographicHash>
 #include <QFileInfo>
+#include <QFile>
+#include <QFontMetrics>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QTemporaryDir>
 #include <QThread>
 #include <utility>
@@ -57,6 +60,16 @@ MavlinkSigningWindow::Connection connection(QObject *identity)
     result.fingerprint = QString(64, 'a');
     return result;
 }
+MavlinkSigningWindow::Connection provisioningConnection(QObject *identity)
+{
+    auto result = connection(identity);
+    result.connected = true;
+    result.required = false;
+    result.fingerprint.clear();
+    result.provisioningTarget = {result.linkId, result.profileId, result.identity,
+        result.revision, 21, 31, 41, 42, 1};
+    return result;
+}
 bool prepare(MavAuthKeyService &service)
 {
     return operation(service, [&] { return service.create(Master); })
@@ -76,6 +89,15 @@ private slots:
     void closeCancelsPendingActivationAndKeepsService();
     void providerAndActivatorMayDestroyWindow();
     void metadataIsPlainTextAndSelectionSurvivesRefresh();
+    void initialProvisionConsentAndPersistentUnconfirmedStatus_data();
+    void initialProvisionConsentAndPersistentUnconfirmedStatus();
+    void provisionRevalidatesConsentAndKeyDelivery_data();
+    void provisionRevalidatesConsentAndKeyDelivery();
+    void provisionEligibilityAndCloseAreFailClosed();
+    void provisioningCallbacksMayDestroyWindow_data();
+    void provisioningCallbacksMayDestroyWindow();
+    void wrappedPendingStatusFitsProductionTheme_data();
+    void wrappedPendingStatusFitsProductionTheme();
 };
 
 void MavlinkSigningWindowTest::realVaultWorkflowMasksConfirmationAndNoImplicitCreate()
@@ -91,6 +113,7 @@ void MavlinkSigningWindowTest::realVaultWorkflowMasksConfirmationAndNoImplicitCr
     QVERIFY(!window->isClosing());
     QCOMPARE(window->objectName(), QString("MavlinkSigningWindow"));
     QVERIFY(window->findChild<QLabel *>("SigningLocalOnlyBanner")->text().contains("does not send keys"));
+    QVERIFY(window->findChild<QLabel *>("SigningLocalOnlyBanner")->text().contains("sends a secret key in cleartext"));
     QVERIFY(window->findChild<QLabel *>("SigningLocalOnlyBanner")->text().contains("does not encrypt telemetry"));
     QVERIFY(window->findChild<QLabel *>("SigningLocalOnlyBanner")->text().contains("no recovery"));
     for (const char *name : {"SigningMasterPassword", "SigningConfirmPassword", "SigningKeySeed"})
@@ -325,6 +348,277 @@ void MavlinkSigningWindowTest::metadataIsPlainTextAndSelectionSurvivesRefresh()
     QVERIFY(status->text().contains("Authenticated packets (shared key): 17"));
     for (int i = owner.get()->metaObject()->methodOffset(); i < owner.get()->metaObject()->methodCount(); ++i)
         QVERIFY(!owner.get()->metaObject()->method(i).parameterTypes().contains("QByteArray"));
+}
+
+void MavlinkSigningWindowTest::initialProvisionConsentAndPersistentUnconfirmedStatus_data()
+{
+    QTest::addColumn<bool>("submitted");
+    QTest::newRow("submitted-unconfirmed") << true;
+    QTest::newRow("failure-after-possible-attempt") << false;
+}
+
+void MavlinkSigningWindowTest::initialProvisionConsentAndPersistentUnconfirmedStatus()
+{
+    QFETCH(bool, submitted);
+    QTemporaryDir dir;
+    MavAuthKeyService service(dir.filePath("vault.keys"));
+    QVERIFY(prepare(service));
+    QObject identity;
+    auto endpoint = provisioningConnection(&identity);
+    int calls = 0;
+    const auto provider = [&] { return QVector<MavlinkSigningWindow::Connection>{endpoint}; };
+    WindowOwner owner(new MavlinkSigningWindow(&service, provider, {}));
+    owner.get()->setProvisioner([&](const auto &received, const QString &name, const QByteArray &key, QString *error) {
+        if (received.provisioningTarget != endpoint.provisioningTarget || !received.connected
+            || received.required || name != "alpha"
+            || key != QCryptographicHash::hash("abc", QCryptographicHash::Sha256)) return false;
+        ++calls;
+        endpoint.required = true;
+        endpoint.provisioningUnconfirmed = true;
+        endpoint.provisioningTarget = {};
+        if (!submitted && error) *error = "Write failed after the attempt began";
+        return submitted; // even true means only submitted, not accepted
+    });
+    QVERIFY(!owner.get()->findChild<QPushButton *>("SigningUseLocally")->isEnabled());
+    QVERIFY(click(owner.get(), "SigningProvisionVehicle"));
+    auto *question = owner.get()->findChild<QMessageBox *>("SigningProvisionConfirmation");
+    QVERIFY(question);
+    QCOMPARE(question->defaultButton(), question->button(QMessageBox::Cancel));
+    QCOMPARE(question->textFormat(), Qt::PlainText);
+    for (const QString &required : {endpoint.name, endpoint.profileId, QString("42"), QString("\"alpha\""),
+            QString("PRIVATE, DEDICATED"), QString("CLEARTEXT"), QString("ALL vehicle channels"),
+            QString("unauthenticated"), QString("pre-existing key may be overwritten"),
+            QString("NO ACKNOWLEDGEMENT"), QString("Do not retry"), QString("no retry, rekey, disable or recovery")})
+        QVERIFY2(question->text().contains(required), qPrintable(required));
+    QVERIFY(!service.busy());
+    question->button(QMessageBox::Cancel)->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(calls, 0);
+    QVERIFY(click(owner.get(), "SigningProvisionVehicle"));
+    question = owner.get()->findChild<QMessageBox *>("SigningProvisionConfirmation");
+    QVERIFY(question);
+    QSignalSpy finished(&service, &MavAuthKeyService::operationFinished);
+    question->button(QMessageBox::Yes)->click();
+    QVERIFY(waitFor(finished));
+    QCOMPARE(calls, 1);
+    const QString result = owner.get()->findChild<QLabel *>("SigningOperationStatus")->text();
+    QVERIFY(result.contains(submitted ? "SUBMITTED — UNCONFIRMED" : "Provisioning was not confirmed"));
+    if (!submitted) QVERIFY(result.contains("Write failed after the attempt began"));
+    QVERIFY(!result.contains("success", Qt::CaseInsensitive));
+    QVERIFY(!owner.get()->findChild<QPushButton *>("SigningProvisionVehicle")->isEnabled());
+    QVERIFY(owner.get()->findChild<QLabel *>("SigningConnectionStatus")->text().contains("PROVISIONING UNCONFIRMED"));
+    endpoint.signedReceived = 99; // authenticated traffic cannot prove durable provisioning
+    QTRY_VERIFY(owner.get()->findChild<QLabel *>("SigningConnectionStatus")->text().contains("shared key): 99"));
+    QVERIFY(owner.get()->findChild<QLabel *>("SigningConnectionStatus")->text().contains("PROVISIONING UNCONFIRMED"));
+    owner.get()->close();
+    QTRY_VERIFY(owner.window.isNull());
+    WindowOwner reopened(new MavlinkSigningWindow(&service, provider, {}));
+    reopened.get()->setProvisioner([](const auto &, const QString &, const QByteArray &, QString *) { return true; });
+    QVERIFY(reopened.get()->findChild<QLabel *>("SigningConnectionStatus")->text().contains("PROVISIONING UNCONFIRMED"));
+    QVERIFY(!reopened.get()->findChild<QPushButton *>("SigningProvisionVehicle")->isEnabled());
+}
+
+void MavlinkSigningWindowTest::provisionRevalidatesConsentAndKeyDelivery_data()
+{
+    QTest::addColumn<QString>("change");
+    QTest::addColumn<bool>("afterConfirmation");
+    for (const bool after : {false, true}) {
+        for (const char *change : {"generation", "session", "instance", "system", "component", "revision",
+                                   "armed", "disconnected", "required", "pending", "identity", "selection", "provider"})
+            QTest::newRow(qPrintable(QString("%1-%2").arg(after ? "key-delivery" : "consent", change)))
+                << QString::fromLatin1(change) << after;
+    }
+}
+
+void MavlinkSigningWindowTest::provisionRevalidatesConsentAndKeyDelivery()
+{
+    QFETCH(QString, change);
+    QFETCH(bool, afterConfirmation);
+    QTemporaryDir dir;
+    MavAuthKeyService service(dir.filePath("vault.keys"));
+    QVERIFY(prepare(service));
+    QObject identity, replacement;
+    auto endpoint = provisioningConnection(&identity);
+    int calls = 0;
+    WindowOwner owner(new MavlinkSigningWindow(&service,
+        [&] { return QVector<MavlinkSigningWindow::Connection>{endpoint}; }, {}));
+    owner.get()->setProvisioner([&](const auto &, const QString &, const QByteArray &, QString *) { ++calls; return true; });
+    QVERIFY(click(owner.get(), "SigningProvisionVehicle"));
+    auto *question = owner.get()->findChild<QMessageBox *>("SigningProvisionConfirmation");
+    QVERIFY(question);
+    QSignalSpy finished(&service, &MavAuthKeyService::operationFinished);
+    if (afterConfirmation) {
+        question->button(QMessageBox::Yes)->click();
+        QVERIFY(service.busy());
+    }
+    if (change == "generation") ++endpoint.provisioningTarget.targetGeneration;
+    else if (change == "session") ++endpoint.provisioningTarget.linkSessionEpoch;
+    else if (change == "instance") ++endpoint.provisioningTarget.instanceEpoch;
+    else if (change == "system") ++endpoint.provisioningTarget.systemId;
+    else if (change == "component") ++endpoint.provisioningTarget.componentId;
+    else if (change == "revision") { ++endpoint.revision; ++endpoint.provisioningTarget.revision; }
+    else if (change == "armed") { endpoint.provisioningTarget = {}; endpoint.provisioningError = "Target is armed"; }
+    else if (change == "disconnected") endpoint.connected = false;
+    else if (change == "required") endpoint.required = true;
+    else if (change == "pending") endpoint.provisioningUnconfirmed = true;
+    else if (change == "identity") { endpoint.identity = &replacement; endpoint.provisioningTarget.identity = &replacement; }
+    else if (change == "selection") owner.get()->findChild<QListWidget *>("SigningKeyList")->setCurrentRow(-1);
+    else if (change == "provider") owner.get()->setProvisioner({});
+    if (afterConfirmation) QVERIFY(waitFor(finished));
+    else {
+        question->button(QMessageBox::Yes)->click();
+        QVERIFY(!service.busy());
+        QCOMPARE(finished.count(), 0);
+    }
+    QCOMPARE(calls, 0);
+}
+
+void MavlinkSigningWindowTest::provisionEligibilityAndCloseAreFailClosed()
+{
+    QTemporaryDir dir;
+    MavAuthKeyService service(dir.filePath("vault.keys"));
+    QVERIFY(prepare(service));
+    QObject identity;
+    auto endpoint = provisioningConnection(&identity);
+    int calls = 0;
+    WindowOwner owner(new MavlinkSigningWindow(&service,
+        [&] { return QVector<MavlinkSigningWindow::Connection>{endpoint}; }, {}));
+    const auto provisioner = [&](const MavlinkSigningWindow::Connection &, const QString &, const QByteArray &, QString *) {
+        ++calls; return true;
+    };
+    QVERIFY(!owner.get()->findChild<QPushButton *>("SigningProvisionVehicle")->isEnabled());
+    for (const QString &reason : {QString("Target is armed"), QString("Heartbeat is stale"), QString("Listening UDP is not private")}) {
+        endpoint.provisioningTarget = {};
+        endpoint.provisioningError = reason;
+        owner.get()->setProvisioner(provisioner);
+        QVERIFY(!owner.get()->findChild<QPushButton *>("SigningProvisionVehicle")->isEnabled());
+        QVERIFY(owner.get()->findChild<QLabel *>("SigningConnectionStatus")->text().contains(reason));
+    }
+    endpoint = provisioningConnection(&identity);
+    endpoint.provisioningTarget.linkId = 999; // individually-valid POD must match its physical connection
+    owner.get()->setProvisioner(provisioner);
+    QVERIFY(!owner.get()->findChild<QPushButton *>("SigningProvisionVehicle")->isEnabled());
+    endpoint = provisioningConnection(&identity);
+    owner.get()->setProvisioner(provisioner);
+    QVERIFY(click(owner.get(), "SigningProvisionVehicle"));
+    auto *question = owner.get()->findChild<QMessageBox *>("SigningProvisionConfirmation");
+    QVERIFY(question);
+    QSignalSpy finished(&service, &MavAuthKeyService::operationFinished);
+    question->button(QMessageBox::Yes)->click();
+    QVERIFY(service.busy());
+    owner.get()->close();
+    QVERIFY(waitFor(finished));
+    QCOMPARE(calls, 0);
+    QTRY_VERIFY(owner.window.isNull());
+    QVERIFY(service.isUnlocked());
+}
+
+void MavlinkSigningWindowTest::provisioningCallbacksMayDestroyWindow_data()
+{
+    QTest::addColumn<bool>("providerDeletes");
+    QTest::newRow("provider-deletion") << true;
+    QTest::newRow("provisioner-deletion") << false;
+}
+
+void MavlinkSigningWindowTest::provisioningCallbacksMayDestroyWindow()
+{
+    QFETCH(bool, providerDeletes);
+    QTemporaryDir dir;
+    MavAuthKeyService service(dir.filePath("vault.keys"));
+    QVERIFY(prepare(service));
+    QObject identity;
+    const auto endpoint = provisioningConnection(&identity);
+    QPointer<MavlinkSigningWindow> window;
+    bool armed = false;
+    WindowOwner owner(new MavlinkSigningWindow(&service, [&] {
+        if (armed && providerDeletes) delete window.data();
+        return QVector<MavlinkSigningWindow::Connection>{endpoint};
+    }, {}));
+    window = owner.get();
+    window->setProvisioner([&](const auto &, const QString &, const QByteArray &, QString *) {
+        delete window.data(); return true;
+    });
+    QVERIFY(click(window, "SigningProvisionVehicle"));
+    auto *question = window->findChild<QMessageBox *>("SigningProvisionConfirmation");
+    QVERIFY(question);
+    QSignalSpy finished(&service, &MavAuthKeyService::operationFinished);
+    question->button(QMessageBox::Yes)->click();
+    armed = true;
+    QVERIFY(waitFor(finished));
+    QVERIFY(window.isNull());
+    QVERIFY(service.isUnlocked());
+}
+
+void MavlinkSigningWindowTest::wrappedPendingStatusFitsProductionTheme_data()
+{
+    QTest::addColumn<QSize>("windowSize");
+    QTest::newRow("initial-720-wide") << QSize(720, 786);
+    QTest::newRow("modest-window") << QSize(560, 520);
+}
+
+void MavlinkSigningWindowTest::wrappedPendingStatusFitsProductionTheme()
+{
+    QFETCH(QSize, windowSize);
+    const QString stylePath = QFINDTESTDATA("../files/styles/style-outdoor.css");
+    QVERIFY(!stylePath.isEmpty());
+    QFile styleFile(stylePath);
+    QVERIFY(styleFile.open(QIODevice::ReadOnly));
+    const QString style = QString::fromUtf8(styleFile.readAll());
+    QObject identity;
+    auto endpoint = connection(&identity);
+    endpoint.connected = true;
+    endpoint.ready = true;
+    endpoint.keyName = "SITL initial key";
+    endpoint.signedReceived = 870;
+    const auto provider = [&] { return QVector<MavlinkSigningWindow::Connection>{endpoint}; };
+    const auto textHeight = [](QLabel *label) {
+        return QFontMetrics(label->font()).boundingRect(
+            QRect(0, 0, label->contentsRect().width(), 100000),
+            Qt::TextWordWrap, label->text()).height();
+    };
+
+    WindowOwner owner(new MavlinkSigningWindow(nullptr, provider, {}));
+    owner.get()->setStyleSheet(style);
+    owner.get()->resize(windowSize);
+    auto *status = owner.get()->findChild<QLabel *>("SigningConnectionStatus");
+    auto *scroll = owner.get()->findChild<QScrollArea *>("SigningContentScroll");
+    QVERIFY(status && scroll && scroll->widgetResizable());
+    endpoint.provisioningUnconfirmed = true;
+    QTRY_VERIFY(status->text().contains("PROVISIONING UNCONFIRMED"));
+    QVERIFY(status->text().contains("No rekey, disable or recovery workflow is available."));
+    QTRY_VERIFY(status->contentsRect().height() >= textHeight(status));
+    QTRY_VERIFY(status->height() >= status->heightForWidth(status->width()));
+    QCOMPARE(owner.get()->size(), windowSize); // short screens scroll, not an off-screen forced minimum
+    scroll->ensureWidgetVisible(status, 0, 0);
+    QTRY_VERIFY(status->mapTo(scroll->viewport(), QPoint()).y() >= 0);
+    QTRY_VERIFY(status->mapTo(scroll->viewport(), QPoint()).y() + status->height()
+                <= scroll->viewport()->height());
+    const int pendingMinimum = status->minimumHeight();
+    endpoint.provisioningUnconfirmed = false;
+    QTRY_VERIFY(!status->text().contains("PROVISIONING UNCONFIRMED"));
+    QTRY_VERIFY(status->minimumHeight() < pendingMinimum);
+    QTRY_VERIFY(status->contentsRect().height() >= textHeight(status));
+    const int compactMinimum = status->minimumHeight();
+    endpoint.provisioningUnconfirmed = true;
+    QTRY_VERIFY(status->text().contains("PROVISIONING UNCONFIRMED"));
+    QTRY_VERIFY(status->contentsRect().height() >= textHeight(status));
+    endpoint.provisioningUnconfirmed = false;
+    QTRY_VERIFY(!status->text().contains("PROVISIONING UNCONFIRMED"));
+    QTRY_COMPARE(status->minimumHeight(), compactMinimum);
+
+    // The warning must also get its full geometry when there is no operation
+    // result label to repeat it, as on a newly opened persisted-pending profile.
+    owner.get()->close();
+    QTRY_VERIFY(owner.window.isNull());
+    endpoint.provisioningUnconfirmed = true;
+    WindowOwner reopened(new MavlinkSigningWindow(nullptr, provider, {}));
+    reopened.get()->setStyleSheet(style);
+    reopened.get()->resize(windowSize);
+    status = reopened.get()->findChild<QLabel *>("SigningConnectionStatus");
+    QVERIFY(status->text().contains("PROVISIONING UNCONFIRMED"));
+    QTRY_VERIFY(status->contentsRect().height() >= textHeight(status));
+    QTRY_VERIFY(status->height() >= status->heightForWidth(status->width()));
+    QCOMPARE(reopened.get()->size(), windowSize);
 }
 
 QTEST_MAIN(MavlinkSigningWindowTest)

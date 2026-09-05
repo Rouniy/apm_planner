@@ -24,7 +24,55 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): **Modeless local Signing key manager**.
+Latest slice (2026-09-05): **Guarded initial MAVLink Signing provisioning**.
+TOOLS and SETUP Advanced share `MAVLink Signing — Keys and initial setup…`.
+The working partial tool now sends one SETUP_SIGNING to an operator-known
+unprovisioned, fresh disarmed exact ArduPilot target on a private dedicated
+route. Default-Cancel consent names cleartext exposure, all-channel effects,
+possible hidden prior keys and the absence of ACK/retry/recovery. Required-key
+fingerprint and an unconfirmed marker persist before any possible write;
+failures never reopen unsigned traffic. Use locally remains offline/no-TX.
+Authenticated packets never silently clear the permanent uncertainty warning.
+Rekey, disable and operator reconciliation remain unavailable: **Advanced is
+still14 complete +1 partial**, not15 complete. The fixed TOOLS inventory stays24
+plus the explicit Qt Signing extension. SETUP46 pages/eight absent routes and
+CONFIG15/15 factories/Planner21/64 controls are unchanged.
+
+Qt5/audio build and **237/237 tests pass (22.96 seconds)**. New tests cover
+consent/delivery mutation, stale/armed/duplicate/radio/signed-target refusal,
+exact signed secret submission without observers, uncertain writer removal,
+strict persisted pending state and production-theme warning resize/scroll.
+The rediscovery regression exposed legacy lifetime bugs: detach all vehicles
+before destroying a shared link, retire registry/companion objects immediately,
+guard deferred callbacks, detach retired protocol consumers, clear old pointers
+in AP2DataPlot2D/UASRawStatusView/QGCMapWidget, and resolve the decoder target
+before field zero with guarded nested-call state. These fixes preserve the
+useful modules. Additional lazy HDDisplay/HSIDisplay/HUD lifetime risks remain
+explicit follow-ups, not covered by this default-route claim.
+
+An independent isolated ArduCopter sys233 fixture on **SERIAL1 TCP61980**, not
+USB/COMM_0, was provisioned once through the actual Qt window. Pymavlink verifies
+980 signatures: an unsigned read-only version request is ignored, a signed one
+answered. Restarting that fixture without wiping storage repeats both checks
+with its retained key. The GUI TLOG has27,090 valid frames, including5,402
+independently verified signatures, and no SETUP_SIGNING/raw key/BAD_DATA.
+Evidence: `/tmp/apm-signing-initial.g6VlP9/`. No network SITL key was changed.
+Final-build X11 restores the locked pending profile after app restart, unlocks
+the vault and uses the matching key locally without another provision. Reconnect
+receives thousands of authenticated packets while keeping the full warning
+readable at720-wide and560x520. The production signing runtime also exits0 on X11.
+Close/reopen preserves the warning and unlocked vault; shutdown with that window
+open exits0. All test windows and the isolated SITL are stopped.
+Claude TCP c205/c206/c163 and three Codex streams supplied independent review,
+implementation and production tests; root scheduled all builds/tests.
+
+Next: reviewed Signing rekey/disable/reconciliation, then the remaining genuine
+single-vehicle Developer/TOOLS workflows. Claude's c207 inventory recommends
+exact-target Developer vehicle actions, Offline MagFit and Photo GeoRef; these
+are planning candidates, not implemented claims. Settings/CONFIG follows Tools;
+Swarm remains last. See `MAVLINK_SIGNING_PORT.md` for limitations and evidence.
+
+Previous slice (2026-09-05): **Modeless local Signing key manager**.
 TOOLS now includes an explicit `MAVLink Signing — Local keys` extension, and
 SETUP Advanced opens the same modeless observer. Fourteen full Advanced
 workflows remain; Signing adds **one working local-only partial workflow**,

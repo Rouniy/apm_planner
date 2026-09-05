@@ -39,6 +39,7 @@ This file is part of the APM_PLANNER project
 #include "UASInterface.h"
 
 #include <QDataStream>
+#include <QScopedValueRollback>
 
 MAVLinkDecoder::MAVLinkDecoder(QObject *parent):
     QObject(parent),
@@ -165,6 +166,12 @@ void MAVLinkDecoder::receiveMessage(LinkInterface* link, mavlink_message_t messa
     {
         return;
     }
+    // Resolve before field zero too; previously it used the previous packet's
+    // UAS, which could already be deleted. Restore guarded state across nested
+    // signal delivery so another decoder invocation cannot retarget this one.
+    const QPointer<UASInterface> target = m_localDecode
+        ? nullptr : UASManager::instance()->getUASForId(message.sysid);
+    const QScopedValueRollback<QPointer<UASInterface>> targetScope(mp_uas, target);
 
     // Handle time sync message
 #ifndef ENABLE_DEBUG_DATALOG_PARSING
@@ -219,16 +226,6 @@ void MAVLinkDecoder::receiveMessage(LinkInterface* link, mavlink_message_t messa
 
         // Align time to global time
         time = getUnixTimeFromMs(message.sysid, time);
-
-        // do we have an active UAS? Check only if not local decoding
-        if(!m_localDecode)
-        {
-            mp_uas = UASManager::instance()->getUASForId(message.sysid);
-        }
-        else
-        {
-            mp_uas = nullptr;
-        }
 
         // Store component ID
         if (!m_componentID.contains(message.msgid))

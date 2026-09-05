@@ -188,6 +188,7 @@ add_library(apm_mavlink_signing STATIC
     src/services/MavAuthKeyService.h
     src/services/MavlinkSigningProfiles.cpp
     src/services/MavlinkSigningProfiles.h
+    src/services/SigningProvisioningTarget.h
 )
 target_include_directories(apm_mavlink_signing
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>

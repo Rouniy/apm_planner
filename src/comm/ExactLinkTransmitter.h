@@ -25,6 +25,7 @@ public:
         Sent,
         InvalidLink,
         InvalidMessage,
+        RestrictedMessage,
         IncompatibleVersion,
         SigningUnavailable,
         TransportUnavailable
@@ -41,7 +42,7 @@ public:
 
     SendResult sendMessage(
         int linkId, quint8 localSystemId, quint8 localComponentId,
-        mavlink_message_t message,
+        const mavlink_message_t &message,
         bool *frameWriterInvoked = nullptr);
     SendResult sendCommandAck(
         int linkId, quint8 localSystemId, quint8 localComponentId,
@@ -64,6 +65,16 @@ signals:
                           mavlink_message_t message);
 
 private:
+    friend class LinkManager;
+    // Secret-bearing provisioning is not a generic tool/plugin send. Only the
+    // reviewed LinkManager transition may reach this typed, no-observer path.
+    SendResult sendSetupSigning(int linkId, quint64 expectedEpoch,
+        quint8 localSystemId, quint8 localComponentId,
+        quint8 targetSystem, quint8 targetComponent, const QByteArray &key,
+        quint64 initialTimestamp, bool *frameWriterInvoked = nullptr);
+    SendResult sendMessageImpl(int linkId, quint8 localSystemId,
+        quint8 localComponentId, mavlink_message_t message,
+        bool *frameWriterInvoked);
     mavlink_status_t &transmitStatus(int linkId);
 
     const FrameWriter m_frameWriter;

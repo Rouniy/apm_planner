@@ -46,6 +46,7 @@ This file is part of the APM_PLANNER project
 #include "MAVLinkDecoder.h"
 #include "MAVLinkProtocol.h"
 #include "MAVLinkSigningManager.h"
+#include "services/SigningProvisioningTarget.h"
 #include <QMap>
 #include <QPointer>
 #include <QSet>
@@ -89,6 +90,7 @@ public:
         bool signingRequired = false;
         QString error;
         quint64 revision = 0; // Runtime edit/lifecycle fence; never persisted.
+        bool provisioningUnconfirmed = false;
     };
     explicit LinkManager(QObject *parent = nullptr);
     static LinkManager* instance();
@@ -157,6 +159,13 @@ public:
     // Local protection for an already provisioned vehicle; requires a physically
     // disconnected link. This never sends SETUP_SIGNING or changes vehicle keys.
     bool configureSigning(int linkId, const QString &connectionProfileId,
+                          const QString &keyName, const QByteArray &key,
+                          QString *error = nullptr);
+    bool prepareSigningProvisioning(int linkId, SigningProvisioningTarget *target,
+                                    QString *error = nullptr) const;
+    // Caller must obtain explicit trusted-private-channel consent for this
+    // exact snapshot. True means submitted, NEVER a vehicle acknowledgement.
+    bool provisionSigning(const SigningProvisioningTarget &target,
                           const QString &keyName, const QByteArray &key,
                           QString *error = nullptr);
     const MAVLinkSigningManager *signingManager() const;
@@ -251,6 +260,11 @@ private:
     QScopedPointer<MAVLinkDecoder> m_mavlinkDecoder;
     QScopedPointer<MAVLinkProtocol> m_mavlinkProtocol;
     std::unique_ptr<MAVLinkSigningManager> m_signingManager;
+    bool captureSigningProvisioningTarget(int linkId, SigningProvisioningTarget *target,
+                                         bool initialPolicy, QString *error) const;
+    bool m_signingProvisioningBusy = false;
+    QHash<int, quint64> m_observedSignedHeartbeatEpochs;
+    QHash<int, quint64> m_observedRadioEpochs;
     VehicleTargetManager *m_vehicleTargetManager = nullptr;
     SwarmTelemetryRegistry *m_swarmTelemetryRegistry = nullptr;
     SwarmCommandService *m_swarmCommandService = nullptr;

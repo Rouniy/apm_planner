@@ -38,6 +38,7 @@ private slots:
     void profileIdsAreCanonicalAndBounded();
     void absentLoadIsSideEffectFreeUnlessRequired();
     void saveAndRestartAreStrictAndIdempotent();
+    void initialProvisioningIsStrictPersistentAndNonReplaceable();
     void deletedAndMalformedMetadataStayRequired();
     void mismatchAndCorruptSettingsAreNeverOverwritten();
     void callerGroupIsRejectedAndPreserved();
@@ -115,8 +116,83 @@ void MavlinkSigningProfilesTest::saveAndRestartAreStrictAndIdempotent()
         QSettings restarted(path, QSettings::IniFormat);
         const auto policy = MavlinkSigningProfiles::load(restarted, Profile);
         QVERIFY(policy.required);
+        QVERIFY(!policy.provisioningUnconfirmed);
         QCOMPARE(policy.fingerprint, expected);
         QVERIFY(policy.error.isEmpty());
+    }
+}
+
+void MavlinkSigningProfilesTest::
+initialProvisioningIsStrictPersistentAndNonReplaceable()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("settings.ini"));
+    const QByteArray expected = fingerprint('P');
+    QString error;
+    QByteArray published;
+    {
+        QSettings settings(path, QSettings::IniFormat);
+        QVERIFY(MavlinkSigningProfiles::beginInitialProvisioning(
+            settings, Profile, expected, &error));
+        QVERIFY(error.isEmpty());
+        const auto policy = MavlinkSigningProfiles::load(settings, Profile);
+        QVERIFY(policy.required);
+        QVERIFY(policy.provisioningUnconfirmed);
+        QCOMPARE(policy.fingerprint, expected);
+        QVERIFY(policy.error.isEmpty());
+        published = readAll(path);
+        QVERIFY(published.contains(expected.toHex()));
+        QVERIFY(published.contains("initial-unconfirmed-v1"));
+        QVERIFY(!published.contains(expected));
+
+        // Ordinary idempotent requirement publication must retain, not clear,
+        // the permanent no-ACK transition marker.
+        QVERIFY(MavlinkSigningProfiles::saveRequired(
+            settings, Profile, expected, &error));
+        QCOMPARE(readAll(path), published);
+        QVERIFY(!MavlinkSigningProfiles::beginInitialProvisioning(
+            settings, Profile, expected, &error));
+        QVERIFY(!error.isEmpty());
+        QCOMPARE(readAll(path), published);
+        QVERIFY(!MavlinkSigningProfiles::beginInitialProvisioning(
+            settings, Profile, fingerprint('Q'), &error));
+        QCOMPARE(readAll(path), published);
+    }
+    {
+        QSettings restarted(path, QSettings::IniFormat);
+        const auto policy = MavlinkSigningProfiles::load(restarted, Profile);
+        QVERIFY(policy.required);
+        QVERIFY(policy.provisioningUnconfirmed);
+        QCOMPARE(policy.fingerprint, expected);
+        QVERIFY(policy.error.isEmpty());
+    }
+
+    const QString malformedPath = directory.filePath(
+        QStringLiteral("malformed-pending.ini"));
+    const QString base = QStringLiteral("MAVLinkSigning/Profiles/") + Profile;
+    {
+        QSettings malformed(malformedPath, QSettings::IniFormat);
+        malformed.setValue(base + QStringLiteral("/provisioning"), 1);
+        malformed.sync();
+        auto policy = MavlinkSigningProfiles::load(malformed, Profile);
+        QVERIFY(policy.required);
+        QVERIFY(policy.provisioningUnconfirmed);
+        QVERIFY(!policy.error.isEmpty());
+
+        malformed.setValue(base + QStringLiteral("/fingerprint"),
+                           QString::fromLatin1(expected.toHex()));
+        malformed.setValue(base + QStringLiteral("/provisioning"),
+                           QStringLiteral("initial-unconfirmed-v2"));
+        malformed.sync();
+        policy = MavlinkSigningProfiles::load(malformed, Profile);
+        QVERIFY(policy.required);
+        QVERIFY(policy.provisioningUnconfirmed);
+        QVERIFY(!policy.error.isEmpty());
+        const QByteArray before = readAll(malformedPath);
+        QVERIFY(!MavlinkSigningProfiles::saveRequired(
+            malformed, Profile, expected, &error));
+        QCOMPARE(readAll(malformedPath), before);
     }
 }
 

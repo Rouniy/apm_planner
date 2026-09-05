@@ -2,6 +2,7 @@
 #define UASRAWSTATUSVIEW_H
 
 #include <QWidget>
+#include <QPointer>
 #include "MAVLinkDecoder.h"
 #include "ui_UASRawStatusView.h"
 #include "UASInterface.h"
@@ -24,13 +25,13 @@ protected:
     void showEvent(QShowEvent *event);
     void hideEvent(QHideEvent *event);
 private:
-    UASInterface *m_uas;
+    QPointer<UASInterface> m_uas;
     QMap<QString,double> valueMap;
     QMap<QString,QTableWidgetItem*> nameToUpdateWidgetMap;
     Ui::UASRawStatusView ui;
     QTimer *m_updateTimer;
     QTimer *m_tableRefreshTimer; //This time triggers a reorganization of the cells, for when new cells are added
-    bool m_tableDirty;
+    bool m_tableDirty = false;
 };
 
 #endif // UASRAWSTATUSVIEW_H

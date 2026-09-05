@@ -1347,15 +1347,7 @@ void QGCMapWidget::addUAS(UASInterface* uas)
 
 void QGCMapWidget::activeUASSet(UASInterface* uas)
 {
-    // Only execute if proper UAS is set
-    if (!uas)
-    {
-        this->uas = 0;
-        return;
-    }
-    if (this->uas == uas) return;
-
-    QLOG_DEBUG() << "activeUASSet" << uas->getUASName();
+    if (uas && this->uas == uas) return;
 
     // Disconnect old MAV manager
     if (currWPManager)
@@ -1380,6 +1372,13 @@ void QGCMapWidget::activeUASSet(UASInterface* uas)
     }
 
     this->uas = uas;
+    currWPManager = nullptr;
+    if (!uas)
+    {
+        followUAVID = 0;
+        return;
+    }
+    QLOG_DEBUG() << "activeUASSet" << uas->getUASName();
     this->currWPManager = uas->getWaypointManager();
 
     updateSelectedSystem(uas->getUASID());

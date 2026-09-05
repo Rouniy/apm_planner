@@ -745,10 +745,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
     auto *warningAction = new QAction(tr("Warning Manager"), this);
     warningAction->setObjectName(QStringLiteral("actionWarningManager"));
     connect(warningAction, &QAction::triggered, this, &MainWindow::showWarningManager);
-    auto *signingAction = new QAction(tr("MAVLink Signing — Local keys…"), this);
+    auto *signingAction = new QAction(tr("MAVLink Signing — Keys and initial setup…"), this);
     signingAction->setObjectName(QStringLiteral("actionMavlinkSigning"));
-    signingAction->setToolTip(tr("Manage the encrypted key vault and select a local key for an offline connection. "
-                                "This does not provision or disable signing on a vehicle."));
+    signingAction->setToolTip(tr("Manage local keys or explicitly provision an unprotected vehicle over a trusted private connection. "
+                                "Vehicle outcomes remain unconfirmed; key change and disable are unavailable."));
     connect(signingAction, &QAction::triggered, this, &MainWindow::showMavlinkSigningWindow);
     ui.menuTools->addSeparator();
     ui.menuTools->addAction(signingAction);
@@ -3273,6 +3273,9 @@ void MainWindow::showMavlinkSigningWindow()
                 item.keyName = status.keyName;
                 item.error = profile.error;
                 item.signedReceived = status.counters.signedAccepted;
+                item.provisioningUnconfirmed = profile.provisioningUnconfirmed;
+                guardedManager->prepareSigningProvisioning(id, &item.provisioningTarget,
+                                                           &item.provisioningError);
                 result.append(item);
             }
             return result;
@@ -3297,6 +3300,20 @@ void MainWindow::showMavlinkSigningWindow()
             return guardedManager->configureSigning(snapshot.linkId, snapshot.profileId, keyName, key, error);
         };
         window = new MavlinkSigningWindow(manager->mavAuthKeyService(), connections, activate, this);
+        window->setProvisioner([guardedManager](const MavlinkSigningWindow::Connection &snapshot,
+                const QString &keyName, const QByteArray &key, QString *error) {
+            if (!guardedManager || guardedManager->isShuttingDown()
+                || !snapshot.connected || snapshot.required || !snapshot.identity
+                || !snapshot.provisioningTarget.isValid()
+                || snapshot.provisioningTarget.identity != snapshot.identity
+                || snapshot.provisioningTarget.linkId != snapshot.linkId
+                || snapshot.provisioningTarget.profileId != snapshot.profileId
+                || snapshot.provisioningTarget.revision != snapshot.revision) {
+                if (error) *error = tr("The confirmed initial-provisioning target is no longer available.");
+                return false;
+            }
+            return guardedManager->provisionSigning(snapshot.provisioningTarget, keyName, key, error);
+        });
     }
     window->show();
     window->raise();

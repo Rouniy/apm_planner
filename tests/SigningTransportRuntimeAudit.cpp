@@ -10,8 +10,15 @@
 #include "comm/MAVLinkSigningClock.h"
 #include "comm/MAVLinkSigningManager.h"
 #include "comm/RadioStatusMonitor.h"
+#include "comm/SwarmTelemetryRegistry.h"
+#include "comm/TCPLink.h"
+#include "comm/UASObject.h"
+#include "comm/VehicleTargetManager.h"
 #include "services/MavlinkSigningProfiles.h"
+#include "services/SigningProvisioningTarget.h"
 #include "ui/configuration/PlannerStartupUdpOptions.h"
+#include "uas/UASInterface.h"
+#include "uas/UASManager.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -19,6 +26,7 @@
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QEvent>
 #include <QHostAddress>
 #include <QPointer>
 #include <QSettings>
@@ -31,6 +39,7 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <utility>
 
 namespace {
 
@@ -40,6 +49,11 @@ constexpr int MissingPolicyLinkId = 910003;
 constexpr int CorruptPolicyLinkId = 910004;
 constexpr int DuplicatePolicyFirstLinkId = 910005;
 constexpr int DuplicatePolicySecondLinkId = 910006;
+constexpr int SignedProvisioningAuditLinkId = 910007;
+constexpr int ProvisioningAuditLinkId = 910008;
+constexpr int InterruptedProvisioningAuditLinkId = 910009;
+constexpr int RetiredUasAuditLinkId = 910010;
+constexpr int RediscoveredUasAuditLinkId = 910011;
 constexpr int WaitTimeoutMs = 1000;
 
 const QString PrimaryProfileId =
@@ -60,6 +74,16 @@ const QString DuplicateRestoreProfileId =
     QStringLiteral("b00a099c-f77e-48fd-8413-754f87f73128");
 const QString CollisionManualProfileId =
     QStringLiteral("bb442861-3ece-4b70-803c-b7772756e5a2");
+const QString SignedProvisioningProfileId =
+    QStringLiteral("4d94df9a-d341-4aa6-b566-8aeea1288c58");
+const QString ProvisioningProfileId =
+    QStringLiteral("fac50c45-9ca9-418c-a3af-a06ec37c46cb");
+const QString InterruptedProvisioningProfileId =
+    QStringLiteral("6890197f-e034-4a6f-b2b6-7f105707c6f9");
+const QString RetiredUasProfileId =
+    QStringLiteral("ab772fee-c647-48f4-9eae-dd89859f60ef");
+const QString RediscoveredUasProfileId =
+    QStringLiteral("3eb5b624-45e7-432e-ae6a-3b7d2eb26eb5");
 
 struct StoredUdpDefinition
 {
@@ -148,6 +172,87 @@ private:
     bool m_connected = false;
     int m_resetRequests = 0;
     QVector<QByteArray> m_writes;
+};
+
+// A TCPLink subclass keeps LinkManager::saveSettings() on its production
+// downcast path while replacing every socket operation with deterministic
+// in-process transport behavior. No network endpoint or SITL is touched.
+class ProvisioningAuditLink final : public TCPLink
+{
+public:
+    using WriteObserver = std::function<void(const QByteArray &)>;
+
+    explicit ProvisioningAuditLink(int id)
+        : TCPLink(QHostAddress::LocalHost,
+                  QStringLiteral("Signing Provisioning Audit"), 5760, false)
+        , m_id(id)
+    {
+    }
+
+    int getId() const override { return m_id; }
+    QString getName() const override
+    {
+        return QStringLiteral("Signing Provisioning Audit %1").arg(m_id);
+    }
+    QString getShortName() const override
+    {
+        return QStringLiteral("Provisioning Audit %1").arg(m_id);
+    }
+    QString getDetail() const override
+    {
+        return QStringLiteral("in-process private TCP client");
+    }
+    bool isConnected() const override { return m_connected; }
+    bool connect() override
+    {
+        if (!m_connected) {
+            m_connected = true;
+            emit connected();
+            emit connected(this);
+            emit connected(true);
+        }
+        return true;
+    }
+    bool disconnect() override
+    {
+        if (m_connected) {
+            m_connected = false;
+            emit disconnected();
+            emit disconnected(this);
+            emit connected(false);
+        }
+        return true;
+    }
+    qint64 bytesAvailable() override { return 0; }
+    void writeBytes(const char *bytes, qint64 size) override
+    {
+        if (m_connected && bytes && size > 0) {
+            const QByteArray frame(bytes, int(size));
+            const WriteObserver observer = m_writeObserver;
+            m_writes.append(frame);
+            // The observer may synchronously remove and delete this link.
+            // Keep everything needed after the append on the stack.
+            if (observer) observer(frame);
+        }
+    }
+    void inject(const QByteArray &bytes)
+    {
+        if (m_connected && !bytes.isEmpty()) emit bytesReceived(this, bytes);
+    }
+    const QVector<QByteArray> &writes() const { return m_writes; }
+    void setWriteObserver(WriteObserver observer)
+    {
+        m_writeObserver = std::move(observer);
+    }
+
+protected slots:
+    void readBytes() override {}
+
+private:
+    const int m_id;
+    bool m_connected = false;
+    QVector<QByteArray> m_writes;
+    WriteObserver m_writeObserver;
 };
 
 class AuditResult final
@@ -361,6 +466,18 @@ mavlink_message_t heartbeatMessage(quint8 systemId, quint8 componentId)
     mavlink_msg_heartbeat_pack(
         systemId, componentId, &message, MAV_TYPE_ONBOARD_CONTROLLER,
         MAV_AUTOPILOT_INVALID, 0, 0, MAV_STATE_ACTIVE);
+    return message;
+}
+
+mavlink_message_t autopilotHeartbeatMessage(quint8 systemId, bool armed,
+                                             quint8 autopilot = MAV_AUTOPILOT_ARDUPILOTMEGA)
+{
+    mavlink_message_t message{};
+    mavlink_msg_heartbeat_pack(
+        systemId, MAV_COMP_ID_AUTOPILOT1, &message, MAV_TYPE_QUADROTOR,
+        autopilot,
+        armed ? MAV_MODE_FLAG_SAFETY_ARMED : 0,
+        0, MAV_STATE_ACTIVE);
     return message;
 }
 
@@ -911,32 +1028,29 @@ int RunSigningTransportRuntimeAudit()
                           .arg(index));
     }
 
-    // SETUP_SIGNING carries the key itself. It may reach an explicitly chosen
-    // transport, but neither the exact nor public submitted streams may mirror
-    // it into inspectors, logs or generic observers.
+    // SETUP_SIGNING carries the key itself. Generic typed paths are not an
+    // authorization boundary: both must reject it before sequence allocation,
+    // signing, transport, or observer publication. Only LinkManager's checked
+    // provisioning operation may invoke the private secret transport path.
     const mavlink_message_t outboundSetup = setupSigningMessage(
         localSystemId, localComponentId, 42, 1, key,
         currentSigningTimestamp());
     const int setupWriteBaseline = firstLink->writes().size();
     const int managerSubmissionBaseline = submittedFrames.size();
     const int exactSubmissionBaseline = exactSubmittedCount;
-    result.expect(links->writeMavlinkMessage(firstLink.data(), outboundSetup),
-                  QStringLiteral("typed SETUP_SIGNING transport write failed"));
-    result.expect(firstLink->writes().size() == setupWriteBaseline + 1
+    bool setupWriterInvoked = true;
+    result.expect(transmitter->sendMessage(
+                      FirstAuditLinkId, localSystemId, localComponentId,
+                      outboundSetup, &setupWriterInvoked)
+                      == ExactLinkTransmitter::SendResult::RestrictedMessage
+                      && !setupWriterInvoked
+                      && !links->writeMavlinkMessage(
+                          firstLink.data(), outboundSetup),
+                  QStringLiteral("a generic typed path admitted SETUP_SIGNING"));
+    result.expect(firstLink->writes().size() == setupWriteBaseline
                       && submittedFrames.size() == managerSubmissionBaseline
                       && exactSubmittedCount == exactSubmissionBaseline,
-                  QStringLiteral("SETUP_SIGNING did not stay transport-only"));
-    if (firstLink->writes().size() == setupWriteBaseline + 1) {
-        const QByteArray setupWire = firstLink->writes().at(setupWriteBaseline);
-        mavlink_message_t decoded{};
-        result.expect(isSignedMavlink2(setupWire) && decodeFrame(setupWire, &decoded)
-                          && decoded.msgid == MAVLINK_MSG_ID_SETUP_SIGNING,
-                      QStringLiteral("SETUP_SIGNING wire frame was not exact/signed"));
-        QVector<QByteArray> verifierFrames = outboundFrames;
-        verifierFrames.append(setupWire);
-        result.expect(nativeVerifierAccepts(verifierFrames, key),
-                      QStringLiteral("native verifier rejected SETUP_SIGNING wire frame"));
-    }
+                  QStringLiteral("rejected SETUP_SIGNING reached transport or observers"));
 
     const auto ingressSnapshot = [&]() {
         return IngressSnapshot{packetCount, receivedFrames.size(),
@@ -1113,6 +1227,720 @@ int RunSigningTransportRuntimeAudit()
                       && links->getLink(FirstAuditLinkId) == nullptr
                       && links->getLink(SecondAuditLinkId) == nullptr,
                   QStringLiteral("LinkManager did not safely delete fake links"));
+
+    // Removing the last link retires a UAS synchronously from UASManager but
+    // destroys it later. A new heartbeat in that precise window must create a
+    // fresh registered UAS, rather than attaching the successor link to the
+    // old object which is already queued for deletion.
+    quint8 rediscoverySystemId = 238;
+    while (rediscoverySystemId > 1 && links->getUas(rediscoverySystemId)) {
+        --rediscoverySystemId;
+    }
+    UASManager *const uasManager = UASManager::instance();
+    QPointer<AuditLink> retiredLink(new AuditLink(RetiredUasAuditLinkId));
+    LinkManagerFactory::connectLinkSignals(retiredLink.data(), links);
+    LinkManager::ConnectionProfile retiredProfile;
+    retiredProfile.id = RetiredUasProfileId;
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->addLink(retiredLink.data(), retiredProfile);
+    }
+    result.expect(links->connectLink(RetiredUasAuditLinkId),
+                  QStringLiteral("retired-UAS audit link did not connect"));
+    retiredLink->inject(nativeFrame(
+        autopilotHeartbeatMessage(rediscoverySystemId, false),
+        rediscoverySystemId, MAV_COMP_ID_AUTOPILOT1, 31, false));
+    result.expect(waitUntil([&]() {
+                      return links->getUas(rediscoverySystemId) != nullptr;
+                  }),
+                  QStringLiteral("first lifecycle heartbeat did not create a UAS"));
+    QPointer<UASInterface> retiredUas(links->getUas(rediscoverySystemId));
+    QPointer<UASObject> retiredObject(
+        links->getUasObject(rediscoverySystemId));
+    result.expect(retiredUas && retiredObject
+                      && uasManager->getUASList().contains(retiredUas.data()),
+                  QStringLiteral("first lifecycle UAS was not fully registered"));
+
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->removeLink(RetiredUasAuditLinkId);
+    }
+    result.expect(retiredLink.isNull() && retiredUas
+                      && !uasManager->getUASList().contains(retiredUas.data())
+                      && links->getUas(rediscoverySystemId) == nullptr
+                      && retiredObject.isNull()
+                      && links->getUasObject(rediscoverySystemId) == nullptr,
+                  QStringLiteral("logical UAS retirement waited for deferred destruction"));
+
+    QPointer<AuditLink> rediscoveredLink(
+        new AuditLink(RediscoveredUasAuditLinkId));
+    LinkManagerFactory::connectLinkSignals(rediscoveredLink.data(), links);
+    LinkManager::ConnectionProfile rediscoveredProfile;
+    rediscoveredProfile.id = RediscoveredUasProfileId;
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->addLink(rediscoveredLink.data(), rediscoveredProfile);
+    }
+    result.expect(links->connectLink(RediscoveredUasAuditLinkId),
+                  QStringLiteral("rediscovery audit link did not connect"));
+    rediscoveredLink->inject(nativeFrame(
+        autopilotHeartbeatMessage(rediscoverySystemId, false),
+        rediscoverySystemId, MAV_COMP_ID_AUTOPILOT1, 32, false));
+    // Factory ingress is deliberately queued. Deliver that exact receiver's
+    // metacalls, but leave the old UAS DeferredDelete pending for this check.
+    QCoreApplication::sendPostedEvents(links, QEvent::MetaCall);
+    UASInterface *const rediscoveredRaw = links->getUas(rediscoverySystemId);
+    QPointer<UASInterface> rediscoveredUas(rediscoveredRaw);
+    QPointer<UASObject> rediscoveredObject(
+        links->getUasObject(rediscoverySystemId));
+    result.expect(retiredUas && rediscoveredUas
+                      && rediscoveredRaw != retiredUas.data()
+                      && rediscoveredObject
+                      && uasManager->getUASList().contains(rediscoveredRaw)
+                      && !uasManager->getUASList().contains(retiredUas.data()),
+                  QStringLiteral("immediate heartbeat reused the deferred-delete UAS"));
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    result.expect(retiredUas.isNull() && rediscoveredUas
+                      && links->getUas(rediscoverySystemId)
+                          == rediscoveredUas.data()
+                      && links->getUasObject(rediscoverySystemId)
+                          == rediscoveredObject.data(),
+                  QStringLiteral("old deferred destruction erased its replacement"));
+    {
+        const QSignalBlocker blockManagerSignals(links);
+        links->removeLink(RediscoveredUasAuditLinkId);
+    }
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    result.expect(rediscoveredLink.isNull() && rediscoveredUas.isNull()
+                      && rediscoveredObject.isNull()
+                      && links->getUas(rediscoverySystemId) == nullptr
+                      && !uasManager->getUASList().contains(rediscoveredRaw),
+                  QStringLiteral("rediscovered lifecycle fixture did not clean up"));
+
+    VehicleTargetManager *const targetManager = links->vehicleTargetManager();
+    SwarmTelemetryRegistry *const swarmRegistry =
+        links->swarmTelemetryRegistry();
+    result.expect(targetManager != nullptr && swarmRegistry != nullptr,
+                  QStringLiteral("signing provisioning target services are missing"));
+
+    quint8 provisioningSystemId = 226;
+    while (provisioningSystemId > 2
+           && links->getUas(provisioningSystemId)) {
+        --provisioningSystemId;
+    }
+    quint8 signedCandidateSystemId = quint8(provisioningSystemId - 1);
+    while (signedCandidateSystemId > 1
+           && links->getUas(signedCandidateSystemId)) {
+        --signedCandidateSystemId;
+    }
+
+    // A valid signed heartbeat on an otherwise unprotected live link is
+    // positive evidence that the vehicle may already hold a key. Initial
+    // provisioning must refuse it instead of overwriting an unknown key.
+    QPointer<ProvisioningAuditLink> signedCandidate(
+        new ProvisioningAuditLink(SignedProvisioningAuditLinkId));
+    LinkManager::ConnectionProfile signedCandidateProfile;
+    signedCandidateProfile.id = SignedProvisioningProfileId;
+    LinkManagerFactory::connectLinkSignals(signedCandidate.data(), links);
+    links->addLink(signedCandidate.data(), signedCandidateProfile);
+    result.expect(links->connectLink(SignedProvisioningAuditLinkId),
+                  QStringLiteral("signed provisioning-refusal fixture did not connect"));
+    const quint64 signedCandidateEpoch =
+        links->currentPhysicalLinkSession(SignedProvisioningAuditLinkId);
+    if (signedCandidate) {
+        signedCandidate->inject(nativeFrame(
+            autopilotHeartbeatMessage(signedCandidateSystemId, false),
+            signedCandidateSystemId, MAV_COMP_ID_AUTOPILOT1, 89, false));
+    }
+    SigningProvisioningTarget unsignedCandidateTarget;
+    QString provisioningError;
+    provisioningError.clear();
+    result.expect(waitUntil([&]() {
+                      provisioningError.clear();
+                      return links->prepareSigningProvisioning(
+                          SignedProvisioningAuditLinkId,
+                          &unsignedCandidateTarget, &provisioningError);
+                  }) && unsignedCandidateTarget.isValid(),
+                  QStringLiteral("fresh unsigned candidate was not initially eligible: %1")
+                      .arg(provisioningError));
+
+    QObject signedCandidateObservationScope;
+    bool signedCandidateObserved = false;
+    bool signedCandidateRefusedInsideObserver = false;
+    QString signedCandidateObserverError;
+    QObject::connect(
+        links, &LinkManager::mavlinkMessageObserved,
+        &signedCandidateObservationScope,
+        [&](int linkId, qulonglong, mavlink_message_t message) {
+            if (linkId != SignedProvisioningAuditLinkId
+                || message.msgid != MAVLINK_MSG_ID_HEARTBEAT
+                || !(message.incompat_flags & MAVLINK_IFLAG_SIGNED)) {
+                return;
+            }
+            signedCandidateObserved = true;
+            SigningProvisioningTarget nestedTarget;
+            signedCandidateRefusedInsideObserver =
+                !links->prepareSigningProvisioning(
+                    SignedProvisioningAuditLinkId, &nestedTarget,
+                    &signedCandidateObserverError)
+                && !nestedTarget.isValid()
+                && !signedCandidateObserverError.isEmpty();
+        });
+    const QByteArray signedCandidateHeartbeat = nativeFrame(
+        autopilotHeartbeatMessage(signedCandidateSystemId, false),
+        signedCandidateSystemId, MAV_COMP_ID_AUTOPILOT1, 90, false,
+        alternateSigningKey(), 27, currentSigningTimestamp());
+    if (signedCandidate) signedCandidate->inject(signedCandidateHeartbeat);
+    result.expect(waitUntil([&]() {
+                      return signedCandidateObserved;
+                  }),
+                  QStringLiteral("signed provisioning-refusal heartbeat was not observed"));
+    SigningProvisioningTarget signedCandidateTarget;
+    const int signedCandidateWriteBaseline =
+        signedCandidate ? signedCandidate->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(signedCandidateEpoch != 0
+                      && signedCandidateRefusedInsideObserver
+                      && !links->prepareSigningProvisioning(
+                          SignedProvisioningAuditLinkId,
+                          &signedCandidateTarget, &provisioningError)
+                      && !signedCandidateTarget.isValid()
+                      && !provisioningError.isEmpty()
+                      && signedCandidate
+                      && signedCandidate->writes().size()
+                          == signedCandidateWriteBaseline,
+                  QStringLiteral("observed signed heartbeat did not block initial provisioning before public fan-out"));
+    links->removeLink(SignedProvisioningAuditLinkId);
+    result.expect(signedCandidate.isNull()
+                      && links->getLink(SignedProvisioningAuditLinkId) == nullptr,
+                  QStringLiteral("signed provisioning-refusal fixture was not removed"));
+
+    // Exercise the only secret-bearing production path with an actual
+    // TCPLink subtype. Socket I/O is overridden, so this remains a fully
+    // in-process audit while LinkManager's persistence downcasts stay valid.
+    QPointer<ProvisioningAuditLink> provisioningLink(
+        new ProvisioningAuditLink(ProvisioningAuditLinkId));
+    LinkManager::ConnectionProfile provisioningProfile;
+    provisioningProfile.id = ProvisioningProfileId;
+    LinkManagerFactory::connectLinkSignals(provisioningLink.data(), links);
+    links->addLink(provisioningLink.data(), provisioningProfile);
+    result.expect(links->connectLink(ProvisioningAuditLinkId),
+                  QStringLiteral("initial provisioning fixture did not connect"));
+    quint64 provisioningEpoch =
+        links->currentPhysicalLinkSession(ProvisioningAuditLinkId);
+    result.expect(provisioningEpoch != 0,
+                  QStringLiteral("initial provisioning fixture lacks a physical epoch"));
+
+    const auto injectProvisioningHeartbeat =
+        [&](quint8 systemId, bool armed, quint8 sequence,
+            quint8 autopilot = MAV_AUTOPILOT_ARDUPILOTMEGA) {
+            if (!provisioningLink) return;
+            provisioningLink->inject(nativeFrame(
+                autopilotHeartbeatMessage(systemId, armed, autopilot),
+                systemId, MAV_COMP_ID_AUTOPILOT1, sequence, false));
+        };
+    injectProvisioningHeartbeat(provisioningSystemId, false, 91);
+    result.expect(waitUntil([&]() {
+                      const VehicleTargetLease selected =
+                          targetManager->acquireTarget();
+                      const VehicleEndpoint endpoint{
+                          ProvisioningAuditLinkId, provisioningSystemId,
+                          MAV_COMP_ID_AUTOPILOT1, {}, {}};
+                      return selected.isValid()
+                          && selected.endpoint.sameIdentity(endpoint)
+                          && swarmRegistry->acquireVehicle(endpoint, 3000)
+                              .isValid();
+                  }),
+                  QStringLiteral("initial provisioning vehicle was not discovered"));
+
+    SigningProvisioningTarget preRadioTarget;
+    provisioningError.clear();
+    result.expect(links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &preRadioTarget,
+                      &provisioningError)
+                      && preRadioTarget.isValid(),
+                  QStringLiteral("fresh private route was not eligible before radio evidence: %1")
+                      .arg(provisioningError));
+    if (provisioningLink) {
+        provisioningLink->inject(nativeFrame(
+            radioStatusMessage(), static_cast<quint8>('3'),
+            static_cast<quint8>('D'), 90, true));
+    }
+    processFor();
+    SigningProvisioningTarget radioTarget;
+    const int radioProvisionWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(!links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &radioTarget,
+                      &provisioningError)
+                      && !radioTarget.isValid()
+                      && !provisioningError.isEmpty()
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == radioProvisionWriteBaseline,
+                  QStringLiteral("observed radio/router traffic did not block cleartext provisioning"));
+    links->disconnectLink(ProvisioningAuditLinkId);
+    result.expect(links->connectLink(ProvisioningAuditLinkId),
+                  QStringLiteral("radio-refusal fixture did not reconnect for a clean epoch"));
+    const quint64 postRadioEpoch =
+        links->currentPhysicalLinkSession(ProvisioningAuditLinkId);
+    result.expect(postRadioEpoch != 0 && postRadioEpoch != provisioningEpoch,
+                  QStringLiteral("radio evidence survived without a physical epoch boundary"));
+    provisioningEpoch = postRadioEpoch;
+    injectProvisioningHeartbeat(provisioningSystemId, false, 91);
+    result.expect(waitUntil([&]() {
+                      const VehicleTargetLease selected =
+                          targetManager->acquireTarget();
+                      return selected.isValid()
+                          && selected.endpoint.linkId
+                              == ProvisioningAuditLinkId
+                          && selected.endpoint.systemId
+                              == provisioningSystemId;
+                  }),
+                  QStringLiteral("provisioning target did not return after radio epoch retirement"));
+
+    SigningProvisioningTarget staleTarget;
+    processFor(3100);
+    // Routine GCS heartbeat/mission timers may write while time is advanced;
+    // only the preparation call itself must be side-effect-free.
+    const int staleWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(!links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &staleTarget,
+                      &provisioningError)
+                      && !staleTarget.isValid()
+                      && !provisioningError.isEmpty()
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == staleWriteBaseline,
+                  QStringLiteral("stale heartbeat authorized signing provisioning"));
+
+    injectProvisioningHeartbeat(provisioningSystemId, true, 92);
+    processFor();
+    SigningProvisioningTarget armedTarget;
+    const int armedWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(!links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &armedTarget,
+                      &provisioningError)
+                      && !armedTarget.isValid()
+                      && !provisioningError.isEmpty()
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == armedWriteBaseline,
+                  QStringLiteral("armed heartbeat authorized signing provisioning"));
+
+    injectProvisioningHeartbeat(provisioningSystemId, false, 93);
+    processFor();
+    SigningProvisioningTarget selectionFence;
+    provisioningError.clear();
+    result.expect(links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &selectionFence,
+                      &provisioningError)
+                      && selectionFence.isValid(),
+                  QStringLiteral("fresh disarmed exact target was not provisionable: %1")
+                      .arg(provisioningError));
+    targetManager->clearTarget();
+    const int targetFenceWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(!links->provisionSigning(
+                      selectionFence, QStringLiteral("Stale consent"),
+                      alternateSigningKey(), &provisioningError)
+                      && !provisioningError.isEmpty()
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == targetFenceWriteBaseline,
+                  QStringLiteral("stale target-generation consent sent a key"));
+    result.expect(targetManager->selectTarget(
+                      ProvisioningAuditLinkId, provisioningSystemId,
+                      MAV_COMP_ID_AUTOPILOT1),
+                  QStringLiteral("provisioning exact target could not be reselected"));
+
+    // A second command-capable autopilot on the same physical link makes the
+    // secret route ambiguous even though the UI still has one selected row.
+    quint8 duplicateSystemId = quint8(provisioningSystemId + 1);
+    if (duplicateSystemId == 0 || duplicateSystemId == 255)
+        duplicateSystemId = quint8(provisioningSystemId - 2);
+    injectProvisioningHeartbeat(duplicateSystemId, false, 94);
+    processFor();
+    SigningProvisioningTarget duplicateTarget;
+    const int duplicateWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(!links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &duplicateTarget,
+                      &provisioningError)
+                      && !duplicateTarget.isValid()
+                      && !provisioningError.isEmpty()
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == duplicateWriteBaseline,
+                  QStringLiteral("multi-autopilot route authorized a secret write"));
+    injectProvisioningHeartbeat(duplicateSystemId, false, 95,
+                                MAV_AUTOPILOT_INVALID);
+    result.expect(waitUntil([&]() {
+                      const VehicleEndpoint duplicateEndpoint{
+                          ProvisioningAuditLinkId, duplicateSystemId,
+                          MAV_COMP_ID_AUTOPILOT1, {}, {}};
+                      return !swarmRegistry->acquireVehicle(
+                                  duplicateEndpoint, 3000)
+                                  .isValid();
+                  }),
+                  QStringLiteral("non-command-capable duplicate was not retired"));
+    injectProvisioningHeartbeat(provisioningSystemId, false, 96);
+    processFor();
+
+    SigningProvisioningTarget revisionFence;
+    provisioningError.clear();
+    result.expect(links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &revisionFence,
+                      &provisioningError)
+                      && revisionFence.isValid(),
+                  QStringLiteral("provisioning target could not be captured before edit: %1")
+                      .arg(provisioningError));
+    links->linkUpdated(provisioningLink.data());
+    const int revisionWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(!links->provisionSigning(
+                      revisionFence, QStringLiteral("Stale revision"),
+                      alternateSigningKey(), &provisioningError)
+                      && !provisioningError.isEmpty()
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == revisionWriteBaseline,
+                  QStringLiteral("stale connection-revision consent sent a key"));
+
+    SigningProvisioningTarget provisionTarget;
+    provisioningError.clear();
+    result.expect(links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &provisionTarget,
+                      &provisioningError)
+                      && provisionTarget.isValid()
+                      && provisionTarget.linkSessionEpoch == provisioningEpoch
+                      && provisionTarget.systemId == provisioningSystemId
+                      && provisionTarget.componentId
+                          == MAV_COMP_ID_AUTOPILOT1,
+                  QStringLiteral("final signing provisioning target was invalid: %1")
+                      .arg(provisioningError));
+
+    QObject provisioningSignalScope;
+    int provisionManagerSubmissions = 0;
+    int provisionExactSubmissions = 0;
+    int provisionPackets = 0;
+    int provisionFrames = 0;
+    int provisionObserved = 0;
+    QObject::connect(
+        links, &LinkManager::mavlinkMessageSubmitted,
+        &provisioningSignalScope,
+        [&](int linkId, qulonglong, mavlink_message_t) {
+            if (linkId == ProvisioningAuditLinkId)
+                ++provisionManagerSubmissions;
+        });
+    QObject::connect(
+        transmitter, &ExactLinkTransmitter::messageSubmitted,
+        &provisioningSignalScope,
+        [&](int linkId, quint64, mavlink_message_t) {
+            if (linkId == ProvisioningAuditLinkId)
+                ++provisionExactSubmissions;
+        });
+    QObject::connect(
+        protocol, &MAVLinkProtocol::packetReceived,
+        &provisioningSignalScope,
+        [&](LinkInterface *link, mavlink_message_t) {
+            if (link && link->getId() == ProvisioningAuditLinkId)
+                ++provisionPackets;
+        });
+    QObject::connect(
+        protocol, &MAVLinkProtocol::frameReceived,
+        &provisioningSignalScope,
+        [&](int linkId, const QByteArray &) {
+            if (linkId == ProvisioningAuditLinkId) ++provisionFrames;
+        });
+    QObject::connect(
+        links, &LinkManager::mavlinkMessageObserved,
+        &provisioningSignalScope,
+        [&](int linkId, qulonglong, mavlink_message_t) {
+            if (linkId == ProvisioningAuditLinkId) ++provisionObserved;
+        });
+
+    const QByteArray provisionedKey = alternateSigningKey();
+    const int provisionWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    const bool provisionSubmitted = links->provisionSigning(
+        provisionTarget, QStringLiteral("Runtime Audit Provisioned Key"),
+        provisionedKey, &provisioningError);
+    result.expect(provisionSubmitted && !provisioningError.isEmpty(),
+                  QStringLiteral("valid initial provisioning was not submitted-unconfirmed: %1")
+                      .arg(provisioningError));
+    result.expect(provisioningLink
+                      && provisioningLink->writes().size()
+                          == provisionWriteBaseline + 1,
+                  QStringLiteral("initial provisioning did not write exactly one frame"));
+    result.expect(provisionManagerSubmissions == 0
+                      && provisionExactSubmissions == 0,
+                  QStringLiteral("secret provisioning frame escaped through outbound observers"));
+
+    QByteArray provisionWire;
+    if (provisioningLink
+        && provisioningLink->writes().size() == provisionWriteBaseline + 1) {
+        provisionWire = provisioningLink->writes().at(provisionWriteBaseline);
+    }
+    mavlink_message_t decodedProvision{};
+    mavlink_setup_signing_t decodedSetup{};
+    const bool provisionWireDecoded = decodeFrame(
+        provisionWire, &decodedProvision);
+    if (provisionWireDecoded
+        && decodedProvision.msgid == MAVLINK_MSG_ID_SETUP_SIGNING) {
+        mavlink_msg_setup_signing_decode(&decodedProvision, &decodedSetup);
+    }
+    result.expect(provisionWireDecoded && isSignedMavlink2(provisionWire)
+                      && decodedProvision.msgid
+                          == MAVLINK_MSG_ID_SETUP_SIGNING
+                      && decodedSetup.target_system == provisioningSystemId
+                      && decodedSetup.target_component
+                          == MAV_COMP_ID_AUTOPILOT1
+                      && decodedSetup.initial_timestamp != 0
+                      && decodedSetup.initial_timestamp
+                          <= frameSigningTimestamp(provisionWire)
+                      && std::memcmp(decodedSetup.secret_key,
+                                     provisionedKey.constData(), 32) == 0
+                      && nativeVerifierAccepts({provisionWire}, provisionedKey),
+                  QStringLiteral("submitted provisioning wire was not the exact signed target/key frame"));
+
+    const auto provisionStatus =
+        links->signingManager()->status(ProvisioningAuditLinkId);
+    const auto provisionProfile =
+        links->connectionProfile(ProvisioningAuditLinkId);
+    QSettings provisionSettings;
+    const auto persistedProvision = MavlinkSigningProfiles::load(
+        provisionSettings, ProvisioningProfileId, true);
+    result.expect(provisionProfile.id == ProvisioningProfileId
+                      && provisionProfile.signingRequired
+                      && provisionProfile.provisioningUnconfirmed
+                      && provisionProfile.error.isEmpty()
+                      && links->signingRequired(ProvisioningAuditLinkId)
+                      && links->signingReady(ProvisioningAuditLinkId)
+                      && provisionStatus.protectedLink
+                      && provisionStatus.keyAvailable
+                      && provisionStatus.activeEpoch == provisioningEpoch
+                      && provisionStatus.connectionProfileId
+                          == ProvisioningProfileId
+                      && provisionStatus.keyFingerprint
+                          == QString::fromLatin1(
+                              keyFingerprint(provisionedKey).toHex())
+                      && persistedProvision.required
+                      && persistedProvision.provisioningUnconfirmed
+                      && persistedProvision.error.isEmpty()
+                      && persistedProvision.fingerprint
+                          == keyFingerprint(provisionedKey),
+                  QStringLiteral("submitted-unconfirmed provisioning state was not fail-closed and persisted"));
+
+    const auto protectedIngress = [&]() {
+        return IngressSnapshot{provisionPackets, provisionFrames,
+                               provisionObserved, 0};
+    };
+    IngressSnapshot provisionBefore = protectedIngress();
+    const auto provisionCountersBeforeUnsigned = provisionStatus.counters;
+    injectProvisioningHeartbeat(provisioningSystemId, false, 97);
+    processFor();
+    result.expect(protectedIngress() == provisionBefore
+                      && links->signingManager()
+                                 ->status(ProvisioningAuditLinkId)
+                                 .counters.rejected
+                          > provisionCountersBeforeUnsigned.rejected,
+                  QStringLiteral("unsigned traffic was accepted after provisioning submission"));
+
+    const QByteArray authenticatedProvisionHeartbeat = nativeFrame(
+        autopilotHeartbeatMessage(provisioningSystemId, false),
+        provisioningSystemId, MAV_COMP_ID_AUTOPILOT1, 98, false,
+        provisionedKey, 41,
+        decodedSetup.initial_timestamp + 6000000ULL);
+    if (provisioningLink)
+        provisioningLink->inject(authenticatedProvisionHeartbeat);
+    result.expect(waitUntil([&]() {
+                      const IngressSnapshot now = protectedIngress();
+                      return now.packets == provisionBefore.packets + 1
+                          && now.frames == provisionBefore.frames + 1
+                          && now.observed == provisionBefore.observed + 1;
+                  }),
+                  QStringLiteral("newly provisioned key did not authenticate vehicle traffic"));
+
+    SigningProvisioningTarget repeatTarget;
+    const int repeatWriteBaseline =
+        provisioningLink ? provisioningLink->writes().size() : 0;
+    provisioningError.clear();
+    result.expect(!links->prepareSigningProvisioning(
+                      ProvisioningAuditLinkId, &repeatTarget,
+                      &provisioningError)
+                      && !repeatTarget.isValid()
+                      && !links->provisionSigning(
+                          provisionTarget,
+                          QStringLiteral("Runtime Audit Provisioned Key"),
+                          provisionedKey, nullptr)
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == repeatWriteBaseline,
+                  QStringLiteral("initial provisioning admitted a second attempt"));
+
+    links->removeLink(ProvisioningAuditLinkId);
+    result.expect(provisioningLink.isNull(),
+                  QStringLiteral("provisioned fixture was not removed"));
+    QPointer<ProvisioningAuditLink> restoredProvisioningLink(
+        new ProvisioningAuditLink(ProvisioningAuditLinkId));
+    LinkManagerFactory::connectLinkSignals(
+        restoredProvisioningLink.data(), links);
+    LinkManager::ConnectionProfile restoredProvisioningProfile;
+    restoredProvisioningProfile.id = ProvisioningProfileId;
+    restoredProvisioningProfile.signingRequired = true;
+    links->addLink(restoredProvisioningLink.data(),
+                   restoredProvisioningProfile);
+    const auto restoredProvision =
+        links->connectionProfile(ProvisioningAuditLinkId);
+    result.expect(restoredProvision.id == ProvisioningProfileId
+                      && restoredProvision.signingRequired
+                      && restoredProvision.provisioningUnconfirmed
+                      && restoredProvision.error.isEmpty()
+                      && !links->signingReady(ProvisioningAuditLinkId)
+                      && !links->connectLink(ProvisioningAuditLinkId)
+                      && restoredProvisioningLink
+                      && !restoredProvisioningLink->isConnected()
+                      && restoredProvisioningLink->writes().isEmpty(),
+                  QStringLiteral("unconfirmed provisioning policy did not restore locked"));
+    links->removeLink(ProvisioningAuditLinkId);
+    result.expect(restoredProvisioningLink.isNull(),
+                  QStringLiteral("restored provisioning fixture was not removed"));
+
+    // A transport can disappear synchronously from its write callback. Once
+    // the private writer has been entered the vehicle outcome is unknowable:
+    // report failure, retain the pending required policy, and never retry or
+    // publish the key through typed observer signals.
+    const quint8 interruptedSystemId = quint8(provisioningSystemId - 2);
+    QPointer<ProvisioningAuditLink> interruptedLink(
+        new ProvisioningAuditLink(InterruptedProvisioningAuditLinkId));
+    LinkManager::ConnectionProfile interruptedProfile;
+    interruptedProfile.id = InterruptedProvisioningProfileId;
+    LinkManagerFactory::connectLinkSignals(interruptedLink.data(), links);
+    links->addLink(interruptedLink.data(), interruptedProfile);
+    result.expect(links->connectLink(InterruptedProvisioningAuditLinkId),
+                  QStringLiteral("interrupted provisioning fixture did not connect"));
+    if (interruptedLink) {
+        interruptedLink->inject(nativeFrame(
+            autopilotHeartbeatMessage(interruptedSystemId, false),
+            interruptedSystemId, MAV_COMP_ID_AUTOPILOT1, 99, false));
+    }
+    SigningProvisioningTarget interruptedTarget;
+    provisioningError.clear();
+    result.expect(waitUntil([&]() {
+                      provisioningError.clear();
+                      const auto selected = targetManager->acquireTarget();
+                      if (targetManager->contains(InterruptedProvisioningAuditLinkId,
+                              interruptedSystemId, MAV_COMP_ID_AUTOPILOT1)
+                          && (!selected.isValid()
+                              || selected.endpoint.linkId != InterruptedProvisioningAuditLinkId))
+                          targetManager->selectTarget(InterruptedProvisioningAuditLinkId,
+                              interruptedSystemId, MAV_COMP_ID_AUTOPILOT1);
+                      return links->prepareSigningProvisioning(
+                          InterruptedProvisioningAuditLinkId,
+                          &interruptedTarget, &provisioningError);
+                  }) && interruptedTarget.isValid(),
+                  QStringLiteral("interrupted provisioning target was not eligible: %1")
+                      .arg(provisioningError));
+
+    QObject interruptedSignalScope;
+    int interruptedManagerSubmissions = 0;
+    int interruptedExactSubmissions = 0;
+    QObject::connect(
+        links, &LinkManager::mavlinkMessageSubmitted,
+        &interruptedSignalScope,
+        [&](int linkId, qulonglong, mavlink_message_t) {
+            if (linkId == InterruptedProvisioningAuditLinkId)
+                ++interruptedManagerSubmissions;
+        });
+    QObject::connect(
+        transmitter, &ExactLinkTransmitter::messageSubmitted,
+        &interruptedSignalScope,
+        [&](int linkId, quint64, mavlink_message_t) {
+            if (linkId == InterruptedProvisioningAuditLinkId)
+                ++interruptedExactSubmissions;
+        });
+    QVector<QByteArray> interruptedWire;
+    if (interruptedLink) {
+        interruptedLink->setWriteObserver(
+            [&](const QByteArray &frame) {
+                interruptedWire.append(frame);
+                if (links->getLink(InterruptedProvisioningAuditLinkId))
+                    links->removeLink(InterruptedProvisioningAuditLinkId);
+            });
+    }
+    const QByteArray interruptedKey = signingKey();
+    provisioningError.clear();
+    result.expect(!links->provisionSigning(
+                      interruptedTarget,
+                      QStringLiteral("Runtime Audit Interrupted Key"),
+                      interruptedKey, &provisioningError)
+                      && provisioningError.contains(
+                          QStringLiteral("unconfirmed"),
+                          Qt::CaseInsensitive)
+                      && interruptedLink.isNull()
+                      && links->getLink(InterruptedProvisioningAuditLinkId)
+                          == nullptr
+                      && interruptedWire.size() == 1
+                      && interruptedManagerSubmissions == 0
+                      && interruptedExactSubmissions == 0,
+                  QStringLiteral("synchronous link removal did not produce one unpublished, unconfirmed attempt"));
+    result.expect(interruptedWire.size() == 1
+                      && isSignedMavlink2(interruptedWire.value(0))
+                      && nativeVerifierAccepts(interruptedWire,
+                                               interruptedKey),
+                  QStringLiteral("interrupted provisioning attempt was not signed exactly once"));
+    QSettings interruptedSettings;
+    const auto interruptedPolicy = MavlinkSigningProfiles::load(
+        interruptedSettings, InterruptedProvisioningProfileId, true);
+    result.expect(interruptedPolicy.required
+                      && interruptedPolicy.provisioningUnconfirmed
+                      && interruptedPolicy.error.isEmpty()
+                      && interruptedPolicy.fingerprint
+                          == keyFingerprint(interruptedKey),
+                  QStringLiteral("uncertain transport outcome did not retain its fail-closed policy"));
+    const int interruptedAttemptCount = interruptedWire.size();
+    result.expect(!links->provisionSigning(
+                      interruptedTarget,
+                      QStringLiteral("Runtime Audit Interrupted Key"),
+                      interruptedKey, nullptr)
+                      && interruptedWire.size() == interruptedAttemptCount,
+                  QStringLiteral("uncertain provisioning outcome was retried"));
+
+    QPointer<ProvisioningAuditLink> restoredInterruptedLink(
+        new ProvisioningAuditLink(InterruptedProvisioningAuditLinkId));
+    LinkManagerFactory::connectLinkSignals(restoredInterruptedLink.data(),
+                                           links);
+    LinkManager::ConnectionProfile restoredInterruptedProfile;
+    restoredInterruptedProfile.id = InterruptedProvisioningProfileId;
+    restoredInterruptedProfile.signingRequired = true;
+    links->addLink(restoredInterruptedLink.data(),
+                   restoredInterruptedProfile);
+    const auto restoredInterrupted =
+        links->connectionProfile(InterruptedProvisioningAuditLinkId);
+    result.expect(restoredInterrupted.signingRequired
+                      && restoredInterrupted.provisioningUnconfirmed
+                      && restoredInterrupted.error.isEmpty()
+                      && !links->signingReady(
+                          InterruptedProvisioningAuditLinkId)
+                      && !links->connectLink(
+                          InterruptedProvisioningAuditLinkId)
+                      && restoredInterruptedLink
+                      && !restoredInterruptedLink->isConnected(),
+                  QStringLiteral("uncertain provisioning outcome restored unsigned"));
+    links->removeLink(InterruptedProvisioningAuditLinkId);
+    result.expect(restoredInterruptedLink.isNull(),
+                  QStringLiteral("interrupted provisioning restore fixture was not removed"));
 
     // A required hint is fail-closed when its separate secret-free policy is
     // missing or malformed. The diagnostic belongs to the connection profile;

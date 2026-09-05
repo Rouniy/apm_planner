@@ -7,6 +7,31 @@
 #include <cstring>
 #include <utility>
 
+namespace {
+void cleanse(void *address, size_t size)
+{
+    auto *bytes = static_cast<volatile unsigned char *>(address);
+    while (size--) *bytes++ = 0;
+}
+struct SecretMessageGuard {
+    mavlink_message_t &message;
+    bool sensitive;
+    ~SecretMessageGuard() { if (sensitive) cleanse(&message, sizeof(message)); }
+};
+struct SecretFrameGuard {
+    bool sensitive;
+    quint8 *buffer;
+    QByteArray &frame, &signedFrame;
+    ~SecretFrameGuard()
+    {
+        if (!sensitive) return;
+        cleanse(buffer, MAVLINK_MAX_PACKET_LEN);
+        if (!frame.isEmpty()) cleanse(frame.data(), size_t(frame.size()));
+        if (!signedFrame.isEmpty()) cleanse(signedFrame.data(), size_t(signedFrame.size()));
+    }
+};
+}
+
 ExactLinkTransmitter::ExactLinkTransmitter(
     FrameWriter frameWriter, QObject *parent)
     : QObject(parent)
@@ -16,8 +41,47 @@ ExactLinkTransmitter::ExactLinkTransmitter(
 
 ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
     int linkId, quint8 localSystemId, quint8 localComponentId,
+    const mavlink_message_t &message, bool *frameWriterInvoked)
+{
+    if (frameWriterInvoked) *frameWriterInvoked = false;
+    if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING)
+        return SendResult::RestrictedMessage;
+    return sendMessageImpl(linkId, localSystemId, localComponentId,
+                           message, frameWriterInvoked);
+}
+
+ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendSetupSigning(
+    int linkId, quint64 expectedEpoch, quint8 localSystemId,
+    quint8 localComponentId, quint8 targetSystem, quint8 targetComponent,
+    const QByteArray &key, quint64 initialTimestamp, bool *frameWriterInvoked)
+{
+    if (frameWriterInvoked) *frameWriterInvoked = false;
+    if (linkId < 0 || !expectedEpoch
+        || m_linkSessionEpochs.value(linkId, 0) != expectedEpoch)
+        return SendResult::InvalidLink;
+    if (!targetSystem || !targetComponent || key.size() != 32
+        || key == QByteArray(32, '\0') || !initialTimestamp
+        || initialTimestamp >= ((quint64(1) << 48) - 6000000))
+        return SendResult::InvalidMessage;
+    mavlink_message_t message{};
+    const SecretMessageGuard guard{message, true};
+    message.msgid = MAVLINK_MSG_ID_SETUP_SIGNING;
+    message.len = MAVLINK_MSG_ID_SETUP_SIGNING_LEN;
+    char *payload = _MAV_PAYLOAD_NON_CONST(&message);
+    _mav_put_uint64_t(payload, 0, initialTimestamp);
+    _mav_put_uint8_t(payload, 8, targetSystem);
+    _mav_put_uint8_t(payload, 9, targetComponent);
+    std::memcpy(payload + 10, key.constData(), 32);
+    return sendMessageImpl(linkId, localSystemId, localComponentId,
+                           message, frameWriterInvoked);
+}
+
+ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessageImpl(
+    int linkId, quint8 localSystemId, quint8 localComponentId,
     mavlink_message_t message, bool *frameWriterInvoked)
 {
+    const bool sensitive = message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING;
+    const SecretMessageGuard messageGuard{message, sensitive};
     if (frameWriterInvoked) {
         *frameWriterInvoked = false;
     }
@@ -70,12 +134,13 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
     const quint16 frameLength =
         mavlink_msg_to_send_buffer(buffer, &message);
     QByteArray frame(reinterpret_cast<const char *>(buffer), frameLength);
+    QByteArray signedFrame;
+    const SecretFrameGuard frameGuard{sensitive, buffer, frame, signedFrame};
     const quint64 submittedEpoch = m_linkSessionEpochs.value(linkId, 0);
     const QPointer<ExactLinkTransmitter> guardedThis(this);
     if (m_frameSigner) {
         const FrameSigner signer = m_frameSigner;
         const quint64 revision = m_signerRevision;
-        QByteArray signedFrame;
         if (!signer(linkId, frame, &signedFrame) || !guardedThis
             || guardedThis->m_signerRevision != revision
             || guardedThis->m_linkSessionEpochs.value(linkId, 0) != submittedEpoch)
@@ -102,6 +167,8 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
         } else if (m_signingRequired.value(linkId, false)) {
             return SendResult::SigningUnavailable;
         }
+        if (sensitive && frame != signedFrame && !frame.isEmpty())
+            cleanse(frame.data(), size_t(frame.size()));
         frame = std::move(signedFrame);
     } else if (m_signingRequired.value(linkId, false)) {
         return SendResult::SigningUnavailable;

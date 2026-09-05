@@ -597,34 +597,44 @@ void ExactLinkTransmitterTest::setupSigningNeverPublishesKeyMaterial()
     });
     transmitter.setLinkSessionEpoch(11, 456);
     int submitted = 0;
+    int signerCalls = 0;
     connect(&transmitter, &ExactLinkTransmitter::messageSubmitted, this,
             [&submitted](int, quint64, mavlink_message_t) { ++submitted; });
     uint8_t secret[32];
     std::memset(secret, 0x5a, sizeof(secret));
     mavlink_message_t setup{};
     mavlink_msg_setup_signing_pack(250, 190, &setup, 42, 1, secret, 123456789);
-    for (const bool signedOutput : {false, true}) {
-        if (signedOutput) {
+    for (const bool protectedLink : {false, true}) {
+        if (protectedLink) {
             transmitter.setSigningRequired(11, true);
-            transmitter.setFrameSigner([](int, const QByteArray &frame, QByteArray *out) {
+            transmitter.setFrameSigner([&signerCalls](
+                    int, const QByteArray &frame, QByteArray *out) {
+                ++signerCalls;
                 *out = attachSignature(frame);
                 return !out->isEmpty();
             });
         }
-        bool invoked = false;
+        bool invoked = true;
         QCOMPARE(transmitter.sendMessage(11, 250, 190, setup, &invoked),
-                 ExactLinkTransmitter::SendResult::Sent);
-        QVERIFY(invoked);
-        const mavlink_message_t decoded = decodeFrame(frames.constLast().bytes);
-        QCOMPARE(decoded.msgid, quint32(MAVLINK_MSG_ID_SETUP_SIGNING));
-        QCOMPARE(decoded.incompat_flags, quint8(signedOutput ? MAVLINK_IFLAG_SIGNED : 0));
-        mavlink_setup_signing_t payload{};
-        mavlink_msg_setup_signing_decode(&decoded, &payload);
-        QCOMPARE(QByteArray(reinterpret_cast<const char *>(payload.secret_key), 32),
-                 QByteArray(reinterpret_cast<const char *>(secret), 32));
-        QCOMPARE(submitted, 0);
+                 ExactLinkTransmitter::SendResult::RestrictedMessage);
+        QVERIFY(!invoked);
     }
-    QCOMPARE(frames.size(), 2);
+    QCOMPARE(frames.size(), 0);
+    QCOMPARE(signerCalls, 0);
+    QCOMPARE(submitted, 0);
+
+    // A rejected secret must not consume the physical link's sequence. Only
+    // LinkManager's private provisioning primitive may put SETUP_SIGNING on
+    // the wire.
+    transmitter.setSigningRequired(11, false);
+    transmitter.setFrameSigner({});
+    QCOMPARE(transmitter.sendMessage(
+                 11, 250, 190,
+                 commandMessage(MAV_CMD_NAV_RETURN_TO_LAUNCH)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(frames.size(), 1);
+    QCOMPARE(decodeFrame(frames.first().bytes).seq, quint8(0));
+    QCOMPARE(submitted, 1);
 }
 
 void ExactLinkTransmitterTest::reentrantSignerChangesAbortBeforeWrite_data()

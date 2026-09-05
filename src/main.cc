@@ -185,7 +185,15 @@ int main(int argc, char *argv[])
     QGCCore core(argc, argv);
 
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
-    if (signingTransportAuditRequested) return RunSigningTransportRuntimeAudit();
+    if (signingTransportAuditRequested) {
+        // Synthetic security fixtures must not subscribe to the operator's
+        // network SITL before the explicit listener-restoration test cases.
+        QSettings auditSettings;
+        auditSettings.setValue(QStringLiteral("startup_udp_listeners_enabled"), false);
+        auditSettings.setValue(QStringLiteral("AUTO_UPDATE/ENABLED"), false);
+        auditSettings.sync();
+        return RunSigningTransportRuntimeAudit();
+    }
     if (setupRouteAuditRequested) {
         return RunSetupRouteRuntimeAudit();
     }

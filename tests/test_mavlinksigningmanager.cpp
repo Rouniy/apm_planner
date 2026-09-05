@@ -1,4 +1,5 @@
 #include "comm/MAVLinkSigningManager.h"
+#include "comm/MAVLinkSigningClock.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -52,6 +53,19 @@ QByteArray unsignedRadioFrame()
     return QByteArray(reinterpret_cast<const char *>(bytes), size);
 }
 
+quint64 signingTimestamp(const QByteArray &frame)
+{
+    if (frame.size() < MAVLINK_SIGNATURE_BLOCK_LEN) return 0;
+    const int timestampOffset = frame.size() - MAVLINK_SIGNATURE_BLOCK_LEN + 1;
+    quint64 timestamp = 0;
+    for (int index = 0; index < 6; ++index) {
+        timestamp |= quint64(static_cast<quint8>(
+                         frame.at(timestampOffset + index)))
+            << (8 * index);
+    }
+    return timestamp;
+}
+
 } // namespace
 
 static_assert(!std::is_copy_constructible<MAVLinkSigningManager>::value,
@@ -65,6 +79,7 @@ class MAVLinkSigningManagerTest final : public QObject
 
 private slots:
     void unprotectedEpochPassesThroughWithoutCreatingState();
+    void initialProvisioningUpgradesOnlyExactLiveUnprotectedEpoch();
     void protectedLifecycleSignsAndVerifies();
     void lockedRequirementBlocksUntilMatchingKeyIsAvailable();
     void sameKeyAliasesShareReplayContext();
@@ -108,6 +123,105 @@ void MAVLinkSigningManagerTest::unprotectedEpochPassesThroughWithoutCreatingStat
     QVERIFY(manager.endEpoch(4, 10));
     QVERIFY(!manager.rawWritesAllowed(4));
     QVERIFY(!QFileInfo::exists(absent));
+}
+
+void MAVLinkSigningManagerTest::
+initialProvisioningUpgradesOnlyExactLiveUnprotectedEpoch()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    MAVLinkSigningManager manager(directory.path());
+    const QByteArray secret = key('P');
+    const QString profile = QStringLiteral("initial-profile");
+    quint64 initialTimestamp = 123;
+    QString error;
+
+    QVERIFY(!manager.protectUnprotectedLiveLink(
+        4, 40, profile, QStringLiteral("Initial"), secret, Now,
+        &initialTimestamp, &error));
+    QCOMPARE(initialTimestamp, quint64(0));
+    QVERIFY(!manager.protectedLink(4));
+    QVERIFY(manager.beginEpoch(4, 40));
+    QVERIFY(!manager.protectUnprotectedLiveLink(
+        4, 41, profile, QStringLiteral("Initial"), secret, Now,
+        &initialTimestamp, &error));
+    QCOMPARE(initialTimestamp, quint64(0));
+    QVERIFY(manager.rawWritesAllowed(4));
+
+    QVERIFY(manager.protectUnprotectedLiveLink(
+        4, 40, profile, QStringLiteral("Initial"), secret, Now,
+        &initialTimestamp, &error));
+    QVERIFY(error.isEmpty());
+    const quint64 wall = quint64(
+        Now - MAVLinkSigningClock::EpochUnixMs) * 100ULL;
+    QCOMPARE(initialTimestamp, wall);
+    const auto protectedStatus = manager.status(4);
+    QVERIFY(protectedStatus.protectedLink);
+    QVERIFY(protectedStatus.keyAvailable);
+    QCOMPARE(protectedStatus.activeEpoch, quint64(40));
+    QCOMPARE(protectedStatus.connectionProfileId, profile);
+    QCOMPARE(protectedStatus.keyName, QStringLiteral("Initial"));
+    QVERIFY(!manager.rawWritesAllowed(4));
+
+    quint64 duplicateTimestamp = 123;
+    QVERIFY(!manager.protectUnprotectedLiveLink(
+        4, 40, profile, QStringLiteral("Initial"), secret, Now,
+        &duplicateTimestamp, &error));
+    QCOMPARE(duplicateTimestamp, quint64(0));
+    QVERIFY(!manager.protectUnprotectedLiveLink(
+        4, 40, profile, QStringLiteral("Initial"), secret, Now,
+        nullptr, &error));
+
+    QByteArray signedFrame;
+    QVERIFY(manager.signFrame(
+        4, 40, UnsignedHeartbeat, Now, &signedFrame, &error));
+    QCOMPARE(signingTimestamp(signedFrame),
+             initialTimestamp + 60ULL * 100ULL * 1000ULL + 1ULL);
+    QCOMPARE(manager.verifyFrame(4, 40, signedFrame, Now).verdict,
+             MAVLinkSigningManager::VerifyVerdict::Signed);
+
+    QVERIFY(manager.endEpoch(4, 40));
+    manager.removeLink(4);
+    QVERIFY(manager.beginEpoch(5, 50));
+    quint64 reopenedTimestamp = 0;
+    QVERIFY(manager.protectUnprotectedLiveLink(
+        5, 50, profile, QStringLiteral("Initial reopened"), secret, Now,
+        &reopenedTimestamp, &error));
+    QVERIFY(reopenedTimestamp > initialTimestamp);
+    QCOMPARE(manager.status(5).signingLinkId,
+             protectedStatus.signingLinkId);
+    QCOMPARE(manager.verifyFrame(5, 50, signedFrame, Now).verdict,
+             MAVLinkSigningManager::VerifyVerdict::Replay);
+
+    MAVLinkSigningManager locked(directory.path());
+    const QByteArray fingerprint = QCryptographicHash::hash(
+        secret, QCryptographicHash::Sha256);
+    QVERIFY(locked.requireSigning(
+        7, QStringLiteral("locked-profile"), fingerprint));
+    QVERIFY(locked.beginEpoch(7, 70));
+    quint64 lockedTimestamp = 0;
+    QVERIFY(!locked.protectUnprotectedLiveLink(
+        7, 70, QStringLiteral("locked-profile"), QStringLiteral("Initial"),
+        secret, Now, &lockedTimestamp, &error));
+    QCOMPARE(lockedTimestamp, quint64(0));
+    QVERIFY(!locked.status(7).keyAvailable);
+
+    QTemporaryDir futureDirectory;
+    QVERIFY(futureDirectory.isValid());
+    {
+        MAVLinkSigningClock futureClock(futureDirectory.filePath(
+            QStringLiteral("signing-clock.state")));
+        QVERIFY(futureClock.open(Now + 2LL * 60LL * 60LL * 1000LL));
+    }
+    MAVLinkSigningManager futureManager(futureDirectory.path());
+    QVERIFY(futureManager.beginEpoch(8, 80));
+    quint64 futureTimestamp = 123;
+    QVERIFY(!futureManager.protectUnprotectedLiveLink(
+        8, 80, QStringLiteral("future-profile"), QStringLiteral("Initial"),
+        secret, Now, &futureTimestamp, &error));
+    QCOMPARE(futureTimestamp, quint64(0));
+    QVERIFY(error.contains(QStringLiteral("ahead"), Qt::CaseInsensitive));
+    QVERIFY(!futureManager.protectedLink(8));
 }
 
 void MAVLinkSigningManagerTest::protectedLifecycleSignsAndVerifies()

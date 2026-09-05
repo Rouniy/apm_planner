@@ -1052,7 +1052,7 @@ int RunSetupRouteRuntimeAudit()
     };
     result.Expect(signingAction && signingAction->isEnabled()
                       && signingAction->text().contains(
-                          QStringLiteral("Local keys"),
+                          QStringLiteral("Keys and initial setup"),
                           Qt::CaseInsensitive)
                       && toolsMenu
                       && toolsMenu->actions().contains(signingAction),
@@ -1088,11 +1088,15 @@ int RunSetupRouteRuntimeAudit()
                 QStringLiteral("SigningDisableVehicle"));
             result.Expect(banner
                               && banner->text().contains(
-                                  QStringLiteral("LOCAL KEYS ONLY"))
+                                  QStringLiteral("Use locally does not send keys"),
+                                  Qt::CaseInsensitive)
                               && banner->text().contains(
-                                  QStringLiteral("does not send keys"),
+                                  QStringLiteral("sends a secret key in cleartext"),
+                                  Qt::CaseInsensitive)
+                              && banner->text().contains(
+                                  QStringLiteral("without a vehicle acknowledgement"),
                                   Qt::CaseInsensitive),
-                          QStringLiteral("Signing window does not disclose its local-only boundary"));
+                          QStringLiteral("Signing window does not distinguish local use from unconfirmed cleartext provisioning"));
             result.Expect(master && confirmation && seed
                               && master->echoMode() == QLineEdit::Password
                               && confirmation->echoMode() == QLineEdit::Password
@@ -1103,7 +1107,7 @@ int RunSetupRouteRuntimeAudit()
                               && !disable->isEnabled()
                               && !provision->toolTip().isEmpty()
                               && !disable->toolTip().isEmpty(),
-                          QStringLiteral("unported vehicle signing mutations are actionable or ambiguous"));
+                          QStringLiteral("offline/no-target signing mutations are actionable or ambiguous"));
             result.Expect(vaultIsUnchanged(),
                           QStringLiteral("opening Signing created or changed a vault"));
 

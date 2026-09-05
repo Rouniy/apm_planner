@@ -1,12 +1,114 @@
 # MAVLink Signing — transport and key-store foundations
 
-The **local key manager is available**, but vehicle provisioning/change/disable
-is not. Advanced Tools has14 complete workflows plus this one local-only partial
-workflow. TOOLS and SETUP share the modeless `MavlinkSigningWindow`; it selects
+The **local key manager and initial provisioning path are implemented**;
+key change, disable and reconciliation are not. Advanced Tools has14 complete
+workflows plus this one partial workflow. TOOLS and SETUP share the modeless `MavlinkSigningWindow`; it selects
 a key for an already-provisioned OFFLINE connection through `configureSigning`.
 Required profiles persist and restore locked before connection. Ordinary
 unconfigured links are still unprotected: a signature's presence alone
 does not imply authentication. Bootloader Ed25519 signing is a different workflow.
+
+## Initial provisioning contract, 2026-09-05
+
+Initial provisioning is distinct from offline Use locally. It requires a settled
+selected ArduPilot autopilot1 target, an exact physical/profile/revision/target/
+instance/epoch snapshot, a disarmed heartbeat at most3 seconds old and exactly
+one observed autopilot on a dedicated serial/TCP-client/UDP-client route.
+Host listeners and obvious multicast/broadcast UDP destinations are refused.
+A RADIO/RADIO_STATUS frame also latches refusal before RX observers for the
+physical epoch; serial-port type alone is not evidence of a direct cable.
+A signed autopilot heartbeat observed in the current epoch latches refusal
+before any RX observer callback. This is conservative signature-flag evidence,
+not authentication of an unprotected connection. Absence of a signature cannot
+prove the vehicle has no stored key (USB and per-channel options differ).
+Operator consent must explicitly identify an unprovisioned vehicle and a trusted
+private channel: the secret is sent in clear and changing it affects the vehicle's
+channels. Exact target fields do not encrypt or establish physical exclusivity.
+
+Before any possible provisioning write, the connection identity is persisted,
+then the required SHA256 fingerprint and strict `initial-unconfirmed-v1` marker
+are published together under `MAVLinkSigning/Profiles/ID` (`fingerprint` and
+`provisioning`). The required hint is also saved before transmission. A failed or
+uncertain publication blocks unsigned use in the current process. Restart and
+re-add restore a locked required profile plus the marker; no implicit retry,
+policy reset, key change or unsigned fallback is available. This marker means
+preparation may have happened, not proof of transmission or vehicle effect.
+
+The manager's separate first-live-install API requires an existing exact epoch
+and no protected binding. It preserves that epoch and shared-key replay history.
+The payload initial timestamp comes from the shared clock; its durable floor is
+advanced to initial+60 seconds before the first signature, matching ArduPilot's
+load offset once, not twice. A retained clock more than1 hour ahead of local wall
+time or insufficient48-bit headroom is refused. Wrong local wall time itself,
+vehicle GPS-time comparison and sudden-power-loss durability remain release risks.
+The shared60-second advance is cumulative: roughly60 rapid initial provisions
+can reach the1-hour guard, including preparations that later fail allocation.
+This is a bounded first implementation for one vehicle, not a fleet-key utility;
+do not reset clock files to bypass its guard.
+
+Exactly one SETUP_SIGNING frame is signed with the newly installed local key;
+this is only for an operator-known unprovisioned vehicle. An already protected
+non-USB vehicle may refuse it; USB/per-channel exceptions may accept an overwrite,
+which is why this is not a supported rekey method. Generic structured exact and
+legacy sends now refuse SETUP_SIGNING before signing/sequence/writer invocation.
+Only the private LinkManager typed path can reach the sequencer. It publishes no
+packet observer and best-effort clears owned staging buffers; trusted raw APIs,
+transport/platform copies and trusted in-process extensions are not a sandbox.
+
+The UI always reports **submitted / outcome unconfirmed**, never ACK or success.
+The persisted warning survives close/reopen, restart and offline key restoration.
+Receiving authenticated new-key traffic does not clear it or claim durable
+vehicle storage. No automatic resend, dual-key transition, key-change/disable or
+operator reconciliation is implemented in this slice. Full Signing remains
+partial pending those workflows and native-platform release evidence. Initial
+provisioning on an isolated non-COMM_0 SITL channel is verified below; it does
+not verify the still-unimplemented key-change/disable transitions.
+
+## Initial provisioning verification, 2026-09-05
+
+Qt5/audio configure/build pass; final full suite **237/237,22.96 seconds**.
+Production tests use real LinkManager/protocol/transmitter/signing state with
+isolated in-process physical links. They cover pre-observer signed/radio latches,
+stale/armed/multiple-autopilot/revision refusal, one exact signed SETUP_SIGNING,
+secret-observer suppression, write-time link removal, persistent unconfirmed
+required profiles and no second attempt. Widget tests cover default-Cancel,
+consent/key-delivery mutations and production-theme wrapped status at720x786
+and560x520, including shrink/reopen. Short windows scroll without clipped text.
+
+Manual X11 used only a separate ArduCopter sys233 fixture, instance71, with
+SERIAL1 TCP127.0.0.1:61980 and private temporary storage. The real TOOLS window
+created a vault/key, exercised Cancel without policy change, then sent once.
+The app received authenticated telemetry but correctly retained SUBMITTED —
+UNCONFIRMED. Independent pymavlink authenticated980 packets on signature link1;
+an unsigned read-only AUTOPILOT_VERSION request was ignored and a signed one
+answered. After a fixture restart without wiping storage, the same checks pass
+again with the persisted vehicle key. This external test evidence is deliberately
+not an automatic UI reconciliation rule. No user/network SITL keys were changed.
+The original GUI TLOG contains27,090 valid frames,5,402 independently checked
+MACs, no SETUP_SIGNING, no raw fixture key and no BAD_DATA.
+Final-build X11 then restarts the application, restores the locked/pending
+profile, unlocks the vault and selects the same key locally without resending.
+Reconnect receives thousands of authenticated packets with the uncertainty
+warning intact and fully readable, including at560x520. The production signing
+runtime independently passes under X11 with exit0.
+Closing/reopening preserves pending state and the unlocked vault; application
+shutdown with the window open exits0. The fixture and test windows are stopped.
+
+The new immediate UAS rediscovery test initially exposed a real shared-link
+destruction crash and additional stale pointers in AP2DataPlot2D, UASRawStatusView,
+QGCMapWidget and the decoder's first field. GDB evidence drove lifetime fixes:
+detach before LinkInterface destruction, retire exact UAS/companion identities
+before DeferredDelete, disconnect retired ingress, guard callbacks/consumers and
+resolve decoder state before field zero. A test itself also needed to deliver
+queued ingress metacalls without draining the deferred deletion it exercises.
+The first wrapped-height implementation could grow but not shrink; unconstrained
+measurement plus a resize reentrancy guard fixes both geometry rows.
+
+All evidence: `/tmp/apm-signing-initial.g6VlP9/`. Claude TCP c205/c206 reviewed
+firmware/routing/no-ACK/clock contracts; c163 reviewed logical lifetime teardown.
+The corrected firmware reading honors exact target routing, but routers can
+still forward cleartext: it does not replace the private-channel requirement.
+Three Codex streams supplied backend/widget/runtime work with root-owned builds.
 
 ## Reference and deliberate corrections
 
@@ -144,13 +246,13 @@ mutates the live signing clock; explicit unverified-signature UI remains a gap.
 ## Required next integration gates
 
 1. Keep local key selection and persisted fail-closed restoration green while
-   adding vehicle transitions. The current local-only UI must not be advertised
+   adding vehicle transitions. The current initial-provisioning UI must not be advertised
    as a complete vehicle-security workflow. Locking/deleting a vault key must not silently
    turn a protected link unsigned. RX history is RAM-only: process restart admits
    the one-minute new-stream replay window characterized by tests. Persistent RX
    high-water or a documented release policy remains before stronger claims.
-2. Add the exact-target provisioning service and reviewed key-change/disable UI.
-   The modeless local vault/key manager and off-thread KDF are implemented;
+2. Add reviewed key-change/disable and operator reconciliation UI.
+   Exact initial provisioning, the local vault/key manager and off-thread KDF are implemented;
    local selection must stay separate from sending a key over a user-confirmed
    trusted channel. Explicit uncertain/failed vehicle-transition states are
    required. Lost master password

@@ -2,6 +2,7 @@
 
 #include <QRegularExpression>
 #include <QSettings>
+#include <QMetaType>
 #include <QUuid>
 
 #include <utility>
@@ -10,12 +11,17 @@ namespace {
 
 const QString ProfilesGroup = QStringLiteral("MAVLinkSigning/Profiles");
 const QString FingerprintKey = QStringLiteral("fingerprint");
+const QString ProvisioningKey = QStringLiteral("provisioning");
+const QString InitialProvisioningMarker =
+    QStringLiteral("initial-unconfirmed-v1");
 constexpr int FingerprintBytes = 32;
 
-MavlinkSigningProfiles::Policy failed(const QString &message)
+MavlinkSigningProfiles::Policy failed(
+    const QString &message, bool provisioningUnconfirmed = false)
 {
     MavlinkSigningProfiles::Policy policy;
     policy.required = true;
+    policy.provisioningUnconfirmed = provisioningUnconfirmed;
     policy.error = message;
     return policy;
 }
@@ -37,6 +43,12 @@ QString profileKey(const QString &profileId)
 {
     return ProfilesGroup + QLatin1Char('/') + profileId
         + QLatin1Char('/') + FingerprintKey;
+}
+
+QString provisioningKey(const QString &profileId)
+{
+    return ProfilesGroup + QLatin1Char('/') + profileId
+        + QLatin1Char('/') + ProvisioningKey;
 }
 
 bool decodeFingerprint(const QVariant &stored, QByteArray *fingerprint)
@@ -102,10 +114,12 @@ MavlinkSigningProfiles::Policy MavlinkSigningProfiles::load(
     settings.endGroup();
     const QString key = profileKey(profileId);
     const bool recordPresent = settings.contains(key);
+    const QString pendingKey = provisioningKey(profileId);
+    const bool pendingPresent = settings.contains(pendingKey);
     if (settings.status() != QSettings::NoError) {
         return failed(settingsError(settings.status()));
     }
-    if (!groupPresent && !recordPresent) {
+    if (!groupPresent && !recordPresent && !pendingPresent) {
         if (requiredHint) {
             return failed(QStringLiteral(
                 "Required MAVLink signing profile metadata is missing."));
@@ -114,7 +128,8 @@ MavlinkSigningProfiles::Policy MavlinkSigningProfiles::load(
     }
     if (!recordPresent) {
         return failed(QStringLiteral(
-            "Required MAVLink signing profile fingerprint is missing."));
+            "Required MAVLink signing profile fingerprint is missing."),
+            pendingPresent);
     }
 
     const QVariant stored = settings.value(key);
@@ -124,11 +139,25 @@ MavlinkSigningProfiles::Policy MavlinkSigningProfiles::load(
     QByteArray fingerprint;
     if (!decodeFingerprint(stored, &fingerprint)) {
         return failed(QStringLiteral(
-            "Required MAVLink signing profile fingerprint is malformed."));
+            "Required MAVLink signing profile fingerprint is malformed."),
+            pendingPresent);
+    }
+    if (pendingPresent) {
+        const QVariant marker = settings.value(pendingKey);
+        if (settings.status() != QSettings::NoError) {
+            return failed(settingsError(settings.status()), true);
+        }
+        if (marker.userType() != QMetaType::QString
+            || marker.toString() != InitialProvisioningMarker) {
+            return failed(QStringLiteral(
+                "Required MAVLink signing provisioning metadata is malformed."),
+                true);
+        }
     }
 
     Policy policy;
     policy.required = true;
+    policy.provisioningUnconfirmed = pendingPresent;
     policy.fingerprint = std::move(fingerprint);
     return policy;
 }
@@ -187,6 +216,66 @@ bool MavlinkSigningProfiles::saveRequired(
         return reject(verified.error.isEmpty()
             ? QStringLiteral(
                 "Published MAVLink signing profile metadata could not be verified.")
+            : verified.error);
+    }
+    return true;
+}
+
+bool MavlinkSigningProfiles::beginInitialProvisioning(
+    QSettings &settings, const QString &profileId,
+    const QByteArray &fingerprint, QString *error)
+{
+    if (error) error->clear();
+    const auto reject = [error](const QString &message) {
+        if (error) *error = message;
+        return false;
+    };
+    if (!settings.group().isEmpty()) {
+        return reject(QStringLiteral(
+            "MAVLink signing profiles must be written from the QSettings root group."));
+    }
+    if (!validProfileId(profileId)) {
+        return reject(QStringLiteral(
+            "The MAVLink signing connection profile ID is invalid."));
+    }
+    if (fingerprint.size() != FingerprintBytes) {
+        return reject(QStringLiteral(
+            "Signing-key fingerprint must contain 32 bytes."));
+    }
+    if (settings.status() != QSettings::NoError) {
+        return reject(settingsError(settings.status()));
+    }
+
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        return reject(settingsError(settings.status()));
+    }
+    const Policy existing = load(settings, profileId);
+    if (existing.required) {
+        return reject(existing.error.isEmpty()
+            ? QStringLiteral(
+                "The connection profile already has a required signing policy.")
+            : existing.error);
+    }
+
+    // QSettings publishes its complete backing file on sync. Stage both
+    // values first, so a successfully observed publication can never expose a
+    // pending transition without its fail-closed required fingerprint.
+    settings.setValue(
+        profileKey(profileId), QString::fromLatin1(fingerprint.toHex()));
+    settings.setValue(provisioningKey(profileId),
+                      InitialProvisioningMarker);
+    settings.sync();
+    if (settings.status() != QSettings::NoError) {
+        return reject(settingsError(settings.status()));
+    }
+    const Policy verified = load(settings, profileId, true);
+    if (!verified.required || !verified.provisioningUnconfirmed
+        || !verified.error.isEmpty()
+        || verified.fingerprint != fingerprint) {
+        return reject(verified.error.isEmpty()
+            ? QStringLiteral(
+                "Initial MAVLink signing provisioning metadata could not be verified.")
             : verified.error);
     }
     return true;

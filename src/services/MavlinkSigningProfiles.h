@@ -12,6 +12,7 @@ class MavlinkSigningProfiles final
 public:
     struct Policy {
         bool required = false;
+        bool provisioningUnconfirmed = false;
         QByteArray fingerprint;
         QString error;
     };
@@ -23,6 +24,15 @@ public:
     static bool saveRequired(QSettings &settings, const QString &profileId,
                              const QByteArray &fingerprint,
                              QString *error = nullptr);
+    /**
+     * Atomically publishes the first required fingerprint together with a
+     * permanent no-ACK provisioning marker. Any pre-existing required or
+     * malformed record is refused; changing and disabling keys are separate
+     * future workflows.
+     */
+    static bool beginInitialProvisioning(
+        QSettings &settings, const QString &profileId,
+        const QByteArray &fingerprint, QString *error = nullptr);
 
 private:
     MavlinkSigningProfiles() = delete;
