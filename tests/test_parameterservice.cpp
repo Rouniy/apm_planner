@@ -165,6 +165,8 @@ private slots:
     void exactReentrantRepliesAndSameLeaseSkipAreSafe();
     void exactMismatchingWriteEchoIsDefiniteRejection();
     void exactTransportFailureClassifiesReadAndWriteSafely();
+    void exactSigningRejectionBeforeWriterIsDefinite();
+    void exactSigningFailureAfterWriteIsUncertain();
     void exactReadRetriesHaveDefiniteBoundedTimeout();
     void exactWriteRetriesStopAtAbsoluteDeadlineAndQuarantine();
     void exactCancellationStopsReadAndWriteRetries();
@@ -2046,6 +2048,117 @@ exactTransportFailureClassifiesReadAndWriteSafely()
              ParameterService::ExactTerminalResult::
                  WriteTransportOutcomeUncertain);
     QVERIFY(report.frameAttempted);
+    QVERIFY(service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+}
+
+void ParameterServiceTest::
+exactSigningRejectionBeforeWriterIsDefinite()
+{
+    VehicleTargetManager targets;
+    int writes = 0;
+    ExactLinkTransmitter transmitter(
+        [&writes](int, const QByteArray &) {
+            ++writes;
+            return true;
+        });
+    transmitter.setFrameSigner(
+        [](int, const QByteArray &, QByteArray *) { return false; });
+    ParameterService service(&targets, &transmitter);
+    const SwarmVehicleInstanceLease lease = swarmLease(41, 63, 1, 9, 15);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("SIGNING_REQUIRED");
+    write.value = qint32(12);
+    write.type = ParameterType::Int32;
+    write.force = true;
+
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::TransportUnavailable);
+    QCOMPARE(writes, 0);
+    QCOMPARE(finished.count(), 1);
+    const auto rejected = exactReportAt(finished, 0);
+    QCOMPARE(rejected.terminalResult,
+             ParameterService::ExactTerminalResult::Rejected);
+    QVERIFY(!rejected.frameAttempted);
+    QVERIFY(!service.isExactWriteQuarantined(
+        lease, write.name, write.value, write.type));
+
+    transmitter.setFrameSigner(ExactLinkTransmitter::FrameSigner());
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(writes, 1);
+    service.observeMessage(
+        lease.endpoint.linkId,
+        parameterValue(lease.endpoint.systemId,
+                       lease.endpoint.componentId,
+                       write.name, write.value, write.type));
+    QCOMPARE(finished.count(), 2);
+    QCOMPARE(exactReportAt(finished, 1).terminalResult,
+             ParameterService::ExactTerminalResult::WriteSucceeded);
+}
+
+void ParameterServiceTest::
+exactSigningFailureAfterWriteIsUncertain()
+{
+    VehicleTargetManager targets;
+    int writes = 0;
+    ExactLinkTransmitter transmitter(
+        [&writes](int, const QByteArray &) {
+            ++writes;
+            return true;
+        });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(10, 1, 10, 2, 200, 200);
+    const SwarmVehicleInstanceLease lease = swarmLease(42, 64, 1, 10, 16);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &ParameterService::exactOperationFinished);
+    ParameterService::ExactWriteRequest write;
+    write.name = QStringLiteral("SIGNED_RETRY");
+    write.value = qint32(13);
+    write.type = ParameterType::Int32;
+    write.force = true;
+
+    QCOMPARE(service.submitExactWrite(reservation, lease, write),
+             ParameterService::ExactSubmitResult::Started);
+    QCOMPARE(writes, 1);
+    transmitter.setFrameSigner(
+        [](int, const QByteArray &, QByteArray *) { return false; });
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 250);
+    QCOMPARE(writes, 1);
+    const auto uncertain = exactReportAt(finished, 0);
+    QCOMPARE(uncertain.terminalResult,
+             ParameterService::ExactTerminalResult::
+                 WriteTransportOutcomeUncertain);
+    QVERIFY(uncertain.frameAttempted);
+    QCOMPARE(uncertain.attempts, 2);
     QVERIFY(service.isExactWriteQuarantined(
         lease, write.name, write.value, write.type));
 }

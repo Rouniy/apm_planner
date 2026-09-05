@@ -23,6 +23,9 @@ public:
     static int addTcpConnection(QHostAddress addr, QString hostName, int port, bool asServer);
 
 private:
+#ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
+    friend int RunSigningTransportRuntimeAudit();
+#endif
     static void connectLinkSignals(LinkInterface *link, LinkManager *lmgr);
 };
 

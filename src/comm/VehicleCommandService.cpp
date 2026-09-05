@@ -447,8 +447,6 @@ VehicleCommandService::submitExactCommandLong(
     pending.absoluteDeadlineMs = submittedAtMs + maximumLifetimeMs;
     pending.deadlineMs = qMin(
         submittedAtMs + pending.timeoutMs, pending.absoluteDeadlineMs);
-    pending.frameAttempted = true;
-
     // Install the waiter before the writer.  Test transports and in-process
     // simulations may deliver COMMAND_ACK reentrantly from the writer call.
     m_pendingExactCommands.insert(token.transactionId, pending);
@@ -459,19 +457,38 @@ VehicleCommandService::submitExactCommandLong(
     scheduleExactDeadline();
 
     QPointer<VehicleCommandService> serviceGuard(this);
+    bool frameWriterInvoked = false;
     const ExactLinkTransmitter::SendResult transmitted =
         m_transmitter->sendMessage(
             lease.endpoint.linkId, m_localSystemId, m_localComponentId,
-            message);
+            message, &frameWriterInvoked);
     if (serviceGuard.isNull()) {
-        return ExactSubmitResult::TransportOutcomeUncertain;
+        return transmitted == ExactLinkTransmitter::SendResult::SigningUnavailable
+                && !frameWriterInvoked
+            ? ExactSubmitResult::ContextUnavailable
+            : ExactSubmitResult::TransportOutcomeUncertain;
     }
 
     // A synchronous ACK may already have completed and removed the waiter.
-    if (!m_pendingExactCommands.contains(token.transactionId)) {
+    auto submitted = m_pendingExactCommands.find(token.transactionId);
+    if (submitted == m_pendingExactCommands.end()) {
         return ExactSubmitResult::Started;
     }
+    submitted->frameAttempted =
+        submitted->frameAttempted || frameWriterInvoked;
     if (transmitted != ExactLinkTransmitter::SendResult::Sent) {
+        if (transmitted
+                == ExactLinkTransmitter::SendResult::SigningUnavailable
+            && !submitted->frameAttempted) {
+            finishExactCommand(
+                token.transactionId,
+                ExactTerminalResult::RejectedBeforeTransmission,
+                -1, 255, 0, 0, 0,
+                QStringLiteral(
+                    "Signing was unavailable; the command was rejected before transmission."),
+                false);
+            return ExactSubmitResult::ContextUnavailable;
+        }
         finishExactCommand(
             token.transactionId,
             ExactTerminalResult::TransportOutcomeUncertain,

@@ -176,6 +176,8 @@ target_link_libraries(apm_mission_command_catalog PUBLIC Qt::Core)
 # uses OpenSSL on all supported platforms; never fall back to plaintext storage.
 find_package(OpenSSL 1.1.1 REQUIRED COMPONENTS Crypto)
 add_library(apm_mavlink_signing STATIC
+    src/comm/MAVLinkSigningManager.cpp
+    src/comm/MAVLinkSigningManager.h
     src/comm/MAVLinkSigningClock.cpp
     src/comm/MAVLinkSigningClock.h
     src/comm/MAVLinkSigningSession.cpp
@@ -1541,6 +1543,7 @@ target_link_libraries(${APM_PLANNER_TARGET}
     opmapcontrol
     apm_parameter_core
     apm_parameter_regeneration
+    apm_mavlink_signing
     apm_mission_command_catalog
     ${ADDITIONAL_LIBS}
     ${APM_QT_AUDIO_LIBRARIES}
@@ -1686,6 +1689,8 @@ if(BUILD_TESTING)
     target_sources(${APM_PLANNER_TARGET} PRIVATE
         tests/SetupRouteRuntimeAudit.cpp
         tests/SetupRouteRuntimeAudit.h
+        tests/SigningTransportRuntimeAudit.cpp
+        tests/SigningTransportRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1710,6 +1715,11 @@ if(BUILD_TESTING)
         RUN_SERIAL TRUE
         TIMEOUT 30
     )
+    add_test(NAME signing_transport_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --signing-transport-audit)
+    set_tests_properties(signing_transport_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 30)
 
     # Explicit desktop diagnostic, not an automatic/noisy CTest. The default
     # invocation only probes readiness; --speak exercises actual synthesis.
@@ -6458,7 +6468,7 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 
-    foreach(signing_test IN ITEMS mavlinksigningclock mavlinksigningsession mavauthkeystore)
+    foreach(signing_test IN ITEMS mavlinksigningclock mavlinksigningsession mavlinksigningmanager mavauthkeystore)
         add_executable(${signing_test}_tests tests/test_${signing_test}.cpp)
         target_link_libraries(${signing_test}_tests PRIVATE apm_mavlink_signing Qt::Test)
         add_test(NAME ${signing_test}_tests COMMAND ${signing_test}_tests)
@@ -6467,6 +6477,8 @@ if(BUILD_TESTING)
     target_sources(mavlinksigningsession_tests PRIVATE src/comm/MAVLinkFrameParser.cpp)
     target_link_libraries(mavauthkeystore_tests PRIVATE OpenSSL::Crypto)
     target_include_directories(mavlinksigningsession_tests PRIVATE
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_include_directories(mavlinksigningmanager_tests PRIVATE
         ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
 
     add_executable(missionplannerstyle_tests

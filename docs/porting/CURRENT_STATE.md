@@ -24,7 +24,40 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): **MAVLink Signing protocol/key-store foundation**
+Latest slice (2026-09-05): **MAVLink Signing production transport integration**.
+The application-owned key-domain manager shares bounded replay contexts across
+aliases, links and reconnects, with persistent stable profile IDs. Exact and
+legacy sends share one finalizer/signing boundary; protected links refuse raw
+write-back and MAVLink 1 downgrade. Original ingress bytes are authenticated
+before discovery, services, logs and mirror fan-out. Unsigned radio is diagnostics
+only. SETUP_SIGNING secrets are suppressed from observers/decoder/replay and
+redacted from CSV/text export; TCP/UDP debug traces are metadata-only.
+
+The full Qt5/audio build and 234-test suite pass, including an isolated test of
+the actual LinkManager/Protocol/transmitter with two synthetic physical links,
+cross-link/reconnect replay checks, real signed TX and no rejected-frame fan-out.
+Real X11 verifies the same protected runtime gate plus ordinary UDP14699 traffic:
+source233 appears, the independent peer parses GCS commands/heartbeats and the
+TLOG contains 221 valid source233 heartbeats and no BAD_DATA. Normal app and peer
+exit 0. Evidence: `/tmp/apm-signing-transport.j50T7t/`. The initial 233/234 exposed
+an outdated Inspector audit checksum expectation; it now checks exact submitted
+bytes against the final wire frame. Codex review also added a 256-context lifetime
+cap without eviction, and Claude TCP c198/c199/c146 reviewed the final contracts.
+
+**Signing still has no usable operator dialog/provisioning workflow.** Only the
+internal offline `configureSigning` API binds an already provisioned vehicle.
+Protected-profile/key-selection policy is not persisted across app restart yet;
+normal UI-created links remain unprotected and a signature alone is not proof
+of authentication. Advanced remains **14/16**, SETUP **46 pages / eight absent
+reference routes**, CONFIG **15/15 factories, Planner 21/64 controls**.
+Next: fail-closed persisted protection/locked-vault startup, off-thread unlock
+and modeless Add/Use/Delete/Disable, exact fresh-disarmed no-ACK provisioning,
+then non-COMM_0 SITL enable/use/change/disable and X11/native-platform evidence.
+Do not enable the Signing action or vehicle-side signing before these gates.
+RX restart replay window, power-loss durability and historical binary-log secret
+sanitization remain explicit limits in `MAVLINK_SIGNING_PORT.md`.
+
+Previous slice (2026-09-05): **MAVLink Signing protocol/key-store foundation**
 and a production signed-frame CRC fix. The new standalone library provides
 exact-byte signing/verification, shared-key bounded replay state, a locked
 process-crash-safe timestamp allocator and OpenSSL AES-GCM/PBKDF2 named-key
@@ -40,7 +73,7 @@ parsing. Application exit is 0 while the valid peer remains active. Evidence:
 `/tmp/apm-signing.krlrz9/`. Claude TCP c196/c197 reviews and three bounded Codex
 streams are recorded in `MAVLINK_SIGNING_PORT.md` / `MAV_AUTH_KEY_STORE.md`.
 
-**Signing itself is not yet wired into production transport or UI.** Advanced
+At that earlier checkpoint, signing was not wired into transport or UI. Advanced
 Tools remains **14/16**, SETUP **46 pages / eight absent reference routes** and
 CONFIG **15/15 factories, Planner 21/64 controls**. A signature present on live
 traffic still does not imply authentication. Next: application-owned same-key
@@ -201,8 +234,8 @@ refresh and normal application exit 0 with the tool open. Evidence:
 `DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
 
 Next single-vehicle candidate, not Swarm: MAVLink Signing
-(integrate the tested protocol/key-store foundation into all transport paths
-and the key-domain manager before provisioning and the dialog); Support Proxy
+(persist fail-closed protected profiles, wire vault unlock/key selection and
+implement guarded no-ACK provisioning plus the modeless dialog); Support Proxy
 is also a placeholder in MP10 itself. Settings/CONFIG follows these working
 single-vehicle surfaces. The eight absent Setup routes remain explicitly tracked.
 

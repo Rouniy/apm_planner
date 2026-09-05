@@ -274,6 +274,22 @@ bool TlogExportService::IsGlobalFrame(quint8 frame)
 
 QString TlogExportService::DescribePacket(const mavlink_message_t &message, const QString &delimiter)
 {
+    if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING) {
+        // Historical/imported logs may contain provisioning traffic. Preserve row
+        // identity, but never reflect, decode, or hex-dump the secret payload.
+        // Offsets 8/9 are the common dialect's target fields; readPayload also
+        // handles MAVLink 2 zero-truncation without touching secret_key at 10.
+        return QStringList{
+            QStringLiteral("SETUP_SIGNING"),
+            QStringLiteral("source_system=%1").arg(message.sysid),
+            QStringLiteral("source_component=%1").arg(message.compid),
+            QStringLiteral("target_system=%1").arg(readPayload<quint8>(message, 8)),
+            QStringLiteral("target_component=%1").arg(readPayload<quint8>(message, 9)),
+            QStringLiteral("secret_key=[REDACTED]"),
+            QStringLiteral("sensitive_payload=omitted")
+        }.join(delimiter);
+    }
+
     const auto it = messageInfoTable().constFind(message.msgid);
     if (it == messageInfoTable().constEnd()) {
         return QString(); // unknown to the bundled dialect: skipped like MP10's empty DebugPacket

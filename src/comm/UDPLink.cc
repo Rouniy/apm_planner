@@ -266,24 +266,11 @@ void UDPLink::_sendBytes(const UdpPeerDatagram &datagram)
         const quint16 currentPort = datagram.peers.ports.at(h);
 //#define UDPLINK_DEBUG
 #ifdef UDPLINK_DEBUG
-        QString bytes;
-        QString ascii;
-        for (int i=0; i<datagram.bytes.size(); i++)
-        {
-            unsigned char v = datagram.bytes.at(i);
-            bytes.append(QString().sprintf("%02x ", v));
-            if (datagram.bytes.at(i) > 31 && datagram.bytes.at(i) < 127)
-            {
-                ascii.append(datagram.bytes.at(i));
-            }
-            else
-            {
-                ascii.append(219);
-            }
-        }
-        QLOG_TRACE() << "Sent" << datagram.bytes.size() << "bytes to" << currentHost.toString() << ":" << currentPort << "data:";
-        QLOG_TRACE() << bytes;
-        QLOG_TRACE() << "ASCII:" << ascii;
+        // Never dump raw datagrams: they may include signing keys even when
+        // fragmented or mixed with unrelated messages.
+        QLOG_TRACE() << "Sent" << datagram.bytes.size() << "bytes to"
+                     << currentHost.toString() << ":" << currentPort
+                     << "(payload omitted)";
 #endif
         if (!socket) {
             return;
@@ -338,15 +325,9 @@ void UDPLink::readBytes()
         emit bytesReceived(this, datagram);
 
 #ifdef UDPLINK_DEBUG
-        // Echo data for debugging purposes
-        std::cerr << __FILE__ << __LINE__ << "Received datagram:" << std::endl;
-//        int i;
-//        for (i=0; i<s; i++)
-//        {
-//            unsigned int v=data[i];
-//            fprintf(stderr,"%02x ", v);
-//        }
-//        std::cerr << std::endl;
+        QLOG_TRACE() << "Received" << datagram.size() << "bytes from"
+                     << sender.toString() << ":" << senderPort
+                     << "(payload omitted)";
 #endif
 
         if(!_running)

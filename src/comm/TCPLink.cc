@@ -122,24 +122,11 @@ void TCPLink::setAsServer(bool asServer)
 #ifdef TCPLINK_READWRITE_DEBUG
 void TCPLink::_writeDebugBytes(const char *data, qint16 size)
 {
-    QString bytes;
-    QString ascii;
-    for (int i=0; i<size; i++)
-    {
-        unsigned char v = data[i];
-        bytes.append(QString().sprintf("%02x ", v));
-        if (data[i] > 31 && data[i] < 127)
-        {
-            ascii.append(data[i]);
-        }
-        else
-        {
-            ascii.append(219);
-        }
-    }
-    qDebug() << "Sent" << size << "bytes to" << _hostAddress.toString() << ":" << _port << "data:";
-    qDebug() << bytes;
-    qDebug() << "ASCII:" << ascii;
+    Q_UNUSED(data);
+    // Raw frames may contain SETUP_SIGNING keys, including fragmented frames
+    // that cannot be reliably identified at this transport boundary.
+    qDebug() << "Sent" << size << "bytes to" << _hostAddress.toString()
+             << ":" << _port << "(payload omitted)";
 }
 #endif
 
@@ -149,7 +136,8 @@ void TCPLink::writeBytes(const char* data, qint64 size)
         return;
 
 #ifdef TCPLINK_READWRITE_DEBUG
-    _writeDebugBytes(data, size);
+    qDebug() << "Sent" << size << "bytes to" << _hostAddress.toString()
+             << ":" << _port << "(payload omitted)";
 #endif
     _socket->write(data, size);
 
@@ -182,7 +170,9 @@ void TCPLink::readBytes()
         logDataRateToBuffer(inDataWriteAmounts, inDataWriteTimes, &inDataIndex, byteCount, QDateTime::currentMSecsSinceEpoch());
 
 #ifdef TCPLINK_READWRITE_DEBUG
-        writeDebugBytes(buffer.data(), buffer.size());
+        qDebug() << "Received" << buffer.size() << "bytes from"
+                 << _hostAddress.toString() << ":" << _port
+                 << "(payload omitted)";
 #endif
     }
 }

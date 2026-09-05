@@ -69,21 +69,55 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
     quint8 buffer[MAVLINK_MAX_PACKET_LEN]{};
     const quint16 frameLength =
         mavlink_msg_to_send_buffer(buffer, &message);
+    QByteArray frame(reinterpret_cast<const char *>(buffer), frameLength);
+    const quint64 submittedEpoch = m_linkSessionEpochs.value(linkId, 0);
+    const QPointer<ExactLinkTransmitter> guardedThis(this);
+    if (m_frameSigner) {
+        const FrameSigner signer = m_frameSigner;
+        const quint64 revision = m_signerRevision;
+        QByteArray signedFrame;
+        if (!signer(linkId, frame, &signedFrame) || !guardedThis
+            || guardedThis->m_signerRevision != revision
+            || guardedThis->m_linkSessionEpochs.value(linkId, 0) != submittedEpoch)
+            return SendResult::SigningUnavailable;
+        if (signedFrame != frame) {
+            // A signer may only attach an authentication trailer. It cannot
+            // retarget/resequence/re-trim or otherwise rewrite the command.
+            if (message.magic != MAVLINK_STX || message.incompat_flags != 0
+                || signedFrame.size() != frame.size() + MAVLINK_SIGNATURE_BLOCK_LEN
+                || signedFrame.left(2) != frame.left(2)
+                || quint8(signedFrame[2]) != MAVLINK_IFLAG_SIGNED
+                || signedFrame.mid(3, frame.size() - 5) != frame.mid(3, frame.size() - 5))
+                return SendResult::SigningUnavailable;
+            const auto *bytes = reinterpret_cast<const uint8_t *>(signedFrame.constData());
+            quint16 crc = crc_calculate(bytes + 1, frame.size() - 3);
+            crc_accumulate(entry->crc_extra, &crc);
+            if (bytes[frame.size() - 2] != (crc & 255)
+                || bytes[frame.size() - 1] != (crc >> 8)) return SendResult::SigningUnavailable;
+            message.incompat_flags = MAVLINK_IFLAG_SIGNED;
+            message.checksum = crc;
+            message.ck[0] = crc & 255;
+            message.ck[1] = crc >> 8;
+            std::memcpy(message.signature, bytes + frame.size(), MAVLINK_SIGNATURE_BLOCK_LEN);
+        } else if (m_signingRequired.value(linkId, false)) {
+            return SendResult::SigningUnavailable;
+        }
+        frame = std::move(signedFrame);
+    } else if (m_signingRequired.value(linkId, false)) {
+        return SendResult::SigningUnavailable;
+    }
     if (frameWriterInvoked) {
         *frameWriterInvoked = true;
     }
-    const quint64 submittedEpoch = m_linkSessionEpochs.value(linkId, 0);
     // The writer is allowed to synchronously tear down this transmitter as
     // part of link removal. Keep its callable alive independently of `this`
     // and guard every access after the callback returns.
     const FrameWriter frameWriter = m_frameWriter;
-    const QPointer<ExactLinkTransmitter> guardedThis(this);
-    if (!frameWriter(
-            linkId,
-            QByteArray(reinterpret_cast<const char *>(buffer), frameLength))) {
+    if (!frameWriter(linkId, frame)) {
         return SendResult::TransportUnavailable;
     }
-    if (submittedEpoch != 0 && guardedThis
+    if (message.msgid != MAVLINK_MSG_ID_SETUP_SIGNING
+        && submittedEpoch != 0 && guardedThis
         && guardedThis->m_linkSessionEpochs.value(linkId, 0)
             == submittedEpoch) {
         emit guardedThis->messageSubmitted(
@@ -123,7 +157,8 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendCommandAck(
 void ExactLinkTransmitter::setOutboundVersion(
     int linkId, unsigned int version)
 {
-    if (linkId < 0 || (version != 1U && version != 2U)) {
+    if (linkId < 0 || (version != 1U && version != 2U)
+        || (version == 1U && m_signingRequired.value(linkId, false))) {
         return;
     }
     mavlink_status_t &status = transmitStatus(linkId);
@@ -132,6 +167,23 @@ void ExactLinkTransmitter::setOutboundVersion(
     } else {
         status.flags &= ~MAVLINK_STATUS_FLAG_OUT_MAVLINK1;
     }
+}
+
+void ExactLinkTransmitter::setSigningRequired(int linkId, bool required)
+{
+    if (linkId < 0) return;
+    if (required) {
+        m_signingRequired.insert(linkId, true);
+        setOutboundVersion(linkId, 2);
+    } else {
+        m_signingRequired.remove(linkId);
+    }
+}
+
+void ExactLinkTransmitter::setFrameSigner(FrameSigner signer)
+{
+    m_frameSigner = std::move(signer);
+    ++m_signerRevision;
 }
 
 unsigned int ExactLinkTransmitter::outboundVersion(int linkId) const

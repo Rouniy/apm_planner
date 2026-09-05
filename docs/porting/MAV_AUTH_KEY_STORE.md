@@ -3,7 +3,9 @@
 `MavAuthKeyStore` is a standalone, thread-confined encrypted key repository.
 It does **not** enable MAVLink signing, transmit SETUP_SIGNING, choose a vehicle,
 alter the parser/transmitter or make the Advanced Tools Signing button usable.
-Production transport/signature verification, explicit key selection and the
+Production transport/signature verification now uses an application-owned
+manager described in `MAVLINK_SIGNING_PORT.md`; this vault is not yet its UI
+key provider. Explicit selection, persisted fail-closed protection and the
 operator-facing Signing workflow remain separate integration requirements.
 
 Reference inspected: MP10 `ExtLibs/ArduPilot/Mavlink/MAVAuthKeys.cs` and

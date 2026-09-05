@@ -247,9 +247,12 @@ void TLogReplayLink::run()
             {
                 nexttime = true;
                 //Good decode
-                if (message.sysid == QGC::MavlinkID())
+                if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING
+                    || message.sysid == QGC::MavlinkID())
                 {
-                    //GCS packet, ignore it
+                    // Ignore our GCS packets and every signing-key packet, including
+                    // foreign senders, before UAS, decoder, and inspector fanout.
+                    // Keep nexttime set so the following record remains aligned.
                 }
                 else
                 {

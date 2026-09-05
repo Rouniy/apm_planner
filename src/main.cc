@@ -46,6 +46,7 @@ This file is part of the QGROUNDCONTROL project
 
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
 #include "SetupRouteRuntimeAudit.h"
+#include "SigningTransportRuntimeAudit.h"
 
 #include <QSettings>
 #include <QStandardPaths>
@@ -131,15 +132,19 @@ int main(int argc, char *argv[])
 {
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
     bool setupRouteAuditRequested = false;
+    bool signingTransportAuditRequested = false;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--setup-route-audit") == 0) {
             setupRouteAuditRequested = true;
-            break;
         }
+        if (std::strcmp(argv[index], "--signing-transport-audit") == 0)
+            signingTransportAuditRequested = true;
     }
 
-    std::unique_ptr<QTemporaryDir> setupRouteAuditSettings;
-    if (setupRouteAuditRequested) {
+    // Construct before application singletons so their static destructors
+    // release signing/file locks before the isolated directory is removed.
+    static std::unique_ptr<QTemporaryDir> setupRouteAuditSettings;
+    if (setupRouteAuditRequested || signingTransportAuditRequested) {
         // The audit constructs production pages but must not observe or mutate
         // the operator's settings and writable application-data directories.
         QStandardPaths::setTestModeEnabled(true);
@@ -151,6 +156,9 @@ int main(int argc, char *argv[])
         }
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                            setupRouteAuditSettings->path());
+        if (signingTransportAuditRequested) {
+            qputenv("APM_PLANNER_HOME", setupRouteAuditSettings->path().toUtf8());
+        }
     }
 #endif
 
@@ -177,6 +185,7 @@ int main(int argc, char *argv[])
     QGCCore core(argc, argv);
 
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
+    if (signingTransportAuditRequested) return RunSigningTransportRuntimeAudit();
     if (setupRouteAuditRequested) {
         return RunSetupRouteRuntimeAudit();
     }

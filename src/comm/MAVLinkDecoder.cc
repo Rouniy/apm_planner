@@ -154,6 +154,11 @@ void MAVLinkDecoder::decodeMessage(const mavlink_message_t &message)
 
 void MAVLinkDecoder::receiveMessage(LinkInterface* link, mavlink_message_t message)
 {
+    // Offline log parsers can enter here without the live protocol's secrecy gate.
+    // A signing key is never a telemetry value, regardless of sender identity.
+    if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING)
+        return;
+
     Q_UNUSED(link);
     const auto p_messageInfo = messageInfo.find(message.msgid);
     if(p_messageInfo == messageInfo.end())
@@ -250,6 +255,10 @@ void MAVLinkDecoder::receiveMessage(LinkInterface* link, mavlink_message_t messa
 
 void MAVLinkDecoder::emitFieldValue(mavlink_message_t* msg, int fieldid, quint64 time)
 {
+    // This is also a public slot: do not rely solely on receiveMessage's gate.
+    if (!msg || msg->msgid == MAVLINK_MSG_ID_SETUP_SIGNING)
+        return;
+
     // check if we have data about the message format
     quint32 msgid = msg->msgid;
     const auto p_messageInfo = messageInfo.find(msgid);

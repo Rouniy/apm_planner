@@ -55,12 +55,15 @@ MAVLink Signing and upstream-placeholder Support Proxy remain unavailable.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
 
-Signing now has a tested standalone AES-GCM/PBKDF2 vault, persistent timestamp
-allocator and exact-byte signing/verification library, but no production
-settings consumer, default vault/clock path or active key-domain manager yet.
-No new QSettings key is counted. The master passphrase is never persisted;
-OpenSSL Crypto is a required build dependency. Live transport and the modeless
-Add/Use/Delete/Disable workflow remain gates in `MAVLINK_SIGNING_PORT.md`.
+Signing now has a tested AES-GCM/PBKDF2 vault and a production key-domain manager
+binding exact/legacy TX and authenticated RX. Internal offline configuration
+creates `mavlink-signing/signing-clock.state` and `signing-link-ids.state` under
+the writable application data directory; ordinary unprotected connections do not.
+These hold timestamp reservations and stable profile IDs, never signing secrets.
+No new QSettings key is counted. Persisted protected-profile/key-selection policy,
+the default vault path, off-thread unlock and modeless Add/Use/Delete/Disable
+workflow remain gates in `MAVLINK_SIGNING_PORT.md`. The master passphrase is never
+persisted; OpenSSL Crypto remains a required build dependency.
 
 Warning Manager persists compatible `warnings.xml` under the writable application
 data directory and shares `speechenable` / `speech_armed_only` with Planner.

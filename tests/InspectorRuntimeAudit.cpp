@@ -525,13 +525,23 @@ int RunInspectorRuntimeAudit()
             if (submissionBaseline < submittedMessages.size()) {
                 const SubmittedMessage &submitted =
                     submittedMessages.at(submissionBaseline);
+                mavlink_message_t written{};
+                const QByteArray writtenFrame =
+                    writeBaseline < firstLink->writes().size()
+                    ? firstLink->writes().at(writeBaseline)
+                    : QByteArray();
+                const bool decoded =
+                    decodeFrame(writtenFrame, &written);
                 result.expect(
                     submitted.linkId == FirstAuditLinkId
                         && submitted.epoch == firstEpoch
-                        && submitted.message.sysid == typed.sysid
-                        && submitted.message.compid == typed.compid
-                        && submitted.message.checksum == typed.checksum,
-                    QStringLiteral("typed MAVLink event did not preserve the frame"));
+                        && decoded
+                        && written.msgid == typed.msgid
+                        && written.sysid == typed.sysid
+                        && written.compid == typed.compid
+                        && submitted.message.seq == written.seq
+                        && wireBytes(submitted.message) == writtenFrame,
+                    QStringLiteral("typed MAVLink event did not preserve the finalized wire frame"));
             }
             result.expect(temporaryInspector->packetStore().contains(
                               {212, 213,

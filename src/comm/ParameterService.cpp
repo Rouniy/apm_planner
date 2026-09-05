@@ -2644,15 +2644,17 @@ ParameterService::transmitExactOperation()
         return ExactSubmitResult::Started;
     }
     ++m_exactOperation.attempts;
-    m_exactOperation.frameAttempted = true;
+    const bool priorFrameAttempted = m_exactOperation.frameAttempted;
+    bool frameWriterInvoked = false;
     QPointer<ParameterService> guard(this);
     const ExactLinkTransmitter::SendResult sent =
         m_transmitter->sendMessage(
             operationLease.endpoint.linkId,
             m_exactOperation.localSystemId,
-            m_exactOperation.localComponentId, message);
+            m_exactOperation.localComponentId, message,
+            &frameWriterInvoked);
     if (guard.isNull()) {
-        return write
+        return write && (priorFrameAttempted || frameWriterInvoked)
             ? ExactSubmitResult::TransportOutcomeUncertain
             : ExactSubmitResult::TransportUnavailable;
     }
@@ -2662,16 +2664,27 @@ ParameterService::transmitExactOperation()
         || m_exactOperation.token.operationId != operationId) {
         return ExactSubmitResult::Started;
     }
+    m_exactOperation.frameAttempted =
+        priorFrameAttempted || frameWriterInvoked;
     if (sent != ExactLinkTransmitter::SendResult::Sent) {
-        finishExactOperation(
+        const bool rejectedBeforeTransmission =
             write
+            && sent == ExactLinkTransmitter::SendResult::SigningUnavailable
+            && !m_exactOperation.frameAttempted;
+        finishExactOperation(
+            rejectedBeforeTransmission
+                ? ExactTerminalResult::Rejected
+                : write
                 ? ExactTerminalResult::WriteTransportOutcomeUncertain
                 : ExactTerminalResult::ReadTransportFailure,
             QVariant(), ParameterType::Unknown,
-            QStringLiteral(
-                "The frame writer did not confirm exact parameter transport."),
-            write);
-        return write
+            rejectedBeforeTransmission
+                ? QStringLiteral(
+                    "Signing was unavailable; the exact parameter write was rejected before transmission.")
+                : QStringLiteral(
+                    "The frame writer did not confirm exact parameter transport."),
+            write && m_exactOperation.frameAttempted);
+        return write && !rejectedBeforeTransmission
             ? ExactSubmitResult::TransportOutcomeUncertain
             : ExactSubmitResult::TransportUnavailable;
     }

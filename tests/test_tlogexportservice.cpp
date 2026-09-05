@@ -123,6 +123,7 @@ class TlogExportServiceTest final : public QObject
 private slots:
     void formattingHelpersMatchMp10();
     void describePacketListsDialectFields();
+    void setupSigningIsRedactedForEverySender();
     void readTrackFiltersInvalidPositions();
     void extractParametersArduPilotVersusBytewise();
     void extractMissionSnapshotsOutOfOrderAndDeduplicated();
@@ -364,6 +365,85 @@ void TlogExportServiceTest::exportWritesEveryFormat()
              qPrintable(wpl));
     QVERIFY(readAll(missions.outputPaths.at(1)).contains(QStringLiteral("\t22\t"))); // MAV_CMD_NAV_TAKEOFF
     QVERIFY(missions.message.startsWith(QStringLiteral("Wrote 2 unique mission snapshot(s): ")));
+}
+
+void TlogExportServiceTest::setupSigningIsRedactedForEverySender()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray secret("0123456789ABCDEFGHIJKLMNOPQRSTUV");
+    QCOMPARE(secret.size(), 32);
+    QStringList numericBytes;
+    for (const char byte : secret)
+        numericBytes.append(QString::number(static_cast<unsigned char>(byte)));
+    const QStringList forbidden{
+        QString::fromLatin1(secret), QString::fromLatin1(secret.toHex()),
+        QString::fromLatin1(secret.toHex().toUpper()),
+        QString::fromLatin1(secret.toBase64()), numericBytes.join(QLatin1Char(',')),
+        numericBytes.join(QLatin1Char(' '))
+    };
+
+    mavlink_message_t hb = heartbeat(1);
+    QByteArray bytes = record(kBase, hb);
+    QStringList descriptions;
+    const QList<quint8> senders{1, 42, 254, 255};
+    for (const quint8 sender : senders) {
+        mavlink_message_t message{};
+        mavlink_msg_setup_signing_pack(sender, 190, &message, 7, 1,
+            reinterpret_cast<const uint8_t *>(secret.constData()), 123456789);
+        QCOMPARE(message.msgid, uint32_t(MAVLINK_MSG_ID_SETUP_SIGNING));
+        QVERIFY(frameBytes(message).contains(secret)); // the fixture really contains a key
+        const QString expected = QStringLiteral(
+            "SETUP_SIGNING,source_system=%1,source_component=190,target_system=7,"
+            "target_component=1,secret_key=[REDACTED],sensitive_payload=omitted").arg(sender);
+        QCOMPARE(TlogExportService::DescribePacket(message, QStringLiteral(",")), expected);
+        QCOMPARE(TlogExportService::DescribePacket(message, QStringLiteral(" ")),
+                 QString(expected).replace(QLatin1Char(','), QLatin1Char(' ')));
+        descriptions.append(expected);
+        bytes += record(kBase + descriptions.size() * 1000, message);
+    }
+
+    // Disabling signing uses an all-zero key and may truncate to the target fields.
+    mavlink_message_t disabled{};
+    const uint8_t emptyKey[32]{};
+    mavlink_msg_setup_signing_pack(42, 68, &disabled, 7, 1, emptyKey, 0);
+    const QString disabledDescription = QStringLiteral(
+        "SETUP_SIGNING,source_system=42,source_component=68,target_system=7,"
+        "target_component=1,secret_key=[REDACTED],sensitive_payload=omitted");
+    QCOMPARE(TlogExportService::DescribePacket(disabled, QStringLiteral(",")), disabledDescription);
+    descriptions.append(disabledDescription);
+    bytes += record(kBase + descriptions.size() * 1000, disabled);
+    bytes += record(kBase + (descriptions.size() + 1) * 1000, hb);
+    const QString input = writeLog(dir, QStringLiteral("sensitive.tlog"), bytes);
+
+    for (const TlogExportFormat format : {TlogExportFormat::Csv, TlogExportFormat::Text}) {
+        const bool csv = format == TlogExportFormat::Csv;
+        const QString output = dir.filePath(csv ? QStringLiteral("redacted.csv")
+                                                : QStringLiteral("redacted.txt"));
+        const auto result = TlogExportService::Export(format, input, output);
+        QVERIFY2(result.success, qPrintable(result.error));
+        QCOMPARE(result.itemCount, descriptions.size() + 2);
+        QCOMPARE(result.recordsRead, qint64(descriptions.size() + 2));
+        const QString content = readAll(output);
+        for (const QString &representation : forbidden)
+            QVERIFY(!content.contains(representation));
+        const QStringList lines = content.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        QCOMPARE(lines.size(), descriptions.size() + 2);
+        QVERIFY(lines.first().contains(QStringLiteral("HEARTBEAT")));
+        QVERIFY(lines.last().contains(QStringLiteral("HEARTBEAT")));
+        for (int i = 0; i < descriptions.size(); ++i) {
+            const qint64 timestamp = kBase + (i + 1) * 1000;
+            const QString prefix = csv ? TlogExportService::FormatCsvTimestamp(timestamp)
+                                       : TlogExportService::FormatIsoTimestamp(timestamp);
+            const QString description = csv ? descriptions.at(i)
+                : QString(descriptions.at(i)).replace(QLatin1Char(','), QLatin1Char(' '));
+            QCOMPARE(lines.at(i + 1), prefix + (csv ? QLatin1Char(',') : QLatin1Char(' '))
+                                          + description);
+        }
+    }
+    QFile original(input);
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), bytes); // redacted export never rewrites the original log
 }
 
 void TlogExportServiceTest::emptyResultsCancelAndFailuresCommitNothing()

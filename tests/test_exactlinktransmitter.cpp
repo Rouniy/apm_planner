@@ -5,6 +5,8 @@
 
 #include <QPointer>
 
+#include <cstring>
+
 namespace
 {
 
@@ -39,6 +41,52 @@ mavlink_message_t decodeFrame(const QByteArray &bytes)
     return message;
 }
 
+QByteArray frameBytes(const mavlink_message_t &message)
+{
+    uint8_t bytes[MAVLINK_MAX_PACKET_LEN]{};
+    const auto length = mavlink_msg_to_send_buffer(bytes, &message);
+    return QByteArray(reinterpret_cast<const char *>(bytes), length);
+}
+
+mavlink_signing_t signingFixture()
+{
+    mavlink_signing_t signing{};
+    signing.flags = MAVLINK_SIGNING_FLAG_SIGN_OUTGOING;
+    signing.link_id = 9;
+    signing.timestamp = 0x102030405060ULL;
+    std::memset(signing.secret_key, 0x5a, sizeof(signing.secret_key));
+    return signing;
+}
+
+// Sign the supplied v2 header/payload in place, without re-finalizing or changing
+// its sequence/zero-truncation. Also supports deliberate payload mutation tests.
+QByteArray attachSignature(QByteArray frame)
+{
+    if (frame.size() < MAVLINK_NUM_NON_PAYLOAD_BYTES
+        || quint8(frame[0]) != MAVLINK_STX
+        || frame.size() != quint8(frame[1]) + MAVLINK_NUM_NON_PAYLOAD_BYTES)
+        return {};
+    const quint32 messageId = quint8(frame[7]) | (quint32(quint8(frame[8])) << 8)
+        | (quint32(quint8(frame[9])) << 16);
+    const mavlink_msg_entry_t *entry = mavlink_get_msg_entry(messageId);
+    if (!entry) return {};
+    frame[2] = char(MAVLINK_IFLAG_SIGNED);
+    const auto *bytes = reinterpret_cast<const uint8_t *>(frame.constData());
+    quint16 crc = crc_calculate(bytes + 1, frame.size() - 3);
+    crc_accumulate(entry->crc_extra, &crc);
+    frame[frame.size() - 2] = char(crc & 255);
+    frame[frame.size() - 1] = char(crc >> 8);
+    bytes = reinterpret_cast<const uint8_t *>(frame.constData());
+    mavlink_signing_t signing = signingFixture();
+    uint8_t signature[MAVLINK_SIGNATURE_BLOCK_LEN]{};
+    if (mavlink_sign_packet(&signing, signature, bytes, MAVLINK_NUM_HEADER_BYTES,
+                           bytes + MAVLINK_NUM_HEADER_BYTES, quint8(frame[1]),
+                           bytes + frame.size() - 2) != MAVLINK_SIGNATURE_BLOCK_LEN)
+        return {};
+    frame.append(reinterpret_cast<const char *>(signature), sizeof(signature));
+    return frame;
+}
+
 } // namespace
 
 class ExactLinkTransmitterTest final : public QObject
@@ -56,6 +104,14 @@ private slots:
     void failedZeroAndForgottenEpochsDoNotReportSubmission();
     void reentrantEpochChangesNeverRelabelSubmission();
     void reentrantDestructionDuringWriteIsSafe();
+    void signingFailuresNeverInvokeWriter_data();
+    void signingFailuresNeverInvokeWriter();
+    void signingRequirementPinsV2AndSurvivesForget();
+    void signedSubmissionContainsActualWireSignature();
+    void setupSigningNeverPublishesKeyMaterial();
+    void reentrantSignerChangesAbortBeforeWrite_data();
+    void reentrantSignerChangesAbortBeforeWrite();
+    void reentrantSignerDestructionIsSafe();
 };
 
 void ExactLinkTransmitterTest::targetedCommandAckCapabilityTracksLinkVersion()
@@ -396,6 +452,245 @@ void ExactLinkTransmitterTest::reentrantDestructionDuringWriteIsSafe()
     QVERIFY(!transmitter);
     QVERIFY(guardedTransmitter.isNull());
     QCOMPARE(submittedCount, 0);
+}
+
+void ExactLinkTransmitterTest::signingFailuresNeverInvokeWriter_data()
+{
+    QTest::addColumn<QString>("scenario");
+    for (const char *scenario : {"no-hook", "failure", "unsigned", "empty", "truncated",
+                                 "extra-byte", "invalid-crc", "retarget", "resequence"})
+        QTest::newRow(scenario) << QString::fromLatin1(scenario);
+}
+
+void ExactLinkTransmitterTest::signingFailuresNeverInvokeWriter()
+{
+    QFETCH(QString, scenario);
+    int writes = 0;
+    int submitted = 0;
+    ExactLinkTransmitter transmitter([&writes](int, const QByteArray &) {
+        ++writes;
+        return true;
+    });
+    transmitter.setLinkSessionEpoch(11, 123);
+    transmitter.setSigningRequired(11, true);
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted, this,
+            [&submitted](int, quint64, mavlink_message_t) { ++submitted; });
+    if (scenario != QStringLiteral("no-hook")) {
+        transmitter.setFrameSigner([scenario](int, const QByteArray &frame, QByteArray *out) {
+            if (scenario == QStringLiteral("failure")) return false;
+            if (scenario == QStringLiteral("unsigned")) { *out = frame; return true; }
+            if (scenario == QStringLiteral("empty")) { out->clear(); return true; }
+            QByteArray toSign = frame;
+            if (scenario == QStringLiteral("retarget"))
+                toSign[MAVLINK_NUM_HEADER_BYTES + 30] = char(43); // COMMAND_LONG target_system
+            if (scenario == QStringLiteral("resequence"))
+                toSign[4] = char(quint8(toSign[4]) + 1);
+            *out = attachSignature(toSign);
+            if (scenario == QStringLiteral("truncated")) out->chop(1);
+            if (scenario == QStringLiteral("extra-byte")) out->append('\0');
+            if (scenario == QStringLiteral("invalid-crc"))
+                (*out)[frame.size() - 1] = char(quint8((*out)[frame.size() - 1]) ^ 1);
+            return true;
+        });
+    }
+    bool writerInvoked = true;
+    QCOMPARE(transmitter.sendMessage(11, 250, 190, commandMessage(MAV_CMD_MISSION_START),
+                                     &writerInvoked),
+             ExactLinkTransmitter::SendResult::SigningUnavailable);
+    QVERIFY(!writerInvoked);
+    QCOMPARE(writes, 0);
+    QCOMPARE(submitted, 0);
+}
+
+void ExactLinkTransmitterTest::signingRequirementPinsV2AndSurvivesForget()
+{
+    int writes = 0;
+    ExactLinkTransmitter transmitter([&writes](int, const QByteArray &) {
+        ++writes;
+        return true;
+    });
+    transmitter.setOutboundVersion(11, 1);
+    QCOMPARE(transmitter.outboundVersion(11), 1U);
+    transmitter.setSigningRequired(11, true);
+    QCOMPARE(transmitter.outboundVersion(11), 2U);
+    transmitter.setOutboundVersion(11, 1);
+    QCOMPARE(transmitter.outboundVersion(11), 2U);
+    transmitter.forgetLink(11);
+    transmitter.setOutboundVersion(11, 1);
+    QCOMPARE(transmitter.outboundVersion(11), 2U);
+    bool invoked = true;
+    QCOMPARE(transmitter.sendMessage(11, 250, 190, commandMessage(MAV_CMD_MISSION_START), &invoked),
+             ExactLinkTransmitter::SendResult::SigningUnavailable);
+    QVERIFY(!invoked);
+    QCOMPARE(writes, 0);
+
+    // The policy is link-local; explicitly clearing it is required to permit v1.
+    transmitter.setOutboundVersion(12, 1);
+    QCOMPARE(transmitter.outboundVersion(12), 1U);
+    transmitter.setSigningRequired(11, false);
+    transmitter.setOutboundVersion(11, 1);
+    QCOMPARE(transmitter.outboundVersion(11), 1U);
+    QCOMPARE(transmitter.sendMessage(11, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(writes, 1);
+}
+
+void ExactLinkTransmitterTest::signedSubmissionContainsActualWireSignature()
+{
+    QByteArray written;
+    QByteArray unsignedFrame;
+    QStringList order;
+    ExactLinkTransmitter transmitter([&](int linkId, const QByteArray &frame) {
+        if (linkId != 11) return false;
+        order.append(QStringLiteral("writer"));
+        written = frame;
+        return true;
+    });
+    transmitter.setLinkSessionEpoch(11, 456);
+    transmitter.setSigningRequired(11, true);
+    transmitter.setFrameSigner([&](int linkId, const QByteArray &frame, QByteArray *out) {
+        if (linkId != 11) return false;
+        order.append(QStringLiteral("signer"));
+        unsignedFrame = frame;
+        *out = attachSignature(frame);
+        return !out->isEmpty();
+    });
+    int submitted = 0;
+    mavlink_message_t published{};
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted, this,
+            [&](int linkId, quint64 epoch, mavlink_message_t message) {
+                QCOMPARE(linkId, 11);
+                QCOMPARE(epoch, quint64(456));
+                order.append(QStringLiteral("published"));
+                ++submitted;
+                published = message;
+            });
+    bool invoked = false;
+    QCOMPARE(transmitter.sendMessage(11, 91, 192, commandMessage(MAV_CMD_MISSION_START), &invoked),
+             ExactLinkTransmitter::SendResult::Sent);
+    QVERIFY(invoked);
+    QCOMPARE(submitted, 1);
+    QCOMPARE(order, (QStringList{QStringLiteral("signer"), QStringLiteral("writer"),
+                                 QStringLiteral("published")}));
+    QCOMPARE(written.size(), unsignedFrame.size() + MAVLINK_SIGNATURE_BLOCK_LEN);
+    QCOMPARE(written, attachSignature(unsignedFrame));
+    QCOMPARE(published.incompat_flags, quint8(MAVLINK_IFLAG_SIGNED));
+    QCOMPARE(published.sysid, quint8(91));
+    QCOMPARE(published.compid, quint8(192));
+    QCOMPARE(published.seq, quint8(0));
+    QCOMPARE(frameBytes(published), written);
+    QCOMPARE(QByteArray(reinterpret_cast<const char *>(published.signature),
+                        MAVLINK_SIGNATURE_BLOCK_LEN), written.right(MAVLINK_SIGNATURE_BLOCK_LEN));
+    const mavlink_message_t decoded = decodeFrame(written);
+    QCOMPARE(frameBytes(decoded), written);
+    mavlink_signing_t signing = signingFixture();
+    mavlink_signing_streams_t streams{};
+    QVERIFY(mavlink_signature_check(&signing, &streams, &published));
+}
+
+void ExactLinkTransmitterTest::setupSigningNeverPublishesKeyMaterial()
+{
+    QVector<CapturedFrame> frames;
+    ExactLinkTransmitter transmitter([&frames](int linkId, const QByteArray &frame) {
+        frames.append({linkId, frame});
+        return true;
+    });
+    transmitter.setLinkSessionEpoch(11, 456);
+    int submitted = 0;
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted, this,
+            [&submitted](int, quint64, mavlink_message_t) { ++submitted; });
+    uint8_t secret[32];
+    std::memset(secret, 0x5a, sizeof(secret));
+    mavlink_message_t setup{};
+    mavlink_msg_setup_signing_pack(250, 190, &setup, 42, 1, secret, 123456789);
+    for (const bool signedOutput : {false, true}) {
+        if (signedOutput) {
+            transmitter.setSigningRequired(11, true);
+            transmitter.setFrameSigner([](int, const QByteArray &frame, QByteArray *out) {
+                *out = attachSignature(frame);
+                return !out->isEmpty();
+            });
+        }
+        bool invoked = false;
+        QCOMPARE(transmitter.sendMessage(11, 250, 190, setup, &invoked),
+                 ExactLinkTransmitter::SendResult::Sent);
+        QVERIFY(invoked);
+        const mavlink_message_t decoded = decodeFrame(frames.constLast().bytes);
+        QCOMPARE(decoded.msgid, quint32(MAVLINK_MSG_ID_SETUP_SIGNING));
+        QCOMPARE(decoded.incompat_flags, quint8(signedOutput ? MAVLINK_IFLAG_SIGNED : 0));
+        mavlink_setup_signing_t payload{};
+        mavlink_msg_setup_signing_decode(&decoded, &payload);
+        QCOMPARE(QByteArray(reinterpret_cast<const char *>(payload.secret_key), 32),
+                 QByteArray(reinterpret_cast<const char *>(secret), 32));
+        QCOMPARE(submitted, 0);
+    }
+    QCOMPARE(frames.size(), 2);
+}
+
+void ExactLinkTransmitterTest::reentrantSignerChangesAbortBeforeWrite_data()
+{
+    QTest::addColumn<bool>("replaceSigner");
+    QTest::newRow("forgotten-epoch") << false;
+    QTest::newRow("replaced-signer") << true;
+}
+
+void ExactLinkTransmitterTest::reentrantSignerChangesAbortBeforeWrite()
+{
+    QFETCH(bool, replaceSigner);
+    int writes = 0;
+    int submitted = 0;
+    ExactLinkTransmitter transmitter([&writes](int, const QByteArray &) {
+        ++writes;
+        return true;
+    });
+    transmitter.setLinkSessionEpoch(11, 456);
+    transmitter.setSigningRequired(11, true);
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted, this,
+            [&submitted](int, quint64, mavlink_message_t) { ++submitted; });
+    transmitter.setFrameSigner([&](int linkId, const QByteArray &frame, QByteArray *out) {
+        *out = attachSignature(frame);
+        if (replaceSigner)
+            transmitter.setFrameSigner([](int, const QByteArray &, QByteArray *) { return false; });
+        else
+            transmitter.forgetLink(linkId);
+        return true;
+    });
+    bool invoked = true;
+    QCOMPARE(transmitter.sendMessage(11, 250, 190, commandMessage(MAV_CMD_MISSION_START), &invoked),
+             ExactLinkTransmitter::SendResult::SigningUnavailable);
+    QVERIFY(!invoked);
+    QCOMPARE(writes, 0);
+    QCOMPARE(submitted, 0);
+}
+
+void ExactLinkTransmitterTest::reentrantSignerDestructionIsSafe()
+{
+    int writes = 0;
+    int submitted = 0;
+    auto *transmitter = new ExactLinkTransmitter([&writes](int, const QByteArray &) {
+        ++writes;
+        return true;
+    });
+    QPointer<ExactLinkTransmitter> guarded = transmitter;
+    transmitter->setLinkSessionEpoch(11, 456);
+    transmitter->setSigningRequired(11, true);
+    connect(transmitter, &ExactLinkTransmitter::messageSubmitted, this,
+            [&submitted](int, quint64, mavlink_message_t) { ++submitted; });
+    transmitter->setFrameSigner([&](int, const QByteArray &frame, QByteArray *out) {
+        *out = attachSignature(frame);
+        delete transmitter;
+        transmitter = nullptr;
+        return true;
+    });
+    bool invoked = true;
+    const auto result = transmitter->sendMessage(
+        11, 250, 190, commandMessage(MAV_CMD_MISSION_START), &invoked);
+    QCOMPARE(result, ExactLinkTransmitter::SendResult::SigningUnavailable);
+    QVERIFY(guarded.isNull());
+    QVERIFY(!transmitter);
+    QVERIFY(!invoked);
+    QCOMPARE(writes, 0);
+    QCOMPARE(submitted, 0);
 }
 
 QTEST_APPLESS_MAIN(ExactLinkTransmitterTest)

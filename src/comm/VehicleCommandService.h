@@ -125,7 +125,8 @@ public:
         TimedOutOutcomeUncertain,
         TransportOutcomeUncertain,
         LeaseRetiredOutcomeUncertain,
-        LinkForgottenOutcomeUncertain
+        LinkForgottenOutcomeUncertain,
+        RejectedBeforeTransmission
     };
     Q_ENUM(ExactTerminalResult)
 
@@ -139,8 +140,8 @@ public:
         int resultParam2 = 0;
         int acknowledgementTargetSystem = 0;
         int acknowledgementTargetComponent = 0;
-        // The shared transmitter was invoked; this is not proof that the
-        // underlying socket accepted any bytes.
+        // The shared transmitter reached its frame writer; this is not proof
+        // that the underlying socket accepted any bytes.
         bool frameAttempted = false;
         bool ownerDetached = false;
         QString description;

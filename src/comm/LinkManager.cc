@@ -31,6 +31,7 @@ This file is part of the APM_PLANNER project
 
 #include "LinkManagerFactory.h"
 #include "LinkManager.h"
+#include "AppPaths.h"
 #include "RadioStatusMonitor.h"
 #include "SwarmCommandService.h"
 #include "SwarmTelemetryRegistry.h"
@@ -67,6 +68,8 @@ This file is part of the APM_PLANNER project
 #include <QtSerialPort/qserialportinfo.h>
 #include <QTimer>
 #include <QDateTime>
+#include <QDir>
+#include <QThread>
 
 namespace
 {
@@ -120,29 +123,33 @@ LinkManager::LinkManager(QObject *parent) :
     QObject(parent),
     m_mavlinkLoggingEnabled(true)
 {
+    m_signingManager = std::make_unique<MAVLinkSigningManager>(
+        QDir(AppPaths::writableDataDirectory()).filePath(QStringLiteral("mavlink-signing")));
     m_vehicleTargetManager = new VehicleTargetManager(this);
     m_swarmTelemetryRegistry = new SwarmTelemetryRegistry(this);
     connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionEnded,
             this, [this](int id, qulonglong epoch) {
+        m_signingManager->endEpoch(id, epoch);
         m_exactLinkTransmitter->setLinkSessionEpoch(id, 0);
         emit physicalLinkSessionEnded(id, epoch);
     });
     m_radioStatusMonitor = new RadioStatusMonitor(this);
     m_exactLinkTransmitter = new ExactLinkTransmitter(
         [this](int linkId, const QByteArray &frame) {
-            return writeRawBytes(linkId, frame);
+            return writeSequencedFrame(linkId, frame);
         }, this);
+    m_exactLinkTransmitter->setFrameSigner(
+        [this](int linkId, const QByteArray &frame, QByteArray *output) {
+            return !m_shuttingDown && m_signingManager->signFrame(
+                linkId, currentPhysicalLinkSession(linkId), frame,
+                QDateTime::currentMSecsSinceEpoch(), output);
+        });
     connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionBegan,
             this, [this](int id, qulonglong epoch) {
+        m_signingManager->beginEpoch(id, epoch);
+        m_exactLinkTransmitter->setSigningRequired(id, m_signingManager->protectedLink(id));
         m_exactLinkTransmitter->setLinkSessionEpoch(id, epoch);
         emit physicalLinkSessionBegan(id, epoch);
-    });
-    connect(m_exactLinkTransmitter, &ExactLinkTransmitter::messageSubmitted,
-            this, [this](int id, quint64 epoch, mavlink_message_t message) {
-        if (!m_shuttingDown && epoch != 0
-            && currentPhysicalLinkSession(id) == epoch) {
-            emit mavlinkMessageSubmitted(id, epoch, message);
-        }
     });
     m_exactLogTransferService = new ExactLogTransferService(
         m_swarmTelemetryRegistry, m_exactLinkTransmitter,
@@ -1079,6 +1086,15 @@ void LinkManager::receiveUdpDatagram(UDPLink *link, const QByteArray &bytes,
 
 bool LinkManager::writeRawBytes(int linkId, const QByteArray &bytes)
 {
+    if (QThread::currentThread() != thread() || m_shuttingDown
+        || !m_signingManager->rawWritesAllowed(linkId)) return false;
+    return writeBytesToTransport(linkId, bytes);
+}
+
+bool LinkManager::writeBytesToTransport(int linkId, const QByteArray &bytes)
+{
+    if (QThread::currentThread() != thread() || m_shuttingDown) return false;
+    const QPointer<LinkManager> self(this);
     QPointer<LinkInterface> link(m_connectionMap.value(linkId, nullptr));
     if (!link || !link->isConnected() || bytes.isEmpty()) {
         return false;
@@ -1090,28 +1106,81 @@ bool LinkManager::writeRawBytes(int linkId, const QByteArray &bytes)
     } else {
         link->writeBytes(bytes.constData(), bytes.size());
     }
-    return link && m_connectionMap.value(linkId, nullptr) == link
+    return self && link && m_connectionMap.value(linkId, nullptr) == link
         && link->isConnected() && isCurrentPhysicalIngress(link);
+}
+
+bool LinkManager::writeSequencedFrame(int linkId, const QByteArray &frame)
+{
+    if (QThread::currentThread() != thread() || m_shuttingDown) return false;
+    const QPointer<LinkManager> self(this);
+    const QPointer<LinkInterface> link(getLink(linkId));
+    const quint64 epoch = currentPhysicalLinkSession(linkId);
+    if (!link || !link->isConnected() || epoch == 0 || !isCurrentPhysicalIngress(link)) return false;
+    const QByteArray &output = frame; // already signed once, before the writer callback
+    // Decode only our freshly finalized bytes for the post-write observer.
+    // Live authentication always consumes the original ingress bytes instead.
+    MAVLinkFrameParser parser;
+    mavlink_message_t message{};
+    unsigned state = MAVLINK_FRAMING_INCOMPLETE;
+    for (const char byte : output) state = parser.parseByte(quint8(byte), &message);
+    if (state != MAVLINK_FRAMING_OK) return false;
+    const bool submitted = writeBytesToTransport(linkId, output);
+    if (submitted && self && link && !m_shuttingDown
+        && getLink(linkId) == link && currentPhysicalLinkSession(linkId) == epoch
+        && message.msgid != MAVLINK_MSG_ID_SETUP_SIGNING) {
+        emit mavlinkMessageSubmitted(linkId, epoch, message);
+    }
+    return submitted;
 }
 
 bool LinkManager::writeMavlinkMessage(
     LinkInterface *physicalLink, mavlink_message_t message)
 {
-    if (!physicalLink) return false;
+    if (QThread::currentThread() != thread() || m_shuttingDown || !physicalLink) return false;
     const int id = physicalLink->getId();
     if (getLink(id) != physicalLink) return false;
-    const QPointer<LinkInterface> guardedLink(physicalLink);
-    const quint64 epoch = currentPhysicalLinkSession(id);
-    quint8 buffer[MAVLINK_MAX_PACKET_LEN]{};
-    const quint16 length = mavlink_msg_to_send_buffer(buffer, &message);
-    const bool submitted = writeRawBytes(id, QByteArray(
-        reinterpret_cast<const char *>(buffer), length));
-    if (submitted && !m_shuttingDown && guardedLink
-        && getLink(id) == guardedLink && epoch != 0
-        && currentPhysicalLinkSession(id) == epoch) {
-        emit mavlinkMessageSubmitted(id, epoch, message);
+    return m_exactLinkTransmitter->sendMessage(id, message.sysid, message.compid, message)
+        == ExactLinkTransmitter::SendResult::Sent;
+}
+
+const MAVLinkSigningManager *LinkManager::signingManager() const
+{
+    return m_signingManager.get();
+}
+
+bool LinkManager::configureSigning(int linkId, const QString &connectionProfileId,
+                                   const QString &keyName, const QByteArray &key,
+                                   QString *error)
+{
+    if (error) error->clear();
+    if (QThread::currentThread() != thread()) {
+        if (error) *error = tr("Signing configuration belongs to the link manager thread.");
+        return false;
     }
-    return submitted;
+    LinkInterface *link = getLink(linkId);
+    if (m_shuttingDown || !link || link->isConnected()
+        || currentPhysicalLinkSession(linkId) != 0) {
+        if (error) *error = tr("Disconnect the physical link before selecting its signing key.");
+        return false;
+    }
+    const QString directory = QDir(AppPaths::writableDataDirectory())
+        .filePath(QStringLiteral("mavlink-signing"));
+    if (!AppPaths::ensureDirectory(directory)) {
+        if (error) *error = tr("Cannot create the private signing-state directory.");
+        return false;
+    }
+    if (!m_signingManager->protectLink(linkId, connectionProfileId, keyName, key,
+                                      QDateTime::currentMSecsSinceEpoch(), error)) return false;
+    m_exactLinkTransmitter->setSigningRequired(linkId, true);
+    return true;
+}
+
+MAVLinkSigningManager::Verification LinkManager::verifyIncomingFrame(
+    int linkId, quint64 epoch, const QByteArray &frame)
+{
+    return m_signingManager->verifyFrame(linkId, epoch, frame,
+                                         QDateTime::currentMSecsSinceEpoch());
 }
 
 bool LinkManager::isUdpPortInUse(quint16 port) const
@@ -1147,6 +1216,8 @@ void LinkManager::removeLink(int linkId)
     // shutting down. Deleting a still-running QThread is undefined and was a
     // second shutdown-crash path when a connection was removed at runtime.
     m_connectionMap.remove(linkId);
+    m_signingManager->removeLink(linkId);
+    m_exactLinkTransmitter->setSigningRequired(linkId, false);
     m_udpIngressRevision.remove(linkId);
     m_startupUdpLinkIds.remove(linkId);
     if (m_mavlinkProtocol) {

@@ -1,10 +1,11 @@
-# MAVLink Signing — protocol and key-store foundation
+# MAVLink Signing — transport and key-store foundations
 
 This is **not an enabled vehicle-signing tool yet**. Advanced Tools remains
-14/16. The standalone `apm_mavlink_signing` library is compiled and tested;
-the production transport does not yet bind it. Never infer authenticated live
-telemetry from the presence of a MAVLink signature before the integration gates
-below are complete. Bootloader Ed25519 signing is a different workflow.
+14/16. Production transport now binds `apm_mavlink_signing`, but only an internal
+offline `LinkManager::configureSigning` API selects a key for an already
+provisioned vehicle. There is no operator UI or persisted protected-profile
+policy yet. Ordinary links are still unprotected: a signature's presence alone
+does not imply authentication. Bootloader Ed25519 signing is a different workflow.
 
 ## Reference and deliberate corrections
 
@@ -28,8 +29,8 @@ the stream table across channels, and reconnect must not rehabilitate a replay.
 
 `MAVLinkSigningSession` is thread-confined and noncopyable. It holds one
 zeroized-on-destruction key, a shared persistent clock and a bounded 256-entry
-receive table. The future manager must coalesce identical secrets even when
-stored under different friendly names and retain the context across link
+receive table. The application-owned manager coalesces identical secrets even
+when stored under different friendly names and retains the context across link
 disconnects. Physical link IDs are not part of the replay key: the signed
 stream is `(source system, source component, signature link ID)`.
 
@@ -46,7 +47,7 @@ stream is `(source system, source component, signature link ID)`.
   invalid frame/MAC, capacity and unavailable clock.
 - Unsigned RADIO_STATUS/RADIO are classified separately from authenticated
   traffic. Incorrectly signed radio packets are rejected. Production integration
-  must deliver the unsigned exception to radio diagnostics only, never treat it
+  delivers the unsigned exception to radio diagnostics only, never treating it
   as an authenticated vehicle or use it to negotiate a MAVLink 1 downgrade.
 - Existing streams require a strictly increasing timestamp; new streams allow
   the mavgen one-minute window, inclusive at 6,000,000 ticks. Full capacity
@@ -85,40 +86,82 @@ bytes, with verification configured and unconfigured. This fix is active in
 existing users of the application-owned frame parser; direct uses of generated
 global-channel parsing, including legacy replay, remain separate audit scope.
 
+## Production transport integration
+
+`LinkManager` owns one thread-confined `MAVLinkSigningManager`. A protected
+binding may be configured only while the registered physical link is offline;
+replacement policies are refused. Epoch activation precedes queued ingress,
+and disconnect invalidates writes without forgetting protection or replay state.
+Removal is offline-only. Identical-key aliases share one context across every
+physical link and reconnect. At most 256 distinct key contexts are retained for
+the process lifetime; new keys fail at capacity, existing keys remain usable.
+No eviction is permitted because it would rehabilitate old replay packets.
+
+One stable 0..255 signature link ID is allocated per connection-profile identity
+under `<writable application data>/mavlink-signing/`. The owner-only versioned
+`signing-link-ids.state` registry has bounded parsing, an integrity digest,
+revision checks and atomic publication; its writer shares the lifetime lease of
+`signing-clock.state`. Neither file stores a signing secret or friendly key name.
+Ordinary unprotected connections create neither file. New profiles fail once
+all 256 IDs are allocated; existing profiles continue to work. IDs are not
+recycled. Renaming an identity consumes a new ID and can consume another stream
+on a vehicle with a smaller receive-table limit (16 in the inspected firmware).
+Do not delete clock state to recover capacity: that loses the reserved timestamp
+floor. There is no supported registry-reset/migration UI yet. A failed first
+binding may still reserve clock capacity while acquiring the shared writer lease;
+this skips timestamps safely and does not publish a link policy.
+
+The exact transmitter finalizes each link's sequence/version before its sole
+pre-writer signing hook. Only the SIGNED flag, CRC and trailer may change; malformed,
+missing, stale or failing signing never invokes the writer (`SigningUnavailable`).
+First-attempt command/parameter failure is therefore certain non-transmission,
+not a spurious uncertain-write quarantine. Earlier possible transmissions still
+retain their uncertainty. Observer messages contain the actual finalized wire
+signature, not the caller's staging checksum. Legacy `writeMavlinkMessage` uses
+this same sequencer; COMM_0 is always v2 payload staging so another v1 link cannot
+truncate extensions before a protected v2 send. Each destination still negotiates
+its own version, while protection pins v2. Public raw writes, including Mirror
+write-back, are refused on protected links and before a physical epoch exists;
+the private typed writer is the only protected path.
+
+`MAVLinkFrameParser::lastFrame()` captures bounded original wire bytes.
+Production ingress verifies those bytes before version negotiation, discovery,
+packet signals, parameter/command consumers, normal TLOGs or mirror forwarding.
+Rejected traffic cannot trigger the non-MAVLink reset heuristic on protected
+links. Unsigned radio diagnostics reach only `RadioStatusMonitor`, never vehicle
+discovery or a v1 downgrade. Accepted logging/mirroring uses original bytes.
+
+SETUP_SIGNING is excluded from TX/RX public observations and live logs/mirror;
+decoder and offline replay also suppress it. CSV/text export retains a redacted
+metadata row without raw/hex/decoded secret bytes. TCP/UDP debug traces expose
+endpoint/direction/length only. There is not yet a redacted Inspector event for
+provisioning. Existing binary logs are not rewritten, and coordinate-only Anon
+Log is not a secret sanitizer: historical SETUP_SIGNING records can remain in
+original/anonymized TLOG files. Offline replay never authenticates traffic or
+mutates the live signing clock; explicit unverified-signature UI remains a gap.
+
 ## Required next integration gates
 
-1. Add an application-owned key-domain manager: identical-key aliases share
-   one replay context, stable 0..255 signing IDs persist with connection identity,
-   physical epoch changes invalidate bindings but never clear replay history.
-   Locking/deleting a vault key cannot silently turn a protected link unsigned.
-   RX history is currently RAM-only: process restart admits the usual one-minute
-   new-stream replay window (characterized by a test). Persistent RX high-water
-   or a documented release policy remains to be chosen before claiming stronger
-   restart protection. Do not discard contexts on ordinary dialog close/reopen.
-2. Route legacy `LinkManager::writeMavlinkMessage` through the same sequencer as
-   exact services. Bind signing to the internal frame writer exactly once;
-   block public raw/mirror write-back on protected links. Audit bootloader and
-   other non-MAVLink raw consumers rather than silently signing arbitrary bytes.
-   Reject v1 negotiation while protected. SETUP_SIGNING contains a secret and
-   must never enter general logs, inspector signals or mirror streams.
-3. Authenticate original ingress bytes before packetReceived, vehicle discovery,
-   parameter/command consumers, normal TLOG logging and mirror fan-out. Preserve
-   exact bytes for CRC/MAC checks, not reconstructed payloads. Queued epochs and
-   callbacks must not cross rekey/physical disconnect. Offline replay must not
-   mutate live clocks or receive history and must disclose unverified signatures.
-4. Add the modeless native key manager and exact-target provisioning service.
+1. Persist protected-profile/key-selection policy and restore it fail-closed
+   before connection, including locked/missing/corrupt vault states. The current
+   internal binding is process-local and must not be advertised as a complete
+   operator security configuration. Locking/deleting a vault key must not silently
+   turn a protected link unsigned. RX history is RAM-only: process restart admits
+   the one-minute new-stream replay window characterized by tests. Persistent RX
+   high-water or a documented release policy remains before stronger claims.
+2. Add the modeless native key manager and exact-target provisioning service.
    Unlock/KDF operations belong off the GUI thread. Separate local key selection
    for an already signed vehicle from sending a new key over a user-confirmed
    trusted channel. Add/Use/Delete/Disable/Close, counts, current-key status and
    explicit locked/corrupt/unknown-key states are required. Lost master password
    has no recovery; never imply that signing encrypts telemetry or provisioning.
-5. Provision only on a fresh exact disarmed target with default-Cancel warning;
+3. Provision only on a fresh exact disarmed target with default-Cancel warning;
    SETUP_SIGNING has no ACK. Model uncertain/timeout outcomes truthfully, preserve
    the usable key until verified transition, and never claim success merely
    because bytes were queued. Key changes/disable need an explicit reviewed
    transition, not an unsigned fallback or destructive blind retry.
-6. Prove every outbound funnel and rejected-ingress fan-out, reconnect and
-   alias behavior with production tests. Exercise enable/use/change/disable on
+4. Keep production outbound/fan-out/reconnect/alias regression coverage green.
+   Exercise enable/use/change/disable on
    a non-COMM_0 SITL channel (ArduPilot accepts unsigned USB traffic), then real
    X11 modeless dialog/lifecycle and native Windows/macOS packaging/crypto tests.
    Only then increase the working Advanced action count.
@@ -126,7 +169,36 @@ global-channel parsing, including legacy replay, remain separate audit scope.
 The broader port objective remains unchanged: full functionality first,
 recognizable MP10 visuals afterwards, Settings/CONFIG next and Swarm last.
 
-## Verified checkpoint, 2026-09-05
+## Transport checkpoint, 2026-09-05
+
+Qt5/audio/OpenSSL configure and full build exit 0. Final full suite passes
+**234/234 in 56.41 seconds**. New manager and actual production-transport tests
+cover same-key aliases, cross-link and reconnect replays, stable IDs, bounds,
+failed signing before writer invocation, exact signed observer bytes and ingress
+suppression. Expanded parser/export/command/parameter/Inspector tests pass.
+The first run was 233/234: Inspector compared a staging checksum rather than
+the finalized wire; the corrected audit now requires full wire-byte equality.
+
+The production signing audit also passes on real X11 (exit 0), with two in-process
+links and the actual LinkManager, protocol, transmitter, decoder and radio monitor.
+It performs no physical-vehicle provisioning. A separate ordinary UDP14699 X11
+run displays source233; its independent pymavlink peer sends 222 unsigned
+heartbeats and parses 44 GCS heartbeats, 60 stream requests, three COMMAND_LONG,
+three parameter-list and six mission-list requests without framing errors.
+The resulting TLOG has 221 source233 heartbeats and zero BAD_DATA. Both the
+application and peer exit normally. The final test-only lifetime adjustment keeps
+the isolated temporary directory until application singletons release their
+signing lock; a final X11 audit has no late lock-file cleanup warning.
+Evidence and personally inspected screenshot: `/tmp/apm-signing-transport.j50T7t/`.
+
+Claude TCP c198/c199 and c146 addendum are REVIEW-OK; the final report is
+`/home/alex/SRC/claude-reports/c199-signing-integration-review.md` (9179 bytes,
+SHA256 `d96fb685e8f761e27b88ec43ee339f32effe12ddee417149224985a4c79195fc`).
+Three bounded Codex streams supplied disjoint implementation/tests and review;
+root scheduled all builds/tests. Advanced stays 14/16 until operator workflow,
+persisted fail-closed policy and non-COMM_0 provisioning gates pass.
+
+## Previous foundation checkpoint, 2026-09-05
 
 Qt5 with required Multimedia/TextToSpeech and OpenSSL 3.0.13 configured and
 built successfully. The full suite passes **232/232 in 55.63 seconds**,

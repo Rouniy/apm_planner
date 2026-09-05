@@ -123,6 +123,7 @@ private slots:
     void exactTimeoutQuarantinesAndConsumesLateAcknowledgement();
     void exactOwnerDetachAndLeaseRetirementDrainSafely();
     void exactWriterFailureIsTerminalOutcomeUncertain();
+    void exactSigningRejectionBeforeWriterIsDefinite();
 };
 
 void VehicleCommandServiceTest::commandLongUsesOnlyTheExactSelectedEndpoint()
@@ -1036,6 +1037,66 @@ exactWriterFailureIsTerminalOutcomeUncertain()
     QVERIFY(report.frameAttempted);
     QVERIFY(service.isExactCommandQuarantined(
         lease, MAV_CMD_NAV_RETURN_TO_LAUNCH));
+}
+
+void VehicleCommandServiceTest::
+exactSigningRejectionBeforeWriterIsDefinite()
+{
+    VehicleTargetManager targets;
+    int writes = 0;
+    ExactLinkTransmitter transmitter(
+        [&writes](int, const QByteArray &) {
+            ++writes;
+            return true;
+        });
+    transmitter.setFrameSigner(
+        [](int, const QByteArray &, QByteArray *) { return false; });
+    VehicleCommandService service(&targets, &transmitter);
+    service.setLocalIdentity(250, 190);
+    const SwarmVehicleInstanceLease lease = swarmLease(17, 42);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+
+    QObject owner;
+    VehicleCommandService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &owner, active, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QSignalSpy finished(
+        &service, &VehicleCommandService::exactCommandFinished);
+    const auto request = exactRequest(MAV_CMD_NAV_RETURN_TO_LAUNCH);
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease, request),
+             VehicleCommandService::ExactSubmitResult::ContextUnavailable);
+    QCOMPARE(writes, 0);
+    QCOMPARE(finished.count(), 1);
+    const auto rejected = reportAt(finished, 0);
+    QCOMPARE(rejected.terminalResult,
+             VehicleCommandService::ExactTerminalResult::
+                 RejectedBeforeTransmission);
+    QVERIFY(!rejected.frameAttempted);
+    QVERIFY(!service.isExactCommandQuarantined(
+        lease, MAV_CMD_NAV_RETURN_TO_LAUNCH));
+
+    transmitter.setFrameSigner(ExactLinkTransmitter::FrameSigner());
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease, request),
+             VehicleCommandService::ExactSubmitResult::Started);
+    QCOMPARE(writes, 1);
+    service.observeMessage(
+        lease.endpoint.linkId,
+        commandAck(lease.endpoint.systemId, lease.endpoint.componentId,
+                   MAV_CMD_NAV_RETURN_TO_LAUNCH, MAV_RESULT_ACCEPTED));
+    QCOMPARE(finished.count(), 2);
+    QCOMPARE(reportAt(finished, 1).terminalResult,
+             VehicleCommandService::ExactTerminalResult::
+                 AcknowledgedAccepted);
 }
 
 QTEST_GUILESS_MAIN(VehicleCommandServiceTest)

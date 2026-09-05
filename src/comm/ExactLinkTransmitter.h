@@ -26,12 +26,15 @@ public:
         InvalidLink,
         InvalidMessage,
         IncompatibleVersion,
+        SigningUnavailable,
         TransportUnavailable
     };
     Q_ENUM(SendResult)
 
     using FrameWriter = std::function<bool(int linkId,
                                             const QByteArray &frame)>;
+    using FrameSigner = std::function<bool(int linkId, const QByteArray &frame,
+                                            QByteArray *signedFrame)>;
 
     explicit ExactLinkTransmitter(FrameWriter frameWriter,
                                   QObject *parent = nullptr);
@@ -47,6 +50,8 @@ public:
         quint8 progress = 255, qint32 resultParam2 = 0);
 
     void setOutboundVersion(int linkId, unsigned int version);
+    void setSigningRequired(int linkId, bool required);
+    void setFrameSigner(FrameSigner signer);
     unsigned int outboundVersion(int linkId) const;
     bool supportsTargetedCommandAck(int linkId) const;
     void setMotorStopLinkEligible(int linkId, bool eligible);
@@ -62,9 +67,12 @@ private:
     mavlink_status_t &transmitStatus(int linkId);
 
     const FrameWriter m_frameWriter;
+    FrameSigner m_frameSigner;
+    quint64 m_signerRevision = 0;
     QHash<int, mavlink_status_t> m_transmitStates;
     QHash<int, bool> m_motorStopLinkEligibility;
     QHash<int, quint64> m_linkSessionEpochs;
+    QHash<int, bool> m_signingRequired;
 };
 
 #endif // EXACTLINKTRANSMITTER_H

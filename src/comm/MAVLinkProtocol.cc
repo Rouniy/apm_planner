@@ -35,12 +35,14 @@ This file is part of the APM_PLANNER project
 
 #include "MAVLinkProtocol.h"
 #include "LinkManager.h"
+#include "RadioStatusMonitor.h"
 #include "mavlink_helpers.h"
 
 #include <cstring>
 #include <QDataStream>
 #include <QMetaMethod>
 #include <QPointer>
+#include <QDateTime>
 
 MAVLinkProtocol::MAVLinkProtocol()
 {
@@ -103,10 +105,18 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
         if (!receiveSessionIsCurrent()) {
             return false;
         }
+        if (version == 1U && m_connectionManager
+            && m_connectionManager->signingManager()->protectedLink(linkId)) {
+            // An unsigned radio diagnostic or old capability bit must never
+            // downgrade an explicitly protected physical link.
+            return true;
+        }
         linkState->parser.setOutboundVersion(version);
-        // Message encoders still finalize through the legacy default channel.
-        // Keep it aligned while receive parsing remains isolated per link.
-        mavlink_set_proto_version(MAVLINK_COMM_0, version);
+        // COMM_0 is now only a payload-building staging channel. Keep every
+        // extension byte: the common transmitter applies the destination's
+        // actual v1/v2 version. A v1 link must not truncate another link's
+        // COMMAND_ACK/other extensions before they can be signed.
+        mavlink_set_proto_version(MAVLINK_COMM_0, 2);
         if (guardedLink) {
             emit outboundVersionChanged(linkId, version);
         }
@@ -124,7 +134,9 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
             static_cast<quint8>(data), &message);
 
         if (decodeState == MAVLINK_FRAMING_INCOMPLETE
-            && !linkState->decodedFirstPacket)
+            && !linkState->decodedFirstPacket
+            && !(m_connectionManager
+                 && m_connectionManager->signingManager()->protectedLink(linkId)))
         {
             linkState->nonMavlinkCount++;
             if (linkState->nonMavlinkCount > 2000
@@ -150,6 +162,23 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
 
         if (decodeState == MAVLINK_FRAMING_OK)
         {
+            // Authenticate the original bounded bytes before discovery,
+            // negotiation, parameter consumers, logging or mirror fan-out.
+            if (m_connectionManager) {
+                const quint64 epoch = m_connectionManager->currentPhysicalLinkSession(linkId);
+                const auto authentication = m_connectionManager->verifyIncomingFrame(
+                    linkId, epoch, linkState->parser.lastFrame());
+                if (!authentication.accepted()) continue;
+                if (authentication.verdict == MAVLinkSigningManager::VerifyVerdict::UnsignedRadio) {
+                    m_connectionManager->radioStatusMonitor()->observe(
+                        linkId, message, QDateTime::currentMSecsSinceEpoch());
+                    if (!receiveSessionIsCurrent()) return;
+                    continue;
+                }
+            }
+            // Provisioning carries the secret key itself. Even a valid packet
+            // from another system must never enter generic observer/log paths.
+            if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING) continue;
             mavlink_status_t *mavlinkStatus = &linkState->parser.status();
             if (!linkState->decodedFirstPacket)
             {
@@ -302,9 +331,8 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
             emit packetReceived(guardedLink.data(), message);
             if (!receiveSessionIsCurrent()) return;
 
-            // MP10's mirror sees complete inbound MAVLink packets, not raw
-            // transport chunks. Re-serializing the parsed message preserves
-            // the received header, checksum and MAVLink 2 signature.
+            // The mirror and log preserve the exact received bytes, including
+            // signatures and extension tails, only after the authentication gate.
             const bool frameObserved = isSignalConnected(
                 QMetaMethod::fromSignal(&MAVLinkProtocol::frameReceived));
             const bool logFrame = m_loggingEnabled
@@ -312,10 +340,7 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
             QByteArray receivedFrame;
             if (frameObserved || logFrame)
             {
-                uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
-                const int len = mavlink_msg_to_send_buffer(buffer, &message);
-                receivedFrame = QByteArray(
-                    reinterpret_cast<const char *>(buffer), len);
+                receivedFrame = linkState->parser.lastFrame();
             }
 
             if (frameObserved) {

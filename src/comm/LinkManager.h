@@ -45,10 +45,12 @@ This file is part of the APM_PLANNER project
  */
 #include "MAVLinkDecoder.h"
 #include "MAVLinkProtocol.h"
+#include "MAVLinkSigningManager.h"
 #include <QMap>
 #include <QPointer>
 #include <QSet>
 #include <QStringList>
+#include <memory>
 
 #include "UASInterface.h"
 #include "UAS.h"
@@ -136,10 +138,18 @@ public:
     bool isCurrentPhysicalIngress(LinkInterface *link) const;
     void receiveUdpDatagram(UDPLink *link, const QByteArray &bytes,
                             quint64 peerRevision);
-    /** Best-effort raw write to one currently connected physical link. */
+    /** Raw passthrough is refused on every signing-protected link. */
     bool writeRawBytes(int linkId, const QByteArray &bytes);
-    /** Submit an already finalized MAVLink frame without re-sequencing it. */
+    /** Legacy payloads share the exact per-link sequencer and signing boundary. */
     bool writeMavlinkMessage(LinkInterface *link, mavlink_message_t message);
+    // Local protection for an already provisioned vehicle; requires a physically
+    // disconnected link. This never sends SETUP_SIGNING or changes vehicle keys.
+    bool configureSigning(int linkId, const QString &connectionProfileId,
+                          const QString &keyName, const QByteArray &key,
+                          QString *error = nullptr);
+    const MAVLinkSigningManager *signingManager() const;
+    MAVLinkSigningManager::Verification verifyIncomingFrame(
+        int linkId, quint64 epoch, const QByteArray &frame);
     bool isUdpPortInUse(quint16 port) const;
     // Remove a link based on instance
     void removeLink(LinkInterface *link);
@@ -200,6 +210,8 @@ private slots:
     void linkTimeoutTriggered(LinkInterface*);
 
 private:
+    bool writeSequencedFrame(int linkId, const QByteArray &frame);
+    bool writeBytesToTransport(int linkId, const QByteArray &bytes);
     void loadSettings();
     void saveSettings();
     bool activateLinkSession(LinkInterface *link);
@@ -222,6 +234,7 @@ private:
     QSet<int> m_startupUdpLinkIds;
     QScopedPointer<MAVLinkDecoder> m_mavlinkDecoder;
     QScopedPointer<MAVLinkProtocol> m_mavlinkProtocol;
+    std::unique_ptr<MAVLinkSigningManager> m_signingManager;
     VehicleTargetManager *m_vehicleTargetManager = nullptr;
     SwarmTelemetryRegistry *m_swarmTelemetryRegistry = nullptr;
     SwarmCommandService *m_swarmCommandService = nullptr;
