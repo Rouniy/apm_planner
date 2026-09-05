@@ -33,9 +33,22 @@ Required tools and libraries:
   Quick, Qml, QuickWidgets and PrintSupport;
 - SDL2.
 
-Qt 5 is currently the reproducible baseline. Qt Multimedia, TextToSpeech and
-DataVisualization are optional; the application provides reduced fallbacks when
-they are absent.
+Qt 5 is currently the reproducible baseline. Qt Multimedia and TextToSpeech
+are required by default. DataVisualization remains optional. CMake fails early
+if the audio development modules are missing; existing build directories should
+set `-DAPM_REQUIRE_QT_AUDIO=ON` explicitly to override an older cached opt-out.
+A runtime speech engine and an unmuted audio output are also required.
+Only intentionally silent developer builds should use
+`-DAPM_REQUIRE_QT_AUDIO=OFF`: **Test Speech** and spoken alerts cannot work
+without TextToSpeech, and such builds are not speech-parity evidence.
+
+On Debian/Ubuntu with Qt 5, install the audio development modules and the
+Speech Dispatcher plugin:
+
+```sh
+sudo apt install qtmultimedia5-dev libqt5texttospeech5-dev \
+  qtspeech5-speechd-plugin speech-dispatcher-espeak-ng
+```
 
 On Debian/Ubuntu, the Qt 5 development libraries do not automatically install
 the QML runtime modules required by user plugins. Install at least:
@@ -64,6 +77,17 @@ Run the test suite:
 ```sh
 ctest --test-dir build --output-on-failure
 ```
+
+Check the installed speech engine on the desktop (the second command speaks):
+
+```sh
+./build/speech_backend_probe
+./build/speech_backend_probe --speak
+```
+
+This diagnostic is built with `BUILD_TESTING=ON` but is intentionally not an
+automatic CTest: headless CI cannot prove working speakers or runtime speech
+plugins. Also verify CONFIG → Planner → Enable Speech → Test Speech.
 
 Do not start concurrent builds of this repository. Use one build process and
 limit it to at most 12 parallel compiler jobs to avoid exhausting memory.

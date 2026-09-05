@@ -1,11 +1,12 @@
 #ifndef GAUDIOOUTPUT_H
 #define GAUDIOOUTPUT_H
 
+#include "audio/QtAudioOutput.h"
+
 #include <QObject>
 #include <QStringList>
 
 class QTimer;
-class QtAudioOutput;
 class SpeechSettings;
 
 class GAudioOutput : public QObject
@@ -24,6 +25,12 @@ public:
     bool isSpeechEnabled() const;
     bool isSpeechReady() const;
     bool isSpeechIdle() const;
+    /**
+     * Backend-only diagnostic (compiled in, engine plugin, engine error,
+     * queue state). Application gates such as mute, the speech enable flag
+     * and the emergency tone are reported by isSpeechReady() instead.
+     */
+    SpeechBackendDiagnostic speechBackendDiagnostic() const;
 
 public slots:
     bool say(QString text, int severity = 1);
@@ -44,6 +51,8 @@ public slots:
 signals:
     void mutedChanged(bool muted);
     void speechEnabledChanged(bool enabled);
+    /** The engine state behind speechBackendDiagnostic() changed. */
+    void speechBackendStateChanged();
 
 private:
     explicit GAudioOutput(QObject *parent = nullptr);

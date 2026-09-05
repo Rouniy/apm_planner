@@ -15,6 +15,44 @@
 #include <QPointer>
 #include <QVBoxLayout>
 
+namespace {
+
+/** One precise sentence for the speech backend, independent of UI gates. */
+QString SpeechBackendStatusText(const SpeechBackendDiagnostic &diagnostic,
+                                bool applicationReady)
+{
+    switch (diagnostic.state) {
+    case SpeechBackendState::NotCompiled:
+        return QObject::tr(
+            "Speech is not available in this build: Qt TextToSpeech was not "
+            "compiled in.");
+    case SpeechBackendState::NoEngine:
+        return QObject::tr(
+            "No Qt speech engine plugin is installed (Debian/Ubuntu: "
+            "qtspeech5-speechd-plugin with speech-dispatcher-espeak-ng).");
+    case SpeechBackendState::RuntimeError:
+        return diagnostic.detail.isEmpty()
+            ? QObject::tr(
+                  "The speech engine reported an error: speech-dispatcher or "
+                  "its espeak-ng module is unavailable.")
+            : QObject::tr("The speech engine reported an error: %1")
+                  .arg(diagnostic.detail);
+    case SpeechBackendState::QueueUnavailable:
+        return QObject::tr(
+            "The speech engine is not ready to accept speech.");
+    case SpeechBackendState::Ready:
+    case SpeechBackendState::Busy:
+        break;
+    }
+    if (!applicationReady) {
+        return QObject::tr(
+            "Speech engine is ready, but speech is paused by an active alert.");
+    }
+    return QObject::tr("Speech engine is ready.");
+}
+
+} // namespace
+
 void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
 {
     if (!view) return;
@@ -26,21 +64,23 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
     RegisterCompiledMapBackends();
 
     const QPointer<ConfigPlannerView> guardedView(view);
-    const auto refreshSpeech = [guardedView, audio]() {
-        if (!guardedView || !guardedView->viewModel()) return;
-        if (!guardedView->viewModel()->speechEnabled()) {
-            guardedView->setSpeechBackendStatus(QObject::tr(
-                "Speech is disabled."));
-        } else if (audio->isMuted()) {
-            guardedView->setSpeechBackendStatus(QObject::tr(
-                "Speech is enabled, but all audio output is muted."));
-        } else if (!audio->isSpeechReady()) {
-            guardedView->setSpeechBackendStatus(QObject::tr(
-                "Speech engine is unavailable."));
-        } else {
-            guardedView->setSpeechBackendStatus(QObject::tr(
-                "Speech engine is ready."));
+    // Disabled and muted are application gates and keep their existing text;
+    // every other case reports the precise backend diagnostic.
+    const auto speechStatusText = [guardedView, audio]() -> QString {
+        if (guardedView && guardedView->viewModel()
+            && !guardedView->viewModel()->speechEnabled()) {
+            return QObject::tr("Speech is disabled.");
         }
+        if (audio->isMuted()) {
+            return QObject::tr(
+                "Speech is enabled, but all audio output is muted.");
+        }
+        return SpeechBackendStatusText(audio->speechBackendDiagnostic(),
+                                       audio->isSpeechReady());
+    };
+    const auto refreshSpeech = [guardedView, speechStatusText]() {
+        if (!guardedView || !guardedView->viewModel()) return;
+        guardedView->setSpeechBackendStatus(speechStatusText());
     };
     const auto refreshRuntime = [guardedView, mainWindow, links, audio]() {
         if (!guardedView) return;
@@ -86,8 +126,10 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
                      view, [refreshSpeech](bool) { refreshSpeech(); });
     QObject::connect(audio, &GAudioOutput::speechEnabledChanged,
                      view, [refreshSpeech](bool) { refreshSpeech(); });
+    QObject::connect(audio, &GAudioOutput::speechBackendStateChanged,
+                     view, [refreshSpeech]() { refreshSpeech(); });
     QObject::connect(view, &ConfigPlannerView::speechTestRequested,
-                     view, [guardedView, audio, refreshSpeech]() {
+                     view, [guardedView, audio, speechStatusText]() {
         if (!guardedView || !guardedView->viewModel()) return;
         if (!guardedView->viewModel()->speechEnabled()) {
             guardedView->setSpeechBackendStatus(QObject::tr(
@@ -99,7 +141,10 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
             guardedView->setSpeechBackendStatus(QObject::tr(
                 "Speech test was sent to the audio engine."));
         } else {
-            refreshSpeech();
+            // say() refused: tell the operator the exact reason instead of a
+            // generic "unavailable".
+            guardedView->setSpeechBackendStatus(
+                QObject::tr("Speech test failed: %1").arg(speechStatusText()));
         }
     });
     const auto promptTemplate = [guardedView](

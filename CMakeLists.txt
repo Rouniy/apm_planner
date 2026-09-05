@@ -52,9 +52,9 @@ endif()
 find_package(${APM_QT_PACKAGE} REQUIRED COMPONENTS ${_apm_qt_required_components})
 message(STATUS "APM Planner Qt major: ${QT_VERSION_MAJOR}")
 
-# Cross-platform audio is implemented only through Qt. These modules are optional for
-# developer builds, while release presets can make them mandatory.
-option(APM_REQUIRE_QT_AUDIO "Fail configure when Qt Multimedia or TextToSpeech is unavailable" OFF)
+# Cross-platform audio is implemented only through Qt. Silent developer builds
+# must be an explicit opt-out, never mistaken for verified speech support.
+option(APM_REQUIRE_QT_AUDIO "Fail configure when Qt Multimedia or TextToSpeech is unavailable" ON)
 find_package(${APM_QT_PACKAGE} QUIET COMPONENTS Multimedia)
 find_package(${APM_QT_PACKAGE} QUIET COMPONENTS TextToSpeech)
 set(APM_QT_AUDIO_LIBRARIES "")
@@ -70,11 +70,11 @@ if(TARGET Qt::TextToSpeech)
     add_compile_definitions(APM_HAS_QT_TEXT_TO_SPEECH)
     message(STATUS "Speech synthesis: Qt TextToSpeech enabled")
 else()
-    message(STATUS "Speech synthesis: Qt TextToSpeech not found; silent fallback enabled")
+    message(WARNING "Speech synthesis disabled: Qt TextToSpeech development package was not found. Test Speech and spoken alerts will not work. Install the Qt speech development package and a runtime speech plugin, or set APM_REQUIRE_QT_AUDIO=ON to reject this reduced build.")
 endif()
 if(APM_REQUIRE_QT_AUDIO AND (NOT TARGET Qt::Multimedia OR NOT TARGET Qt::TextToSpeech))
     message(FATAL_ERROR
-        "APM_REQUIRE_QT_AUDIO=ON requires both Qt Multimedia and Qt TextToSpeech")
+        "Audio requires Qt Multimedia and Qt TextToSpeech development modules. On Debian/Ubuntu Qt 5: install qtmultimedia5-dev libqt5texttospeech5-dev. Runtime speech also needs a Qt speech plugin (qtspeech5-speechd-plugin). Only intentionally silent developer builds should use -DAPM_REQUIRE_QT_AUDIO=OFF.")
 endif()
 
 # The 3D compass plot is optional at configure time. A QWidget fallback keeps the complete
@@ -1633,6 +1633,20 @@ if(BUILD_TESTING)
         RUN_SERIAL TRUE
         TIMEOUT 30
     )
+
+    # Explicit desktop diagnostic, not an automatic/noisy CTest. The default
+    # invocation only probes readiness; --speak exercises actual synthesis.
+    add_executable(speech_backend_probe
+        tests/speech_backend_probe.cpp
+        src/audio/QtAudioOutput.cpp
+        src/audio/QtAudioOutput.h
+        src/audio/QueuedSpeechController.cpp
+        src/audio/QueuedSpeechController.h
+    )
+    target_include_directories(speech_backend_probe PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(speech_backend_probe PRIVATE
+        Qt::Core ${APM_QT_AUDIO_LIBRARIES})
 
     add_executable(queuedspeechcontroller_tests
         tests/test_queuedspeechcontroller.cpp

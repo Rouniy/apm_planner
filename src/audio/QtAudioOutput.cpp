@@ -5,6 +5,7 @@
 #include <QFileInfo>
 #include <QUrl>
 #include <QtGlobal>
+#include <utility>
 
 #ifdef APM_HAS_QT_MULTIMEDIA
 #include <QSoundEffect>
@@ -38,10 +39,30 @@ QtAudioOutput::QtAudioOutput(QObject *parent)
         QueuedSpeechController::UtteranceTimeoutMs, this);
 
 #ifdef APM_HAS_QT_TEXT_TO_SPEECH
+    const QStringList engines = QTextToSpeech::availableEngines();
+    if (engines.isEmpty()) {
+        // Constructing QTextToSpeech without any engine plugin only yields a
+        // BackendError plus a Qt warning. Leave the backend absent so the
+        // diagnostic reports the installation problem precisely.
+        m_engineDetail = QStringLiteral(
+            "QTextToSpeech::availableEngines() is empty");
+        return;
+    }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+    // Qt 6.4+ can report the engine it actually selected, so keep Qt's own
+    // default preference and read the exact name back.
     m_speech = new QTextToSpeech(this);
+    m_engineName = m_speech->engine();
+#else
+    // Qt 5 has no engine() getter: request the first available engine
+    // explicitly so the diagnostic names the engine that really loaded.
+    m_engineName = engines.first();
+    m_speech = new QTextToSpeech(m_engineName, this);
+#endif
     const auto updateSpeechState = [this](QTextToSpeech::State state) {
         QueuedSpeechController::BackendState queueState =
             QueuedSpeechController::BackendState::Busy;
+        m_engineError = false;
         if (state == QTextToSpeech::Ready) {
             queueState = QueuedSpeechController::BackendState::Ready;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -50,13 +71,76 @@ QtAudioOutput::QtAudioOutput(QObject *parent)
         } else if (state == QTextToSpeech::BackendError) {
 #endif
             queueState = QueuedSpeechController::BackendState::Error;
+            m_engineError = true;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 4, 0)
+            m_engineDetail = m_speech->errorString();
+#else
+            m_engineDetail = QStringLiteral(
+                "QTextToSpeech reported BackendError");
+#endif
         }
         m_speechQueue->backendStateChanged(queueState);
+        if (m_backendStateListener) {
+            m_backendStateListener();
+        }
     };
     connect(m_speech, &QTextToSpeech::stateChanged,
             this, updateSpeechState);
     updateSpeechState(m_speech->state());
 #endif
+}
+
+bool QtAudioOutput::speechCompiledIn()
+{
+#ifdef APM_HAS_QT_TEXT_TO_SPEECH
+    return true;
+#else
+    return false;
+#endif
+}
+
+QStringList QtAudioOutput::availableSpeechEngines()
+{
+#ifdef APM_HAS_QT_TEXT_TO_SPEECH
+    return QTextToSpeech::availableEngines();
+#else
+    return QStringList();
+#endif
+}
+
+SpeechBackendDiagnostic QtAudioOutput::speechBackendDiagnostic() const
+{
+    SpeechBackendDiagnostic diagnostic;
+#ifndef APM_HAS_QT_TEXT_TO_SPEECH
+    diagnostic.state = SpeechBackendState::NotCompiled;
+    diagnostic.detail = QStringLiteral(
+        "APM_HAS_QT_TEXT_TO_SPEECH is not defined for this build");
+    return diagnostic;
+#else
+    diagnostic.engine = m_engineName;
+    diagnostic.detail = m_engineDetail;
+    if (!m_speech) {
+        diagnostic.state = SpeechBackendState::NoEngine;
+        return diagnostic;
+    }
+    if (m_engineError) {
+        diagnostic.state = SpeechBackendState::RuntimeError;
+        return diagnostic;
+    }
+    if (!m_speechQueue->isAvailable()) {
+        diagnostic.state = SpeechBackendState::QueueUnavailable;
+        return diagnostic;
+    }
+    diagnostic.state = m_speechQueue->isIdle()
+        ? SpeechBackendState::Ready
+        : SpeechBackendState::Busy;
+    return diagnostic;
+#endif
+}
+
+void QtAudioOutput::setBackendStateListener(BackendStateListener listener)
+{
+    m_backendStateListener = std::move(listener);
 }
 
 bool QtAudioOutput::ensureSoundEffect()

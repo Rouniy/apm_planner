@@ -34,6 +34,9 @@ GAudioOutput::GAudioOutput(QObject *parent)
 
     emergencyTimer = new QTimer(this);
     connect(emergencyTimer, &QTimer::timeout, this, &GAudioOutput::beep);
+    audioBackend->setBackendStateListener([this]() {
+        emit speechBackendStateChanged();
+    });
     connect(speechSettings, &SpeechSettings::enabledChanged, this,
             [this](bool enabled) {
                 if (!enabled) {
@@ -51,6 +54,11 @@ GAudioOutput::GAudioOutput(QObject *parent)
 
 GAudioOutput::~GAudioOutput()
 {
+    // The backend is a child and dies after this body; make sure no late
+    // engine state change can call back into a half-destroyed owner.
+    if (audioBackend) {
+        audioBackend->setBackendStateListener({});
+    }
     QLOG_INFO() << "~GAudioOutput()";
 }
 
@@ -103,6 +111,12 @@ bool GAudioOutput::isSpeechIdle() const
 {
     return isSpeechEnabled() && !muted && !emergency && audioBackend
         && audioBackend->isSpeechIdle();
+}
+
+SpeechBackendDiagnostic GAudioOutput::speechBackendDiagnostic() const
+{
+    return audioBackend ? audioBackend->speechBackendDiagnostic()
+                        : SpeechBackendDiagnostic();
 }
 
 bool GAudioOutput::say(QString text, int severity)
