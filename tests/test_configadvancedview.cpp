@@ -54,13 +54,19 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QAction *fft = makeAction(&actionSource, QStringLiteral("actionFftAnalysis"));
     QAction *paramGen = makeAction(&actionSource, QStringLiteral("actionParameterMetaDataRegeneration"));
     QAction *anonAction = makeAction(&actionSource, QStringLiteral("actionAnonLog"));
+    QAction *warningAction = makeAction(&actionSource, QStringLiteral("actionWarningManager"));
 
     ConfigAdvancedView view(&actionSource);
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
-    QCOMPARE(view.ImplementedActionCount(), 13);
-    QVERIFY(view.Log().contains(QStringLiteral("13 of 16")));
+    QCOMPARE(view.ImplementedActionCount(), 14);
+    QVERIFY(view.Log().contains(QStringLiteral("14 of 16")));
+    QSignalSpy warningSpy(warningAction, &QAction::triggered);
+    auto *warningButton = view.findChild<QPushButton *>(QStringLiteral("WarningManagerButton"));
+    QVERIFY(warningButton && warningButton->isEnabled());
+    warningButton->click();
+    QCOMPARE(warningSpy.count(), 1);
     QSignalSpy paramGenSpy(paramGen, &QAction::triggered);
     auto *paramGenButton = view.findChild<QPushButton *>(QStringLiteral("ParamGenButton"));
     QVERIFY(paramGenButton && paramGenButton->isEnabled());

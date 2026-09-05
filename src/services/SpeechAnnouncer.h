@@ -89,6 +89,8 @@ public slots:
     void handleBatteryTelemetry(double voltage, double remainingPercent);
     void enqueueExactTelemetry(ExactSpeechTelemetryEvent event);
     void enqueueStatusText(ExactStatusText event);
+    void enqueueCustomWarning(const VehicleTargetLease &lease,
+                              const QString &message);
     void tick();
 
 signals:

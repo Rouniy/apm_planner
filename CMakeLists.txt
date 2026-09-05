@@ -590,6 +590,10 @@ set(SOURCES
     src/ui/Loghandling/DataFlashLogAnonymizer.cpp
     src/ui/Loghandling/TelemetryLogAnonymizer.cpp
     src/ui/AnonLogWindow.cpp
+    src/services/WarningEngine.cpp
+    src/services/WarningTelemetrySource.cpp
+    src/ui/WarningManagerWindow.cpp
+    src/ui/flightdata/QuickViewWidget.cpp
     src/ui/Loghandling/DataFlashFftService.h
     src/ui/ConfigFFTWindow.cpp
     src/ui/ConfigFFTWindow.h
@@ -5369,6 +5373,27 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME tlogexportservice_tests COMMAND tlogexportservice_tests)
+
+    add_library(warning_manager_test_support STATIC
+        src/services/WarningEngine.cpp
+        src/services/WarningTelemetrySource.cpp
+        src/ui/WarningManagerWindow.cpp
+        src/ui/flightdata/QuickViewWidget.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleTargetManager.cpp)
+    target_include_directories(warning_manager_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(warning_manager_test_support PUBLIC Qt::Widgets)
+    foreach(warning_test IN ITEMS warningengine warningtelemetrysource
+            warningmanagerwindow quickviewwidget)
+        add_executable(${warning_test}_tests tests/test_${warning_test}.cpp)
+        target_link_libraries(${warning_test}_tests PRIVATE
+            warning_manager_test_support Qt::Test)
+        add_test(NAME ${warning_test}_tests COMMAND ${warning_test}_tests)
+        set_tests_properties(${warning_test}_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    endforeach()
 
     add_library(log_anonymizer_test_support STATIC
         src/ui/Loghandling/LogAnonymizer.cpp

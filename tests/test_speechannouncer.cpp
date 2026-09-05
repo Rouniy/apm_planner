@@ -70,6 +70,7 @@ private slots:
     void lowSpeedUsesCanonicalSiAndAirspeedPriority();
     void highStatusUsesThresholdExactLeaseAndTenSecondLifetime();
     void highStatusRetriesAndRoutesSpecialSpeechOnce();
+    void customWarningsRepeatOnceAndRespectSpeechGates();
 };
 
 void SpeechAnnouncerTest::eventsUsePolicyTemplatesAndCurrentVehicle()
@@ -693,6 +694,52 @@ void SpeechAnnouncerTest::highStatusRetriesAndRoutesSpecialSpeechOnce()
 
     vehicle.generation = 2;
     now += 1;
+    announcer.tick();
+    QVERIFY(announcer.highMessage().isEmpty());
+}
+
+void SpeechAnnouncerTest::customWarningsRepeatOnceAndRespectSpeechGates()
+{
+    QTemporaryDir dir;
+    QSettings store(dir.filePath("speech.ini"), QSettings::IniFormat);
+    SpeechSettings settings(&store);
+    settings.setEnabled(true);
+    settings.setArmedOnly(true);
+    qint64 now = 0;
+    SpeechAnnouncer::VehicleState vehicle;
+    vehicle.valid = true; vehicle.armed = true;
+    vehicle.linkId = 7; vehicle.systemId = 42; vehicle.componentId = 1;
+    vehicle.generation = 1;
+    QStringList spoken;
+    SpeechAnnouncer announcer(&settings, [&spoken](const QString &text) {
+        spoken << text; return true;
+    }, [&vehicle]() { return vehicle; }, [&now]() { return now; });
+    const auto lease = statusEvent(vehicle, MAV_SEVERITY_WARNING, "", now).lease;
+    announcer.enqueueCustomWarning(lease, "Battery low");
+    QCOMPARE(spoken.size(), 1);
+    QCOMPARE(announcer.highMessage(), QString("Battery low"));
+    announcer.tick();
+    QCOMPARE(spoken.size(), 1); // No second high-message speech path.
+    now = 1000;
+    announcer.enqueueCustomWarning(lease, "Battery low");
+    QCOMPARE(spoken.size(), 2); // Identical due warning is not swallowed.
+    settings.setEnabled(false);
+    announcer.enqueueCustomWarning(lease, "Visible without audio");
+    QCOMPARE(announcer.highMessage(), QString("Visible without audio"));
+    QCOMPARE(spoken.size(), 2);
+    settings.setEnabled(true);
+    vehicle.armed = false;
+    announcer.enqueueCustomWarning(lease, "Disarmed warning");
+    QCOMPARE(announcer.highMessage(), QString("Disarmed warning"));
+    QCOMPARE(spoken.size(), 2);
+    vehicle.armed = true;
+    auto wrong = lease; wrong.endpoint.linkId = 99;
+    announcer.enqueueCustomWarning(wrong, "Wrong link");
+    QCOMPARE(announcer.highMessage(), QString("Disarmed warning"));
+    QCOMPARE(spoken.size(), 2);
+    vehicle.generation = 2;
+    announcer.enqueueCustomWarning(lease, "Stale generation");
+    QCOMPARE(spoken.size(), 2);
     announcer.tick();
     QVERIFY(announcer.highMessage().isEmpty());
 }

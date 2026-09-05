@@ -1,6 +1,6 @@
 # CONFIG and Planner Settings inventory audit
 
-Updated: 2026-09-04.
+Updated: 2026-09-05.
 
 This audit compares Mission Planner 10 `ConfigViewModel` and
 `ConfigPlannerView.axaml` with the active Qt `ConfigView` and native
@@ -46,13 +46,21 @@ then dispatches Plane to the native Q controller/INS page and Copter/Heli to
 the retained legacy ATC/PSC/WPNAV editor.
 
 The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
-all 16 MP10 actions are present, ten open working shared tools and six are
+all 16 MP10 actions are present, fourteen open working shared tools and two are
 visibly disabled. MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target /
 TAK, DataFlash Spectrogram, External Guided, Follow Me, Moving Base, Map Tile
-Cache and Proximity reuse working application actions. `Warning Manager` and `FFT`
-remain unported, and `FFT Setup` is also still a missing direct SETUP page.
+Cache and Proximity reuse working application actions. FFT, Param gen, Anon Log
+and Warning Manager now have native workflows; FFT Setup is also a direct page.
+MAVLink Signing and upstream-placeholder Support Proxy remain unavailable.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
+
+Warning Manager persists compatible `warnings.xml` under the writable application
+data directory and shares `speechenable` / `speech_armed_only` with Planner.
+DATA Quick uses `quickViewCount`, `quickViewColumns` and `quickView1`..`12`, and
+is the native warning-color consumer. Its 394-field exact telemetry catalog and
+unit/import limitations are documented in `WARNING_MANAGER_PORT.md` and
+`WARNING_TELEMETRY_CATALOG.md`; it is not another direct CONFIG route/control.
 
 The legacy `Heli Setup` route is capability-gated by the exact MP10
 `H_SWASH_TYPE` marker; current `H_SW_TYPE` vehicles use the separate native
@@ -211,6 +219,7 @@ that instantiates every visible CONFIG row and proves its page is non-empty.
 The separate `SETUP_INVENTORY_AUDIT.md` remains the count baseline: both
 applications have four logical sections (ungrouped plus three named groups).
 Mission Planner 10 registers 53 pages plus three group headings, or 56
-navigation entries. Rechecked after this CONFIG slice, Qt still registers 43
-concrete pages plus the same three group headings, or 46 entries. Qt is missing
-11 reference pages and intentionally keeps one useful extra page, `QML Plugins`.
+navigation entries. At the current checkpoint Qt registers 46 concrete pages
+plus the same three group headings, or 49 entries. Qt is missing eight reference
+pages and intentionally keeps one useful extra page, `QML Plugins`. Offline
+connection filtering is separate from this registered-page inventory.

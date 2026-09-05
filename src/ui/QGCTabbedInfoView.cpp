@@ -58,6 +58,20 @@ QGCTabbedInfoView::~QGCTabbedInfoView()
 {
 }
 
+void QGCTabbedInfoView::installQuickView(QWidget *view)
+{
+    if (!view || ui.tabWidget->indexOf(view) >= 0) return;
+    // Keep the useful raw-value legacy selector available without using its
+    // system-id-only graph for exact-target Warning Manager colors.
+    const int index = ui.tabWidget->indexOf(quickView);
+    if (index >= 0) {
+        ui.tabWidget->removeTab(index);
+        ui.tabWidget->insertTab(index, view, tr("Quick"));
+        ui.tabWidget->addTab(quickView, tr("Quick (Legacy)"));
+        ui.tabWidget->setCurrentWidget(view);
+    }
+}
+
 void QGCTabbedInfoView::setFlightDataViewModel(
     FlightDataViewModel *viewModel)
 {

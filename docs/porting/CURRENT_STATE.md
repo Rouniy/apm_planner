@@ -18,13 +18,35 @@ The immediate user-directed order is:
 
 1. Keep the fixed SETUP Advanced/Developer Tools action rebinding green, including MAVLink Inspector and every already implemented shared tool.
 2. Port the remaining non-swarm TOOLS dialogs/workflows for one vehicle; empty placeholders, no-op actions and accidentally disabled implemented forms are functional defects.
-3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 13/16 intended working actions.
+3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 14/16 intended working actions.
 4. Keep the Swarm family at the end of the active queue. Preserve its tested exact foundations without expanding them while single-vehicle workflows remain missing.
 5. Retain audited useful older APM Planner modules with honest Legacy/partial labels, track functional and GUI inaccuracies separately, and keep committing complete slices.
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): native **Advanced Tools Anon Log** for BIN, text LOG
+Latest slice (2026-09-05): native **Warning Manager** with its real DATA Quick
+coloring consumer. All IF/AND editor columns, repeat/tokens, atomic compatible
+warnings.xml, single application engine/modeless observer, exact-target fresh
+telemetry, bounded shared speech and a ten-second red HUD message are wired.
+The catalog maps **394/486 numeric/boolean reference properties**, with the
+remaining **92 names and producer/unit differences explicitly inventoried**.
+The six-default native Quick grid uses MP10 colors, field/layout settings and
+contrast rules; the useful old selector remains Quick (Legacy). Advanced Tools
+is **14/16**. No direct SETUP/CONFIG route or top-level TOOLS item was added.
+
+Full Qt5/audio build and **229/229 tests pass (16.61 seconds)**.
+Initial 228/229 exposed a late static LinkManager destruction repaint after
+QApplication; GDB identified it and the source now suppresses shutdown signals.
+Real X11 verifies live yellow Quick color/red HUD warning, finite threshold
+editing/save/reopen, stale-state reset, physical disconnect/reconnect recovery,
+non-silent output-monitor speech capture and normal final-build exit 0 with
+the sender still active. Evidence: `/tmp/apm-warning.2r8mcV/`. Contracts, deliberate reference
+bug fixes and gaps: `WARNING_MANAGER_PORT.md`, `WARNING_TELEMETRY_CATALOG.md`.
+Claude reviewed over TCP (c194/c195), with three disjoint implementation streams
+and root-owned builds/tests. Signing transport/verification remains before
+vehicle-side enable; upstream-placeholder Support Proxy remains unavailable.
+
+Previous slice (2026-09-05): native **Advanced Tools Anon Log** for BIN, text LOG
 and MAVLink TLOG. One application-owned single-thread worker and a reusable
 760x740 modeless window now provide file selection, independent offsets,
 default-Cancel privacy/overwrite confirmation, progress, token cancellation and
@@ -152,7 +174,7 @@ refresh and normal application exit 0 with the tool open. Evidence:
 `/tmp/apm-download-logs.FmmrKU/`; details and remaining limits:
 `DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
 
-Next single-vehicle candidates, not Swarm: Warning Manager, then MAVLink Signing
+Next single-vehicle candidate, not Swarm: MAVLink Signing
 (transport and key storage before the dialog); Support Proxy
 is also a placeholder in MP10 itself. Settings/CONFIG follows these working
 single-vehicle surfaces. The eight absent Setup routes remain explicitly tracked.

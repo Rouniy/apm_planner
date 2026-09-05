@@ -52,8 +52,8 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     AddToolAction(tr("Spectrogram"),
                   QStringLiteral("SpectrogramButton"),
                   QStringLiteral("actionDataFlashSpectrogram"));
-    AddUnavailableAction(tr("Warning Manager"),
-                         QStringLiteral("WarningManagerButton"), notPorted);
+    AddToolAction(tr("Warning Manager"), QStringLiteral("WarningManagerButton"),
+                  QStringLiteral("actionWarningManager"));
     AddToolAction(tr("Proximity"),
                   QStringLiteral("ProximityButton"),
                   QStringLiteral("actionProximity"));

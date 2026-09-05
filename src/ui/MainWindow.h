@@ -81,6 +81,8 @@ class HelpView;
 class SetupView;
 class ParameterMetaDataRegenerationService;
 class LogAnonymizeService;
+class WarningEngine;
+class WarningTelemetrySource;
 
 /**
  * @brief The LogWindowSingleton class is a helper class providing
@@ -574,6 +576,11 @@ private:
     void closeParameterMetaDataRegeneration();
     void showAnonLog();
     void closeAnonLog();
+    void showWarningManager();
+    void closeWarningManager();
+    QPointer<WarningEngine> m_warningEngine;
+    QPointer<WarningTelemetrySource> m_warningTelemetry;
+    QString m_warningLoadError;
     QPointer<LogAnonymizeService> m_logAnonymizeService;
     QPointer<ParameterMetaDataRegenerationService> m_parameterMetaDataRegeneration;
     void pruneMavlinkInspectorWindows();

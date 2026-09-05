@@ -19,7 +19,7 @@ public:
     void addSource(MAVLinkDecoder *decoder);
 
 private:
-    UASInterface *uas;
+    UASInterface *uas = nullptr;
 
     /** List of enabled properties */
     QList<QString> uasEnabledPropertyList;

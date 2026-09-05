@@ -117,6 +117,10 @@ This file is part of the QGROUNDCONTROL project
 #include "AppPaths.h"
 #include "configuration/ParameterMetaDataRegenerationWindow.h"
 #include "AnonLogWindow.h"
+#include "WarningManagerWindow.h"
+#include "services/WarningEngine.h"
+#include "services/WarningTelemetrySource.h"
+#include "flightdata/QuickViewWidget.h"
 #include "Loghandling/LogAnonymizeService.h"
 #include "core/parameters/ParameterMetaDataRepository.h"
 #include "LogDownloadViewModel.h"
@@ -629,6 +633,7 @@ MainWindow::~MainWindow()
     closeFftAnalysisWindows();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
+    closeWarningManager();
     closeLogDownloadWindows();
 
     closeTerminalConsole();
@@ -734,6 +739,9 @@ void MainWindow::buildMissionPlannerToolsMenu()
     anonLogAction->setObjectName(QStringLiteral("actionAnonLog"));
     anonLogAction->setToolTip(tr("Shift recognized coordinates in a copy of a BIN, LOG or TLOG file."));
     connect(anonLogAction, &QAction::triggered, this, &MainWindow::showAnonLog);
+    auto *warningAction = new QAction(tr("Warning Manager"), this);
+    warningAction->setObjectName(QStringLiteral("actionWarningManager"));
+    connect(warningAction, &QAction::triggered, this, &MainWindow::showWarningManager);
     if (hardwareSetupView) {
         // Setup can restore an action-backed lazy page before the TOOLS QAction
         // catalogue exists. Recreate only those pages now so implemented tools
@@ -1647,6 +1655,39 @@ void MainWindow::buildCommonWidgets()
     speechAnnouncer->setObjectName(QStringLiteral("SpeechAnnouncer"));
     connect(speechAnnouncer, &SpeechAnnouncer::highMessageChanged,
             flightDataViewModel, &FlightDataViewModel::setStatusMessage);
+    m_warningTelemetry = new WarningTelemetrySource(
+        linkManager->vehicleTargetManager(), {}, this);
+    m_warningTelemetry->setObjectName(QStringLiteral("WarningTelemetrySource"));
+    const QPointer<WarningTelemetrySource> warningSource = m_warningTelemetry;
+    connect(linkManager, &LinkManager::mavlinkMessageObserved,
+            m_warningTelemetry, [warningSource, linkManager](int linkId, qulonglong epoch,
+                                              const mavlink_message_t &message) {
+        if (warningSource && epoch != 0
+            && linkManager->currentPhysicalLinkSession(linkId) == epoch)
+            warningSource->observeMessage(linkId, message);
+    });
+    const auto resetWarningLink = [warningSource](int linkId, qulonglong) {
+        if (warningSource && warningSource->lease().endpoint.linkId == linkId)
+            warningSource->invalidateSourceEpoch();
+    };
+    connect(linkManager, &LinkManager::physicalLinkSessionBegan,
+            m_warningTelemetry, resetWarningLink);
+    connect(linkManager, &LinkManager::physicalLinkSessionEnded,
+            m_warningTelemetry, resetWarningLink);
+    m_warningEngine = new WarningEngine(
+        QDir(AppPaths::writableDataDirectory()).filePath(QStringLiteral("warnings.xml")),
+        [warningSource]() { return warningSource ? warningSource->values() : WarningEngine::Values(); },
+        {}, this);
+    m_warningEngine->setObjectName(QStringLiteral("WarningEngine"));
+    m_warningEngine->load(&m_warningLoadError);
+    connect(m_warningTelemetry, &WarningTelemetrySource::epochChanged,
+            m_warningEngine, &WarningEngine::resetEpoch);
+    connect(m_warningEngine, &WarningEngine::warningMessage,
+            speechAnnouncer, [warningSource, speechAnnouncer](const QString &message) {
+        if (warningSource)
+            speechAnnouncer->enqueueCustomWarning(warningSource->lease(), message);
+    });
+    m_warningEngine->setRunning(true);
     if (pilotView->setHudWidget(pilotHudHost)) {
         registerDockablePanel(pilotView, VIEW_FLIGHT,
                               FlightDataView::hudPanelId(),
@@ -1760,6 +1801,22 @@ void MainWindow::buildCommonWidgets()
     }
 
     QGCTabbedInfoView *infoview = new QGCTabbedInfoView(this);
+    auto *quickSettings = new QSettings(infoview);
+    auto *quick = new QuickViewWidget(quickSettings,
+        WarningTelemetrySource::fieldNames(), infoview);
+    quick->setUnits(&WarningTelemetrySource::fieldUnits);
+    infoview->installQuickView(quick);
+    const QPointer<WarningEngine> warningEngine = m_warningEngine;
+    const auto refreshQuick = [quick, warningSource, warningEngine]() {
+        quick->setValues(warningSource ? warningSource->values() : QuickViewWidget::Values());
+        quick->setWarningColors(warningEngine ? warningEngine->colors() : QuickViewWidget::Colors());
+    };
+    auto *quickTimer = new QTimer(quick);
+    connect(quickTimer, &QTimer::timeout, quick, refreshQuick);
+    connect(m_warningTelemetry, &WarningTelemetrySource::epochChanged, quick, refreshQuick);
+    connect(m_warningEngine, &WarningEngine::colorsChanged, quick, refreshQuick);
+    quickTimer->start(250);
+    refreshQuick();
     connect(infoview, &QGCTabbedInfoView::clearTrackRequested,
             pilotMap, [pilotMap]() {
         if (AbstractMapWidget *const map = pilotMap->mapWidget()) {
@@ -2162,6 +2219,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     closeFftAnalysisWindows();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
+    closeWarningManager();
     closeLogDownloadWindows();
     if (logPlayer) {
         logPlayer->shutdown();
@@ -3118,6 +3176,38 @@ void MainWindow::closeAnonLog()
     for (auto *window : windows) delete window;
     delete m_logAnonymizeService.data();
     m_logAnonymizeService = nullptr;
+}
+
+void MainWindow::showWarningManager()
+{
+    if (aboutToCloseFlag || !m_warningEngine) return;
+    auto *window = findChild<WarningManagerWindow *>();
+    if (!window) {
+        window = new WarningManagerWindow(m_warningEngine,
+            WarningTelemetrySource::fieldNames(), this);
+        if (!m_warningLoadError.isEmpty()) window->setExternalStatus(m_warningLoadError);
+        const QPointer<WarningTelemetrySource> source = m_warningTelemetry;
+        const auto refresh = [source, window]() {
+            window->setTelemetryValues(source ? source->values() : WarningEngine::Values());
+        };
+        auto *timer = new QTimer(window);
+        connect(timer, &QTimer::timeout, window, refresh);
+        connect(m_warningTelemetry, &WarningTelemetrySource::epochChanged, window, refresh);
+        timer->start(250);
+        refresh();
+    }
+    window->show();
+    window->raise();
+    window->activateWindow();
+}
+
+void MainWindow::closeWarningManager()
+{
+    for (auto *window : findChildren<WarningManagerWindow *>()) delete window;
+    delete m_warningEngine.data();
+    m_warningEngine = nullptr;
+    delete m_warningTelemetry.data();
+    m_warningTelemetry = nullptr;
 }
 
 void MainWindow::closeParameterMetaDataRegeneration()

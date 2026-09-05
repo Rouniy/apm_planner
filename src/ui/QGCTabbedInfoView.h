@@ -25,6 +25,7 @@ public:
     ~QGCTabbedInfoView();
     void addSource(MAVLinkDecoder *decoder);
     void setFlightDataViewModel(FlightDataViewModel *viewModel);
+    void installQuickView(QWidget *view);
     PreflightChecklistModel *preflightChecklistModel() const;
     SimpleActionsWidget *simpleActionsWidget() const;
 

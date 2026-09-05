@@ -3,6 +3,9 @@
 #include "ui/configuration/ConfigFFTView.h"
 #include "ui/configuration/ParameterMetaDataRegenerationWindow.h"
 #include "ui/AnonLogWindow.h"
+#include "ui/WarningManagerWindow.h"
+#include "services/WarningEngine.h"
+#include "ui/flightdata/QuickViewWidget.h"
 #include "ui/Loghandling/LogAnonymizeService.h"
 #include "InspectorRuntimeAudit.h"
 #include "LogDownloadRuntimeAudit.h"
@@ -861,6 +864,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("actionFftAnalysis"),
         QStringLiteral("actionParameterMetaDataRegeneration"),
         QStringLiteral("actionAnonLog"),
+        QStringLiteral("actionWarningManager"),
         QStringLiteral("actionProximity"),
         QStringLiteral("actionMavlinkDeviceOperations"),
         QStringLiteral("actionTerrain3D"),
@@ -911,6 +915,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("FftButton"),
         QStringLiteral("ParamGenButton"),
         QStringLiteral("AnonLogButton"),
+        QStringLiteral("WarningManagerButton"),
         QStringLiteral("ProximityButton")
     };
     QAbstractButton *advancedNavigation = backstage->findChild<QAbstractButton *>(
@@ -1013,6 +1018,35 @@ int RunSetupRouteRuntimeAudit()
     auto *paramGenAction = main->findChild<QAction *>(
         QStringLiteral("actionParameterMetaDataRegeneration"));
     auto *anonAction = main->findChild<QAction *>(QStringLiteral("actionAnonLog"));
+    auto *warningAction = main->findChild<QAction *>(QStringLiteral("actionWarningManager"));
+    result.Expect(warningAction && warningAction->isEnabled(),
+                  QStringLiteral("Warning Manager is unavailable offline"));
+    if (warningAction) {
+        warningAction->trigger();
+        auto *window = main->findChild<WarningManagerWindow *>();
+        result.Expect(window && window->isWindow() && window->isVisible()
+                      && window->windowModality() == Qt::NonModal
+                      && window->findChild<QAbstractButton *>(QStringLiteral("AddWarningButton"))
+                      && window->findChild<QAbstractButton *>(QStringLiteral("SaveWarningsButton")),
+                      QStringLiteral("Warning Manager has no usable modeless editor"));
+        if (window) {
+            QPointer<WarningEngine> service = window->engine();
+            result.Expect(service && service->parent() == main,
+                          QStringLiteral("Warning Manager engine is not application-owned"));
+            warningAction->trigger();
+            result.Expect(main->findChildren<WarningManagerWindow *>().size() == 1,
+                          QStringLiteral("Warning Manager opened duplicate observers"));
+            delete window;
+            warningAction->trigger();
+            window = main->findChild<WarningManagerWindow *>();
+            result.Expect(window && service && window->engine() == service,
+                          QStringLiteral("Warning Manager lost rules on close/reopen"));
+            delete window;
+        }
+    }
+    auto *quick = main->findChild<QuickViewWidget *>();
+    result.Expect(quick && quick->findChild<QWidget *>(QStringLiteral("QuickCell_0")),
+                  QStringLiteral("DATA has no native Quick warning-color consumer"));
     result.Expect(anonAction && anonAction->isEnabled(),
                   QStringLiteral("production Anon Log action is unavailable offline"));
     if (anonAction) {

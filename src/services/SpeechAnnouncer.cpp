@@ -339,6 +339,38 @@ void SpeechAnnouncer::enqueueStatusText(ExactStatusText event)
                    speechText);
 }
 
+void SpeechAnnouncer::enqueueCustomWarning(const VehicleTargetLease &lease,
+                                           const QString &message)
+{
+    const VehicleTargetLease capturedLease = lease;
+    const QString capturedMessage = message.trimmed();
+    QPointer<SpeechAnnouncer> guard(this);
+    const VehicleState vehicle = currentVehicle();
+    if (!guard || capturedMessage.isEmpty()
+        || !leaseMatchesCurrentVehicle(capturedLease, vehicle)) return;
+    if (m_targetGeneration != capturedLease.generation) {
+        m_targetGeneration = capturedLease.generation;
+        clearHighMessage();
+        if (!guard) return;
+        resetPeriodicCountdowns(nowMs());
+    }
+    const VehicleState beforeSpeech = currentVehicle();
+    if (!guard || !leaseMatchesCurrentVehicle(capturedLease, beforeSpeech)) return;
+    // Repeat is owned by WarningEngine. Submit each due warning once to the
+    // shared bounded TTS queue, never busy-wait on the GUI thread. Speech-off
+    // and armed-only suppress audio but not the visible warning.
+    if (m_settings && m_settings->isEnabled()
+        && (!m_settings->armedOnly() || beforeSpeech.armed)) {
+        const auto speaker = m_speaker;
+        if (speaker) speaker(capturedMessage);
+        if (!guard) return;
+    }
+    const VehicleState current = currentVehicle();
+    if (!guard || !leaseMatchesCurrentVehicle(capturedLease, current)) return;
+    setHighMessage(capturedMessage, MAV_SEVERITY_EMERGENCY,
+                   nowMs() + kHighMessageLifetimeMs, QString());
+}
+
 void SpeechAnnouncer::enqueueExactTelemetry(ExactSpeechTelemetryEvent event)
 {
     if (!m_telemetrySource
