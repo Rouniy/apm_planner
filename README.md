@@ -31,13 +31,19 @@ Required tools and libraries:
 - CMake 3.21 or newer and a C++17 compiler;
 - Qt 5.10 or newer, or Qt 6, with Core, Gui, Widgets, Network, Svg, Xml, Sql, SerialPort,
   Quick, Qml, QuickWidgets and PrintSupport;
-- SDL2.
+- SDL2;
+- OpenSSL 1.1.1 or newer, Crypto development library (signing-key encryption).
 
 Qt 5 is currently the reproducible baseline. Qt Multimedia and TextToSpeech
 are required by default. DataVisualization remains optional. CMake fails early
 if the audio development modules are missing; existing build directories should
 set `-DAPM_REQUIRE_QT_AUDIO=ON` explicitly to override an older cached opt-out.
 A runtime speech engine and an unmuted audio output are also required.
+The signing foundation requires OpenSSL (`libssl-dev` on Debian/Ubuntu);
+nonstandard installations can set CMake's `OPENSSL_ROOT_DIR`. There is no
+plaintext-key fallback. See `docs/porting/MAVLINK_SIGNING_PORT.md` for the
+remaining transport/UI integration gates; this dependency alone does not enable
+vehicle signing.
 Only intentionally silent developer builds should use
 `-DAPM_REQUIRE_QT_AUDIO=OFF`: **Test Speech** and spoken alerts cannot work
 without TextToSpeech, and such builds are not speech-parity evidence.

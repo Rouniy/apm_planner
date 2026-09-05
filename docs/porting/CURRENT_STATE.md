@@ -24,7 +24,33 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): native **Warning Manager** with its real DATA Quick
+Latest slice (2026-09-05): **MAVLink Signing protocol/key-store foundation**
+and a production signed-frame CRC fix. The new standalone library provides
+exact-byte signing/verification, shared-key bounded replay state, a locked
+process-crash-safe timestamp allocator and OpenSSL AES-GCM/PBKDF2 named-key
+storage. Independent pymavlink vectors and adversarial/atomicity tests pass.
+The old frame helper could turn BAD_CRC into OK after a signed trailer; the
+application parser now rejects that frame without advancing replay/clock state.
+
+Full Qt5/audio build and **232/232 tests pass (55.63 seconds)**. Real X11 with
+isolated UDP14698 rejects forty bad-CRC/valid-MAC heartbeats (no target appears),
+then accepts valid signed frames and creates source232. The resulting TLOG has
+124 valid source232 heartbeats and zero BAD_DATA under independent pymavlink
+parsing. Application exit is 0 while the valid peer remains active. Evidence:
+`/tmp/apm-signing.krlrz9/`. Claude TCP c196/c197 reviews and three bounded Codex
+streams are recorded in `MAVLINK_SIGNING_PORT.md` / `MAV_AUTH_KEY_STORE.md`.
+
+**Signing itself is not yet wired into production transport or UI.** Advanced
+Tools remains **14/16**, SETUP **46 pages / eight absent reference routes** and
+CONFIG **15/15 factories, Planner 21/64 controls**. A signature present on live
+traffic still does not imply authentication. Next: application-owned same-key
+context coalescing and stable link IDs, exact/legacy outbound funnels and raw
+write gate, authenticated ingress/secret suppression, then modeless key manager
+and exact-target no-ACK provisioning with non-COMM_0 SITL evidence. Persistent
+RX restart protection, guaranteed power-loss durability and native-platform
+crypto/packaging remain explicit gaps. Do not enable vehicle-side signing first.
+
+Previous slice (2026-09-05): native **Warning Manager** with its real DATA Quick
 coloring consumer. All IF/AND editor columns, repeat/tokens, atomic compatible
 warnings.xml, single application engine/modeless observer, exact-target fresh
 telemetry, bounded shared speech and a ten-second red HUD message are wired.
@@ -175,7 +201,8 @@ refresh and normal application exit 0 with the tool open. Evidence:
 `DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
 
 Next single-vehicle candidate, not Swarm: MAVLink Signing
-(transport and key storage before the dialog); Support Proxy
+(integrate the tested protocol/key-store foundation into all transport paths
+and the key-domain manager before provisioning and the dialog); Support Proxy
 is also a placeholder in MP10 itself. Settings/CONFIG follows these working
 single-vehicle surfaces. The eight absent Setup routes remain explicitly tracked.
 

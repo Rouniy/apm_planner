@@ -38,6 +38,7 @@ class MAVLinkFrameParserTest final : public QObject
 private slots:
     void interleavedLinksKeepIndependentPartialFrames();
     void protocolVersionStateIsPerParser();
+    void signedTrailerNeverRehabilitatesBadCrc();
 };
 
 void MAVLinkFrameParserTest::interleavedLinksKeepIndependentPartialFrames()
@@ -74,6 +75,43 @@ void MAVLinkFrameParserTest::protocolVersionStateIsPerParser()
     mavlink2.setOutboundVersion(1);
     QVERIFY(mavlink1.status().flags & MAVLINK_STATUS_FLAG_OUT_MAVLINK1);
     QVERIFY(mavlink2.status().flags & MAVLINK_STATUS_FLAG_OUT_MAVLINK1);
+}
+
+void MAVLinkFrameParserTest::signedTrailerNeverRehabilitatesBadCrc()
+{
+    // Independent pymavlink frame, key bytes1..32, timestamp27992960000000.
+    const QByteArray valid = QByteArray::fromHex(
+        "fd0901004d2a01000000000000000203000303c9070900e06f9e7519f130582f8758");
+    for (bool configured : {false, true}) {
+        MAVLinkFrameParser parser;
+        mavlink_signing_t signing{};
+        for (int i = 0; i < 32; ++i) signing.secret_key[i] = i + 1;
+        signing.timestamp = 27992960000000ULL;
+        mavlink_signing_streams_t streams{};
+        if (configured) {
+            parser.status().signing = &signing;
+            parser.status().signing_streams = &streams;
+        }
+        for (int offset : {10, 19, 20}) {
+            QByteArray corrupt = valid;
+            corrupt[offset] = char(quint8(corrupt[offset]) ^ 1);
+            // Even a genuinely valid MAC covering an invalid CRC is not an
+            // acceptable frame and must not allocate replay state.
+            auto signer = signing;
+            signer.flags = MAVLINK_SIGNING_FLAG_SIGN_OUTGOING;
+            signer.link_id = 9;
+            auto *bytes = reinterpret_cast<unsigned char *>(corrupt.data());
+            mavlink_sign_packet(&signer, bytes + 21, bytes, 10, bytes + 10, 9, bytes + 19);
+            QVERIFY(feed(parser, corrupt).isEmpty());
+            QCOMPARE(parser.status().msg_received, quint8(MAVLINK_FRAMING_BAD_CRC));
+            QCOMPARE(parser.status().packet_rx_success_count, quint16(0));
+            QCOMPARE(streams.num_signing_streams, quint16(0));
+            QCOMPARE(signing.timestamp, 27992960000000ULL);
+        }
+        QCOMPARE(feed(parser, valid).size(), 1);
+        QCOMPARE(parser.status().packet_rx_success_count, quint16(1));
+        if (configured) QCOMPARE(streams.num_signing_streams, quint16(1));
+    }
 }
 
 QTEST_APPLESS_MAIN(MAVLinkFrameParserTest)

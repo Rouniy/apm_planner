@@ -172,6 +172,23 @@ target_include_directories(apm_mission_command_catalog
 )
 target_link_libraries(apm_mission_command_catalog PUBLIC Qt::Core)
 
+# Qt has hashes but no authenticated encryption API. Signing-key encryption
+# uses OpenSSL on all supported platforms; never fall back to plaintext storage.
+find_package(OpenSSL 1.1.1 REQUIRED COMPONENTS Crypto)
+add_library(apm_mavlink_signing STATIC
+    src/comm/MAVLinkSigningClock.cpp
+    src/comm/MAVLinkSigningClock.h
+    src/comm/MAVLinkSigningSession.cpp
+    src/comm/MAVLinkSigningSession.h
+    src/services/MavAuthKeyStore.cpp
+    src/services/MavAuthKeyStore.h
+)
+target_include_directories(apm_mavlink_signing
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    PRIVATE ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF}
+)
+target_link_libraries(apm_mavlink_signing PUBLIC Qt::Core PRIVATE OpenSSL::Crypto)
+
 # AGLLIB math library & OPMapControl
 add_subdirectory(libs/alglib EXCLUDE_FROM_ALL)
 add_subdirectory(libs/opmapcontrol EXCLUDE_FROM_ALL)
@@ -6440,6 +6457,17 @@ if(BUILD_TESTING)
     set_tests_properties(uasactionswidget_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    foreach(signing_test IN ITEMS mavlinksigningclock mavlinksigningsession mavauthkeystore)
+        add_executable(${signing_test}_tests tests/test_${signing_test}.cpp)
+        target_link_libraries(${signing_test}_tests PRIVATE apm_mavlink_signing Qt::Test)
+        add_test(NAME ${signing_test}_tests COMMAND ${signing_test}_tests)
+        set_tests_properties(${signing_test}_tests PROPERTIES TIMEOUT 120)
+    endforeach()
+    target_sources(mavlinksigningsession_tests PRIVATE src/comm/MAVLinkFrameParser.cpp)
+    target_link_libraries(mavauthkeystore_tests PRIVATE OpenSSL::Crypto)
+    target_include_directories(mavlinksigningsession_tests PRIVATE
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
 
     add_executable(missionplannerstyle_tests
         tests/test_missionplannerstyle.cpp

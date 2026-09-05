@@ -55,6 +55,13 @@ MAVLink Signing and upstream-placeholder Support Proxy remain unavailable.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
 
+Signing now has a tested standalone AES-GCM/PBKDF2 vault, persistent timestamp
+allocator and exact-byte signing/verification library, but no production
+settings consumer, default vault/clock path or active key-domain manager yet.
+No new QSettings key is counted. The master passphrase is never persisted;
+OpenSSL Crypto is a required build dependency. Live transport and the modeless
+Add/Use/Delete/Disable workflow remain gates in `MAVLINK_SIGNING_PORT.md`.
+
 Warning Manager persists compatible `warnings.xml` under the writable application
 data directory and shares `speechenable` / `speech_armed_only` with Planner.
 DATA Quick uses `quickViewCount`, `quickViewColumns` and `quickView1`..`12`, and
