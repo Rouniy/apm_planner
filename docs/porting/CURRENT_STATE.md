@@ -24,7 +24,44 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Create DashWare CSV**.
+Latest slice (2026-09-06): **Download MAVFTP File and owned FTP operations**.
+The existing TOOLS/SETUP Developer button now follows MP10's direct workflow:
+remote path (default `@SYS/threads.txt`), Save filename, modeless progress and
+Cancel. It does not require directory listing or redirect to a different tool.
+Developer is now **15/32 working,17 unavailable**. One exact target lease is
+pinned before both prompts and rechecked at shared-service admission. A30-second
+remote deadline, token-scoped cancellation and atomic worker output cover
+timeout, target changes, close/destruction and reentrant callbacks. No parameter
+snapshot or disarmed condition is required for this read operation.
+
+Both the new controller and existing full MAVFTP browser use nonzero operation
+IDs published before callbacks, scoped progress/results and owned cancellation.
+They share the application-owned protocol service; no duplicate downloader or
+fixed TOOLS menu item was added. Save may atomically replace one confirmed local
+regular file, with path/snapshot checks and no direct-write fallback. The64MiB
+buffer, sequential80-byte reads and absence of download whole-file CRC remain
+explicit limits, not claims of verified/authenticated remote content.
+
+Qt5/audio configure/build, focused6/6 (7.75s), **243/243 tests (29.82s)** and
+production X11 Tools route exit0 pass. Actual path/Save cancellation sends no
+FTP frames; the in-process sys234 fixture exercises Reset/Open/two Reads/
+Terminate/Reset, rejects wrong sender/destination and compares127 binary bytes
+including NUL/high bytes. Existing GPS/Split/DashWare/six vehicle actions remain
+green. No network SITL state was changed; runtime fixtures are stopped.
+Evidence: `/tmp/apm-mavftp-download.bQ9IqO/`; see `MAVFTP_DEVELOPER_DOWNLOAD.md`.
+Claude TCP c214/c196 cross-review and three Codex streams covered service,
+controller and runtime; root scheduled all builds/tests and reviewed integration.
+
+Next: **fix the older MAVFTP browser's prompt-time target-switch consent gap**,
+then remaining single-drone Developer tools (APJ defaults/MagFit candidates),
+later Signing transitions. The browser's new operation ownership does not by
+itself pin consent before its existing modal prompts; CONFIG-006 tracks this.
+Settings follows Tools; Swarm stays last. Advanced14 complete+1 partial,
+fixedTools24 plus Signing extension, SETUP46/eight absent reference routes and
+CONFIG15/15 factories/Planner21/64 controls are unchanged. Native platforms,
+physical FTP servers, capability gating and reference screenshot parity remain.
+
+Previous slice (2026-09-06): **Create DashWare CSV**.
 The existing TOOLS/SETUP Developer action now exports BIN/text LOG offline
 through actual input/types/output dialogs, with MP10 default types
 `GPS;ATT;NTUN;CTUN;MODE;BAT` and `<basename>-dashware.csv`. Worker progress,

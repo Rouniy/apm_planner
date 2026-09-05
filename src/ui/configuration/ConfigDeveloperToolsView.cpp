@@ -1,6 +1,9 @@
 #include "ConfigDeveloperToolsView.h"
 
 #include "DeveloperToolParsers.h"
+#include "MavFtpFileDownload.h"
+#include "comm/MavFtpServiceInterface.h"
+#include "comm/VehicleTargetManager.h"
 #include "comm/GpsCorrectionExtractor.h"
 #include "ui/Loghandling/DataFlashDashWareCsvExporter.h"
 #include "ui/Loghandling/DataFlashLogSplitter.h"
@@ -130,8 +133,10 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                          QStringLiteral("OrganizeLogDirectoryButton"), notPorted);
     AddUnavailableAction(tr("Download DataFlash Logs over SFTP"),
                          QStringLiteral("DownloadDataFlashSftpButton"), notPorted);
-    AddUnavailableAction(tr("Download MAVFTP File"),
-                         QStringLiteral("DownloadMavftpFileButton"), notPorted);
+    m_mavFtpButton = AddAction(tr("Download MAVFTP File"),
+        QStringLiteral("DownloadMavftpFileButton"),
+        [this]() { StartMavFtpDownload(); }, false,
+        tr("The MAVFTP download service is unavailable."));
     AddUnavailableAction(tr("Restore Parameters (Recovery)"),
                          QStringLiteral("RestoreParametersButton"), notPorted);
     AddUnavailableAction(tr("Cancel Parameter Restore"),
@@ -166,7 +171,63 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
 
 int ConfigDeveloperToolsView::ImplementedActionCount() const
 {
-    return m_implementedActionCount + (m_vehicleTools ? m_vehicleButtons.size() : 0);
+    return m_implementedActionCount + (m_vehicleTools ? m_vehicleButtons.size() : 0)
+        + (m_mavFtpService && m_mavFtpTargets ? 1 : 0);
+}
+
+bool ConfigDeveloperToolsView::MavFtpDownloadBusy() const
+{
+    return m_mavFtpDownload && m_mavFtpDownload->busy();
+}
+
+void ConfigDeveloperToolsView::setMavFtpDownloadServices(
+    MavFtpServiceInterface *service, VehicleTargetManager *targets)
+{
+    if (m_mavFtpService == service && m_mavFtpTargets == targets)
+        return;
+    if (m_mavFtpDownload) {
+        disconnect(m_mavFtpDownload, nullptr, this, nullptr);
+        delete m_mavFtpDownload;
+    }
+    if (m_mavFtpService)
+        disconnect(m_mavFtpService, nullptr, this, nullptr);
+    if (m_mavFtpTargets)
+        disconnect(m_mavFtpTargets, nullptr, this, nullptr);
+    m_mavFtpService = service;
+    m_mavFtpTargets = targets;
+    if (service && targets) {
+        m_mavFtpDownload = new MavFtpFileDownload(service, targets, this);
+        connect(m_mavFtpDownload, &MavFtpFileDownload::busyChanged,
+                this, &ConfigDeveloperToolsView::RefreshVehicleActions);
+        connect(m_mavFtpDownload, &MavFtpFileDownload::logMessage,
+                this, [this](const QString &message) {
+            if (!m_fileToolsClosing)
+                AppendLog(message);
+        });
+        connect(service, &MavFtpServiceInterface::stateChanged,
+                this, &ConfigDeveloperToolsView::RefreshOfflineFileActions);
+        connect(service, &QObject::destroyed,
+                this, &ConfigDeveloperToolsView::RefreshVehicleActions);
+        connect(targets, &QObject::destroyed,
+                this, &ConfigDeveloperToolsView::RefreshVehicleActions);
+    }
+    AppendLog(tr("%1 of %2 Mission Planner Developer tools are available.")
+                  .arg(ImplementedActionCount()).arg(ActionCount()));
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::StartMavFtpDownload()
+{
+    if (m_fileToolsClosing || !m_mavFtpDownload)
+        return;
+    if (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
+        || m_splitPrompt || m_dashWareState || m_dashWarePrompt
+        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        AppendLog(tr("MAVFTP download: finish or cancel the current Developer operation first."));
+        return;
+    }
+    m_mavFtpDownload->start();
 }
 
 void ConfigDeveloperToolsView::AddVehicleAction(
@@ -202,7 +263,7 @@ void ConfigDeveloperToolsView::setVehicleToolService(DeveloperVehicleToolService
 
 void ConfigDeveloperToolsView::RefreshVehicleActions()
 {
-    if (m_refreshingVehicleActions)
+    if (m_refreshingVehicleActions || m_fileToolsClosing)
         return;
     m_refreshingVehicleActions = true;
     const QPointer<ConfigDeveloperToolsView> guard(this);
@@ -214,7 +275,7 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
             reason = tr("The guarded vehicle tool service is unavailable.");
         else if (m_gpsExtractionState || m_gpsExtractionPrompt
                  || m_splitState || m_splitPrompt
-                 || m_dashWareState || m_dashWarePrompt)
+                 || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy())
             reason = tr("Finish or cancel the current offline file operation first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
@@ -270,11 +331,18 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
     CancelGpsExtraction();
     CancelSplit();
     CancelDashWareExport();
+    if (m_mavFtpDownload)
+        m_mavFtpDownload->cancel();
     ActionPageView::closeEvent(event);
 }
 
 ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
 {
+    m_fileToolsClosing = true;
+    if (m_mavFtpDownload) {
+        disconnect(m_mavFtpDownload, nullptr, this, nullptr);
+        delete m_mavFtpDownload;
+    }
     ++m_gpsPromptRevision;
     if (m_gpsExtractionState)
         m_gpsExtractionState->cancelled.store(true, std::memory_order_relaxed);
@@ -312,7 +380,7 @@ void ConfigDeveloperToolsView::PickGpsCorrectionInput()
 {
     if (m_fileToolsClosing || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
-        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
+        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy()))
         return;
     const quint64 revision = ++m_gpsPromptRevision;
@@ -373,11 +441,19 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
         return;
     const bool idle = !m_gpsExtractionState && !m_gpsExtractionPrompt
         && !m_splitState && !m_splitPrompt
-        && !m_dashWareState && !m_dashWarePrompt && !m_vehiclePrompt
+        && !m_dashWareState && !m_dashWarePrompt && !MavFtpDownloadBusy() && !m_vehiclePrompt
         && (!m_vehicleTools || !m_vehicleTools->busy());
     m_gpsExtractionButton->setEnabled(idle);
     m_splitButton->setEnabled(idle);
     m_dashWareButton->setEnabled(idle);
+    const bool ftpAvailable = m_mavFtpService && m_mavFtpTargets;
+    const bool ftpBusy = ftpAvailable && m_mavFtpService->isBusy();
+    m_mavFtpButton->setEnabled(idle && ftpAvailable && !ftpBusy);
+    m_mavFtpButton->setToolTip(!ftpAvailable
+        ? tr("The MAVFTP download service is unavailable.")
+        : (!idle || ftpBusy)
+            ? tr("Finish or cancel the active Developer or MAVFTP operation first.")
+            : tr("Download a remote file by path from the selected vehicle; requires a MAVLink connection."));
 }
 
 void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const QString &output)
@@ -386,7 +462,7 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
         return;
     if (m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
-        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
+        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -502,7 +578,7 @@ void ConfigDeveloperToolsView::PickSplitInput()
 {
     if (m_fileToolsClosing || m_splitState || m_splitPrompt
         || m_gpsExtractionState || m_gpsExtractionPrompt
-        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
+        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -611,7 +687,7 @@ void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
         return;
     if (m_splitState || m_splitPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_dashWareState || m_dashWarePrompt
-        || m_vehiclePrompt
+        || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DataFlash log split: another file selection, offline operation, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -744,7 +820,7 @@ void ConfigDeveloperToolsView::CancelDashWareExport()
 
 void ConfigDeveloperToolsView::PickDashWareInput()
 {
-    if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt
+    if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -843,7 +919,7 @@ void ConfigDeveloperToolsView::ExportDashWareCsv(
 {
     if (m_fileToolsClosing)
         return;
-    if (m_dashWareState || m_dashWarePrompt || m_gpsExtractionState
+    if (m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DashWare CSV export: another file selection, offline operation, or vehicle operation is already active."));
@@ -960,7 +1036,7 @@ void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
     const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
     if (!service || m_vehiclePrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
-        || m_dashWareState || m_dashWarePrompt)
+        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy())
         return;
     VehiclePlan plan;
     QString error;

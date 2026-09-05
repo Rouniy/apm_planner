@@ -57,7 +57,7 @@ Upstream-placeholder Support Proxy stays disabled.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
 
-The separate Developer Tools page has exactly32 MP10 actions, not31. Fourteen
+The separate Developer Tools page has exactly32 MP10 actions, not31. Fifteen
 now have working implementations: the five decoders/shared windows plus Set
 QNH, Adjust Barometer Altitude, Force Accel/Compass Calibrated and Reboot/DFU,
 plus offline Extract GPS Corrections, Split DataFlash Log and Create DashWare
@@ -65,12 +65,17 @@ CSV. All three run off the GUI thread with cancellation; Split stages every part
 no-overwrite publication and reports any partial publication explicitly.
 DashWare preserves sparse raw-record order, source timestamp resets, MP10 schema
 and binary mode labels, with strict parsing and atomic confirmed CSV output.
-Full242/242, actual X11 pickers and independent real/large log checks pass.
+Download MAVFTP File now follows the direct remote-path/Save/progress workflow
+on the shared service, with a target lease captured before prompts, a30-second
+deadline and atomic output. It and the full browser use owned operation IDs,
+progress and cancellation; the browser's older prompt-time consent gap remains
+tracked separately in CONFIG-006. Full243/243 and actual X11 pickers with a
+127-byte in-process MAVFTP transfer pass; earlier real/large log checks remain.
 The six vehicle actions require fresh disarmed exact-target consent and report
-matched ACK/parameter echoes or explicit uncertainty. The remaining18 file,
+matched ACK/parameter echoes or explicit uncertainty. The remaining17 file,
 transport and recovery actions stay disabled. This is not additional CONFIG
 route coverage; see `DEVELOPER_VEHICLE_TOOLS.md`, `GPS_CORRECTION_EXTRACTION.md`,
-`DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md`
+`DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md`, `MAVFTP_DEVELOPER_DOWNLOAD.md`
 and the production route audit. Older RX-only Qt logs may omit this station's
 transmitted corrections. Current recording includes submitted typed MAVLink
 frames while enabled, with secret exclusion and unchanged heartbeat-triggered

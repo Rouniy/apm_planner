@@ -2,6 +2,7 @@
 #define MAVFTPSERVICEINTERFACE_H
 
 #include "MavFtpProtocol.h"
+#include "VehicleEndpoint.h"
 
 #include <QByteArray>
 #include <QObject>
@@ -48,6 +49,7 @@ public:
     struct Result
     {
         Operation operation = Operation::None;
+        quint64 operationId = 0;
         quint64 targetGeneration = 0;
         QString remotePath;
         QString error;
@@ -69,16 +71,33 @@ public:
     virtual bool isBusy() const = 0;
     virtual Operation operation() const = 0;
     virtual quint64 activeTargetGeneration() const = 0;
+    virtual quint64 activeOperationId() const { return 0; }
     virtual QString lastError() const = 0;
 
     virtual StartResult startList(const QString &remotePath) = 0;
     virtual StartResult startDownload(const QString &remotePath) = 0;
+    virtual StartResult startOperation(Operation, const QString &,
+                                      const QByteArray &, quint64 *operationIdOut)
+    {
+        if (operationIdOut) *operationIdOut = 0;
+        return StartResult::TransportUnavailable;
+    }
+    // The admitted token is published before any synchronous service callback.
+    // Defaults fail closed for implementations without ownership-aware support.
+    virtual StartResult startDownloadForTarget(const QString &,
+                                               const VehicleTargetLease &,
+                                               quint64 *operationIdOut)
+    {
+        if (operationIdOut) *operationIdOut = 0;
+        return StartResult::TransportUnavailable;
+    }
     virtual StartResult startUpload(const QString &remotePath,
                                     const QByteArray &data) = 0;
     virtual StartResult startMakeDirectory(const QString &remotePath) = 0;
     virtual StartResult startRemoveFile(const QString &remotePath) = 0;
     virtual StartResult startRemoveDirectory(const QString &remotePath) = 0;
     virtual void cancel() = 0;
+    virtual bool cancelOperation(quint64) { return false; }
 
 signals:
     void stateChanged();
@@ -87,6 +106,8 @@ signals:
                           const QString &remotePath);
     void progressChanged(qulonglong targetGeneration,
                          qint64 completedBytes, qint64 totalBytes);
+    void operationProgress(qulonglong operationId, qulonglong targetGeneration,
+                           qint64 completedBytes, qint64 totalBytes);
     void operationFinished(const MavFtpServiceInterface::Result &result);
 };
 

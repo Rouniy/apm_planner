@@ -55,10 +55,17 @@ public:
     bool isBusy() const override { return m_active != nullptr; }
     Operation operation() const override;
     quint64 activeTargetGeneration() const override;
+    quint64 activeOperationId() const override;
     QString lastError() const override { return m_lastError; }
 
     StartResult startList(const QString &remotePath) override;
     StartResult startDownload(const QString &remotePath) override;
+    StartResult startOperation(Operation operation, const QString &remotePath,
+                               const QByteArray &uploadData,
+                               quint64 *operationIdOut) override;
+    StartResult startDownloadForTarget(const QString &remotePath,
+                                      const VehicleTargetLease &expected,
+                                      quint64 *operationIdOut) override;
     StartResult startUpload(const QString &remotePath,
                             const QByteArray &data) override;
     StartResult startMakeDirectory(const QString &remotePath) override;
@@ -68,6 +75,7 @@ public:
     void observeMessage(int linkId, const mavlink_message_t &message);
     void forgetLink(int linkId);
     void cancel() override;
+    bool cancelOperation(quint64 operationId) override;
     void shutdown();
 
 private:
@@ -117,7 +125,10 @@ private:
                               QByteArray *encodedPath) const;
     StartResult begin(Operation operation, const QString &remotePath,
                       const QByteArray &encodedPath,
-                      const QByteArray &uploadData = QByteArray());
+                      const QByteArray &uploadData = QByteArray(),
+                      const VehicleTargetLease *expected = nullptr,
+                      quint64 *operationIdOut = nullptr);
+    bool publishProgress(qint64 completed, qint64 total);
     bool targetIsCurrent(const VehicleTargetLease &lease) const;
     bool responseSourceMatches(
         int linkId, const mavlink_message_t &message,

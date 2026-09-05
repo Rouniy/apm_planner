@@ -221,7 +221,7 @@ void MavFTPUIView::connectUi()
     }
     connect(m_service, &MavFtpServiceInterface::stateChanged,
             this, &MavFTPUIView::syncControls);
-    connect(m_service, &MavFtpServiceInterface::progressChanged,
+    connect(m_service, &MavFtpServiceInterface::operationProgress,
             this, &MavFTPUIView::handleProgress);
     connect(m_service, &MavFtpServiceInterface::operationFinished,
             this, &MavFTPUIView::handleResult);
@@ -286,8 +286,7 @@ void MavFTPUIView::listDirectory(QTreeWidgetItem *item, bool updateEntries,
     m_pendingListUpdatesEntries = updateEntries;
     m_pendingRootRefresh = rootRefresh;
     m_status->setText(tr("Listing %1").arg(path));
-    finishStart(m_service->startList(path),
-                MavFtpServiceInterface::Operation::ListDirectory, path);
+    admitPending();
 }
 
 void MavFTPUIView::downloadSelected()
@@ -317,8 +316,7 @@ void MavFTPUIView::downloadSelected()
     m_pendingDisplayName = fileName;
     m_pendingLocalPath = uniqueDownloadPath(directory, fileName);
     m_status->setText(tr("Download %1").arg(fileName));
-    finishStart(m_service->startDownload(remotePath),
-                MavFtpServiceInterface::Operation::Download, remotePath);
+    admitPending();
 }
 
 void MavFTPUIView::uploadFile()
@@ -383,8 +381,7 @@ void MavFTPUIView::uploadFile()
     beginPending(MavFtpServiceInterface::Operation::Upload, remotePath);
     m_pendingDisplayName = info.fileName();
     m_status->setText(tr("Upload %1").arg(info.fileName()));
-    finishStart(m_service->startUpload(remotePath, data),
-                MavFtpServiceInterface::Operation::Upload, remotePath);
+    admitPending(data);
 }
 
 void MavFTPUIView::deleteSelected()
@@ -412,10 +409,7 @@ void MavFTPUIView::deleteSelected()
     beginPending(operation, path);
     m_pendingDisplayName = name;
     m_status->setText(tr("Delete %1").arg(name));
-    const auto result = directory
-        ? m_service->startRemoveDirectory(path)
-        : m_service->startRemoveFile(path);
-    finishStart(result, operation, path);
+    admitPending();
 }
 
 void MavFTPUIView::makeDirectory()
@@ -437,21 +431,23 @@ void MavFTPUIView::makeDirectory()
     beginPending(MavFtpServiceInterface::Operation::MakeDirectory, path);
     m_pendingDisplayName = name;
     m_status->setText(tr("Create %1").arg(path));
-    finishStart(m_service->startMakeDirectory(path),
-                MavFtpServiceInterface::Operation::MakeDirectory, path);
+    admitPending();
 }
 
 void MavFTPUIView::cancelOperation()
 {
     if (!m_service || !m_pending || !m_service->isBusy()
+        || !m_pendingOperationId
+        || m_service->activeOperationId() != m_pendingOperationId
         || m_cancelRequested) {
         return;
     }
     m_cancelRequested = true;
     m_status->setText(tr("Cancelling MAVFTP operation…"));
     m_cancel->setEnabled(false);
-    m_service->cancel();
-    syncControls();
+    QPointer<MavFTPUIView> guard(this);
+    m_service->cancelOperation(m_pendingOperationId);
+    if (guard) syncControls();
 }
 
 void MavFTPUIView::openSelectedEntry()
@@ -484,7 +480,8 @@ void MavFTPUIView::openSelectedEntry()
 void MavFTPUIView::handleResult(
     const MavFtpServiceInterface::Result &result)
 {
-    if (!m_pending || result.operation != m_pendingOperation
+    if (!m_pending || !m_pendingOperationId || result.operationId != m_pendingOperationId
+        || result.operation != m_pendingOperation
         || (!result.remotePath.isEmpty()
             && !sameRemotePath(result.remotePath, m_pendingRemotePath))
         || (m_pendingGeneration != 0
@@ -571,10 +568,11 @@ void MavFTPUIView::handleResult(
     syncControls();
 }
 
-void MavFTPUIView::handleProgress(qulonglong generation,
+void MavFTPUIView::handleProgress(qulonglong operationId, qulonglong generation,
                                   qint64 completed, qint64 total)
 {
-    if (!m_pending || (m_pendingGeneration != 0
+    if (!m_pending || !m_pendingOperationId || operationId != m_pendingOperationId
+        || (m_pendingGeneration != 0
                        && generation != m_pendingGeneration)) {
         return;
     }
@@ -694,6 +692,8 @@ void MavFTPUIView::beginPending(
     MavFtpServiceInterface::Operation operation, const QString &remotePath)
 {
     m_pending = true;
+    ++m_pendingRevision;
+    m_pendingOperationId = 0;
     m_pendingOperation = operation;
     m_pendingRemotePath = remotePath;
     m_pendingLocalPath.clear();
@@ -705,6 +705,18 @@ void MavFTPUIView::beginPending(
     m_cancelRequested = false;
     m_progress->setRange(0, 0);
     syncControls();
+}
+
+void MavFTPUIView::admitPending(const QByteArray &data)
+{
+    if (!m_service || !m_pending) return;
+    const auto operation = m_pendingOperation;
+    const QString path = m_pendingRemotePath;
+    const quint64 revision = m_pendingRevision;
+    QPointer<MavFTPUIView> guard(this);
+    const auto result = m_service->startOperation(operation, path, data, &m_pendingOperationId);
+    if (guard && m_pendingRevision == revision)
+        finishStart(result, operation, path);
 }
 
 bool MavFTPUIView::finishStart(
@@ -730,6 +742,7 @@ bool MavFTPUIView::finishStart(
 void MavFTPUIView::clearPending()
 {
     m_pending = false;
+    m_pendingOperationId = 0;
     m_pendingOperation = MavFtpServiceInterface::Operation::None;
     m_pendingRemotePath.clear();
     m_pendingDirectory = nullptr;
@@ -755,7 +768,8 @@ void MavFTPUIView::syncControls()
     m_newFolderName->setEnabled(serviceAvailable && !busy && hasDirectory);
     m_mkdir->setEnabled(serviceAvailable && !busy && hasDirectory
                         && folderNameError().isEmpty());
-    m_cancel->setEnabled(serviceAvailable && m_pending && busy
+    m_cancel->setEnabled(serviceAvailable && m_pending && m_pendingOperationId
+                         && m_service->activeOperationId() == m_pendingOperationId
                          && !m_cancelRequested);
     m_directories->setEnabled(!busy);
     m_entries->setEnabled(!busy);

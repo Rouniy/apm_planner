@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,242/242 тестов; Developer14/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,243/243 тестов; Developer15/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -19,12 +19,19 @@ Create DashWare CSV работает offline через реальные диа�
 строк/колонок, точные времена без исправления скачков, mode names, quoting,
 отмена и атомарная публикация одного файла. Проверены реальный BIN и большой
 105МБ/7million-record log; использование памяти не растёт с длиной лога.
-Полный набор242/242 проходит за29.85s, production X11 тоже проходит.
+Download MAVFTP File реализован отдельным MP10-потоком: remote path → Save →
+progress/cancel на существующем общем сервисе, с фиксацией борта до диалогов,
+30-секундным deadline и атомарной записью. Он и старый браузер используют
+токены владения операциями; чужие Cancel/результаты не пересекаются.
+Полный набор243/243 проходит за29.82s, production X11 с побайтной проверкой
+127-байтового MAVFTP-файла тоже проходит; сетевой SITL не изменялся.
 Начало записи только по heartbeat/enabled остаётся отдельным пробелом.
-Следующий пакет — подключение Download MAVFTP File к уже готовому exact browser,
+Следующий пакет — устранение смены борта во время модальных подтверждений
+старого MAVFTP-браузера (в новом прямом скачивании цель уже фиксируется заранее),
 затем другие single-drone Developer Tools (APJ defaults, MagFit);
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
-`DATAFLASH_LOG_SPLIT.md` и `DATAFLASH_DASHWARE_CSV.md`.
+`DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
+`MAVFTP_DEVELOPER_DOWNLOAD.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 

@@ -3,6 +3,7 @@
 #include "ui/configuration/ConfigDeveloperToolsView.h"
 #include "comm/ExactLinkTransmitter.h"
 #include "comm/MAVLinkFrameParser.h"
+#include "comm/MavFtpServiceInterface.h"
 #include "comm/VehicleTargetManager.h"
 #include "core/parameters/ParameterStore.h"
 #include "ui/Loghandling/DataFlashLogSplitter.h"
@@ -28,6 +29,24 @@
 #include <cstring>
 
 namespace {
+class DeveloperFtpStub final : public MavFtpServiceInterface
+{
+public:
+    bool sharedBusy = false;
+    bool isBusy() const override { return sharedBusy; }
+    Operation operation() const override { return Operation::None; }
+    quint64 activeTargetGeneration() const override { return 0; }
+    QString lastError() const override { return {}; }
+    StartResult startList(const QString &) override { return StartResult::TransportUnavailable; }
+    StartResult startDownload(const QString &) override { return StartResult::TransportUnavailable; }
+    StartResult startUpload(const QString &, const QByteArray &) override { return StartResult::TransportUnavailable; }
+    StartResult startMakeDirectory(const QString &) override { return StartResult::TransportUnavailable; }
+    StartResult startRemoveFile(const QString &) override { return StartResult::TransportUnavailable; }
+    StartResult startRemoveDirectory(const QString &) override { return StartResult::TransportUnavailable; }
+    void cancel() override { ++cancelCalls; }
+    int cancelCalls = 0;
+};
+
 struct VehicleFixture
 {
     VehicleTargetManager targets;
@@ -262,6 +281,8 @@ private slots:
     void dashWareCancellationAndLifetime_data();
     void dashWareCancellationAndLifetime();
     void dashWareAndOtherOperationsInterlock();
+    void mavFtpInjectionAndSharedOperationGate();
+    void mavFtpServiceRemovalDisablesAction();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -1292,6 +1313,82 @@ void ConfigDeveloperToolsViewTest::dashWareAndOtherOperationsInterlock()
     QTRY_VERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     QVERIFY(!QFile::exists(output));
     QVERIFY(!QFile::exists(correctionOutput));
+}
+
+void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
+{
+    QTemporaryDir dir;
+    const QString input = dir.filePath("flight.log");
+    const QString output = dir.filePath("export.csv");
+    QVERIFY(writeFixture(input, dashWareAsciiLog(20)));
+    VehicleFixture fixture;
+    DeveloperFtpStub ftp;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.setMavFtpDownloadServices(&ftp, &fixture.targets);
+    view.show();
+    QCOMPARE(view.ActionCount(), 32);
+    QCOMPARE(view.ImplementedActionCount(), 12); // Five offline + six vehicle + FTP.
+    auto *button = tool(view, "DownloadMavftpFileButton");
+    QVERIFY(button->isEnabled());
+    button->click();
+    auto *path = view.findChild<QInputDialog *>("DeveloperMavFtpPathDialog");
+    QVERIFY(path);
+    QCOMPARE(path->textValue(), QString("@SYS/threads.txt"));
+    QVERIFY(!button->isEnabled());
+    QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
+    QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
+    QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+    view.ExportDashWareCsv(input, output, {"GPS"});
+    view.SplitDataFlashLog(input, 2);
+    view.ExtractGpsCorrections(input, output);
+    QVERIFY(!view.findChild<QProgressDialog *>("DeveloperDashWareProgressDialog"));
+    QVERIFY(!view.findChild<QProgressDialog *>("DeveloperSplitProgressDialog"));
+    QVERIFY(!view.findChild<QProgressDialog *>("DeveloperGpsProgressDialog"));
+    QVERIFY(fixture.frames.isEmpty());
+    path->reject();
+    QTRY_VERIFY(button->isEnabled());
+    QTRY_VERIFY(tool(view, "RebootVehicleButton")->isEnabled());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view.ExportDashWareCsv(input, output, {"GPS"});
+        QVERIFY(!button->isEnabled());
+        button->click();
+        QVERIFY(!view.findChild<QInputDialog *>("DeveloperMavFtpPathDialog"));
+        auto *progress = view.findChild<QProgressDialog *>("DeveloperDashWareProgressDialog");
+        QVERIFY(progress);
+        progress->findChild<QPushButton *>()->click();
+    }
+    QTRY_VERIFY(button->isEnabled());
+    QVERIFY(!QFile::exists(output));
+    ftp.sharedBusy = true;
+    emit ftp.stateChanged();
+    QVERIFY(!button->isEnabled());
+    QVERIFY(tool(view, "CreateDashWareCsvButton")->isEnabled());
+    view.setMavFtpDownloadServices(nullptr, nullptr);
+    QCOMPARE(view.ImplementedActionCount(), 11);
+    QVERIFY(!button->isEnabled());
+    QCOMPARE(ftp.cancelCalls, 0); // Never cancels the browser's shared work.
+}
+
+void ConfigDeveloperToolsViewTest::mavFtpServiceRemovalDisablesAction()
+{
+    VehicleTargetManager targets;
+    ConfigDeveloperToolsView view;
+    auto *ftp = new DeveloperFtpStub;
+    view.setMavFtpDownloadServices(ftp, &targets);
+    QCOMPARE(view.ImplementedActionCount(), 6);
+    auto *button = tool(view, "DownloadMavftpFileButton");
+    QVERIFY(button->isEnabled());
+    button->click(); // A disconnected tool reports the missing target, no prompt.
+    QVERIFY(!view.findChild<QInputDialog *>("DeveloperMavFtpPathDialog"));
+    delete ftp;
+    QCOMPARE(view.ImplementedActionCount(), 5);
+    QVERIFY(!button->isEnabled());
+    QVERIFY(!button->toolTip().isEmpty());
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)

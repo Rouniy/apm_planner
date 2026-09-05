@@ -14,6 +14,9 @@ class QObject;
 class QPushButton;
 class QProgressDialog;
 class QShowEvent;
+class MavFtpServiceInterface;
+class MavFtpFileDownload;
+class VehicleTargetManager;
 
 /** Mission Planner 10 Developer Tools action page. */
 class ConfigDeveloperToolsView final : public ActionPageView
@@ -27,6 +30,8 @@ public:
 
     int ImplementedActionCount() const;
     void setVehicleToolService(DeveloperVehicleToolService *service);
+    void setMavFtpDownloadServices(MavFtpServiceInterface *service,
+                                   VehicleTargetManager *targets);
 
 public slots:
     void DecodeMavlinkInput(const QString &input);
@@ -69,6 +74,8 @@ private:
                             quint64 revision);
     void CancelDashWareExport();
     void RefreshOfflineFileActions();
+    void StartMavFtpDownload();
+    bool MavFtpDownloadBusy() const;
     struct GpsExtractionState;
     struct SplitState;
     struct DashWareState;
@@ -97,6 +104,10 @@ private:
     QPointer<QProgressDialog> m_dashWareProgress;
     std::shared_ptr<DashWareState> m_dashWareState;
     quint64 m_dashWarePromptRevision = 0;
+    QPointer<MavFtpServiceInterface> m_mavFtpService;
+    QPointer<VehicleTargetManager> m_mavFtpTargets;
+    QPointer<MavFtpFileDownload> m_mavFtpDownload;
+    QPushButton *m_mavFtpButton = nullptr;
     bool m_fileToolsClosing = false;
 };
 

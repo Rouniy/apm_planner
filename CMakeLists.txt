@@ -1116,6 +1116,8 @@ set(SOURCES
     src/ui/configuration/ConfigMavCommandViewModel.h
     src/ui/configuration/MavFTPUIView.cpp
     src/ui/configuration/MavFTPUIView.h
+    src/ui/configuration/MavFtpFileDownload.cpp
+    src/ui/configuration/MavFtpFileDownload.h
     src/ui/configuration/ElevationSourceService.cpp
     src/ui/configuration/ElevationSourceService.h
     src/ui/configuration/SrtmElevationSource.cpp
@@ -3898,6 +3900,21 @@ if(BUILD_TESTING)
     add_executable(dataflash_dashware_probe tests/DataFlashDashWareProbe.cpp)
     target_link_libraries(dataflash_dashware_probe PRIVATE dataflash_dashware_test_support)
 
+    add_library(mavftp_download_ui_test_support STATIC
+        src/ui/configuration/MavFtpFileDownload.cpp
+        src/ui/configuration/MavFtpFileDownload.h
+        src/comm/MavFtpServiceInterface.h)
+    target_include_directories(mavftp_download_ui_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(mavftp_download_ui_test_support PUBLIC
+        developer_vehicle_tool_test_support Qt::Widgets Qt::Concurrent)
+    add_executable(mavftpfiledownload_tests tests/test_mavftpfiledownload.cpp)
+    target_link_libraries(mavftpfiledownload_tests PRIVATE
+        mavftp_download_ui_test_support Qt::Test)
+    add_test(NAME mavftpfiledownload_tests COMMAND mavftpfiledownload_tests)
+    set_tests_properties(mavftpfiledownload_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
     add_executable(configdevelopertoolsview_tests
         tests/test_configdevelopertoolsview.cpp
         src/ui/configuration/ActionPageView.cpp
@@ -3917,6 +3934,7 @@ if(BUILD_TESTING)
         gps_correction_test_support
         dataflash_splitter_test_support
         dataflash_dashware_test_support
+        mavftp_download_ui_test_support
         Qt::Concurrent
         Qt::Core
         Qt::Widgets

@@ -2,6 +2,8 @@
 #include "comm/LinkManager.h"
 #include "comm/LinkManagerFactory.h"
 #include "comm/MAVLinkFrameParser.h"
+#include "comm/MavFtpProtocol.h"
+#include "comm/MavFtpServiceInterface.h"
 #include "comm/TCPLink.h"
 #include "comm/VehicleTargetManager.h"
 #include "services/DeveloperVehicleToolService.h"
@@ -192,7 +194,14 @@ bool waitFor(const std::function<bool()> &condition, int timeout = 2500)
 class DeveloperAuditLink final : public TCPLink {
 public:
     DeveloperAuditLink() : TCPLink(QHostAddress::LocalHost,
-        QStringLiteral("Developer action audit"), 61981, false) {}
+        QStringLiteral("Developer action audit"), 61981, false)
+    {
+        ftpFileData = QByteArray::fromHex(
+            "00017f80ff102030405060708090a0b0c0d0e0f0");
+        ftpFileData.append('\0');
+        ftpFileData.append("ArduPilot MAVFTP runtime payload\n");
+        ftpFileData.append(QByteArray(73, char(0xa5)));
+    }
     int getId() const override { return FixtureLinkId; }
     bool isConnected() const override { return m_connected; }
     bool connect() override {
@@ -232,10 +241,130 @@ public:
         mavlink_msg_param_value_encode(FixtureSystem, 1, &message, &value);
         inject(message);
     }
+    mavlink_message_t ftpResponse(
+        const MavFtpProtocol::PayloadHeader &request,
+        int sourceSystem, int sourceComponent,
+        int targetSystem, int targetComponent,
+        const QByteArray &data, int session) const
+    {
+        MavFtpProtocol::PayloadHeader response;
+        response.sequence = static_cast<quint16>(request.sequence + 1u);
+        response.session = static_cast<quint8>(session);
+        response.opcode = MavFtpProtocol::Opcode::Ack;
+        response.requestOpcode = request.opcode;
+        response.offset = request.offset;
+        response.data = data;
+        response.size = static_cast<quint8>(data.size());
+        QString error;
+        const QByteArray wire = MavFtpProtocol::encodePayload(response, &error);
+        if (wire.size() != MavFtpProtocol::PayloadSize) {
+            return {};
+        }
+        quint8 payload[MavFtpProtocol::PayloadSize]{};
+        std::memcpy(payload, wire.constData(), sizeof(payload));
+        mavlink_message_t message{};
+        mavlink_msg_file_transfer_protocol_pack(
+            static_cast<quint8>(sourceSystem),
+            static_cast<quint8>(sourceComponent), &message, 0,
+            static_cast<quint8>(targetSystem),
+            static_cast<quint8>(targetComponent), payload);
+        return message;
+    }
+    void handleFtpRequest(const mavlink_message_t &message)
+    {
+        mavlink_file_transfer_protocol_t outer{};
+        mavlink_msg_file_transfer_protocol_decode(&message, &outer);
+        const QByteArray wire(reinterpret_cast<const char *>(outer.payload),
+                              MavFtpProtocol::PayloadSize);
+        MavFtpProtocol::PayloadHeader request;
+        QString error;
+        if (!MavFtpProtocol::decodePayload(wire, &request, &error)) {
+            ftpEnvelopeValid = false;
+            return;
+        }
+        ++ftpRequestCount;
+        ftpOpcodes.append(request.opcode);
+        if (outer.target_network != 0
+            || outer.target_system != FixtureSystem
+            || outer.target_component != 1) {
+            ftpEnvelopeValid = false;
+        }
+        if (ftpGcsSystem == 0) {
+            ftpGcsSystem = message.sysid;
+            ftpGcsComponent = message.compid;
+        } else if (ftpGcsSystem != message.sysid
+                   || ftpGcsComponent != message.compid) {
+            ftpEnvelopeValid = false;
+        }
+
+        QByteArray responseData;
+        int responseSession = request.session;
+        switch (request.opcode) {
+        case MavFtpProtocol::Opcode::ResetSessions:
+            break;
+        case MavFtpProtocol::Opcode::OpenFileReadOnly:
+            ftpRemotePath = QString::fromUtf8(request.data);
+            responseData.resize(4);
+            qToLittleEndian<quint32>(
+                static_cast<quint32>(ftpFileData.size()),
+                reinterpret_cast<uchar *>(responseData.data()));
+            responseSession = 7;
+            break;
+        case MavFtpProtocol::Opcode::ReadFile: {
+            const quint64 end = static_cast<quint64>(request.offset)
+                + static_cast<quint64>(request.size);
+            if (request.session != 7 || request.size == 0
+                || request.offset >= static_cast<quint32>(ftpFileData.size())
+                || end > static_cast<quint64>(ftpFileData.size())) {
+                ftpEnvelopeValid = false;
+                return;
+            }
+            responseData = ftpFileData.mid(int(request.offset), request.size);
+            responseSession = 7;
+            break;
+        }
+        case MavFtpProtocol::Opcode::TerminateSession:
+            if (request.session != 7)
+                ftpEnvelopeValid = false;
+            responseSession = 7;
+            break;
+        default:
+            ftpEnvelopeValid = false;
+            return;
+        }
+
+        const mavlink_message_t correct = ftpResponse(
+            request, FixtureSystem, 1,
+            message.sysid, message.compid, responseData, responseSession);
+        QTimer::singleShot(0, this,
+            [this, message, request, correct]() {
+            if (!ftpWrongResponsesInjected) {
+                ftpWrongResponsesInjected = true;
+                // Both packets have a valid FTP correlation envelope. They
+                // must still be ignored at the physical/source/target fence.
+                const int requestsBeforeWrongReplies = ftpRequestCount;
+                inject(ftpResponse(request, FixtureSystem - 1, 1,
+                                   message.sysid, message.compid,
+                                   QByteArray(), request.session));
+                if (ftpRequestCount != requestsBeforeWrongReplies)
+                    ftpWrongResponsesRejected = false;
+                inject(ftpResponse(request, FixtureSystem, 1,
+                                   message.sysid - 1, message.compid,
+                                   QByteArray(), request.session));
+                if (ftpRequestCount != requestsBeforeWrongReplies)
+                    ftpWrongResponsesRejected = false;
+            }
+            inject(correct);
+        });
+    }
     void writeBytes(const char *bytes, qint64 size) override {
         mavlink_message_t message{};
         for (qint64 i = 0; i < size; ++i) {
             if (parser.parseByte(quint8(bytes[i]), &message) != MAVLINK_FRAMING_OK) continue;
+            if (message.msgid == MAVLINK_MSG_ID_FILE_TRANSFER_PROTOCOL) {
+                handleFtpRequest(message);
+                continue;
+            }
             if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST
                 || message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) pressureReply();
             if (message.msgid == MAVLINK_MSG_ID_PARAM_SET) {
@@ -268,6 +397,15 @@ public:
     int parameterWrites = 0;
     float pressure = 101325.0f;
     QVector<mavlink_command_long_t> commands;
+    QByteArray ftpFileData;
+    QString ftpRemotePath;
+    QVector<MavFtpProtocol::Opcode> ftpOpcodes;
+    int ftpRequestCount = 0;
+    quint8 ftpGcsSystem = 0;
+    quint8 ftpGcsComponent = 0;
+    bool ftpEnvelopeValid = true;
+    bool ftpWrongResponsesInjected = false;
+    bool ftpWrongResponsesRejected = true;
 private:
     MAVLinkFrameParser parser;
     bool m_connected = false;
@@ -289,11 +427,26 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 14 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 15 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
     expect(reboot && !reboot->isEnabled(), "offline reboot was enabled");
+    auto *mavFtpDownload = page->findChild<QPushButton *>(
+        QStringLiteral("DownloadMavftpFileButton"));
+    expect(mavFtpDownload && mavFtpDownload->isEnabled(),
+           "direct MAVFTP download controller is unavailable offline");
+    if (mavFtpDownload) {
+        const QString logBefore = page->Log();
+        mavFtpDownload->click();
+        QCoreApplication::processEvents();
+        expect(page->Log() != logBefore
+                   && page->Log().contains(QStringLiteral("MAVFTP"),
+                                           Qt::CaseInsensitive)
+                   && !page->findChild<QInputDialog *>(
+                       QStringLiteral("DeveloperMavFtpPathDialog")),
+               "offline MAVFTP click did not report NoTarget before prompting");
+    }
 
     // The offline action must work through its actual Tools-page file pickers,
     // before any vehicle is discovered. The expected bytes are deliberately
@@ -671,6 +824,108 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     page = window->findChild<ConfigDeveloperToolsView *>();
+    mavFtpDownload = page ? page->findChild<QPushButton *>(
+        QStringLiteral("DownloadMavftpFileButton")) : nullptr;
+    expect(mavFtpDownload && waitFor([&] {
+               return mavFtpDownload && mavFtpDownload->isEnabled();
+           }), "connected direct MAVFTP download action disabled");
+    QTemporaryDir mavFtpFiles;
+    expect(mavFtpFiles.isValid(), "MAVFTP output directory unavailable");
+    const QString remotePath = QStringLiteral("@SYS/threads.txt");
+    const QString localPath = mavFtpFiles.filePath(
+        QStringLiteral("downloaded threads copy.bin"));
+    const int ftpBeforePrompts = fixture ? fixture->ftpRequestCount : -1;
+    const auto openMavFtpPath = [&]() -> QInputDialog * {
+        if (!mavFtpDownload || !mavFtpDownload->isEnabled())
+            return nullptr;
+        mavFtpDownload->click();
+        QCoreApplication::processEvents();
+        auto *path = page->findChild<QInputDialog *>(
+            QStringLiteral("DeveloperMavFtpPathDialog"));
+        expect(path && path->inputMode() == QInputDialog::TextInput
+                   && path->textValue() == remotePath,
+               "MAVFTP remote-path prompt/default missing");
+        return path;
+    };
+    const auto acceptMavFtpPath = [&](QInputDialog *path) -> QFileDialog * {
+        if (!path) return nullptr;
+        path->setTextValue(remotePath);
+        path->accept();
+        expect(waitFor([&] {
+            return page->findChild<QFileDialog *>(
+                QStringLiteral("DeveloperMavFtpOutputDialog")) != nullptr;
+        }), "MAVFTP output picker missing");
+        auto *output = page->findChild<QFileDialog *>(
+            QStringLiteral("DeveloperMavFtpOutputDialog"));
+        expect(output && output->acceptMode() == QFileDialog::AcceptSave
+                   && QFileInfo(output->selectedFiles().value(0)).fileName()
+                       == QStringLiteral("threads.txt"),
+               "MAVFTP output picker/default filename mismatch");
+        return output;
+    };
+    if (mavFtpDownload && fixture) {
+        QInputDialog *path = openMavFtpPath();
+        if (path) path->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return mavFtpDownload->isEnabled(); })
+                   && fixture->ftpRequestCount == ftpBeforePrompts,
+               "cancelling MAVFTP path prompt transmitted a request");
+
+        path = openMavFtpPath();
+        QFileDialog *output = acceptMavFtpPath(path);
+        if (output) output->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return mavFtpDownload->isEnabled(); })
+                   && fixture->ftpRequestCount == ftpBeforePrompts
+                   && !QFile::exists(localPath),
+               "cancelling MAVFTP output picker transmitted or wrote data");
+
+        path = openMavFtpPath();
+        output = acceptMavFtpPath(path);
+        if (output) {
+            auto *filename = output->findChild<QLineEdit *>(
+                QStringLiteral("fileNameEdit"));
+            expect(filename != nullptr,
+                   "MAVFTP output filename editor missing");
+            if (filename) filename->setText(localPath);
+            expect(output->selectedFiles() == QStringList{localPath},
+                   "MAVFTP output selection is not exact");
+            expect(QMetaObject::invokeMethod(output, "accept",
+                                             Qt::DirectConnection),
+                   "MAVFTP output picker acceptance unavailable");
+        }
+        auto *ftpProgress = page->findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperMavFtpProgressDialog"));
+        expect(ftpProgress != nullptr,
+               "MAVFTP progress dialog missing after accepted output");
+        expect(waitFor([&] {
+            return mavFtpDownload->isEnabled() && QFile::exists(localPath)
+                && links->mavFtpService()
+                && !links->mavFtpService()->isBusy();
+        }, 5000), "MAVFTP download did not finish through Tools route");
+        QFile downloaded(localPath);
+        expect(downloaded.open(QIODevice::ReadOnly)
+                   && downloaded.readAll() == fixture->ftpFileData,
+               "MAVFTP downloaded binary payload differs");
+        const QVector<MavFtpProtocol::Opcode> expectedOpcodes{
+            MavFtpProtocol::Opcode::ResetSessions,
+            MavFtpProtocol::Opcode::OpenFileReadOnly,
+            MavFtpProtocol::Opcode::ReadFile,
+            MavFtpProtocol::Opcode::ReadFile,
+            MavFtpProtocol::Opcode::TerminateSession,
+            MavFtpProtocol::Opcode::ResetSessions};
+        expect(fixture->ftpEnvelopeValid
+                   && fixture->ftpWrongResponsesInjected
+                   && fixture->ftpWrongResponsesRejected
+                   && fixture->ftpRemotePath == remotePath
+                   && fixture->ftpGcsSystem != 0
+                   && fixture->ftpGcsComponent != 0
+                   && fixture->ftpOpcodes == expectedOpcodes,
+               "MAVFTP route, identity fence, path, or request sequence differs");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        qInfo() << "Developer runtime MAVFTP download:" << remotePath
+                << localPath << page->Log();
+    }
     const QStringList names = {QStringLiteral("SetQnhButton"), QStringLiteral("AdjustBarometerAltitudeButton"),
         QStringLiteral("ForceAccelCalibratedButton"), QStringLiteral("ForceCompassCalibratedButton"),
         QStringLiteral("RebootVehicleButton"), QStringLiteral("RebootToDfuButton")};

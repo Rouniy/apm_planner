@@ -57,7 +57,8 @@ private:
     void cancelOperation();
     void openSelectedEntry();
     void handleResult(const MavFtpServiceInterface::Result &result);
-    void handleProgress(qulonglong generation, qint64 completed, qint64 total);
+    void handleProgress(qulonglong operationId, qulonglong generation,
+                        qint64 completed, qint64 total);
     void populateDirectory(QTreeWidgetItem *directory,
                            const QVector<MavFtpProtocol::DirectoryEntry> &entries,
                            bool updateEntries, bool rootRefresh);
@@ -68,6 +69,7 @@ private:
     void markDirectoryStale(QTreeWidgetItem *directory);
     void beginPending(MavFtpServiceInterface::Operation operation,
                       const QString &remotePath);
+    void admitPending(const QByteArray &data = {});
     bool finishStart(MavFtpServiceInterface::StartResult result,
                      MavFtpServiceInterface::Operation operation,
                      const QString &remotePath);
@@ -107,6 +109,8 @@ private:
     QString m_pendingLocalPath;
     QString m_pendingDisplayName;
     qulonglong m_pendingGeneration = 0;
+    quint64 m_pendingOperationId = 0;
+    quint64 m_pendingRevision = 0;
     bool m_pending = false;
     bool m_pendingListUpdatesEntries = false;
     bool m_pendingRootRefresh = false;

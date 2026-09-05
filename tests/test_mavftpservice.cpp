@@ -189,6 +189,13 @@ private slots:
     void explicitCancelTerminatesAndResetsBestEffort();
     void uploadCrcMismatchFailsAfterCleanup();
     void completionCanRestartReentrantlyAndDestructionIsSafe();
+    void ownedDownloadRejectsStaleLeaseAndPublishesUniqueTokens();
+    void ownedTokenIsPublishedBeforeCallbacks_data();
+    void ownedTokenIsPublishedBeforeCallbacks();
+    void ownedProgressCancellationDoesNotAffectReplacement();
+    void ownedCompletionKeepsOldIdentityAcrossReentrantStart();
+    void ownedSynchronousFailureAndProgressDestruction();
+    void genericAdmissionValidatesAndPublishesToken();
 };
 
 void MavFtpServiceTest::listPaginatesAndCompletesOnEof()
@@ -692,6 +699,186 @@ void MavFtpServiceTest::completionCanRestartReentrantlyAndDestructionIsSafe()
     delete transmitter;
     delete orphanSafeService;
     delete targets;
+}
+
+void MavFtpServiceTest::ownedDownloadRejectsStaleLeaseAndPublishesUniqueTokens()
+{
+    Fixture fixture;
+    const auto old = fixture.select();
+    const auto current = fixture.select(10);
+    quint64 id = 99;
+    QCOMPARE(fixture.service.startDownloadForTarget("/same", old, &id),
+             MavFtpService::StartResult::StaleTarget);
+    QCOMPARE(id, quint64(0)); QVERIFY(fixture.frames.isEmpty());
+    auto wrongComponent = current; ++wrongComponent.endpoint.componentId;
+    QCOMPARE(fixture.service.startDownloadForTarget("/same", wrongComponent, &id),
+             MavFtpService::StartResult::StaleTarget);
+    QVERIFY(fixture.frames.isEmpty());
+    QSignalSpy finished(&fixture.service, &MavFtpServiceInterface::operationFinished);
+    QCOMPARE(fixture.service.startDownloadForTarget("/same", current, &id),
+             MavFtpService::StartResult::Started);
+    QVERIFY(id != 0); QCOMPARE(fixture.service.activeOperationId(), id);
+    const quint64 first = id;
+    QVERIFY(!fixture.service.cancelOperation(0));
+    QVERIFY(!fixture.service.cancelOperation(first + 1));
+    QVERIFY(fixture.service.cancelOperation(first));
+    QCOMPARE(resultAt(finished).operationId, first);
+    QCOMPARE(fixture.service.activeOperationId(), quint64(0));
+    QCOMPARE(fixture.service.startDownloadForTarget("/same", current, &id),
+             MavFtpService::StartResult::Started);
+    QVERIFY(id != first); QVERIFY(id != 0);
+    const int count = fixture.frames.size();
+    QVERIFY(!fixture.service.cancelOperation(first));
+    QCOMPARE(fixture.frames.size(), count); QCOMPARE(fixture.service.activeOperationId(), id);
+}
+
+void MavFtpServiceTest::ownedTokenIsPublishedBeforeCallbacks_data()
+{
+    QTest::addColumn<bool>("startedSignal"); QTest::addColumn<bool>("destroy");
+    QTest::newRow("state cancel") << false << false;
+    QTest::newRow("started cancel") << true << false;
+    QTest::newRow("state destruction") << false << true;
+    QTest::newRow("started destruction") << true << true;
+}
+
+void MavFtpServiceTest::ownedTokenIsPublishedBeforeCallbacks()
+{
+    QFETCH(bool, startedSignal); QFETCH(bool, destroy);
+    Fixture fixture; const auto lease = fixture.select();
+    auto *service = new MavFtpService(&fixture.targets, &fixture.transmitter);
+    QPointer<MavFtpService> guard(service);
+    quint64 id = 0; bool invoked = false;
+    QSignalSpy finished(service, &MavFtpServiceInterface::operationFinished);
+    const auto callback = [&] {
+        if (invoked || !service->isBusy()) return;
+        invoked = true; QVERIFY(id != 0); QCOMPARE(service->activeOperationId(), id);
+        if (destroy) delete service;
+        else QVERIFY(service->cancelOperation(id));
+    };
+    if (startedSignal)
+        connect(service, &MavFtpServiceInterface::operationStarted, service, callback);
+    else connect(service, &MavFtpServiceInterface::stateChanged, service, callback);
+    const auto started = service->startDownloadForTarget("/same", lease, &id);
+    QCOMPARE(started, MavFtpService::StartResult::Started); QVERIFY(invoked); QVERIFY(id != 0);
+    // Only best-effort cancellation/destructor reset may be emitted; the
+    // superseded download must not send its initial request as well.
+    QCOMPARE(fixture.frames.size(), 1);
+    QCOMPARE(fixture.requestAt(0).opcode, MavFtpProtocol::Opcode::ResetSessions);
+    if (destroy) QVERIFY(guard.isNull());
+    else {
+        QCOMPARE(finished.count(), 1); QCOMPARE(resultAt(finished).operationId, id);
+        QVERIFY(resultAt(finished).cancelled); delete service;
+    }
+}
+
+void MavFtpServiceTest::ownedProgressCancellationDoesNotAffectReplacement()
+{
+    Fixture fixture; const auto lease = fixture.select();
+    quint64 oldId = 0, replacementId = 0;
+    QSignalSpy finished(&fixture.service, &MavFtpServiceInterface::operationFinished);
+    QSignalSpy legacy(&fixture.service, &MavFtpServiceInterface::progressChanged);
+    connect(&fixture.service, &MavFtpServiceInterface::operationProgress, &fixture.service,
+            [&](qulonglong id, qulonglong generation, qint64 completed, qint64 total) {
+        QCOMPARE(id, oldId); QCOMPARE(generation, lease.generation);
+        QCOMPARE(completed, qint64(0)); QCOMPARE(total, qint64(3));
+        QVERIFY(fixture.service.cancelOperation(id));
+        QCOMPARE(fixture.service.startDownloadForTarget("/same", lease, &replacementId),
+                 MavFtpService::StartResult::Started);
+    });
+    QCOMPARE(fixture.service.startDownloadForTarget("/same", lease, &oldId),
+             MavFtpService::StartResult::Started);
+    fixture.ack(0); fixture.ack(1, littleEndian32(3), 7);
+    QVERIFY(replacementId != 0); QVERIFY(replacementId != oldId);
+    QCOMPARE(resultAt(finished).operationId, oldId); QCOMPARE(legacy.count(), 0);
+    QCOMPARE(fixture.frames.size(), 5); // reset/open, old terminate/reset, new reset
+    QCOMPARE(fixture.service.activeOperationId(), replacementId);
+    QVERIFY(!fixture.service.cancelOperation(oldId));
+    for (const auto &frame : fixture.frames)
+        QVERIFY(ftpPayload(frame).opcode != MavFtpProtocol::Opcode::ReadFile);
+}
+
+void MavFtpServiceTest::ownedCompletionKeepsOldIdentityAcrossReentrantStart()
+{
+    Fixture fixture; const auto lease = fixture.select();
+    quint64 first = 0, second = 0;
+    QSignalSpy finished(&fixture.service, &MavFtpServiceInterface::operationFinished);
+    connect(&fixture.service, &MavFtpServiceInterface::stateChanged, &fixture.service, [&] {
+        if (first && !second && !fixture.service.isBusy()) {
+            QCOMPARE(fixture.service.startDownloadForTarget("/same", lease, &second),
+                     MavFtpService::StartResult::Started);
+        }
+    });
+    QCOMPARE(fixture.service.startDownloadForTarget("/same", lease, &first),
+             MavFtpService::StartResult::Started);
+    fixture.ack(0); fixture.ack(1, littleEndian32(0), 4);
+    fixture.ack(2); fixture.ack(3);
+    QCOMPARE(finished.count(), 1); QVERIFY(resultAt(finished).succeeded());
+    QCOMPARE(resultAt(finished).operationId, first);
+    QCOMPARE(resultAt(finished).targetGeneration, lease.generation);
+    QVERIFY(second != 0); QVERIFY(second != first);
+    QCOMPARE(fixture.service.activeOperationId(), second);
+    QVERIFY(!fixture.service.cancelOperation(first));
+}
+
+void MavFtpServiceTest::ownedSynchronousFailureAndProgressDestruction()
+{
+    Fixture fixture; const auto lease = fixture.select();
+    quint64 id = 0; bool finishedBeforeReturn = false;
+    fixture.writerAccepts = false;
+    connect(&fixture.service, &MavFtpServiceInterface::operationFinished, &fixture.service,
+            [&](const MavFtpServiceInterface::Result &result) {
+        QVERIFY(id != 0); QCOMPARE(result.operationId, id);
+        QVERIFY(!result.succeeded()); finishedBeforeReturn = true;
+    });
+    QCOMPARE(fixture.service.startDownloadForTarget("/same", lease, &id),
+             MavFtpService::StartResult::Started);
+    QVERIFY(finishedBeforeReturn); QCOMPARE(fixture.service.activeOperationId(), quint64(0));
+    fixture.writerAccepts = true;
+
+    auto *service = new MavFtpService(&fixture.targets, &fixture.transmitter);
+    service->setLocalIdentity(250, 190);
+    QPointer<MavFtpService> guard(service);
+    QSignalSpy legacy(service, &MavFtpServiceInterface::progressChanged);
+    quint64 otherId = 0;
+    connect(service, &MavFtpServiceInterface::operationProgress, service,
+            [&](qulonglong token, qulonglong, qint64, qint64) {
+        QCOMPARE(token, otherId); delete service;
+    });
+    QCOMPARE(service->startDownloadForTarget("/other", lease, &otherId),
+             MavFtpService::StartResult::Started);
+    service->observeMessage(9, ftpResponse(fixture.requestAt(0), MavFtpProtocol::Opcode::Ack));
+    service->observeMessage(9, ftpResponse(fixture.requestAt(1), MavFtpProtocol::Opcode::Ack,
+                                         littleEndian32(3), 7));
+    QVERIFY(guard.isNull()); QCOMPARE(legacy.count(), 0);
+    QCOMPARE(fixture.frames.size(), 4); // reset/open, destructor terminate/reset
+}
+
+void MavFtpServiceTest::genericAdmissionValidatesAndPublishesToken()
+{
+    Fixture fixture; fixture.select();
+    quint64 id = 99;
+    QCOMPARE(fixture.service.startOperation(MavFtpService::Operation::None, "/", {}, &id),
+             MavFtpService::StartResult::InvalidData); QCOMPARE(id, quint64(0));
+    QCOMPARE(fixture.service.startOperation(MavFtpService::Operation::ListDirectory, "/", "bad", &id),
+             MavFtpService::StartResult::InvalidData); QCOMPARE(id, quint64(0));
+    QVERIFY(fixture.frames.isEmpty());
+    connect(&fixture.service, &MavFtpServiceInterface::stateChanged, &fixture.service, [&] {
+        if (fixture.service.isBusy()) {
+            QVERIFY(id != 0); QCOMPARE(fixture.service.activeOperationId(), id);
+        }
+    });
+    const QVector<MavFtpService::Operation> operations = {
+        MavFtpService::Operation::ListDirectory, MavFtpService::Operation::Download,
+        MavFtpService::Operation::Upload, MavFtpService::Operation::MakeDirectory,
+        MavFtpService::Operation::RemoveFile, MavFtpService::Operation::RemoveDirectory};
+    quint64 previous = 0;
+    for (auto operation : operations) {
+        QCOMPARE(fixture.service.startOperation(operation, "/same",
+                     operation == MavFtpService::Operation::Upload ? QByteArray("data") : QByteArray(), &id),
+                 MavFtpService::StartResult::Started);
+        QVERIFY(id != previous); previous = id;
+        QVERIFY(fixture.service.cancelOperation(id));
+    }
 }
 
 QTEST_GUILESS_MAIN(MavFtpServiceTest)

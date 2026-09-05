@@ -126,6 +126,11 @@ quint64 MavFtpService::activeTargetGeneration() const
     return m_active ? m_active->lease.generation : 0;
 }
 
+quint64 MavFtpService::activeOperationId() const
+{
+    return m_active ? m_active->identity : 0;
+}
+
 MavFtpService::StartResult MavFtpService::validateStart(
     const QString &remotePath, QByteArray *encodedPath) const
 {
@@ -177,6 +182,50 @@ MavFtpService::StartResult MavFtpService::startDownload(
         return ready;
     }
     return begin(Operation::Download, remotePath, path);
+}
+
+MavFtpService::StartResult MavFtpService::startOperation(
+    Operation operation, const QString &remotePath, const QByteArray &uploadData,
+    quint64 *operationIdOut)
+{
+    if (operationIdOut) *operationIdOut = 0;
+    QByteArray path;
+    const StartResult ready = validateStart(remotePath, &path);
+    if (ready != StartResult::Started) {
+        m_lastError = startFailureText(ready);
+        return ready;
+    }
+    switch (operation) {
+    case Operation::ListDirectory: case Operation::Download:
+    case Operation::MakeDirectory: case Operation::RemoveFile:
+    case Operation::RemoveDirectory:
+        if (uploadData.isEmpty()) break;
+        m_lastError = startFailureText(StartResult::InvalidData);
+        return StartResult::InvalidData;
+    case Operation::Upload:
+        if (uploadData.size() <= MaximumTransferBytes) break;
+        m_lastError = startFailureText(StartResult::InvalidData);
+        return StartResult::InvalidData;
+    default:
+        m_lastError = startFailureText(StartResult::InvalidData);
+        return StartResult::InvalidData;
+    }
+    return begin(operation, remotePath, path, uploadData, nullptr, operationIdOut);
+}
+
+MavFtpService::StartResult MavFtpService::startDownloadForTarget(
+    const QString &remotePath, const VehicleTargetLease &expected,
+    quint64 *operationIdOut)
+{
+    if (operationIdOut) *operationIdOut = 0;
+    QByteArray path;
+    const StartResult ready = validateStart(remotePath, &path);
+    if (ready != StartResult::Started) {
+        m_lastError = startFailureText(ready);
+        return ready;
+    }
+    return begin(Operation::Download, remotePath, path, {}, &expected,
+                 operationIdOut);
 }
 
 MavFtpService::StartResult MavFtpService::startUpload(
@@ -233,7 +282,8 @@ MavFtpService::StartResult MavFtpService::startRemoveDirectory(
 
 MavFtpService::StartResult MavFtpService::begin(
     Operation operation, const QString &remotePath,
-    const QByteArray &encodedPath, const QByteArray &uploadData)
+    const QByteArray &encodedPath, const QByteArray &uploadData,
+    const VehicleTargetLease *expected, quint64 *operationIdOut)
 {
     if (m_shuttingDown) {
         m_lastError = startFailureText(StartResult::ShuttingDown);
@@ -249,7 +299,10 @@ MavFtpService::StartResult MavFtpService::begin(
         m_lastError = startFailureText(StartResult::NoTarget);
         return StartResult::NoTarget;
     }
-    if (!targetIsCurrent(lease)) {
+    if (!targetIsCurrent(lease)
+        || (expected && (!expected->isValid()
+                         || expected->generation != lease.generation
+                         || expected->endpoint != lease.endpoint))) {
         m_lastError = startFailureText(StartResult::StaleTarget);
         return StartResult::StaleTarget;
     }
@@ -260,6 +313,7 @@ MavFtpService::StartResult MavFtpService::begin(
         active->identity = ++m_nextOperationIdentity;
     }
     active->result.operation = operation;
+    active->result.operationId = active->identity;
     active->result.targetGeneration = lease.generation;
     active->result.remotePath = remotePath;
     active->lease = lease;
@@ -290,6 +344,7 @@ MavFtpService::StartResult MavFtpService::begin(
 
     m_active = std::move(active);
     const quint64 startedIdentity = m_active->identity;
+    if (operationIdOut) *operationIdOut = startedIdentity;
     m_lastError.clear();
     QPointer<MavFtpService> guard(this);
     emit stateChanged();
@@ -310,7 +365,7 @@ MavFtpService::StartResult MavFtpService::begin(
               tr("reset sessions before download"));
         break;
     case Operation::Upload:
-        emit progressChanged(lease.generation, 0, uploadData.size());
+        if (!publishProgress(0, uploadData.size())) return StartResult::Started;
         if (!guard || !m_active || m_active->identity != startedIdentity) {
             return StartResult::Started;
         }
@@ -697,10 +752,9 @@ void MavFtpService::handleListAck(
         }
     }
     const quint64 activeIdentity = m_active->identity;
-    const quint64 generation = m_active->lease.generation;
     const int records = m_active->directoryRecordOffset;
     QPointer<MavFtpService> guard(this);
-    emit progressChanged(generation, records, -1);
+    if (!publishProgress(records, -1)) return;
     if (!guard || !m_active || m_active->identity != activeIdentity) {
         return;
     }
@@ -728,10 +782,9 @@ void MavFtpService::handleOpenDownloadAck(
     }
 
     const quint64 activeIdentity = m_active->identity;
-    const quint64 generation = m_active->lease.generation;
     const quint32 total = m_active->expectedSize;
     QPointer<MavFtpService> guard(this);
-    emit progressChanged(generation, 0, total);
+    if (!publishProgress(0, total)) return;
     if (!guard || !m_active || m_active->identity != activeIdentity) {
         return;
     }
@@ -760,11 +813,10 @@ void MavFtpService::handleReadDownloadAck(
     m_active->result.data.append(response.data);
     m_active->offset += received;
     const quint64 activeIdentity = m_active->identity;
-    const quint64 generation = m_active->lease.generation;
     const quint32 completed = m_active->offset;
     const quint32 total = m_active->expectedSize;
     QPointer<MavFtpService> guard(this);
-    emit progressChanged(generation, completed, total);
+    if (!publishProgress(completed, total)) return;
     if (!guard || !m_active || m_active->identity != activeIdentity) {
         return;
     }
@@ -803,11 +855,10 @@ void MavFtpService::handleWriteUploadAck(
     }
     m_active->offset += static_cast<quint32>(acknowledged);
     const quint64 activeIdentity = m_active->identity;
-    const quint64 generation = m_active->lease.generation;
     const quint32 completed = m_active->offset;
     const int total = m_active->uploadData.size();
     QPointer<MavFtpService> guard(this);
-    emit progressChanged(generation, completed, total);
+    if (!publishProgress(completed, total)) return;
     if (!guard || !m_active || m_active->identity != activeIdentity) {
         return;
     }
@@ -996,6 +1047,7 @@ void MavFtpService::sendCleanupBestEffort(
         return;
     }
     QString ignored;
+    const quint64 lastOperationIdentity = m_nextOperationIdentity;
     QPointer<MavFtpService> guard(this);
     if (active.sessionOpen) {
         MavFtpProtocol::PayloadHeader terminate;
@@ -1003,7 +1055,7 @@ void MavFtpService::sendCleanupBestEffort(
         terminate.session = active.session;
         terminate.opcode = MavFtpProtocol::Opcode::TerminateSession;
         sendForLease(active.lease, terminate, &ignored);
-        if (!guard) {
+        if (!guard || m_nextOperationIdentity != lastOperationIdentity) {
             return;
         }
     }
@@ -1081,6 +1133,14 @@ void MavFtpService::forgetLink(int linkId)
     if (guard) {
         emit operationFinished(result);
     }
+}
+
+bool MavFtpService::cancelOperation(quint64 operationId)
+{
+    if (!operationId || !m_active || m_active->identity != operationId)
+        return false;
+    cancel();
+    return true;
 }
 
 void MavFtpService::cancel()
@@ -1170,6 +1230,18 @@ void MavFtpService::finishImmediate(Result result)
     if (guard) {
         emit operationFinished(result);
     }
+}
+
+bool MavFtpService::publishProgress(qint64 completed, qint64 total)
+{
+    if (!m_active) return false;
+    const quint64 identity = m_active->identity;
+    const quint64 generation = m_active->lease.generation;
+    QPointer<MavFtpService> guard(this);
+    emit operationProgress(identity, generation, completed, total);
+    if (!guard || !m_active || m_active->identity != identity) return false;
+    emit progressChanged(generation, completed, total);
+    return guard && m_active && m_active->identity == identity;
 }
 
 void MavFtpService::clearActive()

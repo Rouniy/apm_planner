@@ -18,12 +18,26 @@ public:
     }
 
     bool isBusy() const override { return m_busy; }
+    quint64 activeOperationId() const override { return m_busy ? m_id : 0; }
     Operation operation() const override { return m_operation; }
     quint64 activeTargetGeneration() const override
     {
         return m_busy ? m_generation : 0;
     }
     QString lastError() const override { return m_lastError; }
+    StartResult startOperation(Operation operation, const QString &path,
+                               const QByteArray &data, quint64 *idOut) override
+    {
+        if (idOut) *idOut = 0;
+        if (operation == Operation::ListDirectory) ++listStarts;
+        if (operation == Operation::Upload) uploadData = data;
+        return start(operation, path, idOut);
+    }
+    bool cancelOperation(quint64 id) override
+    {
+        if (!id || id != activeOperationId()) return false;
+        cancel(); return true;
+    }
 
     StartResult startList(const QString &path) override
     {
@@ -68,7 +82,7 @@ public:
         finish(result);
     }
 
-    StartResult start(Operation requested, const QString &path)
+    StartResult start(Operation requested, const QString &path, quint64 *idOut = nullptr)
     {
         if (m_busy) {
             return StartResult::Busy;
@@ -80,6 +94,8 @@ public:
             return result;
         }
         m_busy = true;
+        m_id = ++m_nextId;
+        if (idOut) *idOut = m_id;
         m_operation = requested;
         activePath = path;
         emit operationStarted(requested, m_generation, path);
@@ -121,11 +137,13 @@ public:
 
     void reportProgress(qint64 completed, qint64 total)
     {
+        emit operationProgress(m_id, m_generation, completed, total);
         emit progressChanged(m_generation, completed, total);
     }
 
-    void finish(const Result &result)
+    void finish(Result result)
     {
+        result.operationId = m_id;
         m_busy = false;
         m_operation = Operation::None;
         activePath.clear();
@@ -144,6 +162,7 @@ private:
     Operation m_operation = Operation::None;
     quint64 m_generation = 17;
     QString m_lastError;
+    quint64 m_id = 0, m_nextId = 0;
 };
 
 namespace {
@@ -187,6 +206,8 @@ private slots:
     void systemRootFallbackIsDeduplicated();
     void lazyDirectoryAndMutationRefresh();
     void errorsCancellationAndLateResultsAreBounded();
+    void ownershipRejectsForeignReplacementAndStaleSamePath();
+    void admissionAndCancellationAllowBrowserDestruction();
 };
 
 void MavFTPUIViewTest::surfaceIsConcreteAndComplete()
@@ -367,6 +388,72 @@ void MavFTPUIViewTest::errorsCancellationAndLateResultsAreBounded()
     const QString errorStatus = status->text();
     service.emitLateError(QStringLiteral("/"), QStringLiteral("later duplicate"));
     QCOMPARE(status->text(), errorStatus);
+}
+
+void MavFTPUIViewTest::ownershipRejectsForeignReplacementAndStaleSamePath()
+{
+    FakeMavFtpService service;
+    MavFTPUIView view(&service);
+    auto *status = view.findChild<QLabel *>(QStringLiteral("MavFtpStatus"));
+    auto *progress = view.findChild<QProgressBar *>(QStringLiteral("MavFtpProgress"));
+    auto *table = view.findChild<QTableWidget *>(QStringLiteral("EntriesGrid"));
+    button(view, "RefreshButton")->click();
+    const quint64 first = service.activeOperationId();
+    service.reportProgress(20, 100); QCOMPARE(progress->value(), 20);
+    quint64 foreign = 0;
+    const auto connection = connect(&service, &MavFtpServiceInterface::stateChanged, &view, [&] {
+        if (!service.isBusy() && !foreign) {
+            QCOMPARE(service.startOperation(MavFtpServiceInterface::Operation::ListDirectory,
+                                            "/", {}, &foreign),
+                     MavFtpServiceInterface::StartResult::Started);
+            QVERIFY(foreign != first);
+            QVERIFY(!button(view, "CancelButton")->isEnabled());
+            button(view, "CancelButton")->click();
+            service.reportProgress(95, 100);
+        }
+    });
+    button(view, "CancelButton")->click();
+    QCOMPARE(service.cancelCalls, 1); QCOMPARE(service.activeOperationId(), foreign);
+    QCOMPARE(status->text(), QStringLiteral("Cancelled by test"));
+    QCOMPARE(progress->value(), 0);
+    disconnect(connection);
+    service.completeList({file("foreign.bin", 99)});
+    QCOMPARE(table->rowCount(), 0);
+    QCOMPARE(status->text(), QStringLiteral("Cancelled by test"));
+
+    button(view, "RefreshButton")->click();
+    const quint64 current = service.activeOperationId(); QVERIFY(current != first);
+    service.reportProgress(30, 100);
+    MavFtpServiceInterface::Result stale;
+    stale.operation = MavFtpServiceInterface::Operation::ListDirectory;
+    stale.operationId = first; stale.targetGeneration = 17; stale.remotePath = "/";
+    stale.entries = {file("stale.bin", 42)};
+    emit service.operationFinished(stale);
+    emit service.operationProgress(first, 17, 99, 100);
+    QCOMPARE(progress->value(), 30); QCOMPARE(table->rowCount(), 0);
+    QVERIFY(button(view, "CancelButton")->isEnabled());
+    service.completeList({file("owned.bin", 2)});
+    QCOMPARE(table->rowCount(), 1); QCOMPARE(table->item(0, 0)->text(), QStringLiteral("owned.bin"));
+}
+
+void MavFTPUIViewTest::admissionAndCancellationAllowBrowserDestruction()
+{
+    FakeMavFtpService service;
+    auto *view = new MavFTPUIView(&service);
+    QPointer<MavFTPUIView> guard(view);
+    const auto started = connect(&service, &MavFtpServiceInterface::operationStarted,
+                                &service, [&] { delete view; });
+    button(*view, "RefreshButton")->click();
+    QVERIFY(guard.isNull()); disconnect(started);
+    service.cancel();
+
+    view = new MavFTPUIView(&service); guard = view;
+    button(*view, "RefreshButton")->click();
+    connect(&service, &MavFtpServiceInterface::stateChanged, &service, [&] {
+        if (!service.isBusy() && guard) delete view;
+    });
+    button(*view, "CancelButton")->click();
+    QVERIFY(guard.isNull()); QVERIFY(!service.isBusy());
 }
 
 QTEST_MAIN(MavFTPUIViewTest)
