@@ -24,7 +24,45 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Outbound TLOG recording and privacy filtering**.
+Latest slice (2026-09-06): **Split DataFlash Log**.
+The existing TOOLS/SETUP Developer action now works offline: pick BIN or text
+LOG, choose2–1000 pieces (default10), review named default-Cancel consent, then
+run with worker progress/cancel. Developer is now **13/32 working,19 unavailable**.
+Every complete ordinary record is retained once and in order, with FMT/FMTU/
+UNIT/MULT prefixed to each part. Size balancing keeps the final remainder;
+reference byte-range truncation, duplicate range metadata and stale output tails
+are not reproduced. Text produces actual.log parts and preserves string commas.
+
+All parts are staged in a private sibling directory; existing paths/symlinks
+are refused. Three source hash passes and staged verification precede final
+publication. Cancellation applies through the last pre-publication gate; each
+no-overwrite rename is separate, so late failure retains and reports exact
+already-published paths rather than claiming group atomicity. A known ordinary
+EOF-truncated binary record is omitted with its type/byte warning, enabling
+real finalized logs; unknown framing and truncated metadata remain fatal.
+Metadata16MiB/line4MiB/pieces1000 bounds keep memory independent of log length.
+
+Qt5/audio configure/build, focused4/4 (7.46s), **241/241 tests (29.88s)** and
+production X11 route exit0 pass. Actual file/count/Cancel/Accept/progress dialogs
+and independent two-part binary parsing are covered, followed by the existing
+GPS picker and six exact vehicle actions. Real5.275MB ArduPilot BIN splits7
+ways, warning about40-byte XKF5 tail; raw hashing verifies129406 data records
+byte-exact/in order, and pymavlink reads every part with zero BAD_DATA. A separate
+complete-prefix copy also passes. A105MB/7million-record file splits10 ways in
+6.78s at10924KiB maximum RSS, with independent byte/order confirmation and
+successful no-output cancellation. Originals and network SITL were not changed;
+all runtime fixtures are stopped. Evidence: `/tmp/apm-dataflash-split.JoYPE7/`.
+
+Claude TCP c211/c185/c186 review informed EOF-tail/float16/text fixes; three Codex
+streams supplied backend, GUI and production tests; root scheduled all builds.
+See `DATAFLASH_LOG_SPLIT.md` for exact limits and evidence. Next: **Create
+DashWare CSV**, then remaining single-vehicle Developer/TOOLS workflows and
+later Signing transitions. Settings follows Tools; Swarm remains last. Advanced
+14 complete+1 partial, fixedTools24 plus Signing extension, SETUP46/eight absent
+routes and CONFIG15/15 factories/Planner21/64 controls remain unchanged. Native
+platforms and reference visual parity are still open.
+
+Previous slice (2026-09-06): **Outbound TLOG recording and privacy filtering**.
 The shared production recorder now appends final typed outgoing MAVLink1/2
 bytes, including signatures, after successful transport submission. Accepted RX
 is captured before negotiation/presentation callbacks. File-session tokens

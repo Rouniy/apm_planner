@@ -5,6 +5,7 @@
 #include "comm/MAVLinkFrameParser.h"
 #include "comm/VehicleTargetManager.h"
 #include "core/parameters/ParameterStore.h"
+#include "ui/Loghandling/DataFlashLogSplitter.h"
 
 #include <QAction>
 #include <QObject>
@@ -154,6 +155,19 @@ QByteArray correctionLog()
     return result + recordedPacket(message);
 }
 
+QByteArray splittableAsciiLog(int dataRecords = 6)
+{
+    QByteArray log(
+        "FMT,128,89,FMT,BBnNZ,Type,Length,Name,Format,Columns\n"
+        "FMT,150,11,DUMY,Q,TimeUS\n");
+    for (int index = 0; index < dataRecords; ++index) {
+        log += "DUMY,";
+        log += QByteArray::number(1000 + index);
+        log += '\n';
+    }
+    return log;
+}
+
 bool writeFixture(const QString &path, const QByteArray &bytes)
 {
     QFile file(path);
@@ -219,6 +233,12 @@ private slots:
     void gpsExtractionCancellationAndLifetime_data();
     void gpsExtractionCancellationAndLifetime();
     void gpsAndVehicleOperationsInterlock();
+    void splitDialogsAreDefaultCancelAndNonDestructive();
+    void splitCompletesOfflineAndReportsCounts();
+    void splitRefusesExistingOutputs();
+    void splitCancellationAndLifetime_data();
+    void splitCancellationAndLifetime();
+    void splitAndOtherOperationsInterlock();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -227,8 +247,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
     QCOMPARE(view.objectName(), QStringLiteral("ConfigDeveloperToolsView"));
     QCOMPARE(view.Title(), QStringLiteral("Developer Tools"));
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 3);
-    QVERIFY(view.Log().contains(QStringLiteral("3 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 4);
+    QVERIFY(view.Log().contains(QStringLiteral("4 of 32")));
 
     const QList<QPushButton *> buttons = view.findChildren<QPushButton *>();
     QCOMPARE(buttons.size(), 32);
@@ -240,11 +260,13 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
             QVERIFY(!button->toolTip().isEmpty());
         }
     }
-    QCOMPARE(enabled, 3);
+    QCOMPARE(enabled, 4);
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeMavlinkPacketButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeHardwareIdButton"))->isEnabled());
+    QVERIFY(view.findChild<QPushButton *>(
+        QStringLiteral("SplitDataFlashLogButton"))->isEnabled());
     QVERIFY(!view.findChild<QPushButton *>(
         QStringLiteral("RebootVehicleButton"))->isEnabled());
 }
@@ -271,8 +293,8 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 6);
-    QVERIFY(view.Log().contains(QStringLiteral("6 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 7);
+    QVERIFY(view.Log().contains(QStringLiteral("7 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
@@ -303,6 +325,12 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
     QVERIFY(!deviceButton->isEnabled());
     QVERIFY(!terrainButton->isEnabled());
     QVERIFY(!osdVideoButton->isEnabled());
+
+    VehicleFixture fixture;
+    view.setVehicleToolService(&fixture.service);
+    QCOMPARE(view.ImplementedActionCount(), 13);
+    view.setVehicleToolService(nullptr);
+    QCOMPARE(view.ImplementedActionCount(), 7);
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()
@@ -357,7 +385,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 9);
+    QCOMPARE(view.ImplementedActionCount(), 10);
     QVERIFY(tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     fixture.heartbeat(true);
@@ -368,7 +396,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     fixture.registry.endLinkSession(fixture.endpoint.linkId, fixture.session);
     QTRY_VERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 3);
+    QCOMPARE(view.ImplementedActionCount(), 4);
     QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(fixture.frames.isEmpty());
 }
@@ -767,6 +795,242 @@ void ConfigDeveloperToolsViewTest::gpsAndVehicleOperationsInterlock()
     }
     QTRY_VERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     QVERIFY(!QFile::exists(output));
+}
+
+void ConfigDeveloperToolsViewTest::splitDialogsAreDefaultCancelAndNonDestructive()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    QVERIFY(writeFixture(input, splittableAsciiLog()));
+    ConfigDeveloperToolsView view;
+    view.show();
+    auto *button = tool(view, "SplitDataFlashLogButton");
+    QVERIFY(button->isEnabled());
+
+    button->click();
+    auto *picker = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperSplitInputDialog"));
+    QVERIFY(picker);
+    QVERIFY(picker->testOption(QFileDialog::DontUseNativeDialog));
+    QCOMPARE(picker->fileMode(), QFileDialog::ExistingFile);
+    QVERIFY(picker->nameFilters().join(QLatin1Char(' '))
+                .contains(QStringLiteral("*.bin")));
+    QVERIFY(!button->isEnabled());
+    picker->reject();
+    QVERIFY(button->isEnabled());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    button->click();
+    picker = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperSplitInputDialog"));
+    QVERIFY(picker);
+    picker->selectFile(input);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept",
+                                      Qt::DirectConnection));
+    auto *count = view.findChild<QInputDialog *>(
+        QStringLiteral("DeveloperSplitCountDialog"));
+    QVERIFY(count);
+    QCOMPARE(count->inputMode(), QInputDialog::IntInput);
+    QCOMPARE(count->intMinimum(), 2);
+    QCOMPARE(count->intMaximum(), 1000);
+    QCOMPARE(count->intValue(), 10);
+    count->reject();
+    QVERIFY(button->isEnabled());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    button->click();
+    picker = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperSplitInputDialog"));
+    QVERIFY(picker);
+    picker->selectFile(input);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept",
+                                      Qt::DirectConnection));
+    count = view.findChild<QInputDialog *>(
+        QStringLiteral("DeveloperSplitCountDialog"));
+    QVERIFY(count);
+    count->setIntValue(3);
+    count->accept();
+    auto *confirm = view.findChild<QMessageBox *>(
+        QStringLiteral("DeveloperSplitConfirmDialog"));
+    QVERIFY(confirm);
+    QCOMPARE(confirm->textFormat(), Qt::PlainText);
+    QCOMPARE(confirm->defaultButton(),
+             confirm->button(QMessageBox::Cancel));
+    QCOMPARE(confirm->escapeButton(),
+             confirm->button(QMessageBox::Cancel));
+    const QStringList outputs = DataFlashLogSplitter::OutputPaths(input, 3);
+    QCOMPARE(outputs.size(), 3);
+    QVERIFY(confirm->text().contains(outputs.first()));
+    QVERIFY(confirm->text().contains(outputs.last()));
+    QVERIFY(confirm->text().contains(QStringLiteral("never overwritten")));
+    QVERIFY(confirm->text().contains(QStringLiteral("not group-atomic")));
+    QVERIFY(confirm->text().contains(QStringLiteral("Complete records")));
+    confirm->button(QMessageBox::Cancel)->click();
+    QVERIFY(button->isEnabled());
+    QVERIFY(!view.findChild<QProgressDialog *>(
+        QStringLiteral("DeveloperSplitProgressDialog")));
+    for (const QString &path : outputs)
+        QVERIFY(!QFile::exists(path));
+}
+
+void ConfigDeveloperToolsViewTest::splitCompletesOfflineAndReportsCounts()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    QVERIFY(writeFixture(input, splittableAsciiLog(6)));
+    const QStringList outputs = DataFlashLogSplitter::OutputPaths(input, 2);
+    QCOMPARE(outputs.size(), 2);
+    ConfigDeveloperToolsView view;
+    view.show();
+    view.SplitDataFlashLog(input, 2);
+    auto *button = tool(view, "SplitDataFlashLogButton");
+    QVERIFY(!button->isEnabled());
+    QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QVERIFY(view.findChild<QProgressDialog *>(
+        QStringLiteral("DeveloperSplitProgressDialog")));
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 5000);
+    qint64 publishedBytes = 0;
+    for (const QString &path : outputs) {
+        QVERIFY2(QFile::exists(path), qPrintable(path));
+        const QByteArray part = readFixture(path);
+        QVERIFY(part.contains("FMT,128,89,FMT"));
+        QVERIFY(part.contains("FMT,150,11,DUMY"));
+        publishedBytes += part.size();
+    }
+    QVERIFY(view.Log().contains(QStringLiteral("split completed: 2 files")));
+    QVERIFY(view.Log().contains(QStringLiteral("8 records (6 data records)")));
+    QVERIFY(view.Log().contains(QString::number(publishedBytes)));
+    QVERIFY(view.Log().contains(QStringLiteral("not group-atomic")));
+}
+
+void ConfigDeveloperToolsViewTest::splitRefusesExistingOutputs()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    QVERIFY(writeFixture(input, splittableAsciiLog()));
+    const QStringList outputs = DataFlashLogSplitter::OutputPaths(input, 2);
+    QCOMPARE(outputs.size(), 2);
+    const QByteArray sentinel("do not overwrite");
+    QVERIFY(writeFixture(outputs.first(), sentinel));
+    ConfigDeveloperToolsView view;
+    view.show();
+    view.SplitDataFlashLog(input, 2);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        tool(view, "SplitDataFlashLogButton")->isEnabled(), 5000);
+    QCOMPARE(readFixture(outputs.first()), sentinel);
+    QVERIFY(!QFile::exists(outputs.last()));
+    QVERIFY(view.Log().contains(QStringLiteral("split failed")));
+    QVERIFY(!view.Log().contains(QStringLiteral("split completed")));
+}
+
+void ConfigDeveloperToolsViewTest::splitCancellationAndLifetime_data()
+{
+    QTest::addColumn<QString>("operation");
+    QTest::newRow("cancel") << QStringLiteral("cancel");
+    QTest::newRow("close") << QStringLiteral("close");
+    QTest::newRow("destroy") << QStringLiteral("destroy");
+}
+
+void ConfigDeveloperToolsViewTest::splitCancellationAndLifetime()
+{
+    QFETCH(QString, operation);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    QVERIFY(writeFixture(input, splittableAsciiLog(20)));
+    const QStringList outputs = DataFlashLogSplitter::OutputPaths(input, 3);
+    QPointer<ConfigDeveloperToolsView> view =
+        new ConfigDeveloperToolsView;
+    view->show();
+    QString logAtClose;
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view->SplitDataFlashLog(input, 3);
+        view->SplitDataFlashLog(input, 4);
+        QVERIFY(view->Log().contains(QStringLiteral("already active")));
+        auto *progress = view->findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperSplitProgressDialog"));
+        QVERIFY(progress);
+        if (operation == QStringLiteral("destroy")) {
+            delete view.data();
+        } else if (operation == QStringLiteral("close")) {
+            logAtClose = view->Log();
+            view->close();
+        } else {
+            auto *cancel = progress->findChild<QPushButton *>();
+            QVERIFY(cancel);
+            cancel->click();
+        }
+    }
+    QCoreApplication::processEvents();
+    for (const QString &path : outputs)
+        QVERIFY(!QFile::exists(path));
+    if (operation == QStringLiteral("destroy")) {
+        QVERIFY(view.isNull());
+    } else if (operation == QStringLiteral("close")) {
+        QCOMPARE(view->Log(), logAtClose);
+        view->show();
+        QTRY_VERIFY(tool(*view, "SplitDataFlashLogButton")->isEnabled());
+        delete view.data();
+    } else {
+        QTRY_VERIFY(view->Log().contains(QStringLiteral("split cancelled")));
+        QVERIFY(tool(*view, "SplitDataFlashLogButton")->isEnabled());
+        delete view.data();
+    }
+}
+
+void ConfigDeveloperToolsViewTest::splitAndOtherOperationsInterlock()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    const QString correctionInput =
+        directory.filePath(QStringLiteral("flight.tlog"));
+    const QString correctionOutput =
+        directory.filePath(QStringLiteral("corrections.dat"));
+    QVERIFY(writeFixture(input, splittableAsciiLog(20)));
+    QVERIFY(writeFixture(correctionInput, correctionLog()));
+    VehicleFixture fixture;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.show();
+
+    tool(view, "RebootVehicleButton")->click();
+    auto *consent = confirmation(view);
+    QVERIFY(consent);
+    QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
+    view.SplitDataFlashLog(input, 2);
+    QVERIFY(!view.findChild<QProgressDialog *>(
+        QStringLiteral("DeveloperSplitProgressDialog")));
+    consent->button(QMessageBox::Cancel)->click();
+
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view.SplitDataFlashLog(input, 2);
+        QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+        QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+        view.ExtractGpsCorrections(correctionInput, correctionOutput);
+        QVERIFY(!view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperGpsProgressDialog")));
+        tool(view, "RebootVehicleButton")->click();
+        QVERIFY(!confirmation(view));
+        QVERIFY(fixture.frames.isEmpty());
+        auto *progress = view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperSplitProgressDialog"));
+        QVERIFY(progress);
+        progress->findChild<QPushButton *>()->click();
+    }
+    QTRY_VERIFY(tool(view, "SplitDataFlashLogButton")->isEnabled());
+    QTRY_VERIFY(tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QTRY_VERIFY(tool(view, "RebootVehicleButton")->isEnabled());
+    QVERIFY(!QFile::exists(correctionOutput));
+    for (const QString &path : DataFlashLogSplitter::OutputPaths(input, 2))
+        QVERIFY(!QFile::exists(path));
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)

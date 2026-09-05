@@ -711,6 +711,8 @@ set(SOURCES
     src/comm/TlogReader.cpp
     src/comm/GpsCorrectionExtractor.cpp
     src/comm/GpsCorrectionExtractor.h
+    src/ui/Loghandling/DataFlashLogSplitter.cpp
+    src/ui/Loghandling/DataFlashLogSplitter.h
     src/comm/TlogReader.h
     src/comm/TlogExportService.cpp
     src/comm/TlogExportService.h
@@ -3862,6 +3864,20 @@ if(BUILD_TESTING)
     add_test(NAME gpscorrectionextractor_tests COMMAND gpscorrectionextractor_tests)
     set_tests_properties(gpscorrectionextractor_tests PROPERTIES TIMEOUT 60)
 
+    add_library(dataflash_splitter_test_support STATIC
+        src/ui/Loghandling/DataFlashLogSplitter.cpp
+        src/ui/Loghandling/DataFlashLogSplitter.h)
+    target_include_directories(dataflash_splitter_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(dataflash_splitter_test_support PUBLIC Qt::Core)
+    add_executable(dataflashlogsplitter_tests tests/test_dataflashlogsplitter.cpp)
+    target_link_libraries(dataflashlogsplitter_tests PRIVATE
+        dataflash_splitter_test_support Qt::Test)
+    add_test(NAME dataflashlogsplitter_tests COMMAND dataflashlogsplitter_tests)
+    set_tests_properties(dataflashlogsplitter_tests PROPERTIES TIMEOUT 60)
+    add_executable(dataflash_log_splitter_probe tests/DataFlashLogSplitterProbe.cpp)
+    target_link_libraries(dataflash_log_splitter_probe PRIVATE dataflash_splitter_test_support)
+
     add_executable(configdevelopertoolsview_tests
         tests/test_configdevelopertoolsview.cpp
         src/ui/configuration/ActionPageView.cpp
@@ -3879,6 +3895,7 @@ if(BUILD_TESTING)
     target_link_libraries(configdevelopertoolsview_tests PRIVATE
         developer_vehicle_tool_test_support
         gps_correction_test_support
+        dataflash_splitter_test_support
         Qt::Concurrent
         Qt::Core
         Qt::Widgets

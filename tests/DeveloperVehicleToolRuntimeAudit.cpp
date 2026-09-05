@@ -12,16 +12,21 @@
 #include <QApplication>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
+#include <QHash>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
+#include <QProgressDialog>
 #include <QPushButton>
+#include <QSet>
 #include <QThread>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QtEndian>
 #include <functional>
 #include <cmath>
 #include <cstring>
@@ -29,6 +34,147 @@
 namespace {
 constexpr int FixtureLinkId = 910110;
 constexpr quint8 FixtureSystem = 234;
+constexpr int DataFlashFmtLength = 89;
+
+QByteArray fixedDataFlashField(const QByteArray &value, int length)
+{
+    QByteArray field(length, '\0');
+    const QByteArray clipped = value.left(length);
+    if (!clipped.isEmpty()) {
+        std::memcpy(field.data(), clipped.constData(), size_t(clipped.size()));
+    }
+    return field;
+}
+
+void appendDataFlashFmt(QByteArray *log, quint8 type, quint8 length,
+                        const QByteArray &name, const QByteArray &format,
+                        const QByteArray &columns)
+{
+    if (!log) return;
+    log->append(char(0xa3));
+    log->append(char(0x95));
+    log->append(char(0x80));
+    log->append(char(type));
+    log->append(char(length));
+    log->append(fixedDataFlashField(name, 4));
+    log->append(fixedDataFlashField(format, 16));
+    log->append(fixedDataFlashField(columns, 64));
+}
+
+void appendDataFlashRecord(QByteArray *log, quint8 type, int length,
+                           quint64 value = 0)
+{
+    if (!log || length < 3) return;
+    QByteArray record(length, '\0');
+    record[0] = char(0xa3);
+    record[1] = char(0x95);
+    record[2] = char(type);
+    if (length >= 11) {
+        qToLittleEndian<quint64>(
+            value, reinterpret_cast<uchar *>(record.data() + 3));
+    }
+    log->append(record);
+}
+
+QByteArray splitDataFlashFixture()
+{
+    constexpr quint8 FmtuType = 150;
+    constexpr quint8 UnitType = 151;
+    constexpr quint8 MultType = 152;
+    constexpr quint8 DataType = 153;
+    QByteArray log;
+    appendDataFlashFmt(&log, 0x80, DataFlashFmtLength, "FMT", "BBnNZ",
+                       "Type,Length,Name,Format,Columns");
+    appendDataFlashFmt(&log, FmtuType, 44, "FMTU", "QBNN",
+                       "TimeUS,FmtType,UnitIds,MultIds");
+    appendDataFlashFmt(&log, UnitType, 76, "UNIT", "QbZ",
+                       "TimeUS,Id,Label");
+    appendDataFlashFmt(&log, MultType, 20, "MULT", "Qbd",
+                       "TimeUS,Id,Mult");
+    appendDataFlashFmt(&log, DataType, 11, "DUMY", "Q", "TimeUS");
+    int start = log.size();
+    appendDataFlashRecord(&log, FmtuType, 44, 1);
+    log[start + 11] = char(DataType);
+    log[start + 12] = 's';
+    log[start + 28] = 'F';
+    start = log.size();
+    appendDataFlashRecord(&log, UnitType, 76, 2);
+    log[start + 11] = 's';
+    std::memcpy(log.data() + start + 12, "seconds", 7);
+    start = log.size();
+    appendDataFlashRecord(&log, MultType, 20, 3);
+    log[start + 11] = 'F';
+    const double multiplier = 1.0e-6;
+    quint64 multiplierBits = 0;
+    std::memcpy(&multiplierBits, &multiplier, sizeof(multiplierBits));
+    qToLittleEndian<quint64>(
+        multiplierBits, reinterpret_cast<uchar *>(log.data() + start + 12));
+    for (quint64 value : {11ULL, 22ULL, 33ULL, 44ULL}) {
+        appendDataFlashRecord(&log, DataType, 11, value);
+    }
+    return log;
+}
+
+struct SplitPiece
+{
+    bool valid = false;
+    QSet<QString> definitions;
+    QSet<QString> metadataRecords;
+    QVector<quint64> values;
+};
+
+SplitPiece readSplitPiece(const QString &path)
+{
+    SplitPiece result;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return result;
+    const QByteArray bytes = file.readAll();
+    QHash<quint8, QPair<int, QString>> definitions;
+    int offset = 0;
+    while (offset < bytes.size()) {
+        if (bytes.size() - offset < 3
+            || quint8(bytes.at(offset)) != 0xa3
+            || quint8(bytes.at(offset + 1)) != 0x95) {
+            return result;
+        }
+        const quint8 type = quint8(bytes.at(offset + 2));
+        const bool formatRecord = type == 0x80;
+        int length = DataFlashFmtLength;
+        QString name = QStringLiteral("FMT");
+        if (formatRecord) {
+            if (bytes.size() - offset < DataFlashFmtLength) return result;
+            const quint8 describedType = quint8(bytes.at(offset + 3));
+            length = quint8(bytes.at(offset + 4));
+            const QByteArray rawName = bytes.mid(offset + 5, 4);
+            name = QString::fromLatin1(rawName.constData(),
+                rawName.indexOf('\0') >= 0 ? rawName.indexOf('\0')
+                                            : rawName.size());
+            if (length < 3 || name.isEmpty()) return result;
+            definitions.insert(describedType, qMakePair(length, name));
+            result.definitions.insert(name);
+            length = DataFlashFmtLength;
+        } else {
+            const auto definition = definitions.constFind(type);
+            if (definition == definitions.constEnd()) return result;
+            length = definition->first;
+            name = definition->second;
+        }
+        if (length < 3 || bytes.size() - offset < length) return result;
+        if (!formatRecord && (name == QStringLiteral("FMTU")
+            || name == QStringLiteral("UNIT")
+            || name == QStringLiteral("MULT"))) {
+            result.metadataRecords.insert(name);
+        } else if (!formatRecord && name == QStringLiteral("DUMY")) {
+            if (length != 11) return result;
+            result.values.append(qFromLittleEndian<quint64>(
+                reinterpret_cast<const uchar *>(bytes.constData() + offset + 3)));
+        }
+        offset += length;
+    }
+    result.valid = offset == bytes.size();
+    return result;
+}
+
 bool waitFor(const std::function<bool()> &condition, int timeout = 2500)
 {
     QElapsedTimer timer;
@@ -142,8 +288,8 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 12 && page->ActionCount() == 32,
-           "production Developer route did not bind six vehicle tools");
+    expect(page && page->ImplementedActionCount() == 13 && page->ActionCount() == 32,
+           "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
     expect(reboot && !reboot->isEnabled(), "offline reboot was enabled");
@@ -228,6 +374,127 @@ int RunDeveloperVehicleToolRuntimeAudit()
                "GPS extraction bytes/order/zero padding differ");
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         qInfo() << "Developer runtime GPS extraction:" << gpsOutput << page->Log();
+    }
+
+    // Split a real binary DataFlash stream through the production Developer
+    // page. The first pass proves that both the count and the output set stay
+    // behind a default-Cancel confirmation; the second verifies independently
+    // that complete data records are neither lost nor duplicated and that each
+    // part carries the metadata required to decode it on its own.
+    QTemporaryDir splitFiles;
+    expect(splitFiles.isValid(), "DataFlash split fixture directory unavailable");
+    const QString splitInput = splitFiles.filePath(
+        QStringLiteral("flight sample.bin"));
+    const QStringList splitOutputs{
+        splitInput + QStringLiteral("_split0.bin"),
+        splitInput + QStringLiteral("_split1.bin")};
+    const QByteArray splitFixture = splitDataFlashFixture();
+    QFile splitSource(splitInput);
+    expect(splitSource.open(QIODevice::WriteOnly)
+               && splitSource.write(splitFixture) == splitFixture.size(),
+           "DataFlash split fixture could not be written");
+    splitSource.close();
+    auto *split = page->findChild<QPushButton *>(
+        QStringLiteral("SplitDataFlashLogButton"));
+    expect(split && split->isEnabled(), "offline DataFlash split action disabled");
+    const auto outputsExist = [&]() {
+        return QFile::exists(splitOutputs.at(0))
+            || QFile::exists(splitOutputs.at(1));
+    };
+    const auto openSplitConfirmation = [&]() -> QMessageBox * {
+        if (!split || !split->isEnabled()) return nullptr;
+        split->click();
+        QCoreApplication::processEvents();
+        auto *picker = page->findChild<QFileDialog *>(
+            QStringLiteral("DeveloperSplitInputDialog"));
+        expect(picker != nullptr, "DataFlash split input picker missing");
+        if (!picker) return nullptr;
+        const QString filters = picker->nameFilters().join(QLatin1Char(' '));
+        expect(filters.contains(QStringLiteral("*.bin"))
+                   && filters.contains(QStringLiteral("*.log")),
+               "DataFlash split picker does not expose both binary and text logs");
+        auto *filename = picker->findChild<QLineEdit *>(
+            QStringLiteral("fileNameEdit"));
+        expect(filename != nullptr, "DataFlash split filename editor missing");
+        if (filename) filename->setText(splitInput);
+        expect(picker->selectedFiles() == QStringList{splitInput},
+               "DataFlash split input selection is not exact");
+        expect(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection),
+               "DataFlash split input picker acceptance unavailable");
+        expect(waitFor([&] {
+            return page->findChild<QInputDialog *>(
+                QStringLiteral("DeveloperSplitCountDialog")) != nullptr;
+        }), "DataFlash split count dialog missing");
+        auto *count = page->findChild<QInputDialog *>(
+            QStringLiteral("DeveloperSplitCountDialog"));
+        if (!count) return nullptr;
+        expect(count->inputMode() == QInputDialog::IntInput
+                   && count->intValue() == 10
+                   && count->intMinimum() == 2
+                   && count->intMaximum() == 1000,
+               "DataFlash split count defaults/bounds differ from MP10");
+        count->setIntValue(2);
+        count->accept();
+        expect(waitFor([&] {
+            return page->findChild<QMessageBox *>(
+                QStringLiteral("DeveloperSplitConfirmDialog")) != nullptr;
+        }), "DataFlash split confirmation missing");
+        return page->findChild<QMessageBox *>(
+            QStringLiteral("DeveloperSplitConfirmDialog"));
+    };
+
+    if (split) {
+        QMessageBox *splitConfirmation = openSplitConfirmation();
+        expect(splitConfirmation
+                   && splitConfirmation->defaultButton()
+                       == splitConfirmation->button(QMessageBox::Cancel)
+                   && splitConfirmation->escapeButton()
+                       == splitConfirmation->button(QMessageBox::Cancel),
+               "DataFlash split is not protected by default/Escape Cancel");
+        if (splitConfirmation)
+            splitConfirmation->button(QMessageBox::Cancel)->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return split->isEnabled(); }) && !outputsExist(),
+               "cancelling DataFlash split confirmation published output");
+
+        splitConfirmation = openSplitConfirmation();
+        expect(splitConfirmation != nullptr,
+               "second DataFlash split confirmation missing");
+        if (splitConfirmation)
+            splitConfirmation->button(QMessageBox::Yes)->click();
+        auto *splitProgress = page->findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperSplitProgressDialog"));
+        expect(splitProgress != nullptr,
+               "DataFlash split progress dialog missing after confirmation");
+        expect(waitFor([&] {
+            return split->isEnabled()
+                && QFile::exists(splitOutputs.at(0))
+                && QFile::exists(splitOutputs.at(1));
+        }, 5000), "DataFlash split did not finish through Tools route");
+
+        const SplitPiece first = readSplitPiece(splitOutputs.at(0));
+        const SplitPiece second = readSplitPiece(splitOutputs.at(1));
+        const QSet<QString> expectedDefinitions{
+            QStringLiteral("FMT"), QStringLiteral("FMTU"),
+            QStringLiteral("UNIT"), QStringLiteral("MULT"),
+            QStringLiteral("DUMY")};
+        const QSet<QString> expectedMetadata{
+            QStringLiteral("FMTU"), QStringLiteral("UNIT"),
+            QStringLiteral("MULT")};
+        expect(first.valid && second.valid
+                   && first.definitions == expectedDefinitions
+                   && second.definitions == expectedDefinitions
+                   && first.metadataRecords == expectedMetadata
+                   && second.metadataRecords == expectedMetadata,
+               "DataFlash split pieces are not independently decodable with full metadata");
+        QVector<quint64> splitValues = first.values;
+        splitValues += second.values;
+        expect(!first.values.isEmpty() && !second.values.isEmpty()
+                   && splitValues == QVector<quint64>{11, 22, 33, 44},
+               "DataFlash split lost, duplicated, reordered, or fragmented data records");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        qInfo() << "Developer runtime DataFlash split:" << splitOutputs
+                << page->Log();
     }
 
     QPointer<DeveloperAuditLink> fixture(new DeveloperAuditLink);

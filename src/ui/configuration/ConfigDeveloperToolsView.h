@@ -34,6 +34,7 @@ public slots:
                                const QString &parameterName = QString());
     // Paths already selected/confirmed by the caller; never sends telemetry.
     void ExtractGpsCorrections(const QString &input, const QString &output);
+    void SplitDataFlashLog(const QString &input, int pieces);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -57,8 +58,13 @@ private:
     void PickGpsCorrectionInput();
     void PickGpsCorrectionOutput(const QString &input, quint64 revision);
     void CancelGpsExtraction();
-    void RefreshGpsExtractionAction();
+    void PickSplitInput();
+    void PickSplitCount(const QString &input, quint64 revision);
+    void ConfirmSplit(const QString &input, int pieces, quint64 revision);
+    void CancelSplit();
+    void RefreshOfflineFileActions();
     struct GpsExtractionState;
+    struct SplitState;
 
     QPointer<QObject> m_actionSource;
     QPointer<DeveloperVehicleToolService> m_vehicleTools;
@@ -74,7 +80,12 @@ private:
     QPointer<QProgressDialog> m_gpsExtractionProgress;
     std::shared_ptr<GpsExtractionState> m_gpsExtractionState;
     quint64 m_gpsPromptRevision = 0;
-    bool m_gpsExtractionClosing = false;
+    QPushButton *m_splitButton = nullptr;
+    QPointer<QDialog> m_splitPrompt;
+    QPointer<QProgressDialog> m_splitProgress;
+    std::shared_ptr<SplitState> m_splitState;
+    quint64 m_splitPromptRevision = 0;
+    bool m_fileToolsClosing = false;
 };
 
 #endif // CONFIGDEVELOPERTOOLSVIEW_H

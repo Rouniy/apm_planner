@@ -9,14 +9,17 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,240/240 тестов; Developer12/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,241/241 тестов; Developer13/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
-Полный набор240/240 проходит за29.84s, production X11 тоже проходит.
+Split DataFlash Log теперь работает с BIN/LOG, целыми записями, метаданными,
+отменой и честным описанием публикации нескольких файлов без перезаписи.
+Полный набор241/241 проходит за29.88s, production X11 тоже проходит.
 Начало записи только по heartbeat/enabled остаётся отдельным пробелом.
-Следующий кандидат — Split DataFlash Log и другие single-drone Developer Tools;
-Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md`.
+Следующий пакет — Create DashWare CSV и другие single-drone Developer Tools;
+Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
+`DATAFLASH_LOG_SPLIT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 

@@ -2,6 +2,7 @@
 
 #include "DeveloperToolParsers.h"
 #include "comm/GpsCorrectionExtractor.h"
+#include "ui/Loghandling/DataFlashLogSplitter.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -23,6 +24,13 @@
 #include <exception>
 
 struct ConfigDeveloperToolsView::GpsExtractionState
+{
+    std::atomic_bool cancelled{false};
+    std::atomic<qint64> processed{0};
+    std::atomic<qint64> total{0};
+};
+
+struct ConfigDeveloperToolsView::SplitState
 {
     std::atomic_bool cancelled{false};
     std::atomic<qint64> processed{0};
@@ -71,8 +79,11 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                          QStringLiteral("ProbeMavlinkCameraButton"), notPorted);
     AddUnavailableAction(tr("Embed Defaults in APJ"),
                          QStringLiteral("EmbedDefaultsInApjButton"), notPorted);
-    AddUnavailableAction(tr("Split DataFlash Log"),
-                         QStringLiteral("SplitDataFlashLogButton"), notPorted);
+    m_splitButton = AddAction(tr("Split DataFlash Log"),
+        QStringLiteral("SplitDataFlashLogButton"),
+        [this]() { PickSplitInput(); });
+    m_splitButton->setToolTip(tr("Split a recorded DataFlash .bin or .log file into complete, independently readable parts; no vehicle connection is required."));
+    ++m_implementedActionCount;
     AddUnavailableAction(tr("Create DashWare CSV"),
                          QStringLiteral("CreateDashWareCsvButton"), notPorted);
     m_gpsExtractionButton = AddAction(tr("Extract GPS Corrections"),
@@ -177,8 +188,9 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
         bool enabled = false;
         if (!service)
             reason = tr("The guarded vehicle tool service is unavailable.");
-        else if (m_gpsExtractionState || m_gpsExtractionPrompt)
-            reason = tr("Finish or cancel GPS correction extraction first.");
+        else if (m_gpsExtractionState || m_gpsExtractionPrompt
+                 || m_splitState || m_splitPrompt)
+            reason = tr("Finish or cancel the current offline file operation first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
         else if (service->busy())
@@ -214,7 +226,7 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
         m_seenStatus = status;
     }
     m_refreshingVehicleActions = false;
-    RefreshGpsExtractionAction();
+    RefreshOfflineFileActions();
 }
 
 void ConfigDeveloperToolsView::CancelVehiclePrompt()
@@ -229,8 +241,9 @@ void ConfigDeveloperToolsView::CancelVehiclePrompt()
 void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
 {
     CancelVehiclePrompt();
-    m_gpsExtractionClosing = true;
+    m_fileToolsClosing = true;
     CancelGpsExtraction();
+    CancelSplit();
     ActionPageView::closeEvent(event);
 }
 
@@ -239,14 +252,17 @@ ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
     ++m_gpsPromptRevision;
     if (m_gpsExtractionState)
         m_gpsExtractionState->cancelled.store(true, std::memory_order_relaxed);
+    ++m_splitPromptRevision;
+    if (m_splitState)
+        m_splitState->cancelled.store(true, std::memory_order_relaxed);
     // The worker owns only copied paths and shared atomic state. Destruction
     // disconnects the watcher; it does not block the GUI waiting for file I/O.
 }
 
 void ConfigDeveloperToolsView::showEvent(QShowEvent *event)
 {
-    m_gpsExtractionClosing = false;
-    RefreshGpsExtractionAction();
+    m_fileToolsClosing = false;
+    RefreshOfflineFileActions();
     ActionPageView::showEvent(event);
 }
 
@@ -265,8 +281,9 @@ void ConfigDeveloperToolsView::CancelGpsExtraction()
 
 void ConfigDeveloperToolsView::PickGpsCorrectionInput()
 {
-    if (m_gpsExtractionClosing || m_gpsExtractionState || m_gpsExtractionPrompt ||
-        m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy()))
+    if (m_fileToolsClosing || m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_splitState || m_splitPrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy()))
         return;
     const quint64 revision = ++m_gpsPromptRevision;
     auto *dialog = new QFileDialog(this, tr("Select telemetry log"));
@@ -278,7 +295,7 @@ void ConfigDeveloperToolsView::PickGpsCorrectionInput()
     m_gpsExtractionPrompt = dialog;
     m_gpsExtractionButton->setEnabled(false);
     connect(dialog, &QDialog::finished, this, [this, dialog, revision](int result) {
-        if (m_gpsExtractionClosing || revision != m_gpsPromptRevision)
+        if (m_fileToolsClosing || revision != m_gpsPromptRevision)
             return;
         m_gpsExtractionPrompt.clear();
         const QStringList files = dialog->selectedFiles();
@@ -293,7 +310,7 @@ void ConfigDeveloperToolsView::PickGpsCorrectionInput()
 
 void ConfigDeveloperToolsView::PickGpsCorrectionOutput(const QString &input, quint64 revision)
 {
-    if (m_gpsExtractionClosing || revision != m_gpsPromptRevision)
+    if (m_fileToolsClosing || revision != m_gpsPromptRevision)
         return;
     const QFileInfo source(input);
     auto *dialog = new QFileDialog(this, tr("Save GPS correction stream"), source.absolutePath());
@@ -308,7 +325,7 @@ void ConfigDeveloperToolsView::PickGpsCorrectionOutput(const QString &input, qui
     dialog->selectFile(source.completeBaseName() + QStringLiteral("-corrections.dat"));
     m_gpsExtractionPrompt = dialog;
     connect(dialog, &QDialog::finished, this, [this, dialog, input, revision](int result) {
-        if (m_gpsExtractionClosing || revision != m_gpsPromptRevision)
+        if (m_fileToolsClosing || revision != m_gpsPromptRevision)
             return;
         m_gpsExtractionPrompt.clear();
         const QStringList files = dialog->selectedFiles();
@@ -320,26 +337,31 @@ void ConfigDeveloperToolsView::PickGpsCorrectionOutput(const QString &input, qui
     dialog->open();
 }
 
-void ConfigDeveloperToolsView::RefreshGpsExtractionAction()
+void ConfigDeveloperToolsView::RefreshOfflineFileActions()
 {
-    if (!m_gpsExtractionClosing)
-        m_gpsExtractionButton->setEnabled(!m_gpsExtractionState && !m_gpsExtractionPrompt &&
-            !m_vehiclePrompt && (!m_vehicleTools || !m_vehicleTools->busy()));
+    if (m_fileToolsClosing)
+        return;
+    const bool idle = !m_gpsExtractionState && !m_gpsExtractionPrompt
+        && !m_splitState && !m_splitPrompt && !m_vehiclePrompt
+        && (!m_vehicleTools || !m_vehicleTools->busy());
+    m_gpsExtractionButton->setEnabled(idle);
+    m_splitButton->setEnabled(idle);
 }
 
 void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const QString &output)
 {
-    if (m_gpsExtractionClosing)
+    if (m_fileToolsClosing)
         return;
-    if (m_gpsExtractionState || m_gpsExtractionPrompt || m_vehiclePrompt ||
-        (m_vehicleTools && m_vehicleTools->busy())) {
+    if (m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_splitState || m_splitPrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
-        RefreshGpsExtractionAction();
+        RefreshOfflineFileActions();
         return;
     }
     if (input.isEmpty() || output.isEmpty()) {
         AppendLog(tr("GPS correction extraction: input and output paths are required."));
-        RefreshGpsExtractionAction();
+        RefreshOfflineFileActions();
         return;
     }
     const auto state = std::make_shared<GpsExtractionState>();
@@ -370,7 +392,7 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
     timer->setInterval(100);
     const QPointer<QProgressDialog> guardedProgress(progress);
     connect(timer, &QTimer::timeout, this, [this, state, guardedProgress]() {
-        if (m_gpsExtractionClosing || !guardedProgress || m_gpsExtractionState != state ||
+        if (m_fileToolsClosing || !guardedProgress || m_gpsExtractionState != state ||
             state->cancelled.load(std::memory_order_relaxed))
             return;
         const qint64 total = state->total.load(std::memory_order_relaxed);
@@ -389,7 +411,7 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
         m_gpsExtractionProgress.clear();
         if (guardedProgress)
             guardedProgress->deleteLater();
-        if (m_gpsExtractionClosing)
+        if (m_fileToolsClosing)
             return;
         if (result.cancelled)
             AppendLog(tr("GPS correction extraction cancelled; no output was published."));
@@ -430,11 +452,254 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
     RefreshVehicleActions();
 }
 
+void ConfigDeveloperToolsView::CancelSplit()
+{
+    ++m_splitPromptRevision;
+    if (m_splitState)
+        m_splitState->cancelled.store(true, std::memory_order_relaxed);
+    const QPointer<QDialog> prompt = m_splitPrompt;
+    m_splitPrompt.clear();
+    if (prompt)
+        prompt->reject();
+    if (m_splitProgress)
+        m_splitProgress->cancel();
+}
+
+void ConfigDeveloperToolsView::PickSplitInput()
+{
+    if (m_fileToolsClosing || m_splitState || m_splitPrompt
+        || m_gpsExtractionState || m_gpsExtractionPrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    const quint64 revision = ++m_splitPromptRevision;
+    auto *dialog = new QFileDialog(this, tr("Select DataFlash log"));
+    dialog->setObjectName(QStringLiteral("DeveloperSplitInputDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setFileMode(QFileDialog::ExistingFile);
+    dialog->setNameFilter(tr("DataFlash logs (*.bin *.BIN *.log *.LOG)"));
+    m_splitPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, revision](int result) {
+        if (m_fileToolsClosing || revision != m_splitPromptRevision)
+            return;
+        m_splitPrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result == QDialog::Accepted && files.size() == 1)
+            PickSplitCount(files.first(), revision);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::PickSplitCount(const QString &input,
+                                               quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_splitPromptRevision)
+        return;
+    auto *dialog = new QInputDialog(this);
+    dialog->setObjectName(QStringLiteral("DeveloperSplitCountDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Split DataFlash Log"));
+    dialog->setLabelText(tr("Number of output parts (2 to 1000)"));
+    dialog->setInputMode(QInputDialog::IntInput);
+    dialog->setIntRange(2, 1000);
+    dialog->setIntValue(10);
+    dialog->setIntStep(1);
+    m_splitPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, input, revision](int result) {
+        if (m_fileToolsClosing || revision != m_splitPromptRevision)
+            return;
+        m_splitPrompt.clear();
+        if (result == QDialog::Accepted)
+            ConfirmSplit(input, dialog->intValue(), revision);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ConfirmSplit(const QString &input, int pieces,
+                                             quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_splitPromptRevision)
+        return;
+    const QStringList outputs = DataFlashLogSplitter::OutputPaths(input, pieces);
+    QString outputDescription;
+    if (!outputs.isEmpty()) {
+        outputDescription = outputs.size() <= 8
+            ? outputs.join(QLatin1Char('\n'))
+            : tr("%1\n%2\n…\n%3\n(%4 output files beside the input)")
+                  .arg(outputs.at(0), outputs.at(1), outputs.constLast())
+                  .arg(outputs.size());
+    }
+    const QString warning = tr(
+        "Split this DataFlash log into %1 independently readable parts?\n\n"
+        "Outputs:\n%2\n\n"
+        "Complete records and required format metadata are copied into each part. "
+        "Existing output files are never overwritten. All parts are staged before "
+        "publication, and cancellation is honored before publication starts. "
+        "Publishing several files is not group-atomic: a late rename failure can "
+        "leave earlier listed outputs published.")
+        .arg(pieces).arg(outputDescription);
+    auto *dialog = new QMessageBox(
+        QMessageBox::Warning, tr("Confirm DataFlash log split"), warning,
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(QStringLiteral("DeveloperSplitConfirmDialog"));
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_splitPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, input, pieces, revision](int result) {
+        if (m_fileToolsClosing || revision != m_splitPromptRevision)
+            return;
+        m_splitPrompt.clear();
+        if (result == QMessageBox::Yes)
+            SplitDataFlashLog(input, pieces);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
+                                                  int pieces)
+{
+    if (m_fileToolsClosing)
+        return;
+    if (m_splitState || m_splitPrompt || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        AppendLog(tr("DataFlash log split: another file selection, offline operation, or vehicle operation is already active."));
+        RefreshOfflineFileActions();
+        return;
+    }
+    if (input.trimmed().isEmpty() || pieces < 2 || pieces > 1000) {
+        AppendLog(tr("DataFlash log split: select a .bin or .log input and 2 to 1000 parts."));
+        RefreshOfflineFileActions();
+        return;
+    }
+
+    const auto state = std::make_shared<SplitState>();
+    m_splitState = state;
+    m_splitButton->setEnabled(false);
+    AppendLog(tr("DataFlash log split started: %1 into %2 parts.")
+                  .arg(input).arg(pieces));
+    AppendLog(tr("Outputs are staged before publication and never overwrite existing files; multi-file publication is not group-atomic."));
+
+    auto *progress = new QProgressDialog(
+        tr("Splitting complete DataFlash records…"), tr("Cancel"),
+        0, 1000, this);
+    progress->setObjectName(QStringLiteral("DeveloperSplitProgressDialog"));
+    progress->setWindowTitle(tr("Split DataFlash Log"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    m_splitProgress = progress;
+    connect(progress, &QProgressDialog::canceled, this, [state]() {
+        state->cancelled.store(true, std::memory_order_relaxed);
+    });
+
+    using Result = DataFlashLogSplitter::Result;
+    auto *watcher = new QFutureWatcher<Result>(this);
+    auto *timer = new QTimer(watcher);
+    timer->setInterval(100);
+    const QPointer<QProgressDialog> guardedProgress(progress);
+    connect(timer, &QTimer::timeout, this,
+            [this, state, guardedProgress]() {
+        if (m_fileToolsClosing || !guardedProgress
+            || m_splitState != state
+            || state->cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        const qint64 total = state->total.load(std::memory_order_relaxed);
+        const qint64 done = state->processed.load(std::memory_order_relaxed);
+        if (total > 0) {
+            guardedProgress->setValue(int(qBound(
+                0.0L, 1000.0L * done / total, 1000.0L)));
+        }
+    });
+    connect(watcher, &QFutureWatcher<Result>::finished, this,
+            [this, state, watcher, timer, guardedProgress, input, pieces]() {
+        timer->stop();
+        const Result result = watcher->result();
+        watcher->deleteLater();
+        if (m_splitState != state)
+            return;
+        m_splitState.reset();
+        m_splitProgress.clear();
+        if (guardedProgress)
+            guardedProgress->deleteLater();
+        if (m_fileToolsClosing)
+            return;
+
+        if (result.cancelled) {
+            AppendLog(result.outputs.isEmpty()
+                ? tr("DataFlash log split cancelled before publication; no output was published.")
+                : tr("DataFlash log split cancelled after publishing: %1")
+                      .arg(result.outputs.join(QStringLiteral(", "))));
+        } else if (!result.success) {
+            AppendLog(tr("DataFlash log split failed: %1").arg(result.error));
+            if (!result.outputs.isEmpty()) {
+                AppendLog(tr("Already published outputs (multi-file publication is not group-atomic):\n%1")
+                              .arg(result.outputs.join(QLatin1Char('\n'))));
+            }
+        } else {
+            AppendLog(tr("DataFlash log split completed: %1 files, %2 records (%3 data records), %4 bytes published from %5.")
+                          .arg(result.outputs.size()).arg(result.recordsRead)
+                          .arg(result.dataRecords).arg(result.bytesWritten)
+                          .arg(input));
+            if (result.outputs.size() != pieces) {
+                AppendLog(tr("DataFlash log split warning: requested %1 parts but %2 paths were reported.")
+                              .arg(pieces).arg(result.outputs.size()));
+            }
+        }
+        for (const QString &warning : result.warnings)
+            AppendLog(tr("DataFlash log split warning: %1").arg(warning));
+        RefreshVehicleActions();
+    });
+    timer->start();
+    watcher->setFuture(QtConcurrent::run([input, pieces, state]() {
+        try {
+            return DataFlashLogSplitter::Split(
+                input, pieces,
+                [state]() {
+                    return state->cancelled.load(std::memory_order_relaxed);
+                },
+                [state](qint64 processed, qint64 total) {
+                    state->processed.store(processed,
+                                           std::memory_order_relaxed);
+                    state->total.store(total, std::memory_order_relaxed);
+                });
+        } catch (const std::exception &error) {
+            Result result;
+            result.error = QString::fromUtf8(error.what());
+            return result;
+        } catch (...) {
+            Result result;
+            result.error = QStringLiteral("Unexpected DataFlash split error.");
+            return result;
+        }
+    }));
+    RefreshVehicleActions();
+}
+
 void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
 {
     const QPointer<ConfigDeveloperToolsView> guard(this);
     const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
-    if (!service || m_vehiclePrompt || m_gpsExtractionState || m_gpsExtractionPrompt)
+    if (!service || m_vehiclePrompt || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt)
         return;
     VehiclePlan plan;
     QString error;
