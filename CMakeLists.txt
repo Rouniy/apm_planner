@@ -709,6 +709,8 @@ set(SOURCES
     src/ui/LinkStatsWindow.h
     src/ui/LinkStatsSampleSource.cpp
     src/comm/TlogReader.cpp
+    src/comm/GpsCorrectionExtractor.cpp
+    src/comm/GpsCorrectionExtractor.h
     src/comm/TlogReader.h
     src/comm/TlogExportService.cpp
     src/comm/TlogExportService.h
@@ -3845,6 +3847,21 @@ if(BUILD_TESTING)
     add_test(NAME developervehicletoolservice_tests COMMAND developervehicletoolservice_tests)
     set_tests_properties(developervehicletoolservice_tests PROPERTIES TIMEOUT 60)
 
+    add_library(gps_correction_test_support STATIC
+        src/comm/GpsCorrectionExtractor.cpp
+        src/comm/GpsCorrectionExtractor.h
+        src/comm/TlogReader.cpp
+        src/comm/MAVLinkFrameParser.cpp)
+    target_include_directories(gps_correction_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(gps_correction_test_support PUBLIC Qt::Core)
+    add_executable(gpscorrectionextractor_tests tests/test_gpscorrectionextractor.cpp)
+    target_link_libraries(gpscorrectionextractor_tests PRIVATE
+        gps_correction_test_support Qt::Test)
+    add_test(NAME gpscorrectionextractor_tests COMMAND gpscorrectionextractor_tests)
+    set_tests_properties(gpscorrectionextractor_tests PROPERTIES TIMEOUT 60)
+
     add_executable(configdevelopertoolsview_tests
         tests/test_configdevelopertoolsview.cpp
         src/ui/configuration/ActionPageView.cpp
@@ -3861,6 +3878,8 @@ if(BUILD_TESTING)
     )
     target_link_libraries(configdevelopertoolsview_tests PRIVATE
         developer_vehicle_tool_test_support
+        gps_correction_test_support
+        Qt::Concurrent
         Qt::Core
         Qt::Widgets
         Qt::Test

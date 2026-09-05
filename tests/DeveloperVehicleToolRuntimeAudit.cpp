@@ -12,11 +12,15 @@
 #include <QApplication>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFileDialog>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
 #include <QThread>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <functional>
 #include <cmath>
@@ -138,11 +142,93 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 11 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 12 && page->ActionCount() == 32,
            "production Developer route did not bind six vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
     expect(reboot && !reboot->isEnabled(), "offline reboot was enabled");
+
+    // The offline action must work through its actual Tools-page file pickers,
+    // before any vehicle is discovered. The expected bytes are deliberately
+    // independent of the extractor's implementation, including MAVLink2 zeros.
+    QTemporaryDir gpsFiles;
+    expect(gpsFiles.isValid(), "GPS fixture directory unavailable");
+    const QString gpsInput = gpsFiles.filePath(QStringLiteral("input.tlog"));
+    const QString gpsOutput = gpsFiles.filePath(QStringLiteral("input-corrections.dat"));
+    QByteArray gpsLog;
+    auto appendGpsRecord = [&](const mavlink_message_t &message) {
+        const quint64 timestamp = 1700000000000000ULL;
+        for (int shift = 56; shift >= 0; shift -= 8) gpsLog.append(char(timestamp >> shift));
+        uint8_t wire[MAVLINK_MAX_PACKET_LEN]{};
+        const int size = mavlink_msg_to_send_buffer(wire, &message);
+        gpsLog.append(reinterpret_cast<const char *>(wire), size);
+    };
+    mavlink_gps_rtcm_data_t rtcm{};
+    rtcm.len = 5;
+    rtcm.data[0] = 0xd3; rtcm.data[1] = 0x11; rtcm.data[2] = 0x22;
+    mavlink_message_t gpsMessage{};
+    auto *fixtureChannel = mavlink_get_channel_status(MAVLINK_COMM_0);
+    const quint8 savedFixtureFlags = fixtureChannel->flags;
+    fixtureChannel->flags &= ~MAVLINK_STATUS_FLAG_OUT_MAVLINK1;
+    mavlink_msg_gps_rtcm_data_encode(255, 190, &gpsMessage, &rtcm);
+    expect(gpsMessage.magic == MAVLINK_STX && gpsMessage.len < MAVLINK_MSG_ID_GPS_RTCM_DATA_LEN,
+           "GPS runtime fixture is not zero-trimmed MAVLink2");
+    appendGpsRecord(gpsMessage);
+    mavlink_gps_inject_data_t injected{};
+    injected.target_system = 234; injected.target_component = 1;
+    injected.len = 2; injected.data[0] = 0x33; injected.data[1] = 0x44;
+    mavlink_msg_gps_inject_data_encode(42, 1, &gpsMessage, &injected);
+    appendGpsRecord(gpsMessage);
+    fixtureChannel->flags = savedFixtureFlags;
+    QFile gpsSource(gpsInput);
+    expect(gpsSource.open(QIODevice::WriteOnly) && gpsSource.write(gpsLog) == gpsLog.size(),
+           "GPS fixture could not be written");
+    gpsSource.close();
+    auto *extract = page->findChild<QPushButton *>(QStringLiteral("ExtractGpsCorrectionsButton"));
+    expect(extract && extract->isEnabled(), "offline GPS extraction action disabled");
+    if (extract) {
+        extract->click();
+        QCoreApplication::processEvents();
+        auto *picker = page->findChild<QFileDialog *>(QStringLiteral("DeveloperGpsInputDialog"));
+        expect(picker != nullptr, "GPS input picker missing");
+        if (picker) picker->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(!QFile::exists(gpsOutput), "cancelling GPS input created output");
+
+        extract->click();
+        QCoreApplication::processEvents();
+        picker = page->findChild<QFileDialog *>(QStringLiteral("DeveloperGpsInputDialog"));
+        if (picker) {
+            // Once visible, QFileDialog::selectFile may deliberately leave
+            // its focused filename editor unchanged. Exercise actual typed
+            // selection, including the spaces in QTemporaryDir's app name.
+            auto *filename = picker->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+            expect(filename != nullptr, "GPS input filename editor missing");
+            if (filename) filename->setText(gpsInput);
+            expect(picker->selectedFiles() == QStringList{gpsInput}, "GPS input selection is not exact");
+            qInfo() << "Developer runtime GPS input selection:" << picker->selectedFiles();
+            expect(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection),
+                   "GPS input picker acceptance unavailable");
+        }
+        waitFor([&] { return page->findChild<QFileDialog *>(QStringLiteral("DeveloperGpsOutputDialog")) != nullptr; });
+        auto *destination = page->findChild<QFileDialog *>(QStringLiteral("DeveloperGpsOutputDialog"));
+        expect(destination != nullptr, "GPS output picker missing");
+        if (destination) {
+            auto *filename = destination->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+            expect(filename != nullptr, "GPS output filename editor missing");
+            if (filename) filename->setText(gpsOutput);
+            expect(destination->selectedFiles() == QStringList{gpsOutput}, "GPS output selection is not exact");
+            QMetaObject::invokeMethod(destination, "accept", Qt::DirectConnection);
+        }
+        expect(waitFor([&] { return extract->isEnabled() && QFile::exists(gpsOutput); }),
+               "GPS extraction did not finish through Tools route");
+        QFile gpsResult(gpsOutput);
+        expect(gpsResult.open(QIODevice::ReadOnly)
+                   && gpsResult.readAll() == QByteArray::fromHex("d3112200003344"),
+               "GPS extraction bytes/order/zero padding differ");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        qInfo() << "Developer runtime GPS extraction:" << gpsOutput << page->Log();
+    }
 
     QPointer<DeveloperAuditLink> fixture(new DeveloperAuditLink);
     LinkManager::ConnectionProfile profile;

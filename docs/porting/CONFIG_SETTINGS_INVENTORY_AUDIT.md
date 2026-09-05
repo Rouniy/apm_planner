@@ -1,6 +1,6 @@
 # CONFIG and Planner Settings inventory audit
 
-Updated: 2026-09-05.
+Updated: 2026-09-06.
 
 This audit compares Mission Planner 10 `ConfigViewModel` and
 `ConfigPlannerView.axaml` with the active Qt `ConfigView` and native
@@ -57,13 +57,16 @@ Upstream-placeholder Support Proxy stays disabled.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
 
-The separate Developer Tools page has exactly32 MP10 actions, not31. Eleven
+The separate Developer Tools page has exactly32 MP10 actions, not31. Twelve
 now have working implementations: the five decoders/shared windows plus Set
-QNH, Adjust Barometer Altitude, Force Accel/Compass Calibrated and Reboot/DFU.
+QNH, Adjust Barometer Altitude, Force Accel/Compass Calibrated and Reboot/DFU,
+plus offline Extract GPS Corrections with asynchronous atomic output/cancel.
 The six vehicle actions require fresh disarmed exact-target consent and report
-matched ACK/parameter echoes or explicit uncertainty. The remaining21 file,
+matched ACK/parameter echoes or explicit uncertainty. The remaining20 file,
 transport and recovery actions stay disabled. This is not additional CONFIG
-route coverage; see `DEVELOPER_VEHICLE_TOOLS.md` and the production route audit.
+route coverage; see `DEVELOPER_VEHICLE_TOOLS.md`, `GPS_CORRECTION_EXTRACTION.md`
+and the production route audit. The separate RX-only Qt log limitation remains:
+this station's transmitted corrections are not yet saved in its .tlog files.
 
 Signing now has a tested AES-GCM/PBKDF2 vault and a production key-domain manager
 binding exact/legacy TX and authenticated RX. Internal offline configuration

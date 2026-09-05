@@ -9,8 +9,16 @@
 #include <QAction>
 #include <QObject>
 #include <QDoubleSpinBox>
+#include <QFile>
+#include <QFileDialog>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QProgressDialog>
+#include <QRunnable>
+#include <QSemaphore>
+#include <QTemporaryDir>
+#include <QThreadPool>
+#include <QtEndian>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -115,6 +123,74 @@ QMessageBox *confirmation(ConfigDeveloperToolsView &view)
             return box;
     return nullptr;
 }
+
+QByteArray recordedPacket(const mavlink_message_t &message)
+{
+    QByteArray result(8, '\0');
+    qToBigEndian<quint64>(1700000000000000ULL,
+        reinterpret_cast<uchar *>(result.data()));
+    uint8_t bytes[MAVLINK_MAX_PACKET_LEN]{};
+    const int size = mavlink_msg_to_send_buffer(bytes, &message);
+    result.append(reinterpret_cast<const char *>(bytes), size);
+    return result;
+}
+
+QByteArray correctionLog()
+{
+    mavlink_gps_inject_data_t payload{};
+    payload.len = 3;
+    payload.data[0] = 0xd3;
+    payload.data[1] = 0;
+    payload.data[2] = 0x21;
+    mavlink_message_t message{};
+    mavlink_msg_gps_inject_data_encode(42, 1, &message, &payload);
+    QByteArray result = recordedPacket(message);
+    mavlink_gps_rtcm_data_t rtcm{};
+    rtcm.flags = 7; // Deliberately fragmented: extraction preserves log order.
+    rtcm.len = 2;
+    rtcm.data[0] = 0;
+    rtcm.data[1] = 0x43;
+    mavlink_msg_gps_rtcm_data_encode(43, 2, &message, &rtcm);
+    return result + recordedPacket(message);
+}
+
+bool writeFixture(const QString &path, const QByteArray &bytes)
+{
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+}
+
+QByteArray readFixture(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+// Keep the actual extraction queued until cancellation/destruction has happened,
+// making lifecycle checks deterministic without timing or huge fixture files.
+class PausedGlobalPool
+{
+public:
+    PausedGlobalPool()
+        : pool(QThreadPool::globalInstance()), previousMaximum(pool->maxThreadCount())
+    {
+        pool->setMaxThreadCount(1);
+        pool->start(QRunnable::create([this]() { entered.release(); resume.acquire(); }));
+        ready = entered.tryAcquire(1, 5000);
+    }
+    ~PausedGlobalPool()
+    {
+        resume.release();
+        pool->waitForDone();
+        pool->setMaxThreadCount(previousMaximum);
+    }
+    bool ready = false;
+private:
+    QThreadPool *pool;
+    int previousMaximum;
+    QSemaphore entered;
+    QSemaphore resume;
+};
 }
 
 class ConfigDeveloperToolsViewTest final : public QObject
@@ -137,6 +213,12 @@ private slots:
     void commandsSendExactPayloadOnlyAfterConsent();
     void closeCancelsConsentButKeepsAdmittedOperation();
     void routeCallbackMayDeletePage();
+    void gpsPickerCancellationIsOfflineAndNonDestructive();
+    void gpsExtractionCompletesOffline_data();
+    void gpsExtractionCompletesOffline();
+    void gpsExtractionCancellationAndLifetime_data();
+    void gpsExtractionCancellationAndLifetime();
+    void gpsAndVehicleOperationsInterlock();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -145,8 +227,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
     QCOMPARE(view.objectName(), QStringLiteral("ConfigDeveloperToolsView"));
     QCOMPARE(view.Title(), QStringLiteral("Developer Tools"));
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 2);
-    QVERIFY(view.Log().contains(QStringLiteral("2 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 3);
+    QVERIFY(view.Log().contains(QStringLiteral("3 of 32")));
 
     const QList<QPushButton *> buttons = view.findChildren<QPushButton *>();
     QCOMPARE(buttons.size(), 32);
@@ -158,7 +240,7 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
             QVERIFY(!button->toolTip().isEmpty());
         }
     }
-    QCOMPARE(enabled, 2);
+    QCOMPARE(enabled, 3);
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeMavlinkPacketButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
@@ -189,8 +271,8 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 5);
-    QVERIFY(view.Log().contains(QStringLiteral("5 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 6);
+    QVERIFY(view.Log().contains(QStringLiteral("6 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
@@ -275,7 +357,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 8);
+    QCOMPARE(view.ImplementedActionCount(), 9);
     QVERIFY(tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     fixture.heartbeat(true);
@@ -286,7 +368,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     fixture.registry.endLinkSession(fixture.endpoint.linkId, fixture.session);
     QTRY_VERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 2);
+    QCOMPARE(view.ImplementedActionCount(), 3);
     QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(fixture.frames.isEmpty());
 }
@@ -505,6 +587,185 @@ void ConfigDeveloperToolsViewTest::routeCallbackMayDeletePage()
     dialog->button(QMessageBox::Yes)->click();
     QVERIFY(view.isNull());
     QVERIFY(fixture.frames.isEmpty());
+}
+
+void ConfigDeveloperToolsViewTest::gpsPickerCancellationIsOfflineAndNonDestructive()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.tlog"));
+    QVERIFY(writeFixture(input, correctionLog()));
+    ConfigDeveloperToolsView view;
+    view.show();
+    auto *button = tool(view, "ExtractGpsCorrectionsButton");
+    QVERIFY(button->isEnabled());
+    button->click();
+    auto *picker = view.findChild<QFileDialog *>(QStringLiteral("DeveloperGpsInputDialog"));
+    QVERIFY(picker);
+    QVERIFY(picker->testOption(QFileDialog::DontUseNativeDialog));
+    QCOMPARE(picker->fileMode(), QFileDialog::ExistingFile);
+    QVERIFY(!button->isEnabled());
+    picker->reject();
+    QVERIFY(button->isEnabled());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    button->click();
+    picker = view.findChild<QFileDialog *>(QStringLiteral("DeveloperGpsInputDialog"));
+    QVERIFY(picker);
+    picker->selectFile(input);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection));
+    auto *output = view.findChild<QFileDialog *>(QStringLiteral("DeveloperGpsOutputDialog"));
+    QVERIFY(output);
+    QCOMPARE(output->acceptMode(), QFileDialog::AcceptSave);
+    QVERIFY(!output->testOption(QFileDialog::DontConfirmOverwrite));
+    QVERIFY(output->selectedFiles().first().endsWith(QStringLiteral("flight-corrections.dat")));
+    output->reject();
+    QVERIFY(button->isEnabled());
+    QVERIFY(!QFile::exists(directory.filePath(QStringLiteral("flight-corrections.dat"))));
+    QVERIFY(!view.findChild<QProgressDialog *>(QStringLiteral("DeveloperGpsProgressDialog")));
+}
+
+void ConfigDeveloperToolsViewTest::gpsExtractionCompletesOffline_data()
+{
+    QTest::addColumn<QString>("mode");
+    QTest::newRow("two senders and binary zeros") << QStringLiteral("valid");
+    QTest::newRow("no correction messages") << QStringLiteral("empty");
+    QTest::newRow("truncated tail warning") << QStringLiteral("truncated");
+    QTest::newRow("missing input") << QStringLiteral("missing");
+}
+
+void ConfigDeveloperToolsViewTest::gpsExtractionCompletesOffline()
+{
+    QFETCH(QString, mode);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.tlog"));
+    const QString output = directory.filePath(QStringLiteral("corrections.dat"));
+    QByteArray log = correctionLog();
+    if (mode == QStringLiteral("empty")) {
+        mavlink_message_t heartbeat{};
+        mavlink_msg_heartbeat_pack(42, 1, &heartbeat, MAV_TYPE_QUADROTOR,
+            MAV_AUTOPILOT_ARDUPILOTMEGA, 0, 0, MAV_STATE_STANDBY);
+        log = recordedPacket(heartbeat);
+    } else if (mode == QStringLiteral("truncated")) {
+        log.append("bad", 3);
+    }
+    if (mode != QStringLiteral("missing"))
+        QVERIFY(writeFixture(input, log));
+    ConfigDeveloperToolsView view;
+    view.show();
+    view.ExtractGpsCorrections(input, output);
+    auto *button = tool(view, "ExtractGpsCorrectionsButton");
+    QVERIFY(!button->isEnabled());
+    QVERIFY(view.findChild<QProgressDialog *>(QStringLiteral("DeveloperGpsProgressDialog")));
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 5000);
+    if (mode == QStringLiteral("missing")) {
+        QVERIFY(!QFile::exists(output));
+        QVERIFY(view.Log().contains(QStringLiteral("extraction failed")));
+        return;
+    }
+    QVERIFY(QFile::exists(output));
+    QCOMPARE(readFixture(output), mode == QStringLiteral("empty")
+             ? QByteArray() : QByteArray::fromHex("d300210043"));
+    QVERIFY(view.Log().contains(QStringLiteral("extraction completed")));
+    QVERIFY(view.Log().contains(QStringLiteral("no RTCM reassembly or validation")));
+    QVERIFY(view.Log().contains(QStringLiteral("Current Qt logs omit")));
+    if (mode == QStringLiteral("empty"))
+        QVERIFY(view.Log().contains(QStringLiteral("no GPS correction messages found")));
+    if (mode == QStringLiteral("truncated")) {
+        QVERIFY(view.Log().contains(QStringLiteral("extraction warning")));
+        QVERIFY(view.Log().contains(QStringLiteral("truncated tail: yes")));
+    }
+}
+
+void ConfigDeveloperToolsViewTest::gpsExtractionCancellationAndLifetime_data()
+{
+    QTest::addColumn<QString>("operation");
+    QTest::newRow("cancel") << QStringLiteral("cancel");
+    QTest::newRow("close") << QStringLiteral("close");
+    QTest::newRow("destroy") << QStringLiteral("destroy");
+}
+
+void ConfigDeveloperToolsViewTest::gpsExtractionCancellationAndLifetime()
+{
+    QFETCH(QString, operation);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.tlog"));
+    const QString output = directory.filePath(QStringLiteral("corrections.dat"));
+    const QString secondOutput = directory.filePath(QStringLiteral("must-not-exist.dat"));
+    QVERIFY(writeFixture(input, correctionLog()));
+    QVERIFY(writeFixture(output, QByteArray("preserve old output")));
+    QPointer<ConfigDeveloperToolsView> view = new ConfigDeveloperToolsView;
+    view->show();
+    QString logAtClose;
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view->ExtractGpsCorrections(input, output);
+        view->ExtractGpsCorrections(input, secondOutput);
+        QVERIFY(view->Log().contains(QStringLiteral("already active")));
+        auto *progress = view->findChild<QProgressDialog *>(QStringLiteral("DeveloperGpsProgressDialog"));
+        QVERIFY(progress);
+        if (operation == QStringLiteral("destroy"))
+            delete view.data();
+        else if (operation == QStringLiteral("close")) {
+            logAtClose = view->Log();
+            view->close();
+        } else {
+            auto *cancel = progress->findChild<QPushButton *>();
+            QVERIFY(cancel);
+            cancel->click();
+        }
+    } // Allow the real, already-cancelled worker to drain.
+    QCoreApplication::processEvents();
+    QCOMPARE(readFixture(output), QByteArray("preserve old output"));
+    QVERIFY(!QFile::exists(secondOutput));
+    if (operation == QStringLiteral("destroy")) {
+        QVERIFY(view.isNull());
+    } else if (operation == QStringLiteral("close")) {
+        QCOMPARE(view->Log(), logAtClose); // No result or progress touches closed UI.
+        view->show();
+        QTRY_VERIFY(tool(*view, "ExtractGpsCorrectionsButton")->isEnabled());
+        delete view.data();
+    } else {
+        QTRY_VERIFY(view->Log().contains(QStringLiteral("extraction cancelled")));
+        QVERIFY(tool(*view, "ExtractGpsCorrectionsButton")->isEnabled());
+        delete view.data();
+    }
+}
+
+void ConfigDeveloperToolsViewTest::gpsAndVehicleOperationsInterlock()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.tlog"));
+    const QString output = directory.filePath(QStringLiteral("corrections.dat"));
+    QVERIFY(writeFixture(input, correctionLog()));
+    VehicleFixture fixture;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.show();
+    tool(view, "RebootVehicleButton")->click();
+    auto *consent = confirmation(view);
+    QVERIFY(consent);
+    QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    view.ExtractGpsCorrections(input, output);
+    QVERIFY(!view.findChild<QProgressDialog *>(QStringLiteral("DeveloperGpsProgressDialog")));
+    consent->button(QMessageBox::Cancel)->click();
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view.ExtractGpsCorrections(input, output);
+        QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+        QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
+        tool(view, "RebootVehicleButton")->click();
+        QVERIFY(fixture.frames.isEmpty());
+        auto *progress = view.findChild<QProgressDialog *>(QStringLiteral("DeveloperGpsProgressDialog"));
+        QVERIFY(progress);
+        progress->findChild<QPushButton *>()->click();
+    }
+    QTRY_VERIFY(tool(view, "RebootVehicleButton")->isEnabled());
+    QVERIFY(!QFile::exists(output));
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)

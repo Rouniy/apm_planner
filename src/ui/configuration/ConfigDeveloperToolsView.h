@@ -6,11 +6,14 @@
 
 #include <QMap>
 #include <QPointer>
+#include <memory>
 
 class QCloseEvent;
 class QDialog;
 class QObject;
 class QPushButton;
+class QProgressDialog;
+class QShowEvent;
 
 /** Mission Planner 10 Developer Tools action page. */
 class ConfigDeveloperToolsView final : public ActionPageView
@@ -20,6 +23,7 @@ class ConfigDeveloperToolsView final : public ActionPageView
 public:
     explicit ConfigDeveloperToolsView(QObject *actionSource = nullptr,
                                       QWidget *parent = nullptr);
+    ~ConfigDeveloperToolsView() override;
 
     int ImplementedActionCount() const;
     void setVehicleToolService(DeveloperVehicleToolService *service);
@@ -28,9 +32,12 @@ public slots:
     void DecodeMavlinkInput(const QString &input);
     void DecodeHardwareIdInput(const QString &input,
                                const QString &parameterName = QString());
+    // Paths already selected/confirmed by the caller; never sends telemetry.
+    void ExtractGpsCorrections(const QString &input, const QString &output);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     using VehicleAction = DeveloperVehicleToolService::Action;
@@ -47,6 +54,11 @@ private:
                                const QString &actionObjectName);
     void DecodePacket();
     void DecodeHardwareId();
+    void PickGpsCorrectionInput();
+    void PickGpsCorrectionOutput(const QString &input, quint64 revision);
+    void CancelGpsExtraction();
+    void RefreshGpsExtractionAction();
+    struct GpsExtractionState;
 
     QPointer<QObject> m_actionSource;
     QPointer<DeveloperVehicleToolService> m_vehicleTools;
@@ -57,6 +69,12 @@ private:
     quint64 m_promptRevision = 0;
     bool m_refreshingVehicleActions = false;
     int m_implementedActionCount = 0;
+    QPushButton *m_gpsExtractionButton = nullptr;
+    QPointer<QDialog> m_gpsExtractionPrompt;
+    QPointer<QProgressDialog> m_gpsExtractionProgress;
+    std::shared_ptr<GpsExtractionState> m_gpsExtractionState;
+    quint64 m_gpsPromptRevision = 0;
+    bool m_gpsExtractionClosing = false;
 };
 
 #endif // CONFIGDEVELOPERTOOLSVIEW_H

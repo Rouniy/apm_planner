@@ -8,7 +8,13 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Проверенная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
+Актуальная проверенная точка и конкретная ближайшая очередь находятся в
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,240/240 тестов; Developer12/32,
+Advanced14 complete+1 partial. После GPS correction extraction следующий
+связанный транспортный пробел — исходящие пакеты в TLOG, с полным исключением
+SETUP_SIGNING и проверкой Anon Log для исходящих координат/opaque RTCM.
+
+Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
 - приложение и все цели CMake собираются одним `cmake --build build-codex-qt -j12`;
 - проходят 194 из 194 тестов;
@@ -304,8 +310,9 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer/Advanced Tools: заменить 37 disabled операций законченными
-  пакетами, не включая кнопки заранее.
+- Developer Tools: после GPS extraction работают12/32; заменить оставшиеся20
+  disabled операций законченными пакетами, не включая кнопки заранее.
+  Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.
 - SETUP OSD: live 24-write full/partial path и profile gate.
 - Current Compass: parameter/priority, onboard multi-compass, Large Vehicle

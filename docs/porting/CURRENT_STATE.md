@@ -1,6 +1,6 @@
 # APM Planner 3.0 current state and handoff
 
-Updated: 2026-09-05. This is the short operational handoff for the Mission Planner 10 Qt/CMake port. Update it whenever a functional package is committed or the immediate priority changes.
+Updated: 2026-09-06. This is the short operational handoff for the Mission Planner 10 Qt/CMake port. Update it whenever a functional package is committed or the immediate priority changes.
 
 ## Goal and current milestone
 
@@ -24,7 +24,55 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): **Six exact single-vehicle Developer actions**.
+Latest slice (2026-09-06): **Extract GPS Corrections**.
+The existing Developer Tools action now works offline through the real TOOLS
+and SETUP shared page: select a .tlog, choose `<name>-corrections.dat`, extract
+on a worker, show progress/cancel and report exact byte/message counts. The
+inventory stays32 with **12 working actions and20 unavailable**. All senders,
+duplicates and fragments are concatenated in log order, exactly as MP10; there
+is no sender filter, RTCM reconstruction or added file header. MAVLink1/2 and
+zero-trimmed payloads work. Invalid GPS payload lengths fail; reader CRC skips
+and truncated tails produce explicit warnings. An empty result is truthful
+success, not fabricated correction data.
+
+QSaveFile with no direct fallback preserves the old destination on observed
+cancellation or failure. Canonical input/output guards and resolved directory
+aliases prevent ordinary source-file replacement; output symlinks are refused.
+The worker captures only paths/shared atomics; GUI progress is polled every100ms.
+Close/destruction requests cancellation without retaining a widget in the worker.
+File selection/extraction and vehicle actions share the page's operation gate.
+
+Qt5/audio build, focused4/4 and **240/240 tests pass (29.70 seconds)**.
+Core tests cover both packet types, all-sender order/duplicates/zero payload,
+v1/v2 malformed lengths, CRC resync/truncated tails, empty/noGPS, atomic output,
+path aliases and cancellation including the final progress callback. UI tests
+cover both picker cancellations, asynchronous results, old-file preservation,
+cancel/close/destruction and vehicle interlock. The initial production audit
+revealed `QFileDialog::selectFile()` leaving a visible focused editor empty;
+the audit now types the exact path and asserts selection, including spaces.
+This was a harness correction, not a production extraction workaround.
+
+Production offscreen and X11 audits open the real Tools action, use both file
+pickers, compare7 expected bytes from two senders (including MAVLink2 restored
+zeros), then rerun the six vehicle actions on isolated in-process sys234.
+Both exit0 with no fixture left running. Evidence:
+`/tmp/apm-gps-extract.jZo3TF/` (`full.log`, `focused-2.log`, `x11.log`,
+`developer-gps-x11.png`). No network SITL was changed. Claude TCP c209/c174 and
+three Codex streams supplied implementation, independent review and diagnostics.
+
+Important newly verified producer gap: Qt currently logs RX only, whereas MP10
+also saves sent packets. Thus current Qt .tlogs omit this GCS's own transmitted
+GPS corrections. The UI explicitly names this; the extractor works on packets
+actually present, including MP10 logs. **Next: outbound TLOG logging**, using
+exact final wire bytes after successful submission, excluding SETUP_SIGNING
+entirely and auditing Anon Log's outbound-coordinate/opaque-RTCM drop policy.
+Then continue remaining single-vehicle Developer/Tools workflows and Signing
+transitions; Settings follows Tools and Swarm stays last. Advanced14 complete+1
+partial, fixedTools24 plus Signing extension, SETUP46/eight absent routes and
+CONFIG15/15 factories/Planner21/64 controls are unchanged. Native platforms and
+reference visual parity remain open. See `GPS_CORRECTION_EXTRACTION.md`.
+
+Previous slice (2026-09-05): **Six exact single-vehicle Developer actions**.
 TOOLS → Developer Tools and the shared SETUP page now wire Set QNH, Adjust
 Barometer Altitude, Force Accel Calibrated, Force Compass Calibrated, Reboot
 Vehicle and Reboot to DFU. The exact inventory stays32: **11 working actions,

@@ -1,17 +1,33 @@
 #include "ConfigDeveloperToolsView.h"
 
 #include "DeveloperToolParsers.h"
+#include "comm/GpsCorrectionExtractor.h"
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFutureWatcher>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
+#include <QProgressDialog>
+#include <QShowEvent>
 #include <QTimer>
+#include <QtConcurrent/QtConcurrentRun>
 
+#include <atomic>
 #include <cmath>
+#include <exception>
+
+struct ConfigDeveloperToolsView::GpsExtractionState
+{
+    std::atomic_bool cancelled{false};
+    std::atomic<qint64> processed{0};
+    std::atomic<qint64> total{0};
+};
 
 ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                                                    QWidget *parent)
@@ -59,8 +75,11 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                          QStringLiteral("SplitDataFlashLogButton"), notPorted);
     AddUnavailableAction(tr("Create DashWare CSV"),
                          QStringLiteral("CreateDashWareCsvButton"), notPorted);
-    AddUnavailableAction(tr("Extract GPS Corrections"),
-                         QStringLiteral("ExtractGpsCorrectionsButton"), notPorted);
+    m_gpsExtractionButton = AddAction(tr("Extract GPS Corrections"),
+        QStringLiteral("ExtractGpsCorrectionsButton"),
+        [this]() { PickGpsCorrectionInput(); });
+    m_gpsExtractionButton->setToolTip(tr("Extract recorded GPS correction bytes from a telemetry log; no vehicle connection is required."));
+    ++m_implementedActionCount;
     AddUnavailableAction(tr("Convert Shapefile to POLY"),
                          QStringLiteral("ConvertShapefileToPolyButton"), notPorted);
     AddUnavailableAction(tr("Translation / RESX Editor"),
@@ -158,6 +177,8 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
         bool enabled = false;
         if (!service)
             reason = tr("The guarded vehicle tool service is unavailable.");
+        else if (m_gpsExtractionState || m_gpsExtractionPrompt)
+            reason = tr("Finish or cancel GPS correction extraction first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
         else if (service->busy())
@@ -193,6 +214,7 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
         m_seenStatus = status;
     }
     m_refreshingVehicleActions = false;
+    RefreshGpsExtractionAction();
 }
 
 void ConfigDeveloperToolsView::CancelVehiclePrompt()
@@ -207,14 +229,212 @@ void ConfigDeveloperToolsView::CancelVehiclePrompt()
 void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
 {
     CancelVehiclePrompt();
+    m_gpsExtractionClosing = true;
+    CancelGpsExtraction();
     ActionPageView::closeEvent(event);
+}
+
+ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
+{
+    ++m_gpsPromptRevision;
+    if (m_gpsExtractionState)
+        m_gpsExtractionState->cancelled.store(true, std::memory_order_relaxed);
+    // The worker owns only copied paths and shared atomic state. Destruction
+    // disconnects the watcher; it does not block the GUI waiting for file I/O.
+}
+
+void ConfigDeveloperToolsView::showEvent(QShowEvent *event)
+{
+    m_gpsExtractionClosing = false;
+    RefreshGpsExtractionAction();
+    ActionPageView::showEvent(event);
+}
+
+void ConfigDeveloperToolsView::CancelGpsExtraction()
+{
+    ++m_gpsPromptRevision;
+    if (m_gpsExtractionState)
+        m_gpsExtractionState->cancelled.store(true, std::memory_order_relaxed);
+    const QPointer<QDialog> prompt = m_gpsExtractionPrompt;
+    m_gpsExtractionPrompt.clear();
+    if (prompt)
+        prompt->reject();
+    if (m_gpsExtractionProgress)
+        m_gpsExtractionProgress->cancel();
+}
+
+void ConfigDeveloperToolsView::PickGpsCorrectionInput()
+{
+    if (m_gpsExtractionClosing || m_gpsExtractionState || m_gpsExtractionPrompt ||
+        m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy()))
+        return;
+    const quint64 revision = ++m_gpsPromptRevision;
+    auto *dialog = new QFileDialog(this, tr("Select telemetry log"));
+    dialog->setObjectName(QStringLiteral("DeveloperGpsInputDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setFileMode(QFileDialog::ExistingFile);
+    dialog->setNameFilter(tr("Telemetry log (*.tlog)"));
+    m_gpsExtractionPrompt = dialog;
+    m_gpsExtractionButton->setEnabled(false);
+    connect(dialog, &QDialog::finished, this, [this, dialog, revision](int result) {
+        if (m_gpsExtractionClosing || revision != m_gpsPromptRevision)
+            return;
+        m_gpsExtractionPrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result == QDialog::Accepted && files.size() == 1)
+            PickGpsCorrectionOutput(files.first(), revision);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::PickGpsCorrectionOutput(const QString &input, quint64 revision)
+{
+    if (m_gpsExtractionClosing || revision != m_gpsPromptRevision)
+        return;
+    const QFileInfo source(input);
+    auto *dialog = new QFileDialog(this, tr("Save GPS correction stream"), source.absolutePath());
+    dialog->setObjectName(QStringLiteral("DeveloperGpsOutputDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setOption(QFileDialog::DontConfirmOverwrite, false);
+    dialog->setAcceptMode(QFileDialog::AcceptSave);
+    dialog->setFileMode(QFileDialog::AnyFile);
+    dialog->setNameFilter(tr("GPS correction stream (*.dat)"));
+    dialog->setDefaultSuffix(QStringLiteral("dat"));
+    dialog->selectFile(source.completeBaseName() + QStringLiteral("-corrections.dat"));
+    m_gpsExtractionPrompt = dialog;
+    connect(dialog, &QDialog::finished, this, [this, dialog, input, revision](int result) {
+        if (m_gpsExtractionClosing || revision != m_gpsPromptRevision)
+            return;
+        m_gpsExtractionPrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result == QDialog::Accepted && files.size() == 1)
+            ExtractGpsCorrections(input, files.first());
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+}
+
+void ConfigDeveloperToolsView::RefreshGpsExtractionAction()
+{
+    if (!m_gpsExtractionClosing)
+        m_gpsExtractionButton->setEnabled(!m_gpsExtractionState && !m_gpsExtractionPrompt &&
+            !m_vehiclePrompt && (!m_vehicleTools || !m_vehicleTools->busy()));
+}
+
+void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const QString &output)
+{
+    if (m_gpsExtractionClosing)
+        return;
+    if (m_gpsExtractionState || m_gpsExtractionPrompt || m_vehiclePrompt ||
+        (m_vehicleTools && m_vehicleTools->busy())) {
+        AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
+        RefreshGpsExtractionAction();
+        return;
+    }
+    if (input.isEmpty() || output.isEmpty()) {
+        AppendLog(tr("GPS correction extraction: input and output paths are required."));
+        RefreshGpsExtractionAction();
+        return;
+    }
+    const auto state = std::make_shared<GpsExtractionState>();
+    m_gpsExtractionState = state;
+    m_gpsExtractionButton->setEnabled(false);
+    AppendLog(tr("GPS correction extraction started: %1").arg(input));
+    AppendLog(tr("All senders and fragments are concatenated in log order; no RTCM reassembly or validation."));
+    AppendLog(tr("Only recorded packets can be extracted. Current Qt logs omit this station’s "
+                 "transmitted corrections; Mission Planner logs may contain them."));
+    auto *progress = new QProgressDialog(tr("Extracting recorded GPS correction bytes…"),
+        tr("Cancel"), 0, 1000, this);
+    progress->setObjectName(QStringLiteral("DeveloperGpsProgressDialog"));
+    progress->setWindowTitle(tr("Extract GPS Corrections"));
+    // A modeless progress dialog keeps setValue() from pumping nested GUI
+    // events. The page's operation gate disables conflicting actions itself.
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    m_gpsExtractionProgress = progress;
+    connect(progress, &QProgressDialog::canceled, this, [state]() {
+        state->cancelled.store(true, std::memory_order_relaxed);
+    });
+    using Result = GpsCorrectionExtractor::Result;
+    auto *watcher = new QFutureWatcher<Result>(this);
+    auto *timer = new QTimer(watcher);
+    timer->setInterval(100);
+    const QPointer<QProgressDialog> guardedProgress(progress);
+    connect(timer, &QTimer::timeout, this, [this, state, guardedProgress]() {
+        if (m_gpsExtractionClosing || !guardedProgress || m_gpsExtractionState != state ||
+            state->cancelled.load(std::memory_order_relaxed))
+            return;
+        const qint64 total = state->total.load(std::memory_order_relaxed);
+        const qint64 done = state->processed.load(std::memory_order_relaxed);
+        if (total > 0)
+            guardedProgress->setValue(int(qBound(0.0L, 1000.0L * done / total, 1000.0L)));
+    });
+    connect(watcher, &QFutureWatcher<Result>::finished, this,
+            [this, state, watcher, timer, guardedProgress, output]() {
+        timer->stop();
+        const Result result = watcher->result();
+        watcher->deleteLater();
+        if (m_gpsExtractionState != state)
+            return;
+        m_gpsExtractionState.reset();
+        m_gpsExtractionProgress.clear();
+        if (guardedProgress)
+            guardedProgress->deleteLater();
+        if (m_gpsExtractionClosing)
+            return;
+        if (result.cancelled)
+            AppendLog(tr("GPS correction extraction cancelled; no output was published."));
+        else if (!result.success)
+            AppendLog(tr("GPS correction extraction failed: %1").arg(result.error));
+        else if (result.messagesWritten == 0)
+            AppendLog(tr("GPS correction extraction completed: no GPS correction messages found; "
+                         "an empty stream was written to %1.").arg(output));
+        else
+            AppendLog(tr("GPS correction extraction completed: %1 messages, %2 bytes written to %3.")
+                          .arg(result.messagesWritten).arg(result.bytesWritten).arg(output));
+        if (result.skippedBytes || result.rejectedFrames || result.truncatedTail)
+            AppendLog(tr("GPS correction extraction warning: %1 skipped bytes, %2 rejected frames, "
+                         "truncated tail: %3. Output may be incomplete; this is not RTCM fragment reconstruction.")
+                          .arg(result.skippedBytes).arg(result.rejectedFrames)
+                          .arg(result.truncatedTail ? tr("yes") : tr("no")));
+        RefreshVehicleActions();
+    });
+    timer->start();
+    watcher->setFuture(QtConcurrent::run([input, output, state]() {
+        try {
+            return GpsCorrectionExtractor::Extract(input, output,
+                [state]() { return state->cancelled.load(std::memory_order_relaxed); },
+                [state](qint64 processed, qint64 total) {
+                    state->processed.store(processed, std::memory_order_relaxed);
+                    state->total.store(total, std::memory_order_relaxed);
+                });
+        } catch (const std::exception &error) {
+            Result result;
+            result.error = QString::fromUtf8(error.what());
+            return result;
+        } catch (...) {
+            Result result;
+            result.error = QStringLiteral("Unexpected file extraction error.");
+            return result;
+        }
+    }));
+    RefreshVehicleActions();
 }
 
 void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
 {
     const QPointer<ConfigDeveloperToolsView> guard(this);
     const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
-    if (!service || m_vehiclePrompt)
+    if (!service || m_vehiclePrompt || m_gpsExtractionState || m_gpsExtractionPrompt)
         return;
     VehiclePlan plan;
     QString error;
