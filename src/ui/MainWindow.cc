@@ -114,6 +114,9 @@ This file is part of the QGROUNDCONTROL project
 #include "AP2DataPlot2D.h"
 #include "LogDownloadWindow.h"
 #include "ConfigFFTWindow.h"
+#include "AppPaths.h"
+#include "configuration/ParameterMetaDataRegenerationWindow.h"
+#include "core/parameters/ParameterMetaDataRepository.h"
 #include "LogDownloadViewModel.h"
 #include "QGCCore.h"
 #include "LinkManager.h"
@@ -621,6 +624,7 @@ MainWindow::~MainWindow()
     // synchronously and no destroyed-lambda needs to touch a raw logPlayer.
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
+    closeParameterMetaDataRegeneration();
     closeLogDownloadWindows();
 
     closeTerminalConsole();
@@ -718,6 +722,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
     auto *fftAction = new QAction(tr("FFT"), this);
     fftAction->setObjectName(QStringLiteral("actionFftAnalysis"));
     connect(fftAction, &QAction::triggered, this, &MainWindow::showFftAnalysis);
+    auto *paramGenAction = new QAction(tr("Param gen"), this);
+    paramGenAction->setObjectName(QStringLiteral("actionParameterMetaDataRegeneration"));
+    connect(paramGenAction, &QAction::triggered, this,
+            &MainWindow::showParameterMetaDataRegeneration);
     if (hardwareSetupView) {
         // Setup can restore an action-backed lazy page before the TOOLS QAction
         // catalogue exists. Recreate only those pages now so implemented tools
@@ -2134,6 +2142,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     aboutToCloseFlag = true;
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
+    closeParameterMetaDataRegeneration();
     closeLogDownloadWindows();
     if (logPlayer) {
         logPlayer->shutdown();
@@ -3044,6 +3053,38 @@ void MainWindow::closeFftAnalysisWindows()
 {
     const auto windows = findChildren<ConfigFFTWindow *>();
     for (auto *window : windows) delete window;
+}
+
+void MainWindow::showParameterMetaDataRegeneration()
+{
+    if (aboutToCloseFlag) return;
+    auto *window = findChild<ParameterMetaDataRegenerationWindow *>();
+    if (!window) {
+        if (!m_parameterMetaDataRegeneration) {
+            const QString cacheDirectory = QDir(AppPaths::writableDataDirectory())
+                .filePath(QStringLiteral("cache/parameter-metadata"));
+            m_parameterMetaDataRegeneration = new ParameterMetaDataRegenerationService(cacheDirectory, this);
+            m_parameterMetaDataRegeneration->setObjectName(QStringLiteral("ParameterMetaDataRegenerationService"));
+            connect(m_parameterMetaDataRegeneration, &ParameterMetaDataRegenerationService::publication,
+                    this, [cacheDirectory](ParameterMetaDataRegenerationService::RunToken,
+                        const ParameterMetaDataRegenerationService::ArtifactReport &artifact) {
+                if (artifact.published)
+                    ParameterMetaDataRepository::invalidateSharedCache(cacheDirectory);
+            });
+        }
+        window = new ParameterMetaDataRegenerationWindow(m_parameterMetaDataRegeneration, this);
+    }
+    window->show();
+    window->raise();
+    window->activateWindow();
+}
+
+void MainWindow::closeParameterMetaDataRegeneration()
+{
+    const auto windows = findChildren<ParameterMetaDataRegenerationWindow *>();
+    for (auto *window : windows) delete window;
+    delete m_parameterMetaDataRegeneration.data();
+    m_parameterMetaDataRegeneration = nullptr;
 }
 
 QString MainWindow::plannerAltitudeUnits() const

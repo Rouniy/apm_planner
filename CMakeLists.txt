@@ -187,6 +187,8 @@ add_library(apm_parameter_core STATIC
     src/core/parameters/ParameterCodec.cpp
     src/core/parameters/ParameterCodec.h
     src/core/parameters/ParameterMetaData.cpp
+    src/core/parameters/ParameterMetaDataParser.cpp
+    src/core/parameters/ParameterMetaDataParser.h
     src/core/parameters/ParameterMetaData.h
     src/core/parameters/ParameterMetaDataRepository.cpp
     src/core/parameters/ParameterMetaDataRepository.h
@@ -197,6 +199,12 @@ target_include_directories(apm_parameter_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
 target_link_libraries(apm_parameter_core PUBLIC Qt::Core)
+
+add_library(apm_parameter_regeneration STATIC
+    src/core/parameters/ParameterMetaDataRegenerationService.cpp
+    src/core/parameters/ParameterMetaDataRegenerationService.h
+)
+target_link_libraries(apm_parameter_regeneration PUBLIC apm_parameter_core Qt::Network)
 
 
 # Gather sources/headers/forms/resources
@@ -883,6 +891,8 @@ set(SOURCES
     src/ui/configuration/ActionPageView.cpp
     src/ui/configuration/ActionPageView.h
     src/ui/configuration/ConfigAdvancedView.cpp
+    src/ui/configuration/ParameterMetaDataRegenerationWindow.cpp
+    src/ui/configuration/ParameterMetaDataRegenerationWindow.h
     src/ui/configuration/ConfigAdvancedView.h
     src/ui/configuration/ConfigADSBView.cpp
     src/ui/configuration/ConfigADSBView.h
@@ -1494,6 +1504,7 @@ target_link_libraries(${APM_PLANNER_TARGET}
     alglib
     opmapcontrol
     apm_parameter_core
+    apm_parameter_regeneration
     apm_mission_command_catalog
     ${ADDITIONAL_LIBS}
     ${APM_QT_AUDIO_LIBRARIES}
@@ -2100,6 +2111,30 @@ if(BUILD_TESTING)
         APM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     )
     add_test(NAME parameter_core_tests COMMAND parameter_core_tests)
+
+    add_executable(parametermetadataparser_tests tests/test_parametermetadataparser.cpp)
+    target_link_libraries(parametermetadataparser_tests PRIVATE apm_parameter_core Qt::Test)
+    add_test(NAME parametermetadataparser_tests COMMAND parametermetadataparser_tests)
+
+    add_executable(parametermetadataregenerationservice_tests
+        tests/test_parametermetadataregenerationservice.cpp)
+    target_link_libraries(parametermetadataregenerationservice_tests PRIVATE
+        apm_parameter_regeneration Qt::Test)
+    add_test(NAME parametermetadataregenerationservice_tests COMMAND parametermetadataregenerationservice_tests)
+    set_tests_properties(parametermetadataregenerationservice_tests PROPERTIES TIMEOUT 60)
+
+    add_executable(parameter_metadata_regeneration_probe tests/parameter_metadata_regeneration_probe.cpp)
+    target_link_libraries(parameter_metadata_regeneration_probe PRIVATE apm_parameter_regeneration)
+
+    add_executable(parametermetadataregenerationwindow_tests
+        tests/test_parametermetadataregenerationwindow.cpp
+        src/ui/configuration/ParameterMetaDataRegenerationWindow.cpp
+        src/ui/configuration/ParameterMetaDataRegenerationWindow.h)
+    target_link_libraries(parametermetadataregenerationwindow_tests PRIVATE
+        apm_parameter_regeneration Qt::Widgets Qt::Test)
+    add_test(NAME parametermetadataregenerationwindow_tests COMMAND parametermetadataregenerationwindow_tests)
+    set_tests_properties(parametermetadataregenerationwindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(qgcparamid_tests
         tests/test_qgcparamid.cpp

@@ -52,13 +52,19 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QAction *proximity = makeAction(
         &actionSource, QStringLiteral("actionProximity"));
     QAction *fft = makeAction(&actionSource, QStringLiteral("actionFftAnalysis"));
+    QAction *paramGen = makeAction(&actionSource, QStringLiteral("actionParameterMetaDataRegeneration"));
 
     ConfigAdvancedView view(&actionSource);
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
-    QCOMPARE(view.ImplementedActionCount(), 11);
-    QVERIFY(view.Log().contains(QStringLiteral("11 of 16")));
+    QCOMPARE(view.ImplementedActionCount(), 12);
+    QVERIFY(view.Log().contains(QStringLiteral("12 of 16")));
+    QSignalSpy paramGenSpy(paramGen, &QAction::triggered);
+    auto *paramGenButton = view.findChild<QPushButton *>(QStringLiteral("ParamGenButton"));
+    QVERIFY(paramGenButton && paramGenButton->isEnabled());
+    paramGenButton->click();
+    QCOMPARE(paramGenSpy.count(), 1);
 
     QSignalSpy inspectorSpy(inspector, &QAction::triggered);
     QSignalSpy mirrorSpy(mirror, &QAction::triggered);

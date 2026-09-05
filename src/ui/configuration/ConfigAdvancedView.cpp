@@ -57,8 +57,8 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     AddToolAction(tr("Proximity"),
                   QStringLiteral("ProximityButton"),
                   QStringLiteral("actionProximity"));
-    AddUnavailableAction(tr("Param gen"),
-                         QStringLiteral("ParamGenButton"), notPorted);
+    AddToolAction(tr("Param gen"), QStringLiteral("ParamGenButton"),
+                  QStringLiteral("actionParameterMetaDataRegeneration"));
     AddUnavailableAction(tr("Support Proxy"),
                          QStringLiteral("SupportProxyButton"), notPorted);
 

@@ -84,6 +84,9 @@ public:
     static QString normalizedVersion(const QString &firmwareVersion);
     void clear(ParameterFirmwareFamily family);
     void clear();
+    // GUI-thread publication notice. All repositories using this directory
+    // reload lazily; previously returned page snapshots remain untouched.
+    static void invalidateSharedCache(const QString &cacheDirectory);
 
 private:
     ParameterMetaDataCatalog loadCatalogFile(
@@ -104,6 +107,7 @@ private:
     QMap<QString, QString> m_errors;
     QSet<QString> m_attempted;
     QSet<QString> m_versionMatchedCatalogs;
+    quint64 m_cacheRevision = 0;
 };
 
 #endif

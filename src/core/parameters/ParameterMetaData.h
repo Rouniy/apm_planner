@@ -4,6 +4,7 @@
 #include <QList>
 #include <QMap>
 #include <QPair>
+#include <QSet>
 #include <QString>
 #include <QVariant>
 
@@ -44,6 +45,9 @@ struct ParameterMetaData
     QList<ParameterMetaDataOption> values;
     QList<QPair<int, QString>> bitmaskValues;
     QMap<QString, QString> fields;
+    // Retain presence separately from value: an explicit false/empty PDEF
+    // field must not be replaced by lower-priority generated metadata.
+    QSet<QString> presentFields;
     ParameterUserLevel userLevel = ParameterUserLevel::Unknown;
     ParameterMetaDataScope scope = ParameterMetaDataScope::Library;
     bool hasRange = false;
@@ -61,7 +65,8 @@ class ParameterMetaDataCatalog
 {
 public:
     static ParameterMetaDataCatalog fromPdef(QIODevice *device,
-                                             const QString &vehicleName);
+                                             const QString &vehicleName,
+                                             bool requireVehicleSection = true);
 
     bool isValid() const;
     QString errorString() const;
@@ -69,6 +74,8 @@ public:
     ParameterMetaData value(const QString &name) const;
     QList<ParameterMetaData> entries() const;
     QList<ParameterMetaData> entriesForLevel(ParameterUserLevel level) const;
+    ParameterMetaDataCatalog withFallback(const ParameterMetaDataCatalog &fallback,
+                                         bool *addedAdvisoryRange = nullptr) const;
 
 private:
     QMap<QString, ParameterMetaData> m_entries;

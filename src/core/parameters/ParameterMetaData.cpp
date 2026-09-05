@@ -126,6 +126,24 @@ QList<QPair<int, QString>> parseBitmask(const QString &text)
     return result;
 }
 
+void deriveFields(ParameterMetaData *metadata)
+{
+    auto &result = *metadata;
+    result.units = fieldValue(result.fields, QStringLiteral("Units"));
+    result.rangeText = fieldValue(result.fields, QStringLiteral("Range"));
+    result.hasRange = parseRange(result.rangeText, &result.minimum, &result.maximum);
+    bool incrementOk = false;
+    result.increment = QLocale::c().toDouble(
+        fieldValue(result.fields, QStringLiteral("Increment")), &incrementOk);
+    result.hasIncrement = incrementOk && result.increment > 0.0;
+    if (!result.hasIncrement) result.increment = 0.01;
+    result.bitmaskValues = parseBitmask(fieldValue(result.fields, QStringLiteral("Bitmask")));
+    result.readOnly = fieldFlag(result.fields, QStringLiteral("ReadOnly"));
+    result.rebootRequired = fieldFlag(result.fields, QStringLiteral("RebootRequired"));
+    result.volatileValue = fieldFlag(result.fields, QStringLiteral("Volatile"));
+    result.calibration = fieldFlag(result.fields, QStringLiteral("Calibration"));
+}
+
 ParameterMetaData parseParameter(QXmlStreamReader *xml, const QString &group,
                                  ParameterMetaDataScope scope)
 {
@@ -141,6 +159,10 @@ ParameterMetaData parseParameter(QXmlStreamReader *xml, const QString &group,
         QStringLiteral("documentation")).toString().trimmed();
     result.userLevel = userLevel(
         attributes.value(QStringLiteral("user")).toString());
+    for (const auto &key : {QStringLiteral("humanName"),
+                            QStringLiteral("documentation"), QStringLiteral("user")}) {
+        if (attributes.hasAttribute(key)) result.presentFields.insert(key.toLower());
+    }
 
     while (!xml->atEnd()) {
         xml->readNext();
@@ -151,41 +173,24 @@ ParameterMetaData parseParameter(QXmlStreamReader *xml, const QString &group,
             continue;
         }
         if (xml->name() == QLatin1String("values")) {
+            result.presentFields.insert(QStringLiteral("values"));
             result.values = parseValues(xml);
         } else if (xml->name() == QLatin1String("field")) {
             const QString fieldName = xml->attributes().value(
                 QStringLiteral("name")).toString();
             result.fields.insert(fieldName, xml->readElementText(
                 QXmlStreamReader::SkipChildElements).trimmed());
+            result.presentFields.insert(fieldName.toLower());
         }
     }
 
-    result.units = fieldValue(result.fields, QStringLiteral("Units"));
-    result.rangeText = fieldValue(result.fields, QStringLiteral("Range"));
-    result.hasRange = parseRange(result.rangeText,
-                                 &result.minimum, &result.maximum);
-    bool incrementOk = false;
-    result.increment = QLocale::c().toDouble(
-        fieldValue(result.fields, QStringLiteral("Increment")), &incrementOk);
-    result.hasIncrement = incrementOk && result.increment > 0.0;
-    if (!result.hasIncrement) {
-        result.increment = 0.01;
-    }
-    result.bitmaskValues = parseBitmask(
-        fieldValue(result.fields, QStringLiteral("Bitmask")));
-    result.readOnly = fieldFlag(result.fields, QStringLiteral("ReadOnly"));
-    result.rebootRequired = fieldFlag(
-        result.fields, QStringLiteral("RebootRequired"));
-    result.volatileValue = fieldFlag(
-        result.fields, QStringLiteral("Volatile"));
-    result.calibration = fieldFlag(
-        result.fields, QStringLiteral("Calibration"));
+    deriveFields(&result);
     return result;
 }
 }
 
 ParameterMetaDataCatalog ParameterMetaDataCatalog::fromPdef(
-    QIODevice *device, const QString &vehicleName)
+    QIODevice *device, const QString &vehicleName, bool requireVehicleSection)
 {
     ParameterMetaDataCatalog catalog;
     if (!device || !device->isReadable()) {
@@ -253,7 +258,7 @@ ParameterMetaDataCatalog ParameterMetaDataCatalog::fromPdef(
         catalog.m_error = xml.errorString();
     } else if (!foundRoot) {
         catalog.m_error = QStringLiteral("Parameter metadata root is missing");
-    } else if (!foundVehicle) {
+    } else if (!foundVehicle && requireVehicleSection) {
         catalog.m_error = QStringLiteral("Vehicle metadata section '%1' is missing")
             .arg(vehicleName);
     }
@@ -263,6 +268,45 @@ ParameterMetaDataCatalog ParameterMetaDataCatalog::fromPdef(
 bool ParameterMetaDataCatalog::isValid() const
 {
     return m_loaded && m_error.isEmpty();
+}
+
+ParameterMetaDataCatalog ParameterMetaDataCatalog::withFallback(
+    const ParameterMetaDataCatalog &fallback, bool *addedAdvisoryRange) const
+{
+    if (addedAdvisoryRange) *addedAdvisoryRange = false;
+    if (!fallback.isValid()) return *this;
+    if (!isValid()) {
+        if (addedAdvisoryRange) {
+            for (const auto &entry : fallback.m_entries)
+                *addedAdvisoryRange = *addedAdvisoryRange || entry.hasRange;
+        }
+        return fallback;
+    }
+    ParameterMetaDataCatalog result = *this;
+    for (auto it = fallback.m_entries.cbegin(); it != fallback.m_entries.cend(); ++it) {
+        if (!result.m_entries.contains(it.key())) {
+            result.m_entries.insert(it.key(), it.value());
+            if (addedAdvisoryRange && it->hasRange) *addedAdvisoryRange = true;
+            continue;
+        }
+        auto &entry = result.m_entries[it.key()];
+        const auto missing = [&entry, &it](const QString &key) {
+            return !entry.presentFields.contains(key) && it->presentFields.contains(key);
+        };
+        if (missing(QStringLiteral("humanname"))) entry.title = it->title;
+        if (missing(QStringLiteral("documentation"))) entry.description = it->description;
+        if (missing(QStringLiteral("user"))) entry.userLevel = it->userLevel;
+        if (missing(QStringLiteral("values"))) entry.values = it->values;
+        const bool newRange = missing(QStringLiteral("range"));
+        for (auto field = it->fields.cbegin(); field != it->fields.cend(); ++field) {
+            if (!entry.presentFields.contains(field.key().toLower()))
+                entry.fields.insert(field.key(), field.value());
+        }
+        entry.presentFields.unite(it->presentFields);
+        deriveFields(&entry);
+        if (addedAdvisoryRange && newRange && entry.hasRange) *addedAdvisoryRange = true;
+    }
+    return result;
 }
 
 QString ParameterMetaDataCatalog::errorString() const

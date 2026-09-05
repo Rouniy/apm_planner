@@ -18,13 +18,41 @@ The immediate user-directed order is:
 
 1. Keep the fixed SETUP Advanced/Developer Tools action rebinding green, including MAVLink Inspector and every already implemented shared tool.
 2. Port the remaining non-swarm TOOLS dialogs/workflows for one vehicle; empty placeholders, no-op actions and accidentally disabled implemented forms are functional defects.
-3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 11/16 intended working actions.
+3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 12/16 intended working actions.
 4. Keep the Swarm family at the end of the active queue. Preserve its tested exact foundations without expanding them while single-vehicle workflows remain missing.
 5. Retain audited useful older APM Planner modules with honest Legacy/partial labels, track functional and GUI inaccuracies separately, and keep committing complete slices.
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): native **FFT Setup / Advanced Tools FFT**. Setup
+Latest slice (2026-09-05): native **Advanced Tools Param gen** and the real
+Setup visibility matrix. A modeless application-owned generator now parses the
+nine master/stable source roots and their libraries and force-refreshes all
+nine PDEF products. Atomic per-file publication, token cancellation, bounded
+network/parser resources and truthful partial results are wired. Both metadata
+repository instances reload lazily while existing parameter pages retain their
+snapshots and edits. Advanced Tools is **12/16**; no new Setup route is counted.
+
+Full Qt5/audio build and **216/216 tests** pass (16.54 seconds). The manual
+official-network probe exits 0 with all ten artifacts, including the 8,665,849-byte
+generated-source catalog (SHA256
+`62e4b7a54be95f590eeab44be256094eee339e1bc7f790d37ccb3283ae6acdc7`).
+Real X11 verifies the offline Advanced button, exact default-Cancel confirmation,
+successful 10/10 publication, close/reopen while downloading, explicit Cancel
+preserving the old generated file hash, and normal application exit 0 during
+another active download with its observer open. Evidence:
+`/tmp/apm-paramgen.h8Bphz/`; contracts and remaining gaps: `PARAM_GEN_PORT.md`.
+Claude reviewed the parser/fallback through TCP 4096 (c183/c184/c185, final
+REVIEW-OK after fixes), with three disjoint Codex work streams and root-owned
+builds/tests. Real input testing additionally corrected the obsolete MP10 stable
+Rover URL to APMrover2-stable and handles SITL library-only/Helicopter products.
+
+The current metadata trust flag is catalog-wide: adding any unversioned fallback
+range makes the merged catalog advisory, including otherwise exact ranges.
+Per-field range provenance, safe idle-page hot refresh, Heli/Blimp active-family
+selection, Local override/legacy XML interchange and native-platform evidence
+remain explicit follow-ups, not claimed parity.
+
+Previous slice (2026-09-05): native **FFT Setup / Advanced Tools FFT**. Setup
 now registers **45 pages: 44 mapped MP10 routes plus QML Plugins**, against
 53 MP10 pages and the same three groups; nine explicit routes remain missing.
 FFT opens both as a real Setup page and an independent 1000×700 modeless
@@ -48,8 +76,11 @@ Codex agents had disjoint edit leases and root owned builds/tests.
 User clarification: Setup entries disappearing only while disconnected and
 returning on reconnect matches MP10's `RequiresConnection` filtering; pages
 were not removed. The full factory inventory is independent of visibility.
-The current route audit forcibly exposes pages, so a separate real
-connected/disconnected/profile visibility matrix remains a future test gate.
+The production route audit now checks actual offline Advanced/Basic/Custom
+visibility, independent Bluetooth gating and an isolated no-write Plane
+connect/disconnect cycle before forcibly exposing factories. Real X11 confirms
+the offline Advanced surface. Other vehicle/profile/partial-parameter matrices
+and physical disconnect tests remain separate gates.
 
 Previous single-vehicle slice (2026-09-05): native **Download Logs (MAVLink)**
 replaces the production legacy dialog route. Refresh, Selected/All downloads,
@@ -67,10 +98,9 @@ refresh and normal application exit 0 with the tool open. Evidence:
 `/tmp/apm-download-logs.FmmrKU/`; details and remaining limits:
 `DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
 
-Next single-vehicle candidates, not Swarm: Advanced Tools Param gen (real
-all-family forced metadata regeneration and live cache invalidation), then
-Setup PX4Flow (bounded image assembly and exact VIDEO_ONLY). Remaining Advanced
-gaps are Anon Log, MAVLink Signing, Warning Manager and Param gen; Support Proxy
+Next single-vehicle candidate, not Swarm: Setup PX4Flow (bounded image assembly
+and exact VIDEO_ONLY). Remaining Advanced gaps are Anon Log, MAVLink Signing
+and Warning Manager; Support Proxy
 is also a placeholder in MP10 itself. Settings/CONFIG follows these working
 single-vehicle surfaces. The nine absent Setup routes remain explicitly tracked.
 

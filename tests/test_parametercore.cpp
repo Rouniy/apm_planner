@@ -145,6 +145,8 @@ private slots:
     void packagedPdefsParse();
     void metadataRepositoryMapsPackagedFamilies();
     void metadataRepositoryUsesResourceFallback();
+    void metadataFallbackPreservesExplicitFields();
+    void regeneratedMetadataInvalidatesBothRepositoriesWithoutChangingSnapshots();
     void metadataCachePrioritizesExactAndPreservesFallback();
     void metadataFreshnessUsesValidatedProvenance();
     void metadataUpdaterBuildsSafeCandidateUrls();
@@ -580,6 +582,94 @@ void ParameterCoreTest::metadataRepositoryUsesResourceFallback()
     QVERIFY(catalog.contains(QStringLiteral("CRUISE_SPEED")));
     QCOMPARE(catalog.value(QStringLiteral("CRUISE_SPEED")).title,
              QStringLiteral("Cruise Speed"));
+}
+
+void ParameterCoreTest::metadataFallbackPreservesExplicitFields()
+{
+    const auto parse = [](const QByteArray &parameters) {
+        QBuffer input;
+        input.setData("<paramfile><vehicles><parameters name=\"ArduCopter\">"
+                      + parameters + "</parameters></vehicles></paramfile>");
+        input.open(QIODevice::ReadOnly);
+        return ParameterMetaDataCatalog::fromPdef(&input, QStringLiteral("ArduCopter"));
+    };
+    const auto primary = parse("<param name=\"TEST\" humanName=\"\" user=\"Standard\">"
+        "<field name=\"ReadOnly\">false</field><field name=\"Range\"></field>"
+        "<values/></param>");
+    const auto fallback = parse("<param name=\"TEST\" humanName=\"Fallback\" "
+        "documentation=\"Description\" user=\"Advanced\">"
+        "<field name=\"readonly\">true</field><field name=\"Range\">0 10</field>"
+        "<field name=\"Units\">m</field><values><value code=\"1\">One</value></values></param>"
+        "<param name=\"NEW\"><field name=\"Range\">1 20</field></param>");
+    bool addedRange = false;
+    const auto combined = primary.withFallback(fallback, &addedRange);
+    const auto value = combined.value(QStringLiteral("TEST"));
+    QVERIFY(value.title.isEmpty());
+    QCOMPARE(value.description, QStringLiteral("Description"));
+    QCOMPARE(value.userLevel, ParameterUserLevel::Standard);
+    QVERIFY(!value.readOnly);
+    QVERIFY(!value.hasRange);
+    QVERIFY(value.values.isEmpty());
+    QCOMPARE(value.units, QStringLiteral("m"));
+    QVERIFY(addedRange); // The new fallback-only row is unversioned.
+    QVERIFY(combined.contains(QStringLiteral("NEW")));
+    QVERIFY(!primary.contains(QStringLiteral("NEW")));
+}
+
+void ParameterCoreTest::regeneratedMetadataInvalidatesBothRepositoriesWithoutChangingSnapshots()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    const QDir cache(temporary.path());
+    QVERIFY(cache.mkpath(QStringLiteral("regenerated")));
+    const QString packaged = QStringLiteral(APM_TEST_SOURCE_DIR "/files/ardupilotmega");
+    ParameterMetaDataRepository setup(packaged, temporary.path());
+    ParameterMetaDataRepository config(packaged, temporary.path());
+    ParameterMetaDataCacheInfo exactInfo;
+    exactInfo.sourceUrl = QStringLiteral("https://autotest.ardupilot.org/Parameters/versioned/Copter/stable-4.6.3/apm.pdef.xml");
+    exactInfo.fetchedAtUtc = QDateTime::currentDateTimeUtc();
+    QVERIFY(setup.installCatalog(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"),
+                                catalogXml(QStringLiteral("ArduCopter"), QStringLiteral("Exact")), exactInfo));
+    const auto setupSnapshot = setup.catalog(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"));
+    const auto configSnapshot = config.catalog(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"));
+    QVERIFY(setup.catalogMatchesFirmwareVersion(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3")));
+    QVERIFY(config.catalogMatchesFirmwareVersion(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3")));
+    QByteArray sitl = catalogXml(QStringLiteral("SITL"), QStringLiteral("SITL"));
+    sitl.replace("user=\"Standard\"/>", "user=\"Standard\"><field name=\"Range\">0 50</field></param>");
+    // The official SITL artifact declares a foreign Blimp vehicle and exposes
+    // useful simulation metadata through libraries, not a SITL vehicle group.
+    sitl.replace("<vehicles><parameters name=\"SITL\">",
+                 "<vehicles><parameters name=\"Blimp\"><param name=\"Blimp:FOREIGN_ONLY\"/></parameters></vehicles>"
+                 "<libraries><parameters name=\"SIM\">");
+    sitl.replace("</parameters></vehicles>", "</parameters></libraries>");
+    // The replacement above affects the foreign section's closing tag too.
+    sitl.replace("<param name=\"Blimp:FOREIGN_ONLY\"/></parameters></libraries>",
+                 "<param name=\"Blimp:FOREIGN_ONLY\"/></parameters></vehicles>");
+    sitl.replace("SITL:", "");
+    QVERIFY(writeBytes(cache.filePath(QStringLiteral("regenerated/SITL.pdef.xml")), sitl));
+    QByteArray source = catalogXml(QStringLiteral("ArduCopter"), QStringLiteral("Source"));
+    source.replace("TEST_PARAM", "SOURCE_ONLY");
+    QVERIFY(writeBytes(cache.filePath(QStringLiteral("regenerated/generated-source.pdef.xml")), source));
+    QVERIFY(!setup.catalog(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3")).contains(QStringLiteral("SOURCE_ONLY")));
+    ParameterMetaDataRepository::invalidateSharedCache(temporary.path());
+    for (auto *repository : {&setup, &config}) {
+        // Stale cached trust is revoked even before the next lazy load.
+        QVERIFY(!repository->catalogMatchesFirmwareVersion(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3")));
+        const auto refreshed = repository->catalog(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3"));
+        QCOMPARE(refreshed.value(QStringLiteral("TEST_PARAM")).title, QStringLiteral("Exact"));
+        QVERIFY(refreshed.value(QStringLiteral("TEST_PARAM")).hasRange);
+        QVERIFY(refreshed.contains(QStringLiteral("SOURCE_ONLY")));
+        QVERIFY(!refreshed.contains(QStringLiteral("FOREIGN_ONLY")));
+        QVERIFY(!repository->catalogMatchesFirmwareVersion(ParameterFirmwareFamily::ArduCopter, QStringLiteral("4.6.3")));
+    }
+    // Existing editors own value snapshots. Publication must not mutate them.
+    QVERIFY(!setupSnapshot.contains(QStringLiteral("SOURCE_ONLY")));
+    QVERIFY(!configSnapshot.value(QStringLiteral("TEST_PARAM")).hasRange);
+    QVERIFY(writeBytes(cache.filePath(QStringLiteral("regenerated/ArduCopter.pdef.xml")),
+                       catalogXml(QStringLiteral("ArduCopter"), QStringLiteral("Regenerated"))));
+    ParameterMetaDataRepository::invalidateSharedCache(temporary.path());
+    QCOMPARE(config.catalog(ParameterFirmwareFamily::ArduCopter).value(QStringLiteral("TEST_PARAM")).title,
+             QStringLiteral("Regenerated"));
 }
 
 void ParameterCoreTest::metadataCachePrioritizesExactAndPreservesFallback()

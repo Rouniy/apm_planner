@@ -1,15 +1,21 @@
 #include "SetupRouteRuntimeAudit.h"
 #include "ui/ConfigFFTWindow.h"
 #include "ui/configuration/ConfigFFTView.h"
+#include "ui/configuration/ParameterMetaDataRegenerationWindow.h"
 #include "InspectorRuntimeAudit.h"
 #include "LogDownloadRuntimeAudit.h"
 #include "FirmwarePageLifetimeAudit.h"
 
 #include "ui/BackstageView.h"
 #include "ui/MainWindow.h"
+#include "comm/LinkInterface.h"
 #include "comm/LinkManager.h"
 #include "comm/MAVLinkProtocol.h"
+#include "comm/VehicleTargetManager.h"
 #include "configuration.h"
+#include "UAS.h"
+#include "UASManager.h"
+#include "ui/configuration/DisplayViewProfile.h"
 #include "ui/configuration/SetupView.h"
 #include "ui/configuration/PlannerStartupUdpOptions.h"
 
@@ -22,6 +28,8 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QGroupBox>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
@@ -207,6 +215,81 @@ QStringList ExpectedNavigationOrder()
     return result;
 }
 
+QStringList ExpectedOfflinePages(bool advanced)
+{
+    QStringList pages = {
+        QStringLiteral("InstallFirmwareView"),
+        QStringLiteral("ConfigGpsInjectView"),
+        QStringLiteral("SikRadioView"),
+        QStringLiteral("ConfigDroneCanView"),
+        QStringLiteral("ConfigJoystickView"),
+        QStringLiteral("ConfigHWBTView"),
+        QStringLiteral("ConfigAntennaTrackerView"),
+        QStringLiteral("AntennaTrackerUIView")
+    };
+    if (advanced) {
+        pages.append({
+            QStringLiteral("ConfigAdvancedView"),
+            QStringLiteral("ConfigElevationSourcesView"),
+            QStringLiteral("ConfigDeveloperToolsView"),
+            QStringLiteral("ConfigMavCommandView"),
+            QStringLiteral("ConfigTerminalView"),
+            QStringLiteral("QmlPluginManagerView")
+        });
+    }
+    return pages;
+}
+
+QStringList ExpectedConnectedPlanePages()
+{
+    // Independent expectation transcribed from MP10's requiresConnection and
+    // Plane visibleWhen rules, plus the retained QML plugin page. The four
+    // frame/heli routes are Copter-only and intentionally absent.
+    return {
+        QStringLiteral("InstallFirmwareView"),
+        QStringLiteral("ConfigAccelCalibrationView"),
+        QStringLiteral("ConfigCompassView"),
+        QStringLiteral("ConfigCompassLegacyView"),
+        QStringLiteral("ConfigRadioInputView"),
+        QStringLiteral("ConfigRadioOutputView"),
+        QStringLiteral("ConfigSerialView"),
+        QStringLiteral("ConfigESCCalibrationView"),
+        QStringLiteral("ConfigFlightModesView"),
+        QStringLiteral("ConfigFailSafeView"),
+        QStringLiteral("ConfigInitialParamsView"),
+        QStringLiteral("ConfigHWIDView"),
+        QStringLiteral("ConfigADSBView"),
+        QStringLiteral("ConfigGpsInjectView"),
+        QStringLiteral("SikRadioView"),
+        QStringLiteral("ConfigGPSOrderView"),
+        QStringLiteral("ConfigBatteryMonitoringView"),
+        QStringLiteral("ConfigBatteryMonitoring2View"),
+        QStringLiteral("ConfigDroneCanView"),
+        QStringLiteral("ConfigJoystickView"),
+        QStringLiteral("ConfigCompassMotView"),
+        QStringLiteral("ConfigRangeFinderView"),
+        QStringLiteral("ConfigAirspeedView"),
+        QStringLiteral("ConfigOptFlowView"),
+        QStringLiteral("ConfigHWOSDView"),
+        QStringLiteral("ConfigMountView"),
+        QStringLiteral("ConfigMotorTestView"),
+        QStringLiteral("ConfigHWBTView"),
+        QStringLiteral("ConfigParachuteView"),
+        QStringLiteral("ConfigHWESP8266View"),
+        QStringLiteral("ConfigFFTView"),
+        QStringLiteral("ConfigAntennaTrackerView"),
+        QStringLiteral("AntennaTrackerUIView"),
+        QStringLiteral("ConfigHWCANView"),
+        QStringLiteral("MavFTPUIView"),
+        QStringLiteral("ConfigAdvancedView"),
+        QStringLiteral("ConfigElevationSourcesView"),
+        QStringLiteral("ConfigDeveloperToolsView"),
+        QStringLiteral("ConfigMavCommandView"),
+        QStringLiteral("ConfigTerminalView"),
+        QStringLiteral("QmlPluginManagerView")
+    };
+}
+
 QStringList NavigationOrder(QWidget *navigationContent)
 {
     QStringList result;
@@ -299,6 +382,115 @@ private:
     int m_failures = 0;
 };
 
+class DisplayProfileRestore final
+{
+public:
+    explicit DisplayProfileRestore(DisplayViewProfileService *service)
+        : m_service(service), m_profile(service ? service->current()
+                                                : DisplayViewProfile())
+    {
+    }
+
+    ~DisplayProfileRestore()
+    {
+        if (m_service) {
+            QString ignoredError;
+            m_service->setProfile(m_profile, &ignoredError);
+        }
+    }
+
+private:
+    DisplayViewProfileService *m_service = nullptr;
+    DisplayViewProfile m_profile;
+};
+
+class SetupVisibilityAuditLink final : public LinkInterface
+{
+public:
+    void disableTimeouts() override {}
+    void enableTimeouts() override {}
+    int getId() const override { return 900003; }
+    QString getName() const override
+    {
+        return QStringLiteral("SETUP visibility audit");
+    }
+    QString getShortName() const override
+    {
+        return QStringLiteral("SETUP audit");
+    }
+    QString getDetail() const override
+    {
+        return QStringLiteral("in-process, no transport");
+    }
+    void requestReset() override {}
+    bool isConnected() const override { return m_connected; }
+    qint64 getConnectionSpeed() const override { return 0; }
+    qint64 bytesAvailable() override { return 0; }
+    LinkType getLinkType() override { return UNKNOWN_LINK; }
+
+    bool connect() override
+    {
+        if (!m_connected) {
+            m_connected = true;
+            emit connected();
+            emit connected(this);
+            emit connected(true);
+        }
+        return true;
+    }
+
+    bool disconnect() override
+    {
+        if (m_connected) {
+            m_connected = false;
+            emit disconnected();
+            emit disconnected(this);
+            emit connected(false);
+        }
+        return true;
+    }
+
+    void writeBytes(const char *bytes, qint64 size) override
+    {
+        if (bytes && size > 0) {
+            ++m_writeCount;
+        }
+    }
+
+    int writeCount() const { return m_writeCount; }
+
+protected slots:
+    void readBytes() override {}
+
+private:
+    bool m_connected = true;
+    int m_writeCount = 0;
+};
+
+QStringList VisiblePageIds(const BackstageView *backstage)
+{
+    QStringList visible;
+    if (!backstage) {
+        return visible;
+    }
+    for (const QString &pageId : backstage->pageIds()) {
+        if (backstage->isPageVisible(pageId)) {
+            visible.append(pageId);
+        }
+    }
+    return visible;
+}
+
+void ExpectVisiblePages(AuditResult *result, const BackstageView *backstage,
+                        const QStringList &expected, const QString &state)
+{
+    const QStringList actual = VisiblePageIds(backstage);
+    result->Expect(actual == expected,
+                   QStringLiteral("%1 SETUP visibility mismatch\nexpected: %2\nactual:   %3")
+                       .arg(state, expected.join(QStringLiteral(", ")),
+                            actual.join(QStringLiteral(", "))));
+}
+
 void ConfigureIsolatedSettings()
 {
     QSettings settings;
@@ -387,6 +579,18 @@ int RunSetupRouteRuntimeAudit()
                   QStringLiteral("the audited 11-page baseline gap or its "
                                  "Joystick/FFT closure was lost"));
 
+    DisplayViewProfileService *const displayProfiles =
+        DisplayViewProfileService::instance();
+    DisplayProfileRestore profileRestore(displayProfiles);
+    QString profileError;
+    result.Expect(displayProfiles != nullptr,
+                  QStringLiteral("DisplayView profile service is missing"));
+    result.Expect(displayProfiles
+                      && displayProfiles->setProfile(
+                          DisplayViewProfile::advanced(), &profileError),
+                  QStringLiteral("could not select Advanced profile: %1")
+                      .arg(profileError));
+
     QWidget host;
     int joystickLaunchCount = 0;
     SetupView setup(&host);
@@ -403,6 +607,7 @@ int RunSetupRouteRuntimeAudit()
     // lazy-factory, selection and stack code while preventing those side
     // effects. No control inside any created page is invoked by this audit.
     const QSignalBlocker lifecycleBlocker(backstage);
+    backstage->setAutomaticSelectionEnabled(false);
 
     const QStringList expectedPages = ExpectedPageIds();
     result.Expect(expectedPages.size() == 45,
@@ -422,6 +627,115 @@ int RunSetupRouteRuntimeAudit()
                   QStringLiteral("production page/group order mismatch\nexpected: %1\nactual:   %2")
                       .arg(expectedNavigation.join(QStringLiteral(", ")),
                            navigationOrder.join(QStringLiteral(", "))));
+
+    // Exercise production SetupView visibility before the factory audit below
+    // deliberately exposes every route. This catches offline pages accidentally
+    // inheriting a requiresConnection gate, and profile flags being ignored.
+    ExpectVisiblePages(&result, backstage, ExpectedOfflinePages(true),
+                       QStringLiteral("offline Advanced"));
+    result.Expect(!backstage->isGroupVisible(kMandatoryGroup)
+                      && backstage->isGroupVisible(kOptionalGroup)
+                      && backstage->isGroupVisible(kAdvancedGroup),
+                  QStringLiteral("offline Advanced group visibility mismatch"));
+
+    profileError.clear();
+    result.Expect(displayProfiles
+                      && displayProfiles->setProfile(
+                          DisplayViewProfile::basic(), &profileError),
+                  QStringLiteral("could not select Basic profile: %1")
+                      .arg(profileError));
+    ExpectVisiblePages(&result, backstage, ExpectedOfflinePages(false),
+                       QStringLiteral("offline Basic"));
+    result.Expect(!backstage->isGroupVisible(kMandatoryGroup)
+                      && backstage->isGroupVisible(kOptionalGroup)
+                      && !backstage->isGroupVisible(kAdvancedGroup),
+                  QStringLiteral("offline Basic group visibility mismatch"));
+
+    QJsonObject customValues = DisplayViewProfile::advanced().jsonObject();
+    customValues.insert(QStringLiteral("displayName"),
+                        static_cast<int>(DisplayViewPreset::Custom));
+    customValues.insert(QStringLiteral("isAdvancedMode"), true);
+    customValues.insert(QStringLiteral("displayBluetooth"), false);
+    DisplayViewProfile customProfile;
+    profileError.clear();
+    const bool parsedCustom = DisplayViewProfile::fromJson(
+        QJsonDocument(customValues).toJson(QJsonDocument::Compact),
+        &customProfile, &profileError);
+    result.Expect(parsedCustom,
+                  QStringLiteral("could not create Custom profile: %1")
+                      .arg(profileError));
+    if (parsedCustom) {
+        profileError.clear();
+        result.Expect(displayProfiles
+                          && displayProfiles->setProfile(customProfile,
+                                                        &profileError),
+                      QStringLiteral("could not select Custom profile: %1")
+                          .arg(profileError));
+        QStringList expectedCustom = ExpectedOfflinePages(true);
+        expectedCustom.removeAll(QStringLiteral("ConfigHWBTView"));
+        ExpectVisiblePages(&result, backstage, expectedCustom,
+                           QStringLiteral("offline Custom/Bluetooth-off"));
+        result.Expect(!backstage->isGroupVisible(kMandatoryGroup)
+                          && backstage->isGroupVisible(kOptionalGroup)
+                          && backstage->isGroupVisible(kAdvancedGroup),
+                      QStringLiteral("offline Custom group visibility mismatch"));
+    }
+
+    profileError.clear();
+    result.Expect(displayProfiles
+                      && displayProfiles->setProfile(
+                          DisplayViewProfile::advanced(), &profileError),
+                  QStringLiteral("could not restore Advanced profile: %1")
+                      .arg(profileError));
+
+    UASManager *const uasManager = UASManager::instance();
+    VehicleTargetManager *const targetManager = LinkManager::instance()
+        ? LinkManager::instance()->vehicleTargetManager() : nullptr;
+    const bool isolatedVehicleState = uasManager
+        && !uasManager->getActiveUAS() && targetManager
+        && !targetManager->acquireTarget().isValid();
+    result.Expect(isolatedVehicleState,
+                  QStringLiteral("connected visibility audit requires no active UAS "
+                                 "or exact vehicle target"));
+    if (isolatedVehicleState && protocol) {
+        SetupVisibilityAuditLink visibilityLink;
+        UAS plane(protocol, 248);
+        plane.setAutopilotType(MAV_AUTOPILOT_ARDUPILOTMEGA);
+        plane.setSystemType(MAV_TYPE_FIXED_WING);
+        plane.addLink(&visibilityLink);
+
+        const bool attached = QMetaObject::invokeMethod(
+            &setup, "activeUASSet", Qt::DirectConnection,
+            Q_ARG(UASInterface *, static_cast<UASInterface *>(&plane)));
+        result.Expect(attached,
+                      QStringLiteral("could not attach isolated Plane to SetupView"));
+        if (attached) {
+            ExpectVisiblePages(&result, backstage,
+                               ExpectedConnectedPlanePages(),
+                               QStringLiteral("connected Advanced Plane"));
+            result.Expect(backstage->isGroupVisible(kMandatoryGroup)
+                              && backstage->isGroupVisible(kOptionalGroup)
+                              && backstage->isGroupVisible(kAdvancedGroup),
+                          QStringLiteral("connected Advanced Plane group visibility mismatch"));
+        }
+
+        visibilityLink.disconnect();
+        if (attached) {
+            ExpectVisiblePages(&result, backstage, ExpectedOfflinePages(true),
+                               QStringLiteral("disconnected Advanced Plane"));
+            result.Expect(!backstage->isGroupVisible(kMandatoryGroup)
+                              && backstage->isGroupVisible(kOptionalGroup)
+                              && backstage->isGroupVisible(kAdvancedGroup),
+                          QStringLiteral("disconnected Advanced Plane group visibility mismatch"));
+        }
+        const bool detached = QMetaObject::invokeMethod(
+            &setup, "activeUASSet", Qt::DirectConnection,
+            Q_ARG(UASInterface *, static_cast<UASInterface *>(nullptr)));
+        result.Expect(detached,
+                      QStringLiteral("could not detach isolated Plane from SetupView"));
+        result.Expect(visibilityLink.writeCount() == 0,
+                      QStringLiteral("visibility audit unexpectedly wrote to its link"));
+    }
 
     const QStringList groupIds = {
         kMandatoryGroup, kOptionalGroup, kAdvancedGroup
@@ -527,6 +841,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("actionMapTileCache"),
         QStringLiteral("actionDataFlashSpectrogram"),
         QStringLiteral("actionFftAnalysis"),
+        QStringLiteral("actionParameterMetaDataRegeneration"),
         QStringLiteral("actionProximity"),
         QStringLiteral("actionMavlinkDeviceOperations"),
         QStringLiteral("actionTerrain3D"),
@@ -575,6 +890,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("MapTileCacheButton"),
         QStringLiteral("SpectrogramButton"),
         QStringLiteral("FftButton"),
+        QStringLiteral("ParamGenButton"),
         QStringLiteral("ProximityButton")
     };
     QAbstractButton *advancedNavigation = backstage->findChild<QAbstractButton *>(
@@ -671,6 +987,35 @@ int RunSetupRouteRuntimeAudit()
                               && window->viewModel(),
                           QStringLiteral("FFT window is blank or not modeless"));
             delete window;
+        }
+    }
+
+    auto *paramGenAction = main->findChild<QAction *>(
+        QStringLiteral("actionParameterMetaDataRegeneration"));
+    result.Expect(paramGenAction && paramGenAction->isEnabled(),
+                  QStringLiteral("production Param gen action is unavailable offline"));
+    if (paramGenAction) {
+        paramGenAction->trigger();
+        auto *window = main->findChild<ParameterMetaDataRegenerationWindow *>();
+        result.Expect(window && window->isWindow() && window->isVisible()
+                          && window->windowModality() == Qt::NonModal
+                          && SemanticContentScore(window) >= 10,
+                      QStringLiteral("Param gen did not open a concrete modeless window"));
+        if (window) {
+            QPointer<ParameterMetaDataRegenerationService> service(window->service());
+            result.Expect(service && service->parent() == main && !service->busy(),
+                          QStringLiteral("Param gen started without confirmation or has wrong owner"));
+            paramGenAction->trigger();
+            result.Expect(main->findChildren<ParameterMetaDataRegenerationWindow *>().size() == 1,
+                          QStringLiteral("Param gen duplicated its application job observer"));
+            delete window;
+            result.Expect(service && !service->busy(),
+                          QStringLiteral("closing Param gen destroyed its application service"));
+            paramGenAction->trigger();
+            auto *reopened = main->findChild<ParameterMetaDataRegenerationWindow *>();
+            result.Expect(reopened && reopened->service() == service,
+                          QStringLiteral("reopening Param gen lost its service state"));
+            delete reopened;
         }
     }
 

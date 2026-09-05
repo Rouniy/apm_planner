@@ -203,9 +203,17 @@ is `/tmp/apm-graph-speech-setup.irm6Qx/setup-expanded.png`,
 `setup-collapsed.png`, `joystick-route.png`, and `joystick-dialog.png`. The full
 200-test suite passed, and the normal application smoke exited with status 0.
 
-Still required as a separate visibility-matrix regression:
+The Param gen slice adds a production visibility regression before the
+force-visible factory audit: offline Advanced and Basic exact page order,
+Custom/Bluetooth-off independent gating, all three group states, and isolated
+Plane connected/disconnected navigation with zero transport writes. The original
+profile is restored, and no user link or active UAS is modified. Full Qt5/audio
+build and 216/216 tests pass; `/tmp/apm-paramgen.h8Bphz/setup-offline.png` records
+the actual disconnected Advanced surface with Param gen enabled (12/16 tools).
 
-- offline, connected, partial-parameter and advanced-mode visibility;
+Still required beyond that matrix:
+
+- physical-vehicle disconnect and partial-parameter visibility;
 - Copter, Plane, Rover, Heli and tracker profile transitions;
 - fallback selection when profile/vehicle gates hide the current page.
 

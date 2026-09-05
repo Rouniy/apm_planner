@@ -17,6 +17,12 @@ constexpr qint64 kMaximumCatalogBytes = 16 * 1024 * 1024;
 constexpr qint64 kMaximumProvenanceBytes = 64 * 1024;
 constexpr qint64 kTrustedCatalogMaximumAgeSeconds = 7 * 24 * 60 * 60;
 
+QMap<QString, quint64> &cacheRevisions()
+{
+    static QMap<QString, quint64> revisions;
+    return revisions;
+}
+
 struct CatalogCandidate
 {
     QString path;
@@ -95,6 +101,11 @@ ParameterMetaDataSource ParameterMetaDataRepository::sourceForFamily(
 ParameterMetaDataCatalog ParameterMetaDataRepository::catalog(
     ParameterFirmwareFamily family, const QString &firmwareVersion)
 {
+    const quint64 revision = cacheRevisions().value(m_cacheDirectory);
+    if (m_cacheRevision != revision) {
+        clear();
+        m_cacheRevision = revision;
+    }
     const QString key = catalogKey(family, firmwareVersion);
     if (m_attempted.contains(key)) {
         return m_catalogs.value(key);
@@ -115,9 +126,17 @@ ParameterMetaDataCatalog ParameterMetaDataRepository::catalog(
                                normalized});
         }
         const QString latestPath = cacheFilePath(family, QString());
+        const QString regeneratedPath = QDir(m_cacheDirectory).filePath(
+            QStringLiteral("regenerated/") + source.latestVehicleName
+            + QStringLiteral(".pdef.xml"));
+        const bool regeneratedNewer = QFileInfo(regeneratedPath).exists()
+            && (!QFileInfo(latestPath).exists()
+                || QFileInfo(regeneratedPath).lastModified() >= QFileInfo(latestPath).lastModified());
+        if (regeneratedNewer) candidates.append({regeneratedPath, true, QString()});
         if (candidates.isEmpty() || candidates.last().path != latestPath) {
             candidates.append({latestPath, true, QString()});
         }
+        if (!regeneratedNewer) candidates.append({regeneratedPath, true, QString()});
     }
     candidates.append({QDir(m_packagedDirectory).filePath(source.fileName),
                        false, QString()});
@@ -125,6 +144,25 @@ ParameterMetaDataCatalog ParameterMetaDataRepository::catalog(
                            + source.fileName,
                        false, QString()});
 
+    // MP10 resolves metadata per field: vehicle PDEF, SITL, AP_Periph,
+    // generated source. Do not mistake master-derived ranges for exact
+    // versioned firmware constraints.
+    ParameterMetaDataCatalog fallback;
+    if (!m_cacheDirectory.isEmpty()) {
+        const QDir generated(QDir(m_cacheDirectory).filePath(QStringLiteral("regenerated")));
+        for (const auto &product : {QStringLiteral("SITL"), QStringLiteral("AP_Periph")}) {
+            QString ignored;
+            const ParameterMetaDataSource supplemental{product + QStringLiteral(".pdef.xml"),
+                                                       product, product, product};
+            const auto loaded = loadCatalogFile(generated.filePath(supplemental.fileName),
+                                                 supplemental, true, &ignored);
+            fallback = fallback.withFallback(loaded);
+        }
+        QString ignored;
+        fallback = fallback.withFallback(loadCatalogFile(
+            generated.filePath(QStringLiteral("generated-source.pdef.xml")),
+            source, true, &ignored));
+    }
     QStringList errors;
     for (const auto &candidate : candidates) {
         QString loadError;
@@ -133,10 +171,12 @@ ParameterMetaDataCatalog ParameterMetaDataRepository::catalog(
             candidate.path, source, candidate.requireSubstantialCatalog,
             &loadError, &catalogBytes);
         if (loaded.isValid()) {
-            m_catalogs.insert(key, loaded);
+            bool advisoryRange = false;
+            const auto merged = loaded.withFallback(fallback, &advisoryRange);
+            m_catalogs.insert(key, merged);
             QDateTime fetchedAtUtc;
             const bool matchesFirmwareVersion =
-                !candidate.exactFirmwareVersion.isEmpty()
+                !advisoryRange && !candidate.exactFirmwareVersion.isEmpty()
                 && cacheProvenanceIsValid(
                     family, candidate.exactFirmwareVersion,
                     &fetchedAtUtc, &catalogBytes)
@@ -148,10 +188,15 @@ ParameterMetaDataCatalog ParameterMetaDataRepository::catalog(
                 m_versionMatchedCatalogs.remove(key);
             }
             m_errors.remove(key);
-            return loaded;
+            return merged;
         }
         errors.append(QStringLiteral("%1: %2")
                           .arg(candidate.path, loadError));
+    }
+    if (fallback.isValid()) {
+        m_catalogs.insert(key, fallback);
+        m_errors.remove(key);
+        return fallback;
     }
     m_errors.insert(key, errors.join(QStringLiteral("; ")));
     return {};
@@ -251,6 +296,7 @@ bool ParameterMetaDataRepository::installCatalog(
         provenanceFile.commit();
     }
 
+    invalidateSharedCache(m_cacheDirectory);
     clear(family);
     return true;
 }
@@ -287,9 +333,16 @@ bool ParameterMetaDataRepository::cachedCatalogIsFresh(
 bool ParameterMetaDataRepository::catalogMatchesFirmwareVersion(
     ParameterFirmwareFamily family, const QString &firmwareVersion) const
 {
-    return !normalizedVersion(firmwareVersion).isEmpty()
+    return m_cacheRevision == cacheRevisions().value(m_cacheDirectory)
+        && !normalizedVersion(firmwareVersion).isEmpty()
         && m_versionMatchedCatalogs.contains(
             catalogKey(family, firmwareVersion));
+}
+
+void ParameterMetaDataRepository::invalidateSharedCache(const QString &cacheDirectory)
+{
+    if (!cacheDirectory.trimmed().isEmpty())
+        ++cacheRevisions()[QDir::cleanPath(cacheDirectory)];
 }
 
 QString ParameterMetaDataRepository::cacheFilePath(
@@ -361,7 +414,8 @@ ParameterMetaDataCatalog ParameterMetaDataRepository::loadCatalogFile(
     buffer.setData(xml);
     buffer.open(QIODevice::ReadOnly);
     const ParameterMetaDataCatalog loaded =
-        ParameterMetaDataCatalog::fromPdef(&buffer, source.vehicleName);
+        ParameterMetaDataCatalog::fromPdef(&buffer, source.vehicleName,
+            source.vehicleName != QLatin1String("SITL"));
     if (error) {
         if (!loaded.isValid()) {
             *error = loaded.errorString();

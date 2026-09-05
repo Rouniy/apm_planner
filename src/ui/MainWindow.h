@@ -79,6 +79,7 @@ class QGCMapTool;
 class MAVLinkInspectorWindow;
 class HelpView;
 class SetupView;
+class ParameterMetaDataRegenerationService;
 
 /**
  * @brief The LogWindowSingleton class is a helper class providing
@@ -568,6 +569,9 @@ private:
     void closeMavlinkInspectorWindows();
     void closeLogDownloadWindows();
     void closeFftAnalysisWindows();
+    void showParameterMetaDataRegeneration();
+    void closeParameterMetaDataRegeneration();
+    QPointer<ParameterMetaDataRegenerationService> m_parameterMetaDataRegeneration;
     void pruneMavlinkInspectorWindows();
 
     bool m_heartbeatEnabled;
