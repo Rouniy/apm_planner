@@ -615,6 +615,8 @@ set(SOURCES
     src/ui/Loghandling/TelemetryLogAnonymizer.cpp
     src/ui/AnonLogWindow.cpp
     src/services/WarningEngine.cpp
+    src/services/DeveloperVehicleToolService.cpp
+    src/services/DeveloperVehicleToolService.h
     src/services/WarningTelemetrySource.cpp
     src/ui/WarningManagerWindow.cpp
     src/ui/MavlinkSigningWindow.cpp
@@ -1697,6 +1699,8 @@ if(BUILD_TESTING)
         tests/SetupRouteRuntimeAudit.h
         tests/SigningTransportRuntimeAudit.cpp
         tests/SigningTransportRuntimeAudit.h
+        tests/DeveloperVehicleToolRuntimeAudit.cpp
+        tests/DeveloperVehicleToolRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1724,6 +1728,11 @@ if(BUILD_TESTING)
     add_test(NAME signing_transport_runtime_tests
         COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --signing-transport-audit)
     set_tests_properties(signing_transport_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 30)
+    add_test(NAME developer_vehicle_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --developer-vehicle-tools-audit)
+    set_tests_properties(developer_vehicle_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 30)
 
@@ -3815,6 +3824,27 @@ if(BUILD_TESTING)
     add_test(NAME developertoolparsers_tests
         COMMAND developertoolparsers_tests)
 
+    add_library(developer_vehicle_tool_test_support STATIC
+        src/services/DeveloperVehicleToolService.cpp
+        src/services/DeveloperVehicleToolService.h
+        src/comm/ParameterService.cpp
+        src/comm/VehicleCommandService.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleTargetManager.cpp
+        src/comm/SwarmTelemetryRegistry.cpp)
+    target_include_directories(developer_vehicle_tool_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(developer_vehicle_tool_test_support PUBLIC
+        apm_parameter_core Qt::Core)
+    add_executable(developervehicletoolservice_tests tests/test_developervehicletoolservice.cpp)
+    target_link_libraries(developervehicletoolservice_tests PRIVATE
+        developer_vehicle_tool_test_support Qt::Test)
+    add_test(NAME developervehicletoolservice_tests COMMAND developervehicletoolservice_tests)
+    set_tests_properties(developervehicletoolservice_tests PROPERTIES TIMEOUT 60)
+
     add_executable(configdevelopertoolsview_tests
         tests/test_configdevelopertoolsview.cpp
         src/ui/configuration/ActionPageView.cpp
@@ -3830,6 +3860,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(configdevelopertoolsview_tests PRIVATE
+        developer_vehicle_tool_test_support
         Qt::Core
         Qt::Widgets
         Qt::Test

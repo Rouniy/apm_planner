@@ -798,7 +798,9 @@ void SetupView::buildPages()
     developerTools.isAdvanced = true;
     developerTools.allowsPartialParameters = true;
     developerTools.factory = [this](QWidget *parent) {
-        return new ConfigDeveloperToolsView(window(), parent);
+        auto *page = new ConfigDeveloperToolsView(window(), parent);
+        page->setVehicleToolService(LinkManager::instance()->developerVehicleToolService());
+        return page;
     };
     m_backstage->addPage(developerTools);
     m_backstage->addPage(configMavCommandBackstagePage());

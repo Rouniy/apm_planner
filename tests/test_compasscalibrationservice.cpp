@@ -1131,8 +1131,10 @@ void CompassCalibrationServiceTest::commandTimeoutPoisonsWhileActivityAndTotalWa
     {
         Fixture fixture;
         const VehicleTargetLease lease = fixture.select();
+        QVERIFY(!fixture.service.blocksDeveloperTools(lease));
         fixture.service.setTimeoutsForTesting(20, 500, 500);
         fixture.service.start(lease, false);
+        QVERIFY(fixture.service.blocksDeveloperTools(lease));
         QTRY_COMPARE_WITH_TIMEOUT(
             fixture.service.state(),
             CompassCalibrationService::State::OutcomeUncertain, 200);
@@ -1148,6 +1150,7 @@ void CompassCalibrationServiceTest::commandTimeoutPoisonsWhileActivityAndTotalWa
                  CompassCalibrationService::State::Idle);
         // The old START ACK is still un-tokenized on the wire; the physical
         // endpoint remains poisoned even after a confirmed cancel.
+        QVERIFY(fixture.service.blocksDeveloperTools(lease));
         QCOMPARE(fixture.service.start(lease, false),
                  CompassCalibrationService::RequestResult::OutcomeUncertain);
         fixture.select(10, 77, 1);

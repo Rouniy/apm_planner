@@ -117,6 +117,9 @@ public:
         QVariant value;
         ParameterType type = ParameterType::Unknown;
         bool force = false;
+        // Optional operation-specific gate, run immediately before every
+        // initial/retry write. False cancels without an additional frame.
+        std::function<bool(QString *)> validateBeforeWrite;
     };
 
     struct ExactOperationToken
@@ -495,6 +498,7 @@ private:
         int maximumAttempts = 1 + DefaultExactReadMaximumRetries;
         qint64 absoluteDeadlineMs = 0;
         bool frameAttempted = false;
+        std::function<bool(QString *)> validateBeforeWrite;
     };
 
     struct ExactCachedValue
@@ -608,7 +612,8 @@ private:
         ParameterType type,
         bool force,
         ExactOperationToken *operationOut,
-        QString *error);
+        QString *error,
+        std::function<bool(QString *)> validateBeforeWrite = {});
     ExactSubmitResult transmitExactOperation();
     void scheduleExactRetry();
     void handleExactRetryTimeout();

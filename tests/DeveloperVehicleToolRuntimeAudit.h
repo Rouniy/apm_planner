@@ -1,0 +1,4 @@
+#ifndef DEVELOPERVEHICLETOOLRUNTIMEAUDIT_H
+#define DEVELOPERVEHICLETOOLRUNTIMEAUDIT_H
+int RunDeveloperVehicleToolRuntimeAudit();
+#endif

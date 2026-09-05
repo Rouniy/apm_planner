@@ -668,7 +668,7 @@ ParameterService::ExactSubmitResult ParameterService::submitExactWrite(
     return submitExactOperation(
         reservation, exactInstance(lease), ExactOperationKind::Write,
         request.name, request.value, request.type, request.force,
-        operationOut, error);
+        operationOut, error, request.validateBeforeWrite);
 }
 
 ParameterService::ExactSubmitResult ParameterService::submitComponentRead(
@@ -694,7 +694,7 @@ ParameterService::ExactSubmitResult ParameterService::submitComponentWrite(
     return submitExactOperation(
         reservation, exactInstance(lease), ExactOperationKind::Write,
         request.name, request.value, request.type, request.force,
-        operationOut, error);
+        operationOut, error, request.validateBeforeWrite);
 }
 
 void ParameterService::retireExactVehicle(
@@ -2253,7 +2253,8 @@ ParameterService::submitExactOperation(
     ParameterType type,
     bool force,
     ExactOperationToken *operationOut,
-    QString *error)
+    QString *error,
+    std::function<bool(QString *)> validateBeforeWrite)
 {
     if (operationOut) {
         *operationOut = ExactOperationToken();
@@ -2523,6 +2524,7 @@ ParameterService::submitExactOperation(
     m_exactApiInFlight = false;
 
     PendingExactOperation operation;
+    operation.validateBeforeWrite = std::move(validateBeforeWrite);
     operation.token.operationId = nextExactOperationId();
     operation.token.reservationId = reservation.reservationId;
     if (componentLease) {
@@ -2642,6 +2644,36 @@ ParameterService::transmitExactOperation()
                     "The exact parameter write maximum lifetime expired before its first transmission."),
             frameAttempted);
         return ExactSubmitResult::Started;
+    }
+    if (write && m_exactOperation.validateBeforeWrite) {
+        QPointer<ParameterService> serviceGuard(this);
+        const auto validate = m_exactOperation.validateBeforeWrite;
+        QString reason;
+        const bool currentLease = exactLeaseIsCurrent(operationLease);
+        if (!serviceGuard) return ExactSubmitResult::ContextUnavailable;
+        if (!m_exactOperationActive || m_exactOperation.token.operationId != operationId)
+            return ExactSubmitResult::Started;
+        // Operation safety is the last application callback: running another
+        // injected validator afterwards could arm/retarget the vehicle again.
+        const bool allowed = currentLease && validate(&reason);
+        if (!serviceGuard) return ExactSubmitResult::ContextUnavailable;
+        if (!m_exactOperationActive || m_exactOperation.token.operationId != operationId)
+            return ExactSubmitResult::Started;
+        const auto reservation = m_exactReservations.constFind(
+            m_exactOperation.token.reservationId);
+        if (!allowed || reservation == m_exactReservations.cend()
+            || reservation->closing || reservation->owner.isNull()
+            || !exactReservationTargetIsCurrent(*reservation)) {
+            const bool uncertain = m_exactOperation.frameAttempted;
+            finishExactOperation(uncertain
+                    ? ExactTerminalResult::WriteCancelledOutcomeUncertain
+                    : ExactTerminalResult::Rejected,
+                QVariant(), ParameterType::Unknown,
+                reason.isEmpty() ? QStringLiteral("The write safety condition changed; no additional frame was sent.")
+                                 : reason,
+                uncertain);
+            return ExactSubmitResult::Started;
+        }
     }
     ++m_exactOperation.attempts;
     const bool priorFrameAttempted = m_exactOperation.frameAttempted;

@@ -76,6 +76,8 @@ private slots:
     void targetChangeDuringRouteValidationFailsClosed();
     void targetSwitchRetiresWaitingOperationBeforeLateReply();
     void retryUsesCapturedSingleVehiclePolicy();
+    void operationWriteGate_data();
+    void operationWriteGate();
 };
 
 void ParameterServiceSingleVehicleTest::singlePolicyDoesNotWeakenSwarmRoute()
@@ -299,6 +301,65 @@ void ParameterServiceSingleVehicleTest::retryUsesCapturedSingleVehiclePolicy()
              ParameterService::ExactTerminalResult::ReadTransportFailure);
     QVERIFY(reportAt(finished, 0).description.contains(
         QStringLiteral("Single route retired")));
+    QVERIFY(service.releaseExactReservation(reservation));
+}
+
+void ParameterServiceSingleVehicleTest::operationWriteGate_data()
+{
+    QTest::addColumn<bool>("allowInitial");
+    QTest::newRow("refuse-initial") << false;
+    QTest::newRow("refuse-retry") << true;
+}
+
+void ParameterServiceSingleVehicleTest::operationWriteGate()
+{
+    QFETCH(bool, allowInitial);
+    VehicleTargetManager targets;
+    int transmissions = 0;
+    ExactLinkTransmitter transmitter([&](int, const QByteArray &) {
+        ++transmissions;
+        return true;
+    });
+    ParameterService service(&targets, &transmitter);
+    service.setExactRetryPolicyForTesting(10, 2, 10, 2, 100, 100);
+    const auto vehicle = endpoint(15, 50);
+    const auto lease = instanceLease(vehicle, 12, 14);
+    QVERIFY(targets.observeEndpoint(vehicle, true));
+    QVERIFY(service.configureExactTransactions(
+        [&](const SwarmVehicleInstanceLease &candidate) { return candidate.sameInstance(lease); },
+        [](const SwarmVehicleInstanceLease &, QString *) { return false; }));
+    QVERIFY(service.configureSingleVehicleExactRoute(
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; }));
+    QObject owner;
+    ParameterService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveSingleVehicleEndpoint(&owner, targets.acquireTarget(), lease, &reservation),
+             ParameterService::ExactReservationResult::Reserved);
+    ParameterService::ExactWriteRequest request;
+    request.name = QStringLiteral("TEST_GATE");
+    request.type = ParameterType::Int32;
+    request.value = 15;
+    request.force = true;
+    int gateCalls = 0;
+    request.validateBeforeWrite = [&](QString *error) {
+        ++gateCalls;
+        if (allowInitial && gateCalls == 1) return true;
+        *error = QStringLiteral("Disarmed snapshot expired");
+        return false;
+    };
+    QSignalSpy finished(&service, &ParameterService::exactOperationFinished);
+    QCOMPARE(service.submitExactWrite(reservation, lease, request),
+             ParameterService::ExactSubmitResult::Started);
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 250);
+    QCOMPARE(transmissions, allowInitial ? 1 : 0);
+    QCOMPARE(gateCalls, allowInitial ? 2 : 1);
+    const auto report = reportAt(finished, 0);
+    QCOMPARE(report.frameAttempted, allowInitial);
+    QCOMPARE(report.terminalResult, allowInitial
+        ? ParameterService::ExactTerminalResult::WriteCancelledOutcomeUncertain
+        : ParameterService::ExactTerminalResult::Rejected);
+    QCOMPARE(report.description, QStringLiteral("Disarmed snapshot expired"));
+    QTest::qWait(30);
+    QCOMPARE(transmissions, allowInitial ? 1 : 0);
     QVERIFY(service.releaseExactReservation(reservation));
 }
 

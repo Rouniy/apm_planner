@@ -68,6 +68,7 @@ class GuidedTargetService;
 class MovingBasePositionStore;
 class MovingBaseService;
 class CompassCalibrationService;
+class DeveloperVehicleToolService;
 class ExactLinkTransmitter;
 class ExactLogTransferService;
 class UDPLink;
@@ -120,6 +121,7 @@ public:
     MovingBasePositionStore *movingBasePositionStore() const;
     MovingBaseService *movingBaseService() const;
     CompassCalibrationService *compassCalibrationService() const;
+    DeveloperVehicleToolService *developerVehicleToolService() const;
     ParameterService *parameterService() const;
     MavlinkComponentRegistry *componentRegistry() const;
     Px4FlowService *px4FlowService() const;
@@ -280,6 +282,7 @@ private:
     MovingBasePositionStore *m_movingBasePositionStore = nullptr;
     MovingBaseService *m_movingBaseService = nullptr;
     CompassCalibrationService *m_compassCalibrationService = nullptr;
+    DeveloperVehicleToolService *m_developerVehicleToolService = nullptr;
     ParameterService *m_parameterService = nullptr;
     MavlinkComponentRegistry *m_componentRegistry = nullptr;
     Px4FlowService *m_px4FlowService = nullptr;

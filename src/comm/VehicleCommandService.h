@@ -77,6 +77,10 @@ public:
         // absolute lifetime is captured at submission and is never extended
         // by MAV_RESULT_IN_PROGRESS acknowledgements.
         int maximumLifetimeMs = 0;
+        // Optional operation-specific safety gate, run once immediately
+        // before the command waiter and frame are created. Returning false
+        // rejects the command without transmission.
+        std::function<bool(QString *)> validateBeforeWrite;
     };
 
     struct ExactCommandToken
@@ -168,12 +172,20 @@ public:
     bool configureExactTransactions(
         ExactLeaseValidator leaseValidator,
         ExactRouteValidator routeValidator);
+    bool configureSingleVehicleExactRoute(
+        ExactRouteValidator routeValidator);
     void setExactCommandTimeoutForTesting(int timeoutMs);
     void setExactQuarantineForTesting(int timeoutMs);
 
     ExactReservationResult reserveExactEndpoints(
         QObject *owner,
         const QList<SwarmVehicleInstanceLease> &leases,
+        ExactReservationToken *reservationOut,
+        QString *error = nullptr);
+    ExactReservationResult reserveSingleVehicleEndpoint(
+        QObject *owner,
+        const VehicleTargetLease &target,
+        const SwarmVehicleInstanceLease &lease,
         ExactReservationToken *reservationOut,
         QString *error = nullptr);
     bool releaseExactReservation(const ExactReservationToken &reservation);
@@ -231,6 +243,12 @@ signals:
     void exactReservationReleased(qulonglong reservationId);
 
 private:
+    enum class ExactReservationPolicy
+    {
+        Swarm,
+        SingleVehicle
+    };
+
     struct SenderIdentity
     {
         VehicleEndpoint endpoint;
@@ -242,6 +260,8 @@ private:
     {
         QPointer<QObject> owner;
         QList<SwarmVehicleInstanceLease> leases;
+        VehicleTargetLease target;
+        ExactReservationPolicy policy = ExactReservationPolicy::Swarm;
         bool closing = false;
         QMetaObject::Connection ownerDestroyedConnection;
     };
@@ -268,8 +288,15 @@ private:
 
     bool targetIsCurrent(const VehicleTargetLease &target) const;
     bool leaseIsCurrent(const SwarmVehicleInstanceLease &lease) const;
-    bool routeIsEligible(const SwarmVehicleInstanceLease &lease,
-                         QString *error) const;
+    bool reservationTargetIsCurrent(
+        const ExactReservationRecord &reservation) const;
+    ExactReservationResult reserveExactEndpointsWithPolicy(
+        QObject *owner,
+        const QList<SwarmVehicleInstanceLease> &leases,
+        ExactReservationPolicy policy,
+        const VehicleTargetLease &target,
+        ExactReservationToken *reservationOut,
+        QString *error);
     bool reservationContains(
         const ExactReservationRecord &reservation,
         const SwarmVehicleInstanceLease &lease) const;
@@ -292,6 +319,7 @@ private:
     void scheduleQuarantineExpiry();
     void handleExactDeadline();
     void handleQuarantineExpiry();
+    void handleTargetGenerationChanged(qulonglong generation);
     void handleExactOwnerDestroyed(quint64 reservationId);
     void finishExactCommand(
         quint64 transactionId, ExactTerminalResult result,
@@ -315,6 +343,7 @@ private:
     QHash<quint64, QHash<quint16, SenderIdentity>> m_pendingCommands;
     ExactLeaseValidator m_exactLeaseValidator;
     ExactRouteValidator m_exactRouteValidator;
+    ExactRouteValidator m_singleVehicleExactRouteValidator;
     QHash<quint64, ExactReservationRecord> m_exactReservations;
     QHash<VehicleEndpoint, quint64> m_exactEndpointReservations;
     QHash<quint64, PendingExactCommand> m_pendingExactCommands;
@@ -327,6 +356,7 @@ private:
     quint64 m_nextExactTransactionId = 0;
     int m_exactCommandTimeoutMs = DefaultExactCommandTimeoutMs;
     int m_exactQuarantineMs = DefaultExactQuarantineMs;
+    bool m_exactApiInFlight = false;
     quint8 m_localSystemId = 255;
     quint8 m_localComponentId = MAV_COMP_ID_MISSIONPLANNER;
 };

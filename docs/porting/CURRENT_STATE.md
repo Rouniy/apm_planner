@@ -24,7 +24,51 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): **Guarded initial MAVLink Signing provisioning**.
+Latest slice (2026-09-05): **Six exact single-vehicle Developer actions**.
+TOOLS → Developer Tools and the shared SETUP page now wire Set QNH, Adjust
+Barometer Altitude, Force Accel Calibrated, Force Compass Calibrated, Reboot
+Vehicle and Reboot to DFU. The exact inventory stays32: **11 working actions,
+21 unavailable**, not a completed Developer page. Pressure uses REAL32
+GND_ABS_PRESS or the capability-gated BARO1_GND_PRESS fallback and the MP10
+11.1 Pa/m formula. These are ground-reference recovery tools, not certified
+sea-level QNH or normal sensor calibration. DFU preserves42/24/71/99, not the
+different hold-in-bootloader command; absent ACK/link loss remains uncertain.
+
+One application-owned service captures target generation, physical session,
+vehicle instance, fresh disarmed ArduPilot heartbeat and complete parameter
+records before any default-Cancel prompt. It revalidates before each possible
+write. Pressure holds both command and parameter lanes; active/uncertain
+compass calibration blocks admission. Command reservations have a separate
+single-vehicle route policy, with no broadening of Swarm routes. Closing the
+page cancels consent, but not an admitted application's terminal waiter.
+
+Qt5/audio build and **239/239 tests pass (29.59 seconds)**; focused7/7 pass.
+New coverage includes wire payloads, REAL32 refusal, stale/armed/target-ABA and
+parameter/capability snapshots, callback reentrancy, retry gates, lane ownership,
+Cancel/Yes, page close/reopen, synchronous replies and shutdown. Initial checks
+found test compile mistakes, stale text assertions and a runtime fixture racing
+the existing6-second PARAM traffic fence; these were corrected without reducing
+the production fence. Claude TCP c168/c170 and three Codex streams reviewed or
+implemented independent parts; root scheduled all builds/tests.
+
+The actual production Tools route passes both offscreen and X11 with isolated
+in-process sys234: all six Cancel paths emit no change, confirmed actions emit
+two exact pressure writes and four exact commands, with matched echo/ACK results
+and clean fixture removal/shutdown (exit0). It opens no telemetry socket and
+never changes the network SITL. The fixture's DFU ACK is synthetic route evidence,
+not proof of physical DFU support. Evidence: `/tmp/apm-developer-vehicle.Nwtyz6/`
+(`full.log`, `focused-3.log`, `x11.log`, `developer-x11.png`). Native platforms,
+physical recovery actions and reference visual parity remain unverified.
+
+Next useful offline slice: Extract GPS Corrections, with TlogReader, bounded
+asynchronous extraction and atomic output; reference semantics are concatenated
+GPS_INJECT_DATA/GPS_RTCM_DATA payloads, not RTCM fragment reassembly. Signing
+rekey/disable/reconciliation also remains open. Settings/CONFIG follows Tools;
+Swarm remains last. Advanced14 complete+1 partial, fixedTools24 plus Signing
+extension, SETUP46/eight absent reference routes and CONFIG15/15 factories with
+Planner21/64 controls are unchanged. See `DEVELOPER_VEHICLE_TOOLS.md`.
+
+Previous slice (2026-09-05): **Guarded initial MAVLink Signing provisioning**.
 TOOLS and SETUP Advanced share `MAVLink Signing — Keys and initial setup…`.
 The working partial tool now sends one SETUP_SIGNING to an operator-known
 unprovisioned, fresh disarmed exact ArduPilot target on a private dedicated

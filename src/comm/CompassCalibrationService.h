@@ -116,6 +116,7 @@ public:
     quint8 calibrationMask() const { return m_calibrationMask; }
     quint8 manualAcceptMask() const { return m_manualAcceptMask; }
     bool isOnboardActive() const;
+    bool blocksDeveloperTools(const VehicleTargetLease &target) const;
     bool canCancel() const;
     bool isBusy() const;
     bool isMotorActive() const;

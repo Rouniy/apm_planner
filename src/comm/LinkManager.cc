@@ -36,6 +36,7 @@ This file is part of the APM_PLANNER project
 #include "SwarmCommandService.h"
 #include "SwarmTelemetryRegistry.h"
 #include "services/SwarmSequenceExecutor.h"
+#include "services/DeveloperVehicleToolService.h"
 #include "services/SwarmWaypointLeaderExecutor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
@@ -262,6 +263,11 @@ LinkManager::LinkManager(QObject *parent) :
                 return exactVehicleRouteIsEligible(lease, error);
             });
     Q_ASSERT(exactCommandsConfigured);
+    const bool singleCommandsConfigured = m_vehicleCommandService->configureSingleVehicleExactRoute(
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
+        });
+    Q_ASSERT(singleCommandsConfigured);
     connect(m_swarmTelemetryRegistry,
             &SwarmTelemetryRegistry::endpointRetired,
             m_vehicleCommandService,
@@ -307,6 +313,16 @@ LinkManager::LinkManager(QObject *parent) :
                 return singleVehicleParameterRouteIsEligible(lease, error);
             });
     Q_ASSERT(singleVehicleParametersConfigured);
+    m_developerVehicleToolService = new DeveloperVehicleToolService(
+        m_vehicleTargetManager, m_swarmTelemetryRegistry, m_parameterService,
+        m_vehicleCommandService,
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            if (m_compassCalibrationService->blocksDeveloperTools(m_vehicleTargetManager->acquireTarget())) {
+                if (error) *error = tr("Compass calibration is active or its outcome is uncertain. Resolve it in the calibration page first.");
+                return false;
+            }
+            return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
+        }, this);
     connect(m_swarmTelemetryRegistry,
             &SwarmTelemetryRegistry::endpointRetired,
             m_parameterService,
@@ -652,6 +668,7 @@ void LinkManager::shutdown()
     // Flush any open MAVFTP session while exact-link lookup and the physical
     // transport are still available. No terminal signal is needed during
     // application shutdown.
+    m_developerVehicleToolService->shutdown();
     m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
     m_exactLogTransferService->shutdown();
@@ -1083,6 +1100,11 @@ MovingBaseService *LinkManager::movingBaseService() const
 CompassCalibrationService *LinkManager::compassCalibrationService() const
 {
     return m_compassCalibrationService;
+}
+
+DeveloperVehicleToolService *LinkManager::developerVehicleToolService() const
+{
+    return m_developerVehicleToolService;
 }
 
 ParameterService *LinkManager::parameterService() const

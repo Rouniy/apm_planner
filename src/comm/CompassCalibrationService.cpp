@@ -197,6 +197,14 @@ bool CompassCalibrationService::isBusy() const
     }
 }
 
+bool CompassCalibrationService::blocksDeveloperTools(const VehicleTargetLease &target) const
+{
+    // A separate recovery command must not impersonate a calibration ACK or
+    // bypass an endpoint whose prior calibration outcome remains uncertain.
+    return isBusy() || isOnboardActive() || m_motorMayBeActive
+        || (target.isValid() && m_poisonedEndpoints.contains(target.endpoint));
+}
+
 bool CompassCalibrationService::isMotorState(State state)
 {
     switch (state) {

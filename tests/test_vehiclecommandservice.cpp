@@ -124,6 +124,10 @@ private slots:
     void exactOwnerDetachAndLeaseRetirementDrainSafely();
     void exactWriterFailureIsTerminalOutcomeUncertain();
     void exactSigningRejectionBeforeWriterIsDefinite();
+    void singleVehicleReservationUsesDedicatedRouteAndExactAck();
+    void singleVehicleSelectionAbaAndSwarmIsolation();
+    void singleVehicleCallbacksFailClosedBeforeWriter();
+    void singleVehicleOwnerDetachAndTargetRetirementDrainSafely();
 };
 
 void VehicleCommandServiceTest::commandLongUsesOnlyTheExactSelectedEndpoint()
@@ -756,6 +760,15 @@ exactEndpointReservationAndPendingCommandAreExclusive()
                  &secondOwner, active, &rejectedReservation),
              VehicleCommandService::ExactReservationResult::Busy);
 
+    // Reservation ownership alone, before an exact command becomes pending,
+    // excludes every legacy command on the same endpoint.
+    QCOMPARE(service.sendCommandLong(
+                 targets.acquireTarget(), 250, 190,
+                 MAV_CMD_NAV_RETURN_TO_LAUNCH, 0,
+                 0, 0, 0, 0, 0, 0, 0),
+             VehicleCommandService::SendResult::TransportUnavailable);
+    QCOMPARE(frames.size(), 0);
+
     QCOMPARE(service.submitExactCommandLong(
                  reservation, lease,
                  exactRequest(MAV_CMD_COMPONENT_ARM_DISARM)),
@@ -1097,6 +1110,438 @@ exactSigningRejectionBeforeWriterIsDefinite()
     QCOMPARE(reportAt(finished, 1).terminalResult,
              VehicleCommandService::ExactTerminalResult::
                  AcknowledgedAccepted);
+}
+
+void VehicleCommandServiceTest::
+singleVehicleReservationUsesDedicatedRouteAndExactAck()
+{
+    VehicleTargetManager targets;
+    QVector<CapturedFrame> frames;
+    ExactLinkTransmitter transmitter(
+        [&frames](int linkId, const QByteArray &bytes) {
+            frames.append({linkId, bytes});
+            return true;
+        });
+    VehicleCommandService service(&targets, &transmitter);
+    service.setLocalIdentity(250, 190);
+    const SwarmVehicleInstanceLease lease =
+        swarmLease(51, 73, 1, 9, 17);
+    QList<SwarmVehicleInstanceLease> active{lease};
+    int swarmRouteCalls = 0;
+    int singleRouteCalls = 0;
+    bool attemptReconfigure = false;
+    bool reconfigureResult = true;
+    bool safeToWrite = true;
+    bool becomeUnsafeInRoute = false;
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [&swarmRouteCalls](const SwarmVehicleInstanceLease &, QString *) {
+            ++swarmRouteCalls;
+            return false;
+        }));
+    QVERIFY(service.configureSingleVehicleExactRoute(
+        [&service, &singleRouteCalls, &attemptReconfigure,
+         &reconfigureResult, &safeToWrite, &becomeUnsafeInRoute](
+            const SwarmVehicleInstanceLease &, QString *) {
+            ++singleRouteCalls;
+            if (attemptReconfigure) {
+                attemptReconfigure = false;
+                reconfigureResult =
+                    service.configureSingleVehicleExactRoute(
+                        [](const SwarmVehicleInstanceLease &, QString *) {
+                            return false;
+                        });
+            }
+            if (becomeUnsafeInRoute) {
+                becomeUnsafeInRoute = false;
+                safeToWrite = false;
+            }
+            return true;
+        }));
+    QVERIFY(targets.observeEndpoint(lease.endpoint, true));
+    const VehicleTargetLease target = targets.acquireTarget();
+    QVERIFY(target.isValid());
+    QVERIFY(targets.isTargetGenerationSettled());
+
+    QObject owner;
+    VehicleCommandService::ExactReservationToken reservation;
+    attemptReconfigure = true;
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 &owner, target, lease, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QVERIFY(!reconfigureResult);
+    QCOMPARE(swarmRouteCalls, 0);
+    QVERIFY(singleRouteCalls >= 1);
+
+    auto routeChangedSafety =
+        exactRequest(MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN);
+    routeChangedSafety.validateBeforeWrite =
+        [&safeToWrite](QString *) { return safeToWrite; };
+    becomeUnsafeInRoute = true;
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease, routeChangedSafety),
+             VehicleCommandService::ExactSubmitResult::RouteUnavailable);
+    QCOMPARE(frames.size(), 0);
+    safeToWrite = true;
+
+    int safetyCalls = 0;
+    auto request = exactRequest(MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN);
+    request.params = {1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F};
+    request.validateBeforeWrite = [&safetyCalls](QString *) {
+        ++safetyCalls;
+        return true;
+    };
+    QSignalSpy finished(
+        &service, &VehicleCommandService::exactCommandFinished);
+    VehicleCommandService::ExactCommandToken commandToken;
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease, request, &commandToken),
+             VehicleCommandService::ExactSubmitResult::Started);
+    QVERIFY(commandToken.isValid());
+    QCOMPARE(safetyCalls, 1);
+    QCOMPARE(swarmRouteCalls, 0);
+    QCOMPARE(frames.size(), 1);
+    QCOMPARE(frames.first().linkId, lease.endpoint.linkId);
+
+    // Link, source component, and acknowledgement target all belong to the
+    // immutable command envelope; near matches cannot complete it.
+    service.observeMessage(
+        lease.endpoint.linkId + 1,
+        commandAck(lease.endpoint.systemId, lease.endpoint.componentId,
+                   request.command, MAV_RESULT_ACCEPTED));
+    service.observeMessage(
+        lease.endpoint.linkId,
+        commandAck(lease.endpoint.systemId,
+                   lease.endpoint.componentId + 1,
+                   request.command, MAV_RESULT_ACCEPTED));
+    service.observeMessage(
+        lease.endpoint.linkId,
+        commandAck(lease.endpoint.systemId, lease.endpoint.componentId,
+                   request.command, MAV_RESULT_ACCEPTED, 249, 190));
+    QCOMPARE(finished.count(), 0);
+
+    service.observeMessage(
+        lease.endpoint.linkId,
+        commandAck(lease.endpoint.systemId, lease.endpoint.componentId,
+                   request.command, MAV_RESULT_ACCEPTED));
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(reportAt(finished, 0).token.transactionId,
+             commandToken.transactionId);
+    QCOMPARE(reportAt(finished, 0).terminalResult,
+             VehicleCommandService::ExactTerminalResult::
+                 AcknowledgedAccepted);
+    QVERIFY(service.releaseExactReservation(reservation));
+}
+
+void VehicleCommandServiceTest::
+singleVehicleSelectionAbaAndSwarmIsolation()
+{
+    VehicleTargetManager targets;
+    QVector<CapturedFrame> frames;
+    ExactLinkTransmitter transmitter(
+        [&frames](int linkId, const QByteArray &bytes) {
+            frames.append({linkId, bytes});
+            return true;
+        });
+    VehicleCommandService service(&targets, &transmitter);
+    service.setLocalIdentity(250, 190);
+    const SwarmVehicleInstanceLease first =
+        swarmLease(52, 74, 1, 4, 20);
+    const VehicleEndpoint alternate = endpoint(53, 75, 1);
+    const QList<SwarmVehicleInstanceLease> active{first};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QVERIFY(service.configureSingleVehicleExactRoute(
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QVERIFY(targets.observeEndpoint(first.endpoint, true));
+    QVERIFY(targets.observeEndpoint(alternate));
+
+    const VehicleTargetLease staleA = targets.acquireTarget();
+    QVERIFY(targets.selectTarget(
+        alternate.linkId, alternate.systemId, alternate.componentId));
+    QVERIFY(targets.selectTarget(
+        first.endpoint.linkId, first.endpoint.systemId,
+        first.endpoint.componentId));
+    QObject owner;
+    VehicleCommandService::ExactReservationToken singleReservation;
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 &owner, staleA, first, &singleReservation),
+             VehicleCommandService::ExactReservationResult::StaleLease);
+
+    const VehicleTargetLease freshA = targets.acquireTarget();
+    QSignalSpy released(
+        &service, &VehicleCommandService::exactReservationReleased);
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 &owner, freshA, first, &singleReservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QVERIFY(targets.selectTarget(
+        alternate.linkId, alternate.systemId, alternate.componentId));
+    QCOMPARE(released.count(), 1);
+    QCOMPARE(service.submitExactCommandLong(
+                 singleReservation, first,
+                 exactRequest(MAV_CMD_NAV_RETURN_TO_LAUNCH)),
+             VehicleCommandService::ExactSubmitResult::InvalidReservation);
+    QCOMPARE(frames.size(), 0);
+
+    // The original Swarm reservation policy is deliberately independent of
+    // global target selection and therefore survives another selection ABA.
+    QObject swarmOwner;
+    VehicleCommandService::ExactReservationToken swarmReservation;
+    QCOMPARE(service.reserveExactEndpoints(
+                 &swarmOwner, active, &swarmReservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QVERIFY(targets.selectTarget(
+        first.endpoint.linkId, first.endpoint.systemId,
+        first.endpoint.componentId));
+    QVERIFY(targets.selectTarget(
+        alternate.linkId, alternate.systemId, alternate.componentId));
+    QCOMPARE(released.count(), 1);
+    QCOMPARE(service.submitExactCommandLong(
+                 swarmReservation, first,
+                 exactRequest(MAV_CMD_NAV_RETURN_TO_LAUNCH)),
+             VehicleCommandService::ExactSubmitResult::Started);
+    QCOMPARE(frames.size(), 1);
+    service.observeMessage(
+        first.endpoint.linkId,
+        commandAck(first.endpoint.systemId, first.endpoint.componentId,
+                   MAV_CMD_NAV_RETURN_TO_LAUNCH, MAV_RESULT_ACCEPTED));
+    QVERIFY(service.releaseExactReservation(swarmReservation));
+}
+
+void VehicleCommandServiceTest::
+singleVehicleCallbacksFailClosedBeforeWriter()
+{
+    VehicleTargetManager targets;
+    int writes = 0;
+    ExactLinkTransmitter transmitter(
+        [&writes](int, const QByteArray &) {
+            ++writes;
+            return true;
+        });
+    VehicleCommandService service(&targets, &transmitter);
+    const SwarmVehicleInstanceLease lease =
+        swarmLease(54, 76, 1, 6, 21);
+    const VehicleEndpoint alternate = endpoint(55, 77, 1);
+    const QList<SwarmVehicleInstanceLease> active{lease};
+    bool changeTargetInRoute = false;
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QVERIFY(service.configureSingleVehicleExactRoute(
+        [&targets, &alternate, &lease, &changeTargetInRoute](
+            const SwarmVehicleInstanceLease &, QString *) {
+            if (changeTargetInRoute) {
+                changeTargetInRoute = false;
+                targets.selectTarget(
+                    alternate.linkId, alternate.systemId,
+                    alternate.componentId);
+                targets.selectTarget(
+                    lease.endpoint.linkId, lease.endpoint.systemId,
+                    lease.endpoint.componentId);
+            }
+            return true;
+        }));
+    QVERIFY(targets.observeEndpoint(lease.endpoint, true));
+    QVERIFY(targets.observeEndpoint(alternate));
+
+    QObject owner;
+    VehicleCommandService::ExactReservationToken reservation;
+    const VehicleTargetLease beforeReserveAba = targets.acquireTarget();
+    changeTargetInRoute = true;
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 &owner, beforeReserveAba, lease, &reservation),
+             VehicleCommandService::ExactReservationResult::StaleLease);
+    QVERIFY(!reservation.isValid());
+
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 &owner, targets.acquireTarget(), lease, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    changeTargetInRoute = true;
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease,
+                 exactRequest(MAV_CMD_PREFLIGHT_CALIBRATION)),
+             VehicleCommandService::ExactSubmitResult::InvalidReservation);
+    QCOMPARE(writes, 0);
+
+    // The operation-specific safety callback runs after the normal route and
+    // lease checks and can still veto without allocating a token or writing.
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 &owner, targets.acquireTarget(), lease, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    auto rejected = exactRequest(MAV_CMD_PREFLIGHT_CALIBRATION);
+    rejected.validateBeforeWrite = [](QString *error) {
+        if (error) {
+            *error = QStringLiteral("Vehicle became armed.");
+        }
+        return false;
+    };
+    VehicleCommandService::ExactCommandToken rejectedToken;
+    QString error;
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease, rejected, &rejectedToken, &error),
+             VehicleCommandService::ExactSubmitResult::RouteUnavailable);
+    QVERIFY(!rejectedToken.isValid());
+    QVERIFY(error.contains(QStringLiteral("armed"), Qt::CaseInsensitive));
+    QCOMPARE(writes, 0);
+
+    auto changedDuringSafety =
+        exactRequest(MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN);
+    changedDuringSafety.validateBeforeWrite =
+        [&targets, &alternate, &lease](QString *) {
+            targets.selectTarget(
+                alternate.linkId, alternate.systemId,
+                alternate.componentId);
+            targets.selectTarget(
+                lease.endpoint.linkId, lease.endpoint.systemId,
+                lease.endpoint.componentId);
+            return true;
+        };
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease, changedDuringSafety),
+             VehicleCommandService::ExactSubmitResult::StaleLease);
+    QCOMPARE(writes, 0);
+    QVERIFY(!service.releaseExactReservation(reservation));
+
+    // A copied policy callable may delete the service. The outer call must
+    // fail without dereferencing its former QObject state.
+    ExactLinkTransmitter deletingTransmitter(
+        [](int, const QByteArray &) { return true; });
+    auto *deletingService =
+        new VehicleCommandService(&targets, &deletingTransmitter);
+    QPointer<VehicleCommandService> guarded(deletingService);
+    QVERIFY(deletingService->configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QVERIFY(deletingService->configureSingleVehicleExactRoute(
+        [&deletingService](
+            const SwarmVehicleInstanceLease &, QString *) {
+            VehicleCommandService *victim = deletingService;
+            deletingService = nullptr;
+            delete victim;
+            return true;
+        }));
+    VehicleCommandService::ExactReservationToken deletedReservation;
+    QCOMPARE(deletingService->reserveSingleVehicleEndpoint(
+                 &owner, targets.acquireTarget(), lease,
+                 &deletedReservation),
+             VehicleCommandService::ExactReservationResult::
+                 ContextUnavailable);
+    QVERIFY(guarded.isNull());
+}
+
+void VehicleCommandServiceTest::
+singleVehicleOwnerDetachAndTargetRetirementDrainSafely()
+{
+    VehicleTargetManager targets;
+    const SwarmVehicleInstanceLease lease =
+        swarmLease(56, 78, 1, 7, 22);
+    const VehicleEndpoint alternate = endpoint(57, 79, 1);
+    VehicleCommandService *servicePointer = nullptr;
+    bool injectAckBeforeServiceTargetHandler = false;
+    connect(&targets, &VehicleTargetManager::targetGenerationChanged,
+            &targets,
+            [&servicePointer, &injectAckBeforeServiceTargetHandler,
+             &lease](qulonglong) {
+                if (injectAckBeforeServiceTargetHandler
+                    && servicePointer) {
+                    injectAckBeforeServiceTargetHandler = false;
+                    servicePointer->observeMessage(
+                        lease.endpoint.linkId,
+                        commandAck(
+                            lease.endpoint.systemId,
+                            lease.endpoint.componentId,
+                            MAV_CMD_PREFLIGHT_CALIBRATION,
+                            MAV_RESULT_ACCEPTED));
+                }
+            });
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    VehicleCommandService service(&targets, &transmitter);
+    servicePointer = &service;
+    service.setLocalIdentity(250, 190);
+    service.setExactQuarantineForTesting(500);
+    const QList<SwarmVehicleInstanceLease> active{lease};
+    QVERIFY(service.configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &candidate) {
+            return containsLease(active, candidate);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QVERIFY(service.configureSingleVehicleExactRoute(
+        [](const SwarmVehicleInstanceLease &, QString *) {
+            return true;
+        }));
+    QVERIFY(targets.observeEndpoint(lease.endpoint, true));
+    QVERIFY(targets.observeEndpoint(alternate));
+
+    QSignalSpy finished(
+        &service, &VehicleCommandService::exactCommandFinished);
+    QSignalSpy released(
+        &service, &VehicleCommandService::exactReservationReleased);
+    auto *owner = new QObject;
+    VehicleCommandService::ExactReservationToken reservation;
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 owner, targets.acquireTarget(), lease, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease,
+                 exactRequest(MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN)),
+             VehicleCommandService::ExactSubmitResult::Started);
+    delete owner;
+    QCOMPARE(released.count(), 0);
+    service.observeMessage(
+        lease.endpoint.linkId,
+        commandAck(lease.endpoint.systemId, lease.endpoint.componentId,
+                   MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN,
+                   MAV_RESULT_ACCEPTED));
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(reportAt(finished, 0).ownerDetached);
+    QCOMPARE(reportAt(finished, 0).terminalResult,
+             VehicleCommandService::ExactTerminalResult::
+                 AcknowledgedAccepted);
+    QCOMPARE(released.count(), 1);
+
+    QObject secondOwner;
+    QCOMPARE(service.reserveSingleVehicleEndpoint(
+                 &secondOwner, targets.acquireTarget(), lease,
+                 &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QCOMPARE(service.submitExactCommandLong(
+                 reservation, lease,
+                 exactRequest(MAV_CMD_PREFLIGHT_CALIBRATION)),
+             VehicleCommandService::ExactSubmitResult::Started);
+    // This observer was connected before the service's invalidation handler.
+    // An ACK injected from targetGenerationChanged must not be accepted under
+    // the stale selected-target generation.
+    injectAckBeforeServiceTargetHandler = true;
+    QVERIFY(targets.selectTarget(
+        alternate.linkId, alternate.systemId, alternate.componentId));
+    QCOMPARE(finished.count(), 2);
+    QCOMPARE(reportAt(finished, 1).terminalResult,
+             VehicleCommandService::ExactTerminalResult::
+                 LeaseRetiredOutcomeUncertain);
+    QVERIFY(reportAt(finished, 1).frameAttempted);
+    QCOMPARE(released.count(), 2);
+    QVERIFY(service.isExactCommandQuarantined(
+        lease, MAV_CMD_PREFLIGHT_CALIBRATION));
 }
 
 QTEST_GUILESS_MAIN(VehicleCommandServiceTest)
