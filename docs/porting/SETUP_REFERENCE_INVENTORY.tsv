@@ -31,7 +31,7 @@ mp10	29	ConfigJoystickViewModel	Joystick	Optional Hardware	displayJoystick	offli
 mp10	30	ConfigCompassMotViewModel	Compass/Motor Calib	Optional Hardware	displayCompassMotorCalib	connected	ConfigCompassMotView	ported-with-safety-lifetime-extension	no
 mp10	31	ConfigRangeFinderViewModel	Range Finder	Optional Hardware	displayRangeFinder	connected	ConfigRangeFinderView	ported	no
 mp10	32	ConfigAirspeedViewModel	Airspeed	Optional Hardware	displayAirSpeed	connected	ConfigAirspeedView	ported	no
-mp10	33	ConfigPX4FlowViewModel	PX4Flow	Optional Hardware	displayPx4Flow	offline		missing	gap-7-of-11
+mp10	33	ConfigPX4FlowViewModel	PX4Flow	Optional Hardware	displayPx4Flow	offline	ConfigPX4FlowView	in-progress	gap-7-of-11-closed
 mp10	34	ConfigOptFlowViewModel	Optical Flow	Optional Hardware	displayOpticalFlow	connected	ConfigOptFlowView	ported	no
 mp10	35	ConfigHWOSDViewModel	OSD	Optional Hardware	displayOsd	connected	ConfigHWOSDView	ported	no
 mp10	36	ConfigMountViewModel	Camera Gimbal	Optional Hardware	displayCameraGimbal	connected	ConfigMountView	ported	no

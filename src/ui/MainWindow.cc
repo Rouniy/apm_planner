@@ -120,6 +120,7 @@ This file is part of the QGROUNDCONTROL project
 #include "LogDownloadViewModel.h"
 #include "QGCCore.h"
 #include "LinkManager.h"
+#include "comm/Px4FlowService.h"
 #include "LinkManagerFactory.h"
 #include "comm/VehicleTargetManager.h"
 
@@ -870,6 +871,16 @@ void MainWindow::buildCommonWidgets()
     //logPlayer->setMavlinkDecoder(mavlinkDecoder);
     connect(logPlayer,SIGNAL(logFinished()),statusBar(),SLOT(hide()));
     customStatusBar->setLogPlayer(logPlayer);
+    if (Px4FlowService *const flow = LinkManager::instance()->px4FlowService()) {
+        connect(logPlayer, &QGCMAVLinkLogPlayer::logLoaded, flow, [this, flow]() {
+            const auto replay = logPlayer->activeReplayLease();
+            if (replay.isValid()) flow->beginReplay(replay.generation);
+        });
+        connect(logPlayer, &QGCMAVLinkLogPlayer::replayMessageObserved,
+                flow, &Px4FlowService::observeReplay);
+        connect(logPlayer, &QGCMAVLinkLogPlayer::replaySourceEnded,
+                flow, &Px4FlowService::endReplay);
+    }
 
     // Center widgets
     if (!plannerView)

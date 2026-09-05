@@ -21,12 +21,12 @@ the groups, the navigation has four logical sections.
 |---|---:|---:|---:|---:|
 | Ungrouped | 4 | 1 | 0 | 0 |
 | Mandatory Hardware | 16 | 16 | 1 | 1 |
-| Optional Hardware | 26 | 22 | 1 | 1 |
+| Optional Hardware | 26 | 23 | 1 | 1 |
 | Advanced | 7 | 6 | 1 | 1 |
-| **Total** | **53** | **45** | **3** | **3** |
+| **Total** | **53** | **46** | **3** | **3** |
 
 Thus MP10 registers 56 potential navigation entries when group headings are
-included. Qt registers 48: 45 page factories plus the same three group
+included. Qt registers 49: 46 page factories plus the same three group
 headings. Every current Qt page registration has a concrete factory. Counts
 alone do not imply parity because several factories still wrap legacy APM
 Planner widgets rather than the corresponding MP10 implementation.
@@ -44,18 +44,18 @@ launches MainWindow's shared `actionJoystickSettings`, so the application keeps
 one `JoystickInput` and reuses one modeless `JoystickWidget` instead of creating
 a duplicate live controller. The subsequent native FFT Setup page closes
 another gap, with a separately usable Advanced Tools analysis window
-(`FFT_PORT.md`). The current missing count is therefore nine:
+(`FFT_PORT.md`). PX4Flow closes a third navigation gap. The current missing count is eight:
 
 - Ungrouped: `Install Firmware Legacy`, `Secure`, and
   `Secure (Bootloader Keys)`.
-- Optional Hardware: `CubeID Update`, `NV Modem`, `PX4Flow`, `Antenna Tracker`.
+- Optional Hardware: `CubeID Update`, `NV Modem`, `Antenna Tracker`.
 - Advanced: `Onboard Lua REPL` and `Local Script REPL`.
 
 Qt also has one intentional additional page, `QML Plugins`. It is the useful
 user-facing manager for the fresh port's trusted QML extension system and must
-remain. The current arithmetic is therefore `53 - 9 + 1 = 45` Qt pages. The
+remain. The current arithmetic is therefore `53 - 8 + 1 = 46` Qt pages. The
 machine-readable `SETUP_REFERENCE_INVENTORY.tsv` retains all 53 MP10 rows,
-marks all 11 baseline gaps, records Joystick and FFT as closed navigation
+marks all 11 baseline gaps, records Joystick, FFT and PX4Flow as closed navigation
 gaps (not strict whole-module parity), and lists the Qt-only QML page separately.
 
 ## Retained useful legacy modules
@@ -143,11 +143,11 @@ Among pages common to both applications, `DroneCAN/UAVCAN` now follows
 `Compass/Motor Calib` route follows Joystick and precedes `Range Finder`; this
 preserves their MP10 relative order. The tracker pages correctly
 precede `HW CAN` in both. Qt now has one shared JSON
-`DisplayViewProfileService`. It preserves all 35 MP10 SETUP feature flags; 33
+`DisplayViewProfileService`. It preserves all 35 MP10 SETUP feature flags; 34
 currently gate corresponding existing factories, including the newly active
 `displayJoystick`, `displayCompassMotorCalib`, the independent CONFIG
 `displayOSD` versus SETUP `displayOsd` distinction, CAN, tracker and Terminal
-flags, plus the native FFT route. The two dormant flags belong to PX4Flow and two REPL
+flags, plus the native FFT and PX4Flow routes. The dormant flag belongs to the two REPL
 routes. Active gates compose with connection requirements; they never make a
 missing page appear.
 Useful Qt-only `QML Plugins` and Advanced utilities without a reference feature
@@ -176,9 +176,9 @@ in the production audit.
 an isolated BUILD_TESTING process. Its oracle is now an independently
 transcribed 53-page MP10 manifest rather than a list copied from the current Qt
 registry. Every reference route has either one explicit Qt mapping or membership
-in the reviewed nine-route missing allowlist; the original 11-gap baseline and
-the Joystick/FFT closures are also asserted. The useful Qt-only `QML Plugins` route
-is an explicit extension. The audit then locks the resulting 45 page IDs and
+in the reviewed eight-route missing allowlist; the original 11-gap baseline and
+the Joystick/FFT/PX4Flow closures are also asserted. The useful Qt-only `QML Plugins` route
+is an explicit extension. The audit then locks the resulting 46 page IDs and
 three group IDs in production order, invokes every real factory through its
 navigation button, checks current/checked/stack ownership and semantic
 non-empty content, and resets/recreates Optical Flow. Removing a mapped route,

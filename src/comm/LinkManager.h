@@ -55,6 +55,7 @@ This file is part of the APM_PLANNER project
 #include "UASObject.h"
 class VehicleTargetManager;
 struct SwarmVehicleInstanceLease;
+struct VehicleEndpoint;
 class SwarmTelemetryRegistry;
 class SwarmCommandService;
 class SwarmSequenceExecutor;
@@ -70,6 +71,8 @@ class UDPLink;
 class ExactMissionSnapshotService;
 class RadioStatusMonitor;
 class ParameterService;
+class MavlinkComponentRegistry;
+class Px4FlowService;
 class MavFtpService;
 class MavFtpServiceInterface;
 class QGCUASParamManager;
@@ -107,6 +110,10 @@ public:
     MovingBaseService *movingBaseService() const;
     CompassCalibrationService *compassCalibrationService() const;
     ParameterService *parameterService() const;
+    MavlinkComponentRegistry *componentRegistry() const;
+    Px4FlowService *px4FlowService() const;
+    bool singleEndpointRouteIsEligible(const VehicleEndpoint &endpoint,
+                                      quint64 epoch, QString *error = nullptr) const;
     MavFtpServiceInterface *mavFtpService() const;
     QGCUASParamManager *parameterManager() const;
     Q_INVOKABLE QObject *vehicleTargetManagerObject() const;
@@ -231,6 +238,8 @@ private:
     MovingBaseService *m_movingBaseService = nullptr;
     CompassCalibrationService *m_compassCalibrationService = nullptr;
     ParameterService *m_parameterService = nullptr;
+    MavlinkComponentRegistry *m_componentRegistry = nullptr;
+    Px4FlowService *m_px4FlowService = nullptr;
     MavFtpService *m_mavFtpService = nullptr;
     QGCUASParamManager *m_parameterManager = nullptr;
     QString m_logSubDir;

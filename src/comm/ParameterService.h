@@ -2,6 +2,7 @@
 #define PARAMETERSERVICE_H
 
 #include "VehicleEndpoint.h"
+#include "MavlinkComponentInstanceLease.h"
 #include "SwarmTelemetryRegistry.h"
 #include "core/parameters/ParameterCodec.h"
 
@@ -29,7 +30,8 @@ class VehicleTargetManager;
  * Exact-endpoint implementation of the classic MAVLink parameter protocol.
  *
  * Legacy requests are authorized by a current VehicleTargetLease. Production
- * exact requests use a reserved SwarmVehicleInstanceLease and an injected
+ * exact requests use either a reserved SwarmVehicleInstanceLease or a
+ * deliberately separate peripheral component lease with its own injected
  * registry/route policy. All traffic stays on the specified physical link and
  * the single PARAM_VALUE consumer correlates the complete endpoint, lifetime,
  * name, type and normalized-value envelope. Cache ownership is independent of
@@ -66,17 +68,24 @@ public:
         const SwarmVehicleInstanceLease &lease)>;
     using ExactRouteValidator = std::function<bool(
         const SwarmVehicleInstanceLease &lease, QString *error)>;
+    using ComponentLeaseValidator = std::function<bool(
+        const MavlinkComponentInstanceLease &lease)>;
+    using ComponentRouteValidator = std::function<bool(
+        const MavlinkComponentInstanceLease &lease, QString *error)>;
 
     struct ExactReservationToken
     {
         QPointer<QObject> owner;
         quint64 reservationId = 0;
         QList<SwarmVehicleInstanceLease> leases;
+        QList<MavlinkComponentInstanceLease> componentLeases;
 
         bool isValid() const noexcept
         {
             return !owner.isNull() && reservationId != 0
-                && !leases.isEmpty();
+                && ((!leases.isEmpty() && componentLeases.isEmpty())
+                    || (leases.isEmpty()
+                        && componentLeases.size() == 1));
         }
     };
 
@@ -115,6 +124,7 @@ public:
         quint64 operationId = 0;
         quint64 reservationId = 0;
         SwarmVehicleInstanceLease lease;
+        MavlinkComponentInstanceLease componentLease;
         ExactOperationKind kind = ExactOperationKind::Read;
         QString name;
         ParameterType type = ParameterType::Unknown;
@@ -123,7 +133,13 @@ public:
         bool isValid() const noexcept
         {
             return operationId != 0 && reservationId != 0
-                && lease.isValid() && !name.isEmpty();
+                && (lease.isValid() != componentLease.isValid())
+                && !name.isEmpty();
+        }
+
+        bool isComponentOperation() const noexcept
+        {
+            return componentLease.isValid() && !lease.isValid();
         }
     };
 
@@ -196,6 +212,9 @@ public:
         ExactRouteValidator routeValidator);
     bool configureSingleVehicleExactRoute(
         ExactRouteValidator routeValidator);
+    bool configureComponentExactTransactions(
+        ComponentLeaseValidator leaseValidator,
+        ComponentRouteValidator routeValidator);
     ExactReservationResult reserveExactEndpoints(
         QObject *owner,
         const QList<SwarmVehicleInstanceLease> &leases,
@@ -205,6 +224,11 @@ public:
         QObject *owner,
         const VehicleTargetLease &target,
         const SwarmVehicleInstanceLease &lease,
+        ExactReservationToken *reservationOut,
+        QString *error = nullptr);
+    ExactReservationResult reserveComponentEndpoint(
+        QObject *owner,
+        const MavlinkComponentInstanceLease &lease,
         ExactReservationToken *reservationOut,
         QString *error = nullptr);
     bool releaseExactReservation(
@@ -225,9 +249,27 @@ public:
         const ExactWriteRequest &request,
         ExactOperationToken *operationOut = nullptr,
         QString *error = nullptr);
+    ExactSubmitResult submitComponentRead(
+        const ExactReservationToken &reservation,
+        const MavlinkComponentInstanceLease &lease,
+        const ExactReadRequest &request,
+        ExactOperationToken *operationOut = nullptr,
+        QString *error = nullptr);
+    ExactSubmitResult submitComponentWrite(
+        const ExactReservationToken &reservation,
+        const MavlinkComponentInstanceLease &lease,
+        const ExactWriteRequest &request,
+        ExactOperationToken *operationOut = nullptr,
+        QString *error = nullptr);
     void retireExactVehicle(const SwarmVehicleInstanceLease &lease);
+    void retireComponent(const MavlinkComponentInstanceLease &lease);
     bool isExactWriteQuarantined(
         const SwarmVehicleInstanceLease &lease,
+        const QString &name,
+        const QVariant &value,
+        ParameterType type);
+    bool isComponentWriteQuarantined(
+        const MavlinkComponentInstanceLease &lease,
         const QString &name,
         const QVariant &value,
         ParameterType type);
@@ -263,6 +305,10 @@ public:
         bool force = false);
 
     void observeMessage(int linkId, const mavlink_message_t &message);
+    void observePhysicalMessage(int linkId, quint64 linkSessionEpoch,
+                                const mavlink_message_t &message);
+    void observeComponentMessage(int linkId, quint64 linkSessionEpoch,
+                                 const mavlink_message_t &message);
     void setEncoding(const VehicleEndpoint &endpoint,
                      ParameterEncoding encoding);
     void forgetLink(int linkId);
@@ -390,13 +436,47 @@ private:
     enum class ExactReservationPolicy
     {
         Swarm,
-        SingleVehicle
+        SingleVehicle,
+        Component
+    };
+
+    enum class ExactLeaseDomain
+    {
+        Swarm,
+        Component
+    };
+
+    struct ExactInstanceLease
+    {
+        VehicleEndpoint endpoint;
+        quint64 linkSessionEpoch = 0;
+        quint64 instanceEpoch = 0;
+        ExactLeaseDomain domain = ExactLeaseDomain::Swarm;
+
+        bool isValid() const noexcept
+        {
+            return endpoint.isValid() && linkSessionEpoch != 0
+                && instanceEpoch != 0;
+        }
+
+        bool sameInstance(const ExactInstanceLease &other) const noexcept
+        {
+            return domain == other.domain
+                && endpoint.sameIdentity(other.endpoint)
+                && linkSessionEpoch == other.linkSessionEpoch
+                && instanceEpoch == other.instanceEpoch;
+        }
+
+        bool operator==(const ExactInstanceLease &other) const noexcept
+        {
+            return sameInstance(other);
+        }
     };
 
     struct ExactReservationRecord
     {
         QPointer<QObject> owner;
-        QList<SwarmVehicleInstanceLease> leases;
+        QList<ExactInstanceLease> leases;
         VehicleTargetLease target;
         ExactReservationPolicy policy = ExactReservationPolicy::Swarm;
         bool closing = false;
@@ -419,7 +499,7 @@ private:
 
     struct ExactCachedValue
     {
-        SwarmVehicleInstanceLease lease;
+        ExactInstanceLease lease;
         QString name;
         QVariant value;
         ParameterType type = ParameterType::Unknown;
@@ -437,17 +517,25 @@ private:
     };
 
     bool targetIsCurrent(const VehicleTargetLease &target) const;
-    bool exactLeaseIsCurrent(
-        const SwarmVehicleInstanceLease &lease) const;
+    static ExactInstanceLease exactInstance(
+        const SwarmVehicleInstanceLease &lease);
+    static ExactInstanceLease exactInstance(
+        const MavlinkComponentInstanceLease &lease);
+    static ExactInstanceLease exactInstance(
+        const ExactOperationToken &token);
+    static bool reservationTokenMatches(
+        const ExactReservationToken &token,
+        const ExactReservationRecord &record);
+    bool exactLeaseIsCurrent(const ExactInstanceLease &lease) const;
     bool exactRouteIsEligible(
-        const SwarmVehicleInstanceLease &lease,
+        const ExactInstanceLease &lease,
         ExactReservationPolicy policy,
         QString *error) const;
     bool exactReservationTargetIsCurrent(
         const ExactReservationRecord &reservation) const;
     bool exactReservationContains(
         const ExactReservationRecord &reservation,
-        const SwarmVehicleInstanceLease &lease) const;
+        const ExactInstanceLease &lease) const;
     bool legacyOperationTouches(const VehicleEndpoint &endpoint) const;
     bool exactEndpointReserved(const VehicleEndpoint &endpoint) const;
     static bool parameterNameBytes(const QString &name, QByteArray *bytes);
@@ -506,14 +594,14 @@ private:
     void cancelTransactions(quint64 currentGeneration);
     ExactReservationResult reserveExactEndpointsWithPolicy(
         QObject *owner,
-        const QList<SwarmVehicleInstanceLease> &leases,
+        const QList<ExactInstanceLease> &leases,
         ExactReservationPolicy policy,
         const VehicleTargetLease &target,
         ExactReservationToken *reservationOut,
         QString *error);
     ExactSubmitResult submitExactOperation(
         const ExactReservationToken &reservation,
-        const SwarmVehicleInstanceLease &lease,
+        const ExactInstanceLease &lease,
         ExactOperationKind kind,
         const QString &name,
         const QVariant &value,
@@ -540,12 +628,12 @@ private:
         int parameterCount,
         int parameterIndex);
     void rememberExactValue(
-        const SwarmVehicleInstanceLease &lease,
+        const ExactInstanceLease &lease,
         const QString &name,
         const QVariant &value,
         ParameterType type);
     bool exactCacheMatches(
-        const SwarmVehicleInstanceLease &lease,
+        const ExactInstanceLease &lease,
         const QString &name,
         const QVariant &value,
         ParameterType type) const;
@@ -565,6 +653,7 @@ private:
     bool exactReservationHasPending(quint64 reservationId) const;
     void maybeReleaseExactReservation(quint64 reservationId);
     void removeExactReservation(quint64 reservationId);
+    void retireExactInstance(const ExactInstanceLease &lease);
     quint64 nextExactReservationId();
     quint64 nextExactOperationId();
 
@@ -606,6 +695,8 @@ private:
     ExactLeaseValidator m_exactLeaseValidator;
     ExactRouteValidator m_exactRouteValidator;
     ExactRouteValidator m_singleVehicleExactRouteValidator;
+    ComponentLeaseValidator m_componentLeaseValidator;
+    ComponentRouteValidator m_componentRouteValidator;
     bool m_exactApiInFlight = false;
     QHash<quint64, ExactReservationRecord> m_exactReservations;
     QHash<VehicleEndpoint, quint64> m_exactEndpointReservations;

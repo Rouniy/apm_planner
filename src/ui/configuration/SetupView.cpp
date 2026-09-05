@@ -36,6 +36,8 @@
 #include "ConfigHWESP8266View.h"
 #include "ConfigFFTView.h"
 #include "ConfigFFTIntegration.h"
+#include "ConfigPX4FlowView.h"
+#include "comm/Px4FlowService.h"
 #include "comm/SwarmTelemetryRegistry.h"
 #include "ConfigInitialParamsView.h"
 #include "ConfigMavCommandView.h"
@@ -123,6 +125,7 @@ const QString kRangeFinder = QStringLiteral("ConfigRangeFinderView");
 const QString kAirspeed = QStringLiteral("ConfigAirspeedView");
 const QString kJoystick = QStringLiteral("ConfigJoystickView");
 const QString kOpticalFlow = QStringLiteral("ConfigOptFlowView");
+const QString kPX4Flow = QStringLiteral("ConfigPX4FlowView");
 const QString kOsd = QStringLiteral("ConfigHWOSDView");
 const QString kCameraGimbal = QStringLiteral("ConfigMountView");
 const QString kMotorTest = QStringLiteral("ConfigMotorTestView");
@@ -617,6 +620,60 @@ void SetupView::buildPages()
         kRangeFinder, tr("Range Finder"), true, true));
     m_backstage->addPage(makeBackstagePage<AirspeedConfig>(
         kAirspeed, tr("Airspeed"), true, true));
+    BackstagePage px4Flow;
+    px4Flow.id = kPX4Flow;
+    px4Flow.header = tr("PX4Flow");
+    px4Flow.isSub = true;
+    // A peripheral and log replay do not depend on the selected autopilot's
+    // connection or parameter-list readiness. Match MP10's offline route.
+    px4Flow.allowsPartialParameters = true;
+    px4Flow.factory = [](QWidget *parent) {
+        auto *page = new ConfigPX4FlowView(parent);
+        QPointer<Px4FlowService> service(LinkManager::instance()->px4FlowService());
+        if (!service) return page;
+        const auto refresh = [page, service]() {
+            if (!service) return;
+            page->setSources(service->sources());
+            page->setSelectedSourceId(service->selectedSourceId());
+            page->setStatus(service->status());
+            page->setFrame(service->frame());
+            page->setModeState(service->videoOnly(), service->canToggle(), service->busy());
+        };
+        QObject::connect(service, &Px4FlowService::changed, page, refresh);
+        QObject::connect(page, &ConfigPX4FlowView::sourceSelected,
+                         service, &Px4FlowService::selectSource);
+        QObject::connect(page, &ConfigPX4FlowView::focusRequested,
+                         page, [page, service]() {
+            if (!service || !service->canToggle()) return;
+            const QString source = service->selectedSourceId();
+            const bool previousMode = service->videoOnly();
+            QPointer<ConfigPX4FlowView> guardedPage(page);
+            if (!service->videoOnly()) {
+                // VIDEO_ONLY can suspend optical-flow processing in sensor
+                // firmware. This is a bench operation, not a flight control.
+                const auto answer = QMessageBox::warning(page,
+                    QObject::tr("PX4Flow focus mode"),
+                    QObject::tr("Focus mode can suspend optical-flow measurements. "
+                                "Use it only on the bench, with the aircraft disarmed. "
+                                "Enable focus mode on the selected sensor?"),
+                    QMessageBox::Ok | QMessageBox::Cancel, QMessageBox::Cancel);
+                if (!guardedPage || !service || answer != QMessageBox::Ok) return;
+            }
+            if (service->selectedSourceId() == source && service->canToggle()
+                && service->videoOnly() == previousMode)
+                service->toggleFocus();
+        });
+        QObject::connect(page, &ConfigPX4FlowView::activated,
+                         service, &Px4FlowService::activate);
+        QObject::connect(page, &ConfigPX4FlowView::deactivated,
+                         service, &Px4FlowService::deactivate);
+        QObject::connect(page, &QObject::destroyed, service, [service]() {
+            if (service) service->deactivate();
+        });
+        refresh();
+        return page;
+    };
+    m_backstage->addPage(px4Flow);
     m_backstage->addPage(makeBackstagePage<OpticalFlowConfig>(
         kOpticalFlow, tr("Optical Flow"), true, true));
     BackstagePage osd;
@@ -1173,6 +1230,7 @@ void SetupView::refreshPageVisibility()
         kRangeFinder, m_connected && profile.displayRangeFinder);
     m_backstage->setPageVisible(
         kAirspeed, m_connected && profile.displayAirSpeed);
+    m_backstage->setPageVisible(kPX4Flow, profile.displayPx4Flow);
     m_backstage->setPageVisible(
         kOpticalFlow, m_connected && profile.displayOpticalFlow);
     m_backstage->setPageVisible(

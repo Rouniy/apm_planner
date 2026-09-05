@@ -327,6 +327,13 @@ set(SOURCES
     src/comm/NmeaOutputService.cpp
     src/comm/NmeaOutputService.h
     src/comm/ParameterService.cpp
+    src/comm/MavlinkComponentInstanceLease.h
+    src/comm/MavlinkComponentRegistry.cpp
+    src/comm/MavlinkComponentRegistry.h
+    src/comm/Px4FlowFrameAssembler.cpp
+    src/comm/Px4FlowFrameAssembler.h
+    src/comm/Px4FlowService.cpp
+    src/comm/Px4FlowService.h
     src/comm/ParameterService.h
     src/comm/VehicleCommandService.cpp
     src/comm/VehicleCommandService.h
@@ -582,6 +589,8 @@ set(SOURCES
     src/ui/ConfigFFTWindow.cpp
     src/ui/ConfigFFTWindow.h
     src/ui/configuration/ConfigFFTView.cpp
+    src/ui/configuration/ConfigPX4FlowView.cpp
+    src/ui/configuration/ConfigPX4FlowView.h
     src/ui/configuration/ConfigFFTView.h
     src/ui/configuration/ConfigFFTViewModel.cpp
     src/ui/configuration/ConfigFFTViewModel.h
@@ -3478,6 +3487,30 @@ if(BUILD_TESTING)
         src/comm/VehicleEndpoint.cpp
         src/comm/VehicleTargetManager.cpp
         src/comm/SwarmTelemetryRegistry.cpp)
+    add_library(px4flow_test_support STATIC
+        src/comm/ParameterService.cpp
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleTargetManager.cpp
+        src/comm/MavlinkComponentRegistry.cpp
+        src/comm/Px4FlowFrameAssembler.cpp
+        src/comm/Px4FlowService.cpp
+        src/ui/configuration/ConfigPX4FlowView.cpp)
+    target_include_directories(px4flow_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(px4flow_test_support PUBLIC
+        apm_parameter_core Qt::Gui Qt::Widgets)
+    foreach(px4flow_test IN ITEMS px4flowframeassembler mavlinkcomponentregistry
+            parametercomponenttransactions px4flowservice configpx4flowview)
+        add_executable(${px4flow_test}_tests tests/test_${px4flow_test}.cpp)
+        target_link_libraries(${px4flow_test}_tests PRIVATE px4flow_test_support Qt::Test)
+        add_test(NAME ${px4flow_test}_tests COMMAND ${px4flow_test}_tests)
+        set_tests_properties(${px4flow_test}_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    endforeach()
     target_include_directories(parameterservicesinglevehicle_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})

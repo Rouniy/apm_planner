@@ -54,6 +54,8 @@ This file is part of the APM_PLANNER project
 #include "MovingBasePositionStore.h"
 #include "MovingBaseService.h"
 #include "ParameterService.h"
+#include "MavlinkComponentRegistry.h"
+#include "Px4FlowService.h"
 #include "QGCUASParamManager.h"
 #include "VehicleCommandService.h"
 #include "VehicleEndpoint.h"
@@ -274,6 +276,22 @@ LinkManager::LinkManager(QObject *parent) :
                     service->retireExactVehicle(lease);
                 }
             });
+    m_componentRegistry = new MavlinkComponentRegistry(this);
+    connect(this, &LinkManager::physicalLinkSessionBegan,
+            m_componentRegistry, &MavlinkComponentRegistry::beginLinkSession);
+    connect(this, &LinkManager::physicalLinkSessionEnded,
+            m_componentRegistry, &MavlinkComponentRegistry::endLinkSession);
+    const bool componentParametersConfigured = m_parameterService->configureComponentExactTransactions(
+        [this](const MavlinkComponentInstanceLease &lease) {
+            return m_componentRegistry->validateLease(lease);
+        },
+        [this](const MavlinkComponentInstanceLease &lease, QString *error) {
+            return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
+        });
+    Q_ASSERT(componentParametersConfigured);
+    connect(m_componentRegistry, &MavlinkComponentRegistry::componentRetired,
+            m_parameterService, &ParameterService::retireComponent);
+    m_px4FlowService = new Px4FlowService(m_componentRegistry, m_parameterService, this);
     m_swarmWaypointLeaderExecutor = new SwarmWaypointLeaderExecutor(
         m_swarmTelemetryRegistry,
         m_exactMissionSnapshotService,
@@ -307,7 +325,23 @@ LinkManager::LinkManager(QObject *parent) :
         const int id = link->getId();
         if (!isCurrentPhysicalIngress(link)) return;
         const quint64 epoch = currentPhysicalLinkSession(id);
-        if (epoch != 0) emit mavlinkMessageObserved(id, epoch, message);
+        if (epoch == 0) return;
+        // Peripherals such as PX4Flow do not necessarily create a legacy UAS.
+        // Keep discovery and their exact ACK owner ahead of that compatibility
+        // gate. Revalidate after every observer (it can remove/rebind a link).
+        QPointer<LinkInterface> pinned(link);
+        const auto current = [this, pinned, id, epoch]() {
+            return !m_shuttingDown && pinned && getLink(id) == pinned.data()
+                && currentPhysicalLinkSession(id) == epoch
+                && isCurrentPhysicalIngress(pinned.data());
+        };
+        m_componentRegistry->observeMessage(id, epoch, message);
+        if (!current()) return;
+        m_parameterService->observePhysicalMessage(id, epoch, message);
+        if (!current()) return;
+        m_px4FlowService->observeMessage(id, epoch, message);
+        if (!current()) return;
+        emit mavlinkMessageObserved(id, epoch, message);
     });
     connect(m_mavlinkProtocol.data(),SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),m_mavlinkDecoder.data(),SLOT(receiveMessage(LinkInterface*,mavlink_message_t)));
     connect(m_mavlinkProtocol.data(),SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),this,SLOT(receiveMessage(LinkInterface*,mavlink_message_t)));
@@ -322,10 +356,17 @@ LinkManager::LinkManager(QObject *parent) :
 bool LinkManager::singleVehicleParameterRouteIsEligible(
     const SwarmVehicleInstanceLease &lease, QString *error) const
 {
+    return lease.isValid()
+        && singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
+}
+
+bool LinkManager::singleEndpointRouteIsEligible(
+    const VehicleEndpoint &endpoint, quint64 epoch, QString *error) const
+{
     if (error) error->clear();
-    LinkInterface *const link = getLink(lease.endpoint.linkId);
-    if (m_shuttingDown || !lease.isValid() || !link || !link->isConnected()
-        || currentPhysicalLinkSession(link->getId()) != lease.linkSessionEpoch
+    LinkInterface *const link = getLink(endpoint.linkId);
+    if (m_shuttingDown || !endpoint.isValid() || epoch == 0 || !link || !link->isConnected()
+        || currentPhysicalLinkSession(link->getId()) != epoch
         || !isCurrentPhysicalIngress(link)) {
         if (error) *error = tr("The selected physical link is unavailable or its peer changed.");
         return false;
@@ -341,7 +382,7 @@ bool LinkManager::singleVehicleParameterRouteIsEligible(
         const auto peers = udp->peerSnapshot();
         if (peers.revision == m_udpIngressRevision.value(link->getId())
             && peers.hosts.size() == 1 && peers.ports.size() == 1) return true;
-        if (error) *error = tr("FFT parameters require one UDP peer; use a separate connection for each vehicle.");
+        if (error) *error = tr("Exact parameters require one UDP peer; use a separate connection for each device.");
         return false;
     }
     default:
@@ -569,6 +610,7 @@ void LinkManager::shutdown()
     m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
     m_exactLogTransferService->shutdown();
+    m_px4FlowService->shutdown();
 
     // Make every outbound lookup fail and detach ingress. Links remain live
     // while UASManager quiesces DroneCAN and other vehicle-owned transports.
@@ -923,6 +965,12 @@ ParameterService *LinkManager::parameterService() const
     return m_parameterService;
 }
 
+MavlinkComponentRegistry *LinkManager::componentRegistry() const
+{ return m_componentRegistry; }
+
+Px4FlowService *LinkManager::px4FlowService() const
+{ return m_px4FlowService; }
+
 MavFtpServiceInterface *LinkManager::mavFtpService() const
 {
     return m_mavFtpService;
@@ -1266,10 +1314,9 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
     if (!linkIsCurrent()) {
         return;
     }
-    m_parameterService->observeMessage(linkId, message);
-    if (!linkIsCurrent()) {
-        return;
-    }
+    // ParameterService already consumed this physical frame before the UAS
+    // gate. Replaying it here could acknowledge an operation submitted by a
+    // synchronous completion callback for the preceding operation.
     m_mavFtpService->observeMessage(linkId, message);
     if (!linkIsCurrent()) {
         return;

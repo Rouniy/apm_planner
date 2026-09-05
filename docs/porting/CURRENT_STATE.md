@@ -24,7 +24,29 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): native **Advanced Tools Param gen** and the real
+Latest slice (2026-09-05): native **PX4Flow Setup**. The offline Optional Hardware
+page now displays bounded RAW8U grayscale frames and performs exact typed
+VIDEO_ONLY reads/writes through the central parameter service. Its explicit
+generic-component selector is independent of the active autopilot. Physical and
+component-instance epochs, one pre-UAS parameter ingress, shared endpoint
+arbitration and application-owned bounded cleanup prevent stale responses or
+page/source changes from redirecting a write. Focus has a default-Cancel bench
+warning; replay is read-only. No Swarm feature expansion was made.
+
+SETUP now registers **46 pages: 45 mapped MP10 routes plus QML Plugins**, against
+53 reference pages and the same three groups (49 Qt navigation entries).
+Eight reference routes remain absent; connection filtering is counted separately.
+Full Qt5/audio build and **221/221 tests** pass (16.70 seconds). Real X11 with
+an isolated UDP sensor simulator verifies 64x64 normal and 376x240 focus frames,
+exact VIDEO_ONLY=1/0 ACKs, missing-packet stale diagnostics and recovery,
+restoration to zero after leaving the page, disconnect/reconnect without implicit
+sensor retargeting, and normal application exit 0. The peer also exits 0 in mode
+zero. Evidence: `/tmp/apm-px4flow.HrHy0E/`; contracts and limits: `PX4FLOW_PORT.md`.
+Claude reviewed through TCP 4096 (c186-c189, final REVIEW-OK after fixes), with
+three disjoint Codex work streams and root-owned builds/tests. Physical PX4Flow,
+real replay-file, reference visual comparison and Windows/macOS checks remain.
+
+Previous slice (2026-09-05): native **Advanced Tools Param gen** and the real
 Setup visibility matrix. A modeless application-owned generator now parses the
 nine master/stable source roots and their libraries and force-refreshes all
 nine PDEF products. Atomic per-file publication, token cancellation, bounded
@@ -98,11 +120,10 @@ refresh and normal application exit 0 with the tool open. Evidence:
 `/tmp/apm-download-logs.FmmrKU/`; details and remaining limits:
 `DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
 
-Next single-vehicle candidate, not Swarm: Setup PX4Flow (bounded image assembly
-and exact VIDEO_ONLY). Remaining Advanced gaps are Anon Log, MAVLink Signing
+Next single-vehicle candidates, not Swarm: remaining Advanced gaps Anon Log, MAVLink Signing
 and Warning Manager; Support Proxy
 is also a placeholder in MP10 itself. Settings/CONFIG follows these working
-single-vehicle surfaces. The nine absent Setup routes remain explicitly tracked.
+single-vehicle surfaces. The eight absent Setup routes remain explicitly tracked.
 
 The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`). The later verified checkpoints include `9d69cebb` (PLAN wrapper geometry), `9b180eba` (waypoint row actions), `e6d9e75b` (independent Inspector windows), `fbeacd6e` (Antenna Tracker pages), `e7d5e58b` (their parity-ledger checkpoint), `ed0d3706` (exact Waypoint Leader foundations), `a3594d95` (bounded Waypoint Leader profile control), `b1a12a39` (hardened exact swarm command dispatch), `5ad9d0d9` (exact swarm parameter transactions), `93c652b5` (complete disabled Waypoint Leader window shell) and `938db3bc` (fresh exact mission-observation lifecycle).
 

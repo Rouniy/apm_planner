@@ -127,7 +127,7 @@ QList<Mp10SetupRoute> Mp10ReferenceRoutes()
          QStringLiteral("ConfigRangeFinderView")},
         {QStringLiteral("ConfigAirspeedViewModel"), kOptionalGroup,
          QStringLiteral("ConfigAirspeedView")},
-        {QStringLiteral("ConfigPX4FlowViewModel"), kOptionalGroup, {}},
+        {QStringLiteral("ConfigPX4FlowViewModel"), kOptionalGroup, QStringLiteral("ConfigPX4FlowView")},
         {QStringLiteral("ConfigOptFlowViewModel"), kOptionalGroup,
          QStringLiteral("ConfigOptFlowView")},
         {QStringLiteral("ConfigHWOSDViewModel"), kOptionalGroup,
@@ -178,7 +178,6 @@ QSet<QString> KnownMissingMp10Routes()
         QStringLiteral("ConfigSecureViewModel"),
         QStringLiteral("ConfigCubeIDViewModel"),
         QStringLiteral("NvModemViewModel"),
-        QStringLiteral("ConfigPX4FlowViewModel"),
         QStringLiteral("ConfigAntennaTrackerParamViewModel"),
         QStringLiteral("ConfigOnboardReplViewModel"),
         QStringLiteral("ConfigScriptReplViewModel")
@@ -223,6 +222,7 @@ QStringList ExpectedOfflinePages(bool advanced)
         QStringLiteral("SikRadioView"),
         QStringLiteral("ConfigDroneCanView"),
         QStringLiteral("ConfigJoystickView"),
+        QStringLiteral("ConfigPX4FlowView"),
         QStringLiteral("ConfigHWBTView"),
         QStringLiteral("ConfigAntennaTrackerView"),
         QStringLiteral("AntennaTrackerUIView")
@@ -269,6 +269,7 @@ QStringList ExpectedConnectedPlanePages()
         QStringLiteral("ConfigCompassMotView"),
         QStringLiteral("ConfigRangeFinderView"),
         QStringLiteral("ConfigAirspeedView"),
+        QStringLiteral("ConfigPX4FlowView"),
         QStringLiteral("ConfigOptFlowView"),
         QStringLiteral("ConfigHWOSDView"),
         QStringLiteral("ConfigMountView"),
@@ -543,8 +544,8 @@ int RunSetupRouteRuntimeAudit()
     const QSet<QString> knownMissing = KnownMissingMp10Routes();
     result.Expect(mp10Routes.size() == 53,
                   QStringLiteral("independent MP10 manifest is not 53 pages"));
-    result.Expect(knownMissing.size() == 9,
-                  QStringLiteral("current MP10 missing-route allowlist is not 9"));
+    result.Expect(knownMissing.size() == 8,
+                  QStringLiteral("current MP10 missing-route allowlist is not 8"));
 
     QSet<QString> referenceIds;
     QSet<QString> mappedQtIds;
@@ -573,11 +574,13 @@ int RunSetupRouteRuntimeAudit()
     QSet<QString> baselineGaps = knownMissing;
     baselineGaps.insert(QStringLiteral("ConfigJoystickViewModel"));
     baselineGaps.insert(QStringLiteral("ConfigFFTViewModel"));
+    baselineGaps.insert(QStringLiteral("ConfigPX4FlowViewModel"));
     result.Expect(baselineGaps.size() == 11
                       && mappedQtIds.contains(kJoystick)
-                      && mappedQtIds.contains(QStringLiteral("ConfigFFTView")),
+                      && mappedQtIds.contains(QStringLiteral("ConfigFFTView"))
+                      && mappedQtIds.contains(QStringLiteral("ConfigPX4FlowView")),
                   QStringLiteral("the audited 11-page baseline gap or its "
-                                 "Joystick/FFT closure was lost"));
+                                 "Joystick/FFT/PX4Flow closure was lost"));
 
     DisplayViewProfileService *const displayProfiles =
         DisplayViewProfileService::instance();
@@ -610,8 +613,8 @@ int RunSetupRouteRuntimeAudit()
     backstage->setAutomaticSelectionEnabled(false);
 
     const QStringList expectedPages = ExpectedPageIds();
-    result.Expect(expectedPages.size() == 45,
-                  QStringLiteral("the audited Qt inventory is not 45 pages"));
+    result.Expect(expectedPages.size() == 46,
+                  QStringLiteral("the audited Qt inventory is not 46 pages"));
     result.Expect(backstage->pageIds() == expectedPages,
                   QStringLiteral("production page ID/order mismatch\nexpected: %1\nactual:   %2")
                       .arg(expectedPages.join(QStringLiteral(", ")),
@@ -621,8 +624,8 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("backstageNavigationContent"));
     const QStringList navigationOrder = NavigationOrder(navigationContent);
     const QStringList expectedNavigation = ExpectedNavigationOrder();
-    result.Expect(expectedNavigation.size() == 48,
-                  QStringLiteral("the navigation baseline itself is not 48 entries"));
+    result.Expect(expectedNavigation.size() == 49,
+                  QStringLiteral("the navigation baseline itself is not 49 entries"));
     result.Expect(navigationOrder == expectedNavigation,
                   QStringLiteral("production page/group order mismatch\nexpected: %1\nactual:   %2")
                       .arg(expectedNavigation.join(QStringLiteral(", ")),
@@ -679,6 +682,19 @@ int RunSetupRouteRuntimeAudit()
                           && backstage->isGroupVisible(kOptionalGroup)
                           && backstage->isGroupVisible(kAdvancedGroup),
                       QStringLiteral("offline Custom group visibility mismatch"));
+        customValues.insert(QStringLiteral("displayPx4Flow"), false);
+        DisplayViewProfile withoutPx4Flow;
+        profileError.clear();
+        const bool parsedPx4Gate = DisplayViewProfile::fromJson(
+            QJsonDocument(customValues).toJson(QJsonDocument::Compact),
+            &withoutPx4Flow, &profileError);
+        result.Expect(parsedPx4Gate && displayProfiles
+                          && displayProfiles->setProfile(withoutPx4Flow, &profileError),
+                      QStringLiteral("could not select PX4Flow-off profile: %1")
+                          .arg(profileError));
+        expectedCustom.removeAll(QStringLiteral("ConfigPX4FlowView"));
+        ExpectVisiblePages(&result, backstage, expectedCustom,
+                           QStringLiteral("offline Custom/Bluetooth-and-PX4Flow-off"));
     }
 
     profileError.clear();
@@ -1022,7 +1038,7 @@ int RunSetupRouteRuntimeAudit()
     if (result.failures() == 0) {
         qInfo().noquote()
             << QStringLiteral("SETUP route audit: 53-page MP10 manifest, "
-                              "45 Qt pages + 3 groups passed");
+                              "46 Qt pages + 3 groups passed");
     }
     return result.exitCode();
 }
