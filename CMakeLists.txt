@@ -5826,6 +5826,8 @@ if(BUILD_TESTING)
         tests/test_mavftpuiview.cpp
         src/comm/MavFtpProtocol.h
         src/comm/MavFtpServiceInterface.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
         src/ui/configuration/MavFTPUIView.cpp
         src/ui/configuration/MavFTPUIView.h
     )
@@ -5842,6 +5844,7 @@ if(BUILD_TESTING)
     add_test(NAME mavftpuiview_tests COMMAND mavftpuiview_tests)
     set_tests_properties(mavftpuiview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        TIMEOUT 60
     )
 
     add_executable(backstageview_tests

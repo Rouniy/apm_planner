@@ -79,12 +79,27 @@ MavFtpService::MavFtpService(
         connect(m_targetManager,
                 &VehicleTargetManager::targetGenerationChanged,
                 this, &MavFtpService::handleTargetGenerationChanged);
+        connect(m_targetManager, &VehicleTargetManager::targetGenerationSettled,
+                this, [this](qulonglong) {
+            if (!m_shuttingDown) emit targetChanged();
+        });
+        connect(m_targetManager, &QObject::destroyed, this, [this] {
+            m_targetManager = nullptr;
+            if (m_shuttingDown) return;
+            QPointer<MavFtpService> guard(this);
+            emit targetChanged();
+            if (!guard || !m_active) return;
+            Result result = m_active->result;
+            result.cancelled = true;
+            result.error = tr("The MAVFTP target manager is unavailable.");
+            finishImmediate(result);
+        });
     }
 }
 
 MavFtpService::~MavFtpService()
 {
-    shutdown();
+    shutdownInternal(false);
 }
 
 void MavFtpService::setLocalIdentity(
@@ -129,6 +144,15 @@ quint64 MavFtpService::activeTargetGeneration() const
 quint64 MavFtpService::activeOperationId() const
 {
     return m_active ? m_active->identity : 0;
+}
+
+VehicleTargetLease MavFtpService::currentTargetLease() const
+{
+    if (!m_targetManager) return {};
+    VehicleTargetLease lease = m_targetManager->acquireTarget();
+    if (m_shuttingDown || !m_transmitter || !targetIsCurrent(lease))
+        lease.endpoint = VehicleEndpoint();
+    return lease;
 }
 
 MavFtpService::StartResult MavFtpService::validateStart(
@@ -188,6 +212,20 @@ MavFtpService::StartResult MavFtpService::startOperation(
     Operation operation, const QString &remotePath, const QByteArray &uploadData,
     quint64 *operationIdOut)
 {
+    return startOwnedOperation(operation, remotePath, uploadData, nullptr, operationIdOut);
+}
+
+MavFtpService::StartResult MavFtpService::startOperationForTarget(
+    Operation operation, const QString &remotePath, const QByteArray &uploadData,
+    const VehicleTargetLease &expected, quint64 *operationIdOut)
+{
+    return startOwnedOperation(operation, remotePath, uploadData, &expected, operationIdOut);
+}
+
+MavFtpService::StartResult MavFtpService::startOwnedOperation(
+    Operation operation, const QString &remotePath, const QByteArray &uploadData,
+    const VehicleTargetLease *expected, quint64 *operationIdOut)
+{
     if (operationIdOut) *operationIdOut = 0;
     QByteArray path;
     const StartResult ready = validateStart(remotePath, &path);
@@ -210,22 +248,14 @@ MavFtpService::StartResult MavFtpService::startOperation(
         m_lastError = startFailureText(StartResult::InvalidData);
         return StartResult::InvalidData;
     }
-    return begin(operation, remotePath, path, uploadData, nullptr, operationIdOut);
+    return begin(operation, remotePath, path, uploadData, expected, operationIdOut);
 }
 
 MavFtpService::StartResult MavFtpService::startDownloadForTarget(
     const QString &remotePath, const VehicleTargetLease &expected,
     quint64 *operationIdOut)
 {
-    if (operationIdOut) *operationIdOut = 0;
-    QByteArray path;
-    const StartResult ready = validateStart(remotePath, &path);
-    if (ready != StartResult::Started) {
-        m_lastError = startFailureText(ready);
-        return ready;
-    }
-    return begin(Operation::Download, remotePath, path, {}, &expected,
-                 operationIdOut);
+    return startOwnedOperation(Operation::Download, remotePath, {}, &expected, operationIdOut);
 }
 
 MavFtpService::StartResult MavFtpService::startUpload(
@@ -1104,7 +1134,13 @@ void MavFtpService::handleTimeout()
 void MavFtpService::handleTargetGenerationChanged(
     qulonglong generation)
 {
-    if (!m_active || generation == m_active->lease.generation) {
+    if (m_shuttingDown) return;
+    const quint64 interruptedIdentity = activeOperationId();
+    QPointer<MavFtpService> guard(this);
+    emit targetChanged();
+    if (!guard) return;
+    if (!m_active || m_active->identity != interruptedIdentity
+        || generation == m_active->lease.generation) {
         return;
     }
     Result result = m_active->result;
@@ -1167,15 +1203,22 @@ void MavFtpService::cancel()
 
 void MavFtpService::shutdown()
 {
+    shutdownInternal(true);
+}
+
+void MavFtpService::shutdownInternal(bool notify)
+{
     if (m_shuttingDown) {
         return;
     }
     m_shuttingDown = true;
+    QPointer<MavFtpService> guard(this);
     if (m_active) {
         ActiveOperation operation = *m_active;
         clearActive();
         sendCleanupBestEffort(operation);
     }
+    if (guard && notify) emit targetChanged();
 }
 
 void MavFtpService::finishSuccess()

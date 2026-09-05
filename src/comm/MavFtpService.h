@@ -56,6 +56,7 @@ public:
     Operation operation() const override;
     quint64 activeTargetGeneration() const override;
     quint64 activeOperationId() const override;
+    VehicleTargetLease currentTargetLease() const override;
     QString lastError() const override { return m_lastError; }
 
     StartResult startList(const QString &remotePath) override;
@@ -63,6 +64,10 @@ public:
     StartResult startOperation(Operation operation, const QString &remotePath,
                                const QByteArray &uploadData,
                                quint64 *operationIdOut) override;
+    StartResult startOperationForTarget(Operation operation, const QString &remotePath,
+                                        const QByteArray &uploadData,
+                                        const VehicleTargetLease &expected,
+                                        quint64 *operationIdOut) override;
     StartResult startDownloadForTarget(const QString &remotePath,
                                       const VehicleTargetLease &expected,
                                       quint64 *operationIdOut) override;
@@ -123,6 +128,11 @@ private:
 
     StartResult validateStart(const QString &remotePath,
                               QByteArray *encodedPath) const;
+    StartResult startOwnedOperation(Operation operation, const QString &remotePath,
+                                    const QByteArray &uploadData,
+                                    const VehicleTargetLease *expected,
+                                    quint64 *operationIdOut);
+    void shutdownInternal(bool notify);
     StartResult begin(Operation operation, const QString &remotePath,
                       const QByteArray &encodedPath,
                       const QByteArray &uploadData = QByteArray(),

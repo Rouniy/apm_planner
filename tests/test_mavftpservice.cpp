@@ -196,6 +196,12 @@ private slots:
     void ownedCompletionKeepsOldIdentityAcrossReentrantStart();
     void ownedSynchronousFailureAndProgressDestruction();
     void genericAdmissionValidatesAndPublishesToken();
+    void allOwnedOperationsRejectWrongExpectedTarget();
+    void targetLeaseNotificationsAreSettledAndIgnoreMetadata();
+    void targetNotificationsPermitDestruction_data();
+    void targetNotificationsPermitDestruction();
+    void targetManagerDestructionCancelsOwnedOperation();
+    void targetListenerCancelsAndRecursivelySelectsBeforeReplacement();
 };
 
 void MavFtpServiceTest::listPaginatesAndCompletesOnEof()
@@ -879,6 +885,170 @@ void MavFtpServiceTest::genericAdmissionValidatesAndPublishesToken()
         QVERIFY(id != previous); previous = id;
         QVERIFY(fixture.service.cancelOperation(id));
     }
+}
+
+void MavFtpServiceTest::allOwnedOperationsRejectWrongExpectedTarget()
+{
+    Fixture fixture; const auto current = fixture.select();
+    QVector<VehicleTargetLease> wrong;
+    auto lease = current; ++lease.endpoint.linkId; wrong.append(lease);
+    lease = current; ++lease.endpoint.systemId; wrong.append(lease);
+    lease = current; ++lease.endpoint.componentId; wrong.append(lease);
+    lease = current; ++lease.generation; wrong.append(lease);
+    wrong.append(VehicleTargetLease());
+    const QVector<MavFtpService::Operation> operations = {
+        MavFtpService::Operation::ListDirectory, MavFtpService::Operation::Download,
+        MavFtpService::Operation::Upload, MavFtpService::Operation::MakeDirectory,
+        MavFtpService::Operation::RemoveFile, MavFtpService::Operation::RemoveDirectory};
+    quint64 id = 99;
+    for (auto operation : operations) {
+        const QByteArray data = operation == MavFtpService::Operation::Upload ? QByteArray("test") : QByteArray();
+        for (const auto &expected : wrong) {
+            QCOMPARE(fixture.service.startOperationForTarget(operation, "/same", data, expected, &id),
+                     MavFtpService::StartResult::StaleTarget);
+            QCOMPARE(id, quint64(0)); QVERIFY(fixture.frames.isEmpty());
+        }
+    }
+    connect(&fixture.service, &MavFtpServiceInterface::stateChanged, &fixture.service, [&] {
+        if (fixture.service.isBusy()) {
+            QVERIFY(id != 0); QCOMPARE(fixture.service.activeOperationId(), id);
+        }
+    });
+    for (auto operation : operations) {
+        QCOMPARE(fixture.service.startOperationForTarget(operation, "/same", {}, current, &id),
+                 MavFtpService::StartResult::Started);
+        QVERIFY(id != 0); QVERIFY(fixture.service.cancelOperation(id));
+    }
+}
+
+void MavFtpServiceTest::targetLeaseNotificationsAreSettledAndIgnoreMetadata()
+{
+    Fixture fixture; const auto first = fixture.select();
+    QCOMPARE(fixture.service.currentTargetLease().endpoint, first.endpoint);
+    QCOMPARE(fixture.service.currentTargetLease().generation, first.generation);
+    QSignalSpy changed(&fixture.service, &MavFtpServiceInterface::targetChanged);
+    auto renamed = first.endpoint; renamed.linkName = "Renamed link";
+    QVERIFY(fixture.targets.observeEndpoint(renamed)); QCOMPARE(changed.count(), 0);
+    QCOMPARE(fixture.service.currentTargetLease().endpoint.linkName, renamed.linkName);
+    fixture.targets.observeEndpoint(endpoint(10)); fixture.targets.observeEndpoint(endpoint(11));
+    QCOMPARE(changed.count(), 0);
+    QVector<VehicleTargetLease> snapshots;
+    bool nested = false;
+    const auto connection = connect(&fixture.service, &MavFtpServiceInterface::targetChanged,
+                                    &fixture.service, [&] {
+        const auto current = fixture.service.currentTargetLease(); snapshots.append(current);
+        if (!current.isValid()) {
+            QVERIFY(!fixture.targets.isTargetGenerationSettled());
+            QCOMPARE(current.generation, fixture.targets.targetGeneration());
+            quint64 id = 55;
+            QCOMPARE(fixture.service.startOperationForTarget(MavFtpService::Operation::RemoveFile,
+                         "/same", {}, fixture.targets.acquireTarget(), &id),
+                     MavFtpService::StartResult::StaleTarget);
+            QCOMPARE(id, quint64(0));
+            if (!nested) { nested = true; fixture.targets.selectTarget(11, 42, 1); }
+        } else QVERIFY(fixture.targets.isTargetGenerationSettled());
+    });
+    QVERIFY(fixture.targets.selectTarget(10, 42, 1));
+    QCOMPARE(snapshots.size(), 3);
+    QVERIFY(!snapshots[0].isValid()); QVERIFY(!snapshots[1].isValid());
+    QVERIFY(snapshots[2].isValid()); QCOMPARE(snapshots[2].endpoint.linkId, 11);
+    QVERIFY(fixture.frames.isEmpty());
+    disconnect(connection);
+    quint64 admitted = 0;
+    connect(&fixture.service, &MavFtpServiceInterface::targetChanged, &fixture.service, [&] {
+        const auto current = fixture.service.currentTargetLease();
+        if (current.isValid()) {
+            QCOMPARE(fixture.service.startOperationForTarget(MavFtpService::Operation::ListDirectory,
+                         "/", {}, current, &admitted), MavFtpService::StartResult::Started);
+        }
+    });
+    fixture.targets.selectTarget(10, 42, 1);
+    QVERIFY(admitted != 0); QCOMPARE(fixture.service.activeOperationId(), admitted);
+}
+
+void MavFtpServiceTest::targetNotificationsPermitDestruction_data()
+{
+    QTest::addColumn<int>("phase");
+    QTest::newRow("invalidation") << 0;
+    QTest::newRow("settled") << 1;
+    QTest::newRow("shutdown") << 2;
+    QTest::newRow("manager destruction") << 3;
+}
+
+void MavFtpServiceTest::targetNotificationsPermitDestruction()
+{
+    QFETCH(int, phase);
+    auto *targets = new VehicleTargetManager;
+    targets->observeEndpoint(endpoint(9)); targets->selectTarget(9, 42, 1);
+    ExactLinkTransmitter transmitter([](int, const QByteArray &) { return true; });
+    auto *service = new MavFtpService(targets, &transmitter);
+    QPointer<MavFtpService> guard(service);
+    quint64 operationId = 0;
+    QCOMPARE(service->startOperationForTarget(MavFtpService::Operation::ListDirectory,
+                 "/", {}, service->currentTargetLease(), &operationId), MavFtpService::StartResult::Started);
+    bool called = false;
+    connect(service, &MavFtpServiceInterface::targetChanged, &transmitter, [&] {
+        if (phase == 1 && !service->currentTargetLease().isValid()) return;
+        called = true;
+        if (phase != 1) QVERIFY(!service->currentTargetLease().isValid());
+        if (phase == 0) QVERIFY(service->cancelOperation(operationId));
+        delete service;
+    });
+    if (phase == 2) service->shutdown();
+    else if (phase == 3) { delete targets; targets = nullptr; }
+    else {
+        targets->observeEndpoint(endpoint(10)); targets->selectTarget(10, 42, 1);
+    }
+    QVERIFY(called); QVERIFY(guard.isNull()); delete targets;
+}
+
+void MavFtpServiceTest::targetManagerDestructionCancelsOwnedOperation()
+{
+    auto *targets = new VehicleTargetManager;
+    targets->observeEndpoint(endpoint(9)); targets->selectTarget(9, 42, 1);
+    int frames = 0;
+    ExactLinkTransmitter transmitter([&](int, const QByteArray &) { ++frames; return true; });
+    MavFtpService service(targets, &transmitter);
+    quint64 id = 0;
+    QCOMPARE(service.startOperationForTarget(MavFtpService::Operation::ListDirectory,
+                 "/", {}, service.currentTargetLease(), &id), MavFtpService::StartResult::Started);
+    QSignalSpy changed(&service, &MavFtpServiceInterface::targetChanged);
+    QSignalSpy finished(&service, &MavFtpServiceInterface::operationFinished);
+    delete targets;
+    QCOMPARE(changed.count(), 1); QCOMPARE(finished.count(), 1);
+    QVERIFY(!service.currentTargetLease().isValid()); QVERIFY(!service.isBusy());
+    QCOMPARE(resultAt(finished).operationId, id); QVERIFY(resultAt(finished).cancelled);
+    QCOMPARE(frames, 1);
+    service.shutdown(); QCOMPARE(changed.count(), 2);
+    service.shutdown(); QCOMPARE(changed.count(), 2);
+}
+
+void MavFtpServiceTest::targetListenerCancelsAndRecursivelySelectsBeforeReplacement()
+{
+    Fixture fixture; const auto lease = fixture.select();
+    fixture.targets.observeEndpoint(endpoint(10)); fixture.targets.observeEndpoint(endpoint(11));
+    quint64 first = 0, replacement = 0;
+    QCOMPARE(fixture.service.startOperationForTarget(MavFtpService::Operation::ListDirectory,
+                 "/", {}, lease, &first), MavFtpService::StartResult::Started);
+    QSignalSpy finished(&fixture.service, &MavFtpServiceInterface::operationFinished);
+    bool nested = false;
+    connect(&fixture.service, &MavFtpServiceInterface::targetChanged, &fixture.service, [&] {
+        const auto current = fixture.service.currentTargetLease();
+        if (!current.isValid() && !nested) {
+            nested = true;
+            QVERIFY(fixture.service.cancelOperation(first));
+            QVERIFY(fixture.targets.selectTarget(11, 42, 1));
+        } else if (current.isValid()) {
+            QCOMPARE(fixture.service.startOperationForTarget(MavFtpService::Operation::ListDirectory,
+                         "/", {}, current, &replacement), MavFtpService::StartResult::Started);
+        }
+    });
+    QVERIFY(fixture.targets.selectTarget(10, 42, 1));
+    QVERIFY(nested); QCOMPARE(finished.count(), 1); QCOMPARE(resultAt(finished).operationId, first);
+    QVERIFY(resultAt(finished).cancelled); QVERIFY(replacement != 0); QVERIFY(replacement != first);
+    QCOMPARE(fixture.service.activeOperationId(), replacement);
+    QCOMPARE(fixture.service.currentTargetLease().endpoint.linkId, 11);
+    QCOMPARE(fixture.frames.size(), 2); QCOMPARE(fixture.frames.last().linkId, 11);
 }
 
 QTEST_GUILESS_MAIN(MavFtpServiceTest)

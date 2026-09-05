@@ -72,12 +72,24 @@ public:
     virtual Operation operation() const = 0;
     virtual quint64 activeTargetGeneration() const = 0;
     virtual quint64 activeOperationId() const { return 0; }
+    // Invalid while a target generation is unsettled or the service is closed.
+    // An invalid lease may retain the generation for cache invalidation.
+    virtual VehicleTargetLease currentTargetLease() const { return {}; }
     virtual QString lastError() const = 0;
 
     virtual StartResult startList(const QString &remotePath) = 0;
     virtual StartResult startDownload(const QString &remotePath) = 0;
     virtual StartResult startOperation(Operation, const QString &,
                                       const QByteArray &, quint64 *operationIdOut)
+    {
+        if (operationIdOut) *operationIdOut = 0;
+        return StartResult::TransportUnavailable;
+    }
+    // Exact consent snapshot; never substitutes the presently selected target.
+    virtual StartResult startOperationForTarget(Operation, const QString &,
+                                               const QByteArray &,
+                                               const VehicleTargetLease &,
+                                               quint64 *operationIdOut)
     {
         if (operationIdOut) *operationIdOut = 0;
         return StartResult::TransportUnavailable;
@@ -101,6 +113,8 @@ public:
 
 signals:
     void stateChanged();
+    // True target invalidation and settled phases; not display-name changes.
+    void targetChanged();
     void operationStarted(MavFtpServiceInterface::Operation operation,
                           qulonglong targetGeneration,
                           const QString &remotePath);

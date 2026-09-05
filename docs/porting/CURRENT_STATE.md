@@ -24,7 +24,48 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Download MAVFTP File and owned FTP operations**.
+Latest slice (2026-09-06): **MAVFTP browser target-bound consent and lifecycle**.
+The shared SETUP/CONFIG browser now captures its exact target, remote path,
+entry type and destination before page-owned asynchronous file/confirmation
+dialogs. Upload/Delete show the target and path with default Cancel. Every
+operation uses expected-target admission; cached rows/directories carry their
+source lease, and target changes retire prompts and clear stale lists. Returning
+to the same MAV IDs still requires a fresh listing. Metadata-only updates do not
+invalidate it; literal-root operations do not require a prior directory listing.
+
+The browser cancels only its own operation ID, fences deferred refresh to the
+original lease and handles close/reopen, page/service destruction and callback
+replacement. SETUP's synchronous connection-page recreation is covered by
+reacquiring both the browser and Developer page after component changes. Tests
+found and fixed a post-prompt disabled-button state and a Qt5 progress-setter
+repaint crash when a valueChanged listener deleted the page. Progress is now
+published after Qt's setter returns, with lifetime/revision guards.
+
+Qt5/audio configure/build, focused6/6 (8.10s), **243/243 tests (30.20s)** and
+production X11 exit0 pass. The real Tools → Developer → SETUP MAVFtp route lists
+an in-process file/directory fixture to EOF, exercises default-Cancel and changes
+sys234 from component1 to2 during both Upload and Delete consent: zero destructive
+FTP requests, cleared/destroyed old page, empty reopened page and explicit Refresh.
+The direct127-byte binary download and all previous GPS/Split/DashWare/six vehicle
+actions remain green. No network SITL mutation; test fixtures are stopped.
+Evidence: `/tmp/apm-mavftp-consent.AgH20W/`; see `MAVFTP_BROWSER_TARGET_CONSENT.md`.
+Claude TCP c197/c199/c201–c203 independently reviewed design/code/runtime fixes;
+three Codex streams supplied service, browser/tests and production audit work.
+Root reviewed, fixed harness/runtime findings and scheduled all verification.
+
+Counts remain Developer15/32 (17 missing), Advanced14 complete+1 partial Signing
+and disabled Support Proxy, fixedTools24 plus Signing extension, SETUP46/eight
+absent reference routes, CONFIG15/15 factories and Planner21/64 controls. The
+outdated Advanced12 count in SETUP-001 was corrected to match source/tests.
+Next: **Embed Defaults in APJ**, then other single-drone tools and later Signing
+transitions. The independent APJ audit identifies unsigned descriptor CRC
+recalculation and signed-image refusal as required safety work; MP10's simple
+marker patch does not handle them. Settings follows Tools; Swarm remains last.
+MAVFTP64MiB buffering, sequential80-byte reads, GUI-thread browser local IO,
+capability gating, exclusive local no-replace creation, native/hardware evidence
+and reference screenshot parity remain; download whole-file CRC is not claimed.
+
+Previous slice (2026-09-06): **Download MAVFTP File and owned FTP operations**.
 The existing TOOLS/SETUP Developer button now follows MP10's direct workflow:
 remote path (default `@SYS/threads.txt`), Save filename, modeless progress and
 Cancel. It does not require directory listing or redirect to a different tool.

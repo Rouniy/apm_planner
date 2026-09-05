@@ -7,8 +7,11 @@
 #include "comm/TCPLink.h"
 #include "comm/VehicleTargetManager.h"
 #include "services/DeveloperVehicleToolService.h"
+#include "ui/BackstageView.h"
 #include "ui/MainWindow.h"
 #include "ui/configuration/ConfigDeveloperToolsView.h"
+#include "ui/configuration/MavFTPUIView.h"
+#include "ui/configuration/SetupView.h"
 
 #include <QAction>
 #include <QApplication>
@@ -28,6 +31,7 @@
 #include <QSet>
 #include <QThread>
 #include <QTemporaryDir>
+#include <QTableWidget>
 #include <QTimer>
 #include <QtEndian>
 #include <functional>
@@ -223,13 +227,14 @@ public:
         const int size = mavlink_msg_to_send_buffer(buffer, &message);
         emit bytesReceived(this, QByteArray(reinterpret_cast<const char *>(buffer), size));
     }
-    void heartbeat(bool armed = false) {
+    void heartbeatFor(quint8 componentId, bool armed = false) {
         mavlink_message_t message{};
-        mavlink_msg_heartbeat_pack(FixtureSystem, 1, &message, MAV_TYPE_QUADROTOR,
+        mavlink_msg_heartbeat_pack(FixtureSystem, componentId, &message, MAV_TYPE_QUADROTOR,
             MAV_AUTOPILOT_ARDUPILOTMEGA, armed ? MAV_MODE_FLAG_SAFETY_ARMED : 0,
             0, MAV_STATE_STANDBY);
         inject(message);
     }
+    void heartbeat(bool armed = false) { heartbeatFor(1, armed); }
     void pressureReply() {
         mavlink_param_value_t value{};
         std::memcpy(value.param_id, "GND_ABS_PRESS", 13);
@@ -245,12 +250,14 @@ public:
         const MavFtpProtocol::PayloadHeader &request,
         int sourceSystem, int sourceComponent,
         int targetSystem, int targetComponent,
-        const QByteArray &data, int session) const
+        const QByteArray &data, int session,
+        MavFtpProtocol::Opcode responseOpcode =
+            MavFtpProtocol::Opcode::Ack) const
     {
         MavFtpProtocol::PayloadHeader response;
         response.sequence = static_cast<quint16>(request.sequence + 1u);
         response.session = static_cast<quint8>(session);
-        response.opcode = MavFtpProtocol::Opcode::Ack;
+        response.opcode = responseOpcode;
         response.requestOpcode = request.opcode;
         response.offset = request.offset;
         response.data = data;
@@ -299,7 +306,26 @@ public:
 
         QByteArray responseData;
         int responseSession = request.session;
+        MavFtpProtocol::Opcode responseOpcode = MavFtpProtocol::Opcode::Ack;
         switch (request.opcode) {
+        case MavFtpProtocol::Opcode::ListDirectory:
+            if (request.offset == 0) {
+                responseData.append('D');
+                responseData.append("logs", 4);
+                responseData.append('\0');
+                responseData.append('F');
+                responseData.append("threads.txt\t", 12);
+                responseData.append(QByteArray::number(ftpFileData.size()));
+                responseData.append('\0');
+            } else if (request.offset == 2) {
+                responseOpcode = MavFtpProtocol::Opcode::Nak;
+                responseData.append(static_cast<char>(
+                    MavFtpProtocol::ErrorCode::EndOfFile));
+            } else {
+                ftpEnvelopeValid = false;
+                return;
+            }
+            break;
         case MavFtpProtocol::Opcode::ResetSessions:
             break;
         case MavFtpProtocol::Opcode::OpenFileReadOnly:
@@ -328,6 +354,14 @@ public:
                 ftpEnvelopeValid = false;
             responseSession = 7;
             break;
+        case MavFtpProtocol::Opcode::CreateFile:
+        case MavFtpProtocol::Opcode::WriteFile:
+        case MavFtpProtocol::Opcode::RemoveFile:
+        case MavFtpProtocol::Opcode::CreateDirectory:
+        case MavFtpProtocol::Opcode::RemoveDirectory:
+            ++destructiveFtpRequests;
+            ftpEnvelopeValid = false;
+            return;
         default:
             ftpEnvelopeValid = false;
             return;
@@ -335,7 +369,8 @@ public:
 
         const mavlink_message_t correct = ftpResponse(
             request, FixtureSystem, 1,
-            message.sysid, message.compid, responseData, responseSession);
+            message.sysid, message.compid, responseData, responseSession,
+            responseOpcode);
         QTimer::singleShot(0, this,
             [this, message, request, correct]() {
             if (!ftpWrongResponsesInjected) {
@@ -401,6 +436,7 @@ public:
     QString ftpRemotePath;
     QVector<MavFtpProtocol::Opcode> ftpOpcodes;
     int ftpRequestCount = 0;
+    int destructiveFtpRequests = 0;
     quint8 ftpGcsSystem = 0;
     quint8 ftpGcsComponent = 0;
     bool ftpEnvelopeValid = true;
@@ -926,6 +962,243 @@ int RunDeveloperVehicleToolRuntimeAudit()
         qInfo() << "Developer runtime MAVFTP download:" << remotePath
                 << localPath << page->Log();
     }
+
+    // Exercise the production Setup browser, not the direct-download helper.
+    // The remote list is useful after an explicit refresh, but destructive
+    // prompts must remain pinned to the target that was current before any
+    // local picker/consent UI opened.
+    auto *setup = window->findChild<SetupView *>();
+    auto *backstage = setup ? setup->findChild<BackstageView *>() : nullptr;
+    expect(backstage && backstage->isPageVisible(
+               QStringLiteral("MavFTPUIView")),
+           "connected production MAVFTP Setup route is not visible");
+    expect(backstage && backstage->setCurrentPage(
+               QStringLiteral("MavFTPUIView")),
+           "production MAVFTP Setup route could not be selected");
+    QPointer<MavFTPUIView> browser = backstage
+        ? qobject_cast<MavFTPUIView *>(backstage->page(
+              QStringLiteral("MavFTPUIView")))
+        : nullptr;
+    QPointer<QPushButton> browserRefresh = browser ? browser->findChild<QPushButton *>(
+        QStringLiteral("RefreshButton")) : nullptr;
+    QPointer<QTableWidget> browserEntries = browser ? browser->findChild<QTableWidget *>(
+        QStringLiteral("EntriesGrid")) : nullptr;
+    QPointer<QPushButton> browserUpload = browser ? browser->findChild<QPushButton *>(
+        QStringLiteral("UploadBtn")) : nullptr;
+    QPointer<QPushButton> browserDelete = browser ? browser->findChild<QPushButton *>(
+        QStringLiteral("DeleteButton")) : nullptr;
+    expect(browser && browserRefresh && browserEntries && browserUpload
+               && browserDelete,
+           "production MAVFTP browser controls are missing");
+
+    const auto selectBrowserFile = [&]() -> bool {
+        if (!browserEntries) return false;
+        for (int row = 0; row < browserEntries->rowCount(); ++row) {
+            const QTableWidgetItem *const item = browserEntries->item(row, 0);
+            if (item && item->text() == QStringLiteral("threads.txt")) {
+                browserEntries->selectRow(row);
+                QCoreApplication::processEvents();
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto browserHasRemoteFixture = [&]() {
+        if (!browserEntries || browserEntries->rowCount() != 2) return false;
+        bool hasDirectory = false;
+        bool hasFile = false;
+        for (int row = 0; row < browserEntries->rowCount(); ++row) {
+            const QString name = browserEntries->item(row, 0)
+                ? browserEntries->item(row, 0)->text() : QString();
+            hasDirectory = hasDirectory || name == QStringLiteral("logs");
+            hasFile = hasFile || name == QStringLiteral("threads.txt");
+        }
+        return hasDirectory && hasFile;
+    };
+    if (browserRefresh && browserEntries && browserUpload && browserDelete
+        && fixture) {
+        const int listStart = fixture->ftpRequestCount;
+        browserRefresh->click();
+        expect(waitFor([&] {
+            return !links->mavFtpService()->isBusy()
+                && browserHasRemoteFixture();
+        }), "production MAVFTP browser did not list the fixture directory");
+        expect(fixture->ftpRequestCount == listStart + 2
+                   && fixture->ftpOpcodes.value(listStart)
+                       == MavFtpProtocol::Opcode::ListDirectory
+                   && fixture->ftpOpcodes.value(listStart + 1)
+                       == MavFtpProtocol::Opcode::ListDirectory,
+               "production MAVFTP browser list did not paginate to EOF");
+
+        expect(selectBrowserFile() && browserDelete->isEnabled(),
+               "listed MAVFTP file cannot be selected for deletion");
+        const int beforeDeletePrompt = fixture->ftpRequestCount;
+        browserDelete->click();
+        expect(waitFor([&] {
+            return browser->findChild<QMessageBox *>(
+                QStringLiteral("MavFtpDeleteConfirmDialog")) != nullptr;
+        }), "named MAVFTP delete confirmation did not open");
+        auto *deletePrompt = browser->findChild<QMessageBox *>(
+            QStringLiteral("MavFtpDeleteConfirmDialog"));
+        expect(deletePrompt
+                   && deletePrompt->defaultButton()
+                       == deletePrompt->button(QMessageBox::Cancel)
+                   && deletePrompt->escapeButton()
+                       == deletePrompt->button(QMessageBox::Cancel)
+                   && deletePrompt->text().contains(
+                       QStringLiteral("threads.txt")),
+               "MAVFTP delete consent is not named/default-Cancel/path-specific");
+        if (deletePrompt)
+            deletePrompt->button(QMessageBox::Cancel)->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return browserDelete->isEnabled(); })
+                   && fixture->ftpRequestCount == beforeDeletePrompt
+                   && fixture->destructiveFtpRequests == 0,
+               "cancelling MAVFTP delete consent transmitted a mutation");
+
+        QTemporaryDir uploadFiles;
+        expect(uploadFiles.isValid(), "MAVFTP upload fixture directory unavailable");
+        const QString uploadPath = uploadFiles.filePath(
+            QStringLiteral("upload candidate.bin"));
+        QFile uploadSource(uploadPath);
+        const QByteArray uploadBytes("must not reach the vehicle");
+        expect(uploadSource.open(QIODevice::WriteOnly)
+                   && uploadSource.write(uploadBytes) == uploadBytes.size(),
+               "MAVFTP upload fixture could not be written");
+        uploadSource.close();
+
+        const int beforeUploadPrompt = fixture->ftpRequestCount;
+        browserUpload->click();
+        expect(waitFor([&] {
+            return browser->findChild<QFileDialog *>(
+                QStringLiteral("MavFtpUploadFileDialog")) != nullptr;
+        }), "named MAVFTP upload picker did not open");
+        auto *uploadPicker = browser->findChild<QFileDialog *>(
+            QStringLiteral("MavFtpUploadFileDialog"));
+        if (uploadPicker) {
+            auto *filename = uploadPicker->findChild<QLineEdit *>(
+                QStringLiteral("fileNameEdit"));
+            expect(filename != nullptr,
+                   "MAVFTP upload picker filename editor missing");
+            if (filename) filename->setText(uploadPath);
+            expect(uploadPicker->selectedFiles() == QStringList{uploadPath},
+                   "MAVFTP upload selection is not exact");
+            expect(QMetaObject::invokeMethod(uploadPicker, "accept",
+                                             Qt::DirectConnection),
+                   "MAVFTP upload picker acceptance unavailable");
+        }
+        expect(waitFor([&] {
+            return browser->findChild<QMessageBox *>(
+                QStringLiteral("MavFtpUploadConfirmDialog")) != nullptr;
+        }), "named MAVFTP upload confirmation did not open");
+        QPointer<QMessageBox> uploadPrompt = browser->findChild<QMessageBox *>(
+            QStringLiteral("MavFtpUploadConfirmDialog"));
+        expect(uploadPrompt
+                   && uploadPrompt->defaultButton()
+                       == uploadPrompt->button(QMessageBox::Cancel)
+                   && uploadPrompt->escapeButton()
+                       == uploadPrompt->button(QMessageBox::Cancel)
+                   && uploadPrompt->text().contains(
+                       QStringLiteral("upload candidate.bin"))
+                   && uploadPrompt->text().contains(
+                       QString::number(FixtureSystem)),
+               "MAVFTP upload consent is not default-Cancel/path/target-specific");
+
+        fixture->heartbeatFor(2);
+        expect(waitFor([&] {
+            return links->vehicleTargetManager()->contains(
+                FixtureLinkId, FixtureSystem, 2);
+        }), "alternate MAVFTP target component was not discovered");
+        expect(links->vehicleTargetManager()->selectTarget(
+                   FixtureLinkId, FixtureSystem, 2),
+               "could not select alternate MAVFTP target component");
+        expect(waitFor([&] {
+            return (!uploadPrompt || uploadPrompt->isHidden())
+                && (!browserEntries || browserEntries->rowCount() == 0)
+                && !links->mavFtpService()->isBusy();
+        }), "target switch did not cancel MAVFTP consent and stale rows");
+        expect(fixture->ftpRequestCount == beforeUploadPrompt
+                   && fixture->destructiveFtpRequests == 0,
+               "target switch during MAVFTP consent transmitted a mutation");
+
+        expect(links->vehicleTargetManager()->selectTarget(
+                   FixtureLinkId, FixtureSystem, 1),
+               "could not restore original MAVFTP target");
+        expect(waitFor([&] {
+            return links->vehicleTargetManager()->isTargetGenerationSettled();
+        }), "restored MAVFTP target generation did not settle");
+        expect(backstage->setCurrentPage(QStringLiteral("MavFTPUIView")),
+               "MAVFTP Setup route could not reopen after target restore");
+        browser = qobject_cast<MavFTPUIView *>(backstage->page(
+            QStringLiteral("MavFTPUIView")));
+        browserRefresh = browser ? browser->findChild<QPushButton *>(
+            QStringLiteral("RefreshButton")) : nullptr;
+        browserEntries = browser ? browser->findChild<QTableWidget *>(
+            QStringLiteral("EntriesGrid")) : nullptr;
+        browserDelete = browser ? browser->findChild<QPushButton *>(
+            QStringLiteral("DeleteButton")) : nullptr;
+        expect(browser && browserRefresh && browserEntries && browserDelete
+                   && browserEntries->rowCount() == 0,
+               "switching back silently reused stale MAVFTP rows or lost controls");
+        expect(browserRefresh && browserRefresh->isEnabled(),
+               "MAVFTP browser cannot explicitly refresh after target restore");
+        if (browserRefresh) browserRefresh->click();
+        expect(waitFor([&] {
+            return !links->mavFtpService()->isBusy()
+                && browserHasRemoteFixture();
+        }), "MAVFTP browser did not require and complete refresh after target restore");
+
+        expect(selectBrowserFile() && browserDelete
+                   && browserDelete->isEnabled(),
+               "refreshed MAVFTP file cannot be selected for deletion");
+        const int beforeDeleteSwitch = fixture->ftpRequestCount;
+        if (browserDelete) browserDelete->click();
+        expect(waitFor([&] {
+            return browser->findChild<QMessageBox *>(
+                QStringLiteral("MavFtpDeleteConfirmDialog")) != nullptr;
+        }), "second MAVFTP delete confirmation did not open");
+        QPointer<QMessageBox> deleteSwitchPrompt =
+            browser->findChild<QMessageBox *>(
+                QStringLiteral("MavFtpDeleteConfirmDialog"));
+        expect(deleteSwitchPrompt
+                   && deleteSwitchPrompt->text().contains(
+                       QStringLiteral("threads.txt"))
+                   && deleteSwitchPrompt->text().contains(
+                       QString::number(FixtureSystem)),
+               "MAVFTP delete consent does not identify its path and target");
+        expect(links->vehicleTargetManager()->selectTarget(
+                   FixtureLinkId, FixtureSystem, 2),
+               "could not switch target during MAVFTP delete consent");
+        expect(waitFor([&] {
+            return (!deleteSwitchPrompt || deleteSwitchPrompt->isHidden())
+                && (!browserEntries || browserEntries->rowCount() == 0)
+                && !links->mavFtpService()->isBusy();
+        }), "target switch did not cancel MAVFTP delete consent and stale rows");
+        expect(fixture->ftpRequestCount == beforeDeleteSwitch
+                   && fixture->destructiveFtpRequests == 0,
+               "target switch during MAVFTP delete consent transmitted a mutation");
+        expect(links->vehicleTargetManager()->selectTarget(
+                   FixtureLinkId, FixtureSystem, 1),
+               "could not restore vehicle target after delete-consent audit");
+        expect(waitFor([&] {
+            return links->vehicleTargetManager()->isTargetGenerationSettled();
+        }) && (!browserEntries || browserEntries->rowCount() == 0),
+               "delete-consent target restore reused stale MAVFTP rows");
+        expect(fixture->destructiveFtpRequests == 0,
+               "MAVFTP browser emitted a destructive request during target-lifetime audit");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        qInfo() << "Developer runtime MAVFTP browser target consent passed";
+    }
+    expect(backstage && backstage->setCurrentPage(
+               QStringLiteral("ConfigDeveloperToolsView")),
+           "Developer page could not be restored after MAVFTP browser audit");
+    page = backstage
+        ? qobject_cast<ConfigDeveloperToolsView *>(backstage->page(
+              QStringLiteral("ConfigDeveloperToolsView")))
+        : nullptr;
+    expect(page != nullptr,
+           "Developer route did not expose a live page after target changes");
+
     const QStringList names = {QStringLiteral("SetQnhButton"), QStringLiteral("AdjustBarometerAltitudeButton"),
         QStringLiteral("ForceAccelCalibratedButton"), QStringLiteral("ForceCompassCalibratedButton"),
         QStringLiteral("RebootVehicleButton"), QStringLiteral("RebootToDfuButton")};

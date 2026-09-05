@@ -68,9 +68,12 @@ and binary mode labels, with strict parsing and atomic confirmed CSV output.
 Download MAVFTP File now follows the direct remote-path/Save/progress workflow
 on the shared service, with a target lease captured before prompts, a30-second
 deadline and atomic output. It and the full browser use owned operation IDs,
-progress and cancellation; the browser's older prompt-time consent gap remains
-tracked separately in CONFIG-006. Full243/243 and actual X11 pickers with a
-127-byte in-process MAVFTP transfer pass; earlier real/large log checks remain.
+progress and cancellation. The browser's older prompt-time consent gap is now
+fixed too: immutable exact target/path/type before asynchronous prompts,
+default-Cancel target-specific Upload/Delete, cached-list lease tags and clearing
+on target changes. Full243/243 and actual X11 pickers with a127-byte in-process
+MAVFTP transfer plus both component-switch/no-mutation confirmation paths pass;
+earlier real/large log checks remain. See `MAVFTP_BROWSER_TARGET_CONSENT.md`.
 The six vehicle actions require fresh disarmed exact-target consent and report
 matched ACK/parameter echoes or explicit uncertainty. The remaining17 file,
 transport and recovery actions stay disabled. This is not additional CONFIG

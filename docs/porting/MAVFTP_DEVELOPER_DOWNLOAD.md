@@ -80,11 +80,11 @@ an independently verified or authenticated remote file. Upload CRC behavior is
 unchanged. FTP reset/terminate messages manage the remote FTP session; this is
 not a zero-traffic local tool.
 
-The older browser still captures its target after its own static modal file/
-confirmation prompts. Its prompt-time target-switch safety is a separately
-tracked gap; this slice adds operation ownership without claiming that all
-browser write-consent behavior is fixed. Native platforms, capability gating,
-actual hardware servers and MP10 screenshot parity remain open.
+The follow-up browser slice now captures its own exact target/path/type before
+asynchronous prompts and clears stale listings, closing the previously recorded
+prompt-time target-switch gap. See `MAVFTP_BROWSER_TARGET_CONSENT.md` for its
+separate tests and boundaries. Native platforms, capability gating, actual
+hardware servers and MP10 screenshot parity remain open.
 
 ## Verification
 

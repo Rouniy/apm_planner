@@ -23,15 +23,19 @@ Download MAVFTP File реализован отдельным MP10-потоком
 progress/cancel на существующем общем сервисе, с фиксацией борта до диалогов,
 30-секундным deadline и атомарной записью. Он и старый браузер используют
 токены владения операциями; чужие Cancel/результаты не пересекаются.
-Полный набор243/243 проходит за29.82s, production X11 с побайтной проверкой
-127-байтового MAVFTP-файла тоже проходит; сетевой SITL не изменялся.
+Теперь и полный MAVFTP-браузер фиксирует борт/путь/тип до асинхронных диалогов,
+проверяет lease при допуске операции и очищает списки при смене цели. Подтверждения
+Upload/Delete показывают цель и путь, по умолчанию выбирается Cancel.
+Полный набор243/243 проходит за30.20s; production X11 проверяет127-байтовый файл,
+обе смены компонента во время подтверждения без destructive FTP requests,
+пересоздание страниц и явный Refresh. Сетевой SITL не изменялся.
 Начало записи только по heartbeat/enabled остаётся отдельным пробелом.
-Следующий пакет — устранение смены борта во время модальных подтверждений
-старого MAVFTP-браузера (в новом прямом скачивании цель уже фиксируется заранее),
-затем другие single-drone Developer Tools (APJ defaults, MagFit);
+Следующий пакет — Embed Defaults in APJ: точные file dialogs/marker/выходной файл,
+проверка и пересчёт unsigned descriptor CRC, отказ от изменения signed firmware;
+затем другие single-drone Developer Tools (включая MagFit).
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
-`MAVFTP_DEVELOPER_DOWNLOAD.md`.
+`MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
