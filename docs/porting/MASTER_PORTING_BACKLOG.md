@@ -76,11 +76,11 @@ Qt Widgets и доверенный QML API можно сочетать по на
 
 1. Убрать пустую полосу у правой границы PLAN и зафиксировать геометрию при
    1120×720, 1280×800, 1920×1080 и HiDPI.
-2. Tools → MAVLink Inspector уже открывает отдельное независимое modeless
-   окно, но его data model смешивает physical links и одинаковые message id
-   разных components. Следующий slice должен сначала закрепить один exact
-   source и ключ `(link, sysid, compid, msgid)`, затем добавить MP10
-   Pause/Resume, Clear, Filter, Show GCS Traffic и bounded Graph It.
+2. Tools → MAVLink Inspector теперь использует отдельные modeless окна с
+   exact physical-link/replay source и раздельными sysid/component/message
+   ключами; Pause/Resume, Clear и Filter работают. Следующий slice — exact
+   outbound observations, Show GCS Traffic и bounded Graph It, затем безопасный
+   Download Logs (точная цель, отмена, ограниченные retries, atomic output).
 3. Довести главный DATA HUD/OSD до видимого набора MP: вертикальная скорость
    уже приходит в модель и рисуется только малоконтрастной стрелкой VSI;
    требуется явно видимое числовое значение и проверка остальных полей.
@@ -179,36 +179,26 @@ viewport, scrollbar не создаёт второй пустой столбец
 
 #### 1B. MAVLink Inspector window
 
-Состояние 2026-09-03: выполнена window/lifecycle часть. Каждый вызов создаёт
-новое modeless top-level окно, replay использует guarded multicast; unit и
-real-X11 multi-instance/close/shutdown проверки проходят. Фильтры, графики и
-современный dialect остаются отдельной функциональной работой.
+Состояние 2026-09-05: новый `MAVLinkInspectorView` заменяет legacy content
+в независимых modeless окнах. Реализованы Pause/Resume, Clear, фильтр из cache,
+дерево `Vehicle → Component → Message → Field`, точные integer/array значения,
+333 ms refresh и MP10 three-second Hz/Bps. Cache ограничен 4096 identities и
+200 samples/key; source закрепляет physical-link QObject + epoch либо replay
+generation. Отключение сохраняет снимок, новое соединение того же объекта
+очищает старую сессию даже при Pause. Legacy heartbeat/UAS gate обходится
+отдельным диагностическим сигналом только для уже разобранных пакетов.
 
-Аудит 2026-09-05 уточнил главный функциональный дефект: текущий store
-игнорирует `LinkInterface*` и ключует данные только `(sysid,msgid)`, поэтому
-смешивает physical links, replay/live и компоненты одного system. MP10
-показывает `Vehicle → Component → Message → Field` на одном активном physical
-link. Исправление exact-source/store предшествует косметическим контролам.
-
-- Проверить оба входа: верхнее Tools menu/Ctrl+I и SETUP Advanced Tools.
-- Сначала проверить текущий бинарник: source уже создаёт `QGCMAVLinkInspector`
-  с `Qt::Window`, `show/raise/activate`; наблюдение может относиться к старой
-  сборке либо platform-specific поведению child-`QWidget`.
-- Вынести содержимое в MP10-подобные `MAVLinkInspectorView` и modeless
-  `MAVLinkInspectorWindow : QWidget` с явным `Qt::Window`; не наследовать
-  диалоговые Enter/Escape semantics.
-- Не использовать embedded center-stack, dock или child-widget с одним лишь
-  поздним `setWindowFlag(Qt::Window)` как долгосрочную модель ownership.
-- MP10 открывает новый modeless Inspector на каждый вызов. Сначала можно
-  сохранить безопасный singleton как P0-fix, но конечный P1 gate — независимые
-  multi-instance окна.
-- Закрытие каждого окна удаляет его и очищает replay attachment; для
-  multi-instance log player/replay link должны хранить безопасный список
-  подписчиков, а не один raw pointer.
-- Окно обязано фильтровать точный link/system/component, поддерживать message
-  tree/rate/fields/filter/graphs и современный 32-bit message id.
-- Добавить тест top-level/window flags, multi-instance, закрытия одного из двух,
-  destruction и shutdown при активном потоке live/replay сообщений.
+- Сохранять оба входа: верхнее Tools menu/Ctrl+I и SETUP Advanced Tools.
+- Следующий этап: exact outbound observations после успешного frame writer,
+  без sniffing произвольного `writeRawBytes`, затем Show GCS Traffic.
+- Перенести Graph It: numeric scalar/array fields, immutable source identity,
+  bounded 10..100000 history (default 500), независимые modeless графики.
+- Обновлять vendored MAVLink dialect отдельным глобальным slice с parser и
+  service regression tests; старый dialect не расширять в обход parser.
+- Подтвердить real replay-file unload/reload и native-platform evidence;
+  source generation unit tests не считать проверкой настоящего tlog.
+- Позже выровнять monospaced reference tree, component enum labels и порядок;
+  сохранённые отдельные Value/Type колонки — явное GUI deviation.
 
 Gate: отдельная запись window manager, отдельная рамка/перемещение, два вызова
 создают два окна как в MP10, основное окно остаётся доступным, нет утечек и

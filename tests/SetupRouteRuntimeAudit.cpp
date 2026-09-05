@@ -1,4 +1,5 @@
 #include "SetupRouteRuntimeAudit.h"
+#include "InspectorRuntimeAudit.h"
 
 #include "ui/BackstageView.h"
 #include "ui/MainWindow.h"
@@ -209,6 +210,8 @@ int RunSetupRouteRuntimeAudit()
     ConfigureIsolatedSettings();
 
     AuditResult result;
+    result.Expect(RunInspectorRuntimeAudit() == 0,
+                  QStringLiteral("production Inspector route/ingress audit failed"));
     // The retained legacy Planner surface must not bypass Connection Options'
     // restart-only sender identity policy while exact services are running.
     const int runningId = QGC::MavlinkID();

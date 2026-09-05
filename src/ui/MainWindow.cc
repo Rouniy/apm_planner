@@ -39,7 +39,8 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCTabbedInfoView.h"
 #include "QGCMAVLinkLogPlayer.h"
-#include "QGCMAVLinkInspector.h"
+#include "MAVLinkInspectorView.h"
+#include "MAVLinkInspectorTrafficSource.h"
 #include "MAVLinkInspectorWindow.h"
 #include "LinkStatsWindow.h"
 #include "MavlinkLogWindow.h"
@@ -4045,14 +4046,47 @@ void MainWindow::showMavlinkInspector()
 {
     pruneMavlinkInspectorWindows();
 
-    auto *inspector = new QGCMAVLinkInspector;
+    auto *inspector = new MAVLinkInspectorView;
     auto *window = new MAVLinkInspectorWindow(inspector, this);
     m_mavlinkInspectorWindows.append(window);
     connect(window, &QObject::destroyed,
             this, &MainWindow::pruneMavlinkInspectorWindows);
 
-    if (logPlayer) {
-        logPlayer->addMavlinkInspector(inspector);
+    auto *source = new MAVLinkInspectorTrafficSource(inspector);
+    inspector->attachSource(source);
+    const MAVLinkReplayLease replay = logPlayer
+        ? logPlayer->activeReplayLease() : MAVLinkReplayLease{};
+    if (replay.isValid()) {
+        source->bindReplay(replay.generation, replay.displayName);
+        connect(logPlayer, &QGCMAVLinkLogPlayer::replayMessageObserved,
+                source, &MAVLinkInspectorTrafficSource::observeReplay);
+        connect(logPlayer, &QGCMAVLinkLogPlayer::replaySourceEnded,
+                source, &MAVLinkInspectorTrafficSource::endReplay);
+    } else {
+        LinkManager *const links = LinkManager::instance();
+        const int linkId = m_mainWindowHeader->selectedLinkId();
+        LinkInterface *const link = links->getLink(linkId);
+        source->bindLive(link, linkId,
+                        links->currentPhysicalLinkSession(linkId),
+                        link ? links->getLinkName(linkId) : QString());
+        connect(links, &LinkManager::mavlinkMessageObserved, source,
+                [links, source](int id, qulonglong epoch,
+                                mavlink_message_t message) {
+            // A prior observer may synchronously remove/reconnect the link.
+            if (epoch != 0 && links->currentPhysicalLinkSession(id) == epoch) {
+                source->observeLive(links->getLink(id), id, epoch, message);
+            }
+        });
+        connect(links, &LinkManager::physicalLinkSessionBegan, source,
+                [links, source](int id, qulonglong epoch) {
+            if (epoch != 0 && links->currentPhysicalLinkSession(id) == epoch) {
+                source->beginLiveSession(links->getLink(id), id, epoch);
+            }
+        });
+        connect(links, &LinkManager::physicalLinkSessionEnded,
+                source, &MAVLinkInspectorTrafficSource::endLiveSession);
+        connect(links, &LinkManager::linkRemoved,
+                source, &MAVLinkInspectorTrafficSource::removeLiveLink);
     }
 
     window->show();

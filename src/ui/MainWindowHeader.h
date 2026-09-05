@@ -40,6 +40,7 @@ public:
     void setToolsMenu(QMenu *menu);
     void setConnectionOptionsAction(QAction *action);
     void setAddConnectionAction(QAction *action);
+    int selectedLinkId() const;
 
     void disableConnectWidget(bool disable);
     void overrideDisableConnectWidget(bool disable);

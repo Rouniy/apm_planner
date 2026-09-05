@@ -611,6 +611,14 @@ set(SOURCES
     src/ui/MAVLinkInspectorMessageRelay.h
     src/ui/MAVLinkInspectorWindow.cpp
     src/ui/MAVLinkInspectorWindow.h
+    src/ui/MAVLinkInspectorPacketStore.cpp
+    src/ui/MAVLinkInspectorPacketStore.h
+    src/ui/MAVLinkInspectorTrafficSource.cpp
+    src/ui/MAVLinkInspectorTrafficSource.h
+    src/ui/MAVLinkInspectorView.cpp
+    src/ui/MAVLinkInspectorView.h
+    src/ui/MAVLinkReplaySource.cpp
+    src/ui/MAVLinkReplaySource.h
     src/comm/MAVLinkMessageMetaType.h
     src/ui/LinkStatsWindow.cpp
     src/ui/LinkStatsWindow.h
@@ -1599,6 +1607,8 @@ if(BUILD_TESTING)
     target_sources(${APM_PLANNER_TARGET} PRIVATE
         tests/SetupRouteRuntimeAudit.cpp
         tests/SetupRouteRuntimeAudit.h
+        tests/InspectorRuntimeAudit.cpp
+        tests/InspectorRuntimeAudit.h
     )
     target_include_directories(${APM_PLANNER_TARGET} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
@@ -5155,6 +5165,47 @@ if(BUILD_TESTING)
     set_tests_properties(mavlinklogwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_executable(mavlinkinspectorpacketstore_tests
+        tests/test_mavlinkinspectorpacketstore.cpp
+        src/ui/MAVLinkInspectorPacketStore.cpp
+        src/ui/MAVLinkInspectorPacketStore.h
+    )
+    add_executable(mavlinkinspectorsource_tests
+        tests/test_mavlinkinspectorsource.cpp
+        src/ui/MAVLinkInspectorTrafficSource.cpp
+        src/ui/MAVLinkInspectorTrafficSource.h
+    )
+    add_executable(mavlinkreplaysource_tests
+        tests/test_mavlinkreplaysource.cpp
+        src/ui/MAVLinkReplaySource.cpp
+        src/ui/MAVLinkReplaySource.h
+    )
+    add_executable(mavlinkinspectorview_tests
+        tests/test_mavlinkinspectorview.cpp
+        src/ui/MAVLinkInspectorPacketStore.cpp
+        src/ui/MAVLinkInspectorPacketStore.h
+        src/ui/MAVLinkInspectorTrafficSource.cpp
+        src/ui/MAVLinkInspectorTrafficSource.h
+        src/ui/MAVLinkInspectorView.cpp
+        src/ui/MAVLinkInspectorView.h
+        src/ui/MAVLinkInspectorWindow.cpp
+        src/ui/MAVLinkInspectorWindow.h
+    )
+    foreach(inspector_test IN ITEMS mavlinkinspectorpacketstore_tests
+            mavlinkinspectorsource_tests mavlinkreplaysource_tests
+            mavlinkinspectorview_tests)
+        target_include_directories(${inspector_test} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+            ${MAVLINKPATH}
+            ${MAVLINKPATH}/${MAVLINK_CONF}
+        )
+        target_link_libraries(${inspector_test} PRIVATE Qt::Core Qt::Widgets Qt::Test)
+        add_test(NAME ${inspector_test} COMMAND ${inspector_test})
+        set_tests_properties(${inspector_test} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
 
     add_executable(mavlinkinspectorwindow_tests
         tests/test_mavlinkinspectorwindow.cpp

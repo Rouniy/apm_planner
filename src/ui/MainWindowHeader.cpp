@@ -400,6 +400,8 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
                 QSettings().setValue(QStringLiteral("autoconnect"), enabled);
             });
     connect(LinkManager::instance(), SIGNAL(newLink(int)), this, SLOT(refreshLinks()));
+    connect(LinkManager::instance(), &LinkManager::linkRemoved,
+            this, &MainWindowHeader::refreshLinks);
     connect(LinkManager::instance(), SIGNAL(linkChanged(int)), this, SLOT(updateCurrentLink()));
     connect(UASManager::instance(), SIGNAL(activeUASSet(UASInterface*)),
             this, SLOT(activeVehicleChanged(UASInterface*)));
@@ -599,6 +601,11 @@ void MainWindowHeader::refreshLinks()
 int MainWindowHeader::currentLinkId() const
 {
     return m_portCombo->currentIndex() >= 0 ? m_portCombo->currentData().toInt() : -1;
+}
+
+int MainWindowHeader::selectedLinkId() const
+{
+    return currentLinkId();
 }
 
 void MainWindowHeader::updateCurrentLink()

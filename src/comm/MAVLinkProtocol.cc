@@ -296,6 +296,13 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                 }
             }
 
+            // Diagnostics must not depend on handleMessage's legacy UAS gate.
+            // A peripheral or a link awaiting its first heartbeat still has
+            // inspectable traffic. Recheck the parser epoch around observers.
+            if (!receiveSessionIsCurrent()) return;
+            emit packetReceived(guardedLink.data(), message);
+            if (!receiveSessionIsCurrent()) return;
+
             // MP10's mirror sees complete inbound MAVLink packets, not raw
             // transport chunks. Re-serializing the parsed message preserves
             // the received header, checksum and MAVLink 2 signature.
@@ -356,7 +363,7 @@ void MAVLinkProtocol::handleMessage(LinkInterface *link, const mavlink_message_t
 {
     // ORDER MATTERS HERE!
     // If the matching UAS object does not yet exist, it has to be created
-    // before emitting the packetReceived signal
+    // before emitting the legacy messageReceived signal
 
     Q_ASSERT_X(m_connectionManager != NULL, "MAVLinkProtocol::receiveBytes", " error:m_connectionManager == NULL");
     UASInterface* uas = m_connectionManager->getUas(message.sysid);

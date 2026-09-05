@@ -118,6 +118,8 @@ public:
     QList<int> getLinks() const;
 
     LinkInterface* getLink(int linkId) const;
+    // Physical connection epoch, available before any vehicle heartbeat.
+    quint64 currentPhysicalLinkSession(int linkId) const;
     /** Best-effort raw write to one currently connected physical link. */
     bool writeRawBytes(int linkId, const QByteArray &bytes);
     bool isUdpPortInUse(quint16 port) const;
@@ -158,6 +160,10 @@ signals:
 
     void linkError(int linkid, QString message);
     void messageReceived(LinkInterface* link,mavlink_message_t message);
+    void physicalLinkSessionBegan(int linkId, qulonglong epoch);
+    void physicalLinkSessionEnded(int linkId, qulonglong epoch);
+    void mavlinkMessageObserved(int linkId, qulonglong epoch,
+                               mavlink_message_t message);
 
 public slots:
     void receiveMessage(LinkInterface* link,mavlink_message_t message);

@@ -4,8 +4,10 @@
 #include "TLogReplayLink.h"
 #include "MAVLinkDecoder.h"
 #include "MAVLinkInspectorMessageRelay.h"
+#include "MAVLinkReplaySource.h"
 
 #include <QFile>
+#include <QPointer>
 #include <QWidget>
 namespace Ui
 {
@@ -30,6 +32,7 @@ public:
     void addMavlinkInspector(QGCMAVLinkInspector *inspector);
     void removeMavlinkInspector(QGCMAVLinkInspector *inspector);
     int mavlinkInspectorSubscriberCount() const;
+    MAVLinkReplayLease activeReplayLease() const;
     ~QGCMAVLinkLogPlayer();
     void shutdown();
     bool isPlayingLogFile()
@@ -69,14 +72,25 @@ protected:
     void storeSettings();
 
 private:
+    void setSpeedControlsEnabled(bool enabled);
+    void unloadReplayLink();
+    void handleLogLinkTerminated(
+        const QPointer<TLogReplayLink> &finishedLink,
+        quint64 generation);
+
     Ui::QGCMAVLinkLogPlayer *ui;
     TLogReplayLink *m_logLink;
     bool m_logLoaded;
+    bool m_shuttingDown;
     MAVLinkDecoder *m_mavlinkDecoder;
     MAVLinkInspectorMessageRelay m_inspectorRelay;
+    MAVLinkReplaySource m_replaySource;
 signals:
     void logFinished();
     void logLoaded();
+    void replayMessageObserved(quint64 generation,
+                               mavlink_message_t message);
+    void replaySourceEnded(quint64 generation);
 };
 
 #endif // QGCMAVLINKLOGPLAYER_H

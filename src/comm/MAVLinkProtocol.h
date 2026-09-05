@@ -123,6 +123,8 @@ signals:
     void receiveLossChanged(int id,float value);
     /** Complete vehicle-to-GCS frame after successful MAVLink framing. */
     void frameReceived(int linkId, QByteArray frame);
+    // Every validated inbound packet, including systems without a heartbeat.
+    void packetReceived(LinkInterface *link, mavlink_message_t message);
     void messageReceived(LinkInterface *link,mavlink_message_t message);
 };
 

@@ -8,6 +8,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDesktopServices>
+#include <QFileInfo>
 
 QGCMAVLinkLogPlayer::QGCMAVLinkLogPlayer(QWidget *parent):
     QWidget(parent),
@@ -16,8 +17,10 @@ QGCMAVLinkLogPlayer::QGCMAVLinkLogPlayer(QWidget *parent):
     ui(new Ui::QGCMAVLinkLogPlayer),
     m_logLink(NULL),
     m_logLoaded(false),
+    m_shuttingDown(false),
     m_mavlinkDecoder(NULL),
-    m_inspectorRelay()
+    m_inspectorRelay(),
+    m_replaySource()
 {
     ui->setupUi(this);
     ui->horizontalLayout->setAlignment(Qt::AlignTop);
@@ -34,12 +37,14 @@ QGCMAVLinkLogPlayer::QGCMAVLinkLogPlayer(QWidget *parent):
     connect(ui->speedButton500,SIGNAL(clicked()),this,SLOT(speed500Clicked()));
     connect(ui->speedButton1000,SIGNAL(clicked()),this,SLOT(speed1000Clicked()));
 
-    ui->speedButton75->setEnabled(false);
-    ui->speedButton100->setEnabled(false);
-    ui->speedButton150->setEnabled(false);
-    ui->speedButton200->setEnabled(false);
-    ui->speedButton500->setEnabled(false);
-    ui->speedButton1000->setEnabled(false);
+    setSpeedControlsEnabled(false);
+
+    connect(&m_replaySource,
+            &MAVLinkReplaySource::replayMessageObserved,
+            this, &QGCMAVLinkLogPlayer::replayMessageObserved);
+    connect(&m_replaySource,
+            &MAVLinkReplaySource::replaySourceEnded,
+            this, &QGCMAVLinkLogPlayer::replaySourceEnded);
 }
 void QGCMAVLinkLogPlayer::speed75Clicked()
 {
@@ -120,16 +125,16 @@ QGCMAVLinkLogPlayer::~QGCMAVLinkLogPlayer()
 {
     storeSettings();
     shutdown();
-    delete m_logLink;
-    m_logLink = nullptr;
     delete ui;
 }
 
 void QGCMAVLinkLogPlayer::shutdown()
 {
-    if (m_logLink) {
-        m_logLink->disconnect();
+    if (m_shuttingDown) {
+        return;
     }
+    m_shuttingDown = true;
+    unloadReplayLink();
 }
 void QGCMAVLinkLogPlayer::storeSettings()
 {
@@ -139,29 +144,13 @@ void QGCMAVLinkLogPlayer::storeSettings()
 
 void QGCMAVLinkLogPlayer::loadLogButtonClicked()
 {
-    if (m_logLoaded)
+    if (m_shuttingDown) {
+        return;
+    }
+
+    if (m_logLoaded || m_logLink || m_replaySource.activeLease().isValid())
     {
-        if (m_logLink)
-        {
-            // Stop and join before releasing the replay link.  Leaving the
-            // object alive after stop made a second click operate on a dead
-            // worker and leaked its private MAVLink decoder.
-            TLogReplayLink *link = m_logLink;
-            m_logLink = nullptr;
-            link->disconnect();
-            delete link;
-            m_logLoaded = false;
-            ui->speedButton75->setEnabled(false);
-            ui->speedButton100->setEnabled(false);
-            ui->speedButton150->setEnabled(false);
-            ui->speedButton200->setEnabled(false);
-            ui->speedButton500->setEnabled(false);
-            ui->speedButton1000->setEnabled(false);
-        }
-        else
-        {
-            m_logLoaded = false;
-        }
+        unloadReplayLink();
         return;
     }
 
@@ -173,6 +162,10 @@ void QGCMAVLinkLogPlayer::loadLogButtonClicked()
 }
 void QGCMAVLinkLogPlayer::loadLogDialogAccepted()
 {
+    if (m_shuttingDown) {
+        return;
+    }
+
     QFileDialog *dialog = qobject_cast<QFileDialog*>(sender());
     if (!dialog)
     {
@@ -183,29 +176,60 @@ void QGCMAVLinkLogPlayer::loadLogDialogAccepted()
         //No file selected/cancel clicked
         return;
     }
-    QString fileName = dialog->selectedFiles().at(0);
-    m_logLoaded = true;
-    emit logLoaded();
+    const QString fileName = dialog->selectedFiles().at(0);
+    TLogReplayLink *const link = new TLogReplayLink(this);
+    link->setLog(fileName);
 
-    m_logLink = new TLogReplayLink(this);
+    const MAVLinkReplayLease lease = m_replaySource.beginSource(
+        QFileInfo(fileName).fileName());
+    if (!lease.isValid()) {
+        delete link;
+        return;
+    }
+
+    m_logLink = link;
     //m_logLink->setMavlinkDecoder(m_mavlinkDecoder);
-    connect(m_logLink, &TLogReplayLink::inspectorMessage,
-            &m_inspectorRelay, &MAVLinkInspectorMessageRelay::publish,
+    connect(link, &TLogReplayLink::inspectorMessage,
+            this,
+            [this, generation = lease.generation](
+                LinkInterface *, mavlink_message_t message) {
+                // The worker-provided link pointer is intentionally ignored:
+                // it may be stale by the time this queued callback runs.
+                const QPointer<QGCMAVLinkLogPlayer> self(this);
+                if (!m_replaySource.publish(generation, message) || !self) {
+                    return;
+                }
+                if (m_replaySource.isActive(generation)) {
+                    m_inspectorRelay.publish(nullptr, message);
+                }
+            },
             Qt::QueuedConnection);
-    connect(m_logLink,SIGNAL(logProgress(qint64,qint64)),this,SLOT(logProgress(qint64,qint64)));
-    connect(m_logLink,SIGNAL(finished()),this,SLOT(logLinkTerminated()));
+    connect(link, &TLogReplayLink::logProgress,
+            this,
+            [this, generation = lease.generation](qint64 pos,
+                                                   qint64 total) {
+                if (m_replaySource.isActive(generation)) {
+                    logProgress(pos, total);
+                }
+            },
+            Qt::QueuedConnection);
 
-    m_logLink->setLog(fileName);
-    m_logLink->connect();
+    const QPointer<TLogReplayLink> guardedLink(link);
+    connect(link, &QThread::finished,
+            this,
+            [this, guardedLink, generation = lease.generation]() {
+                handleLogLinkTerminated(guardedLink, generation);
+            },
+            Qt::QueuedConnection);
 
-   ui->logStatsLabel->setText(fileName.mid(fileName.lastIndexOf("/")+1));
+    m_logLoaded = true;
+    m_isPlaying = true;
+    ui->logStatsLabel->setText(lease.displayName);
     ui->playButton->setIcon(QIcon(":/files/images/actions/media-playback-stop.svg"));
-    ui->speedButton75->setEnabled(true);
-    ui->speedButton100->setEnabled(true);
-    ui->speedButton150->setEnabled(true);
-    ui->speedButton200->setEnabled(true);
-    ui->speedButton500->setEnabled(true);
-    ui->speedButton1000->setEnabled(true);
+    setSpeedControlsEnabled(true);
+
+    link->connect();
+    emit logLoaded();
 }
 void QGCMAVLinkLogPlayer::logProgress(qint64 pos,qint64 total)
 {
@@ -250,6 +274,11 @@ int QGCMAVLinkLogPlayer::mavlinkInspectorSubscriberCount() const
     return m_inspectorRelay.subscriberCount();
 }
 
+MAVLinkReplayLease QGCMAVLinkLogPlayer::activeReplayLease() const
+{
+    return m_replaySource.activeLease();
+}
+
 void QGCMAVLinkLogPlayer::playButtonClicked()
 {
     if (m_logLink)
@@ -257,29 +286,96 @@ void QGCMAVLinkLogPlayer::playButtonClicked()
         if (m_logLink->isPaused())
         {
             m_logLink->play();
+            m_isPlaying = true;
             ui->playButton->setIcon(QIcon(":/files/images/actions/media-playback-stop.svg"));
         }
         else
         {
             m_logLink->pause();
+            m_isPlaying = false;
             ui->playButton->setIcon(QIcon(":/files/images/actions/media-playback-start.svg"));
         }
     }
 }
 void QGCMAVLinkLogPlayer::logLinkTerminated()
 {
+    TLogReplayLink *finishedLink = qobject_cast<TLogReplayLink *>(sender());
+    if (!finishedLink) {
+        finishedLink = m_logLink;
+    }
+    handleLogLinkTerminated(QPointer<TLogReplayLink>(finishedLink),
+                            m_replaySource.activeLease().generation);
+}
+
+void QGCMAVLinkLogPlayer::setSpeedControlsEnabled(bool enabled)
+{
+    ui->speedButton75->setEnabled(enabled);
+    ui->speedButton100->setEnabled(enabled);
+    ui->speedButton150->setEnabled(enabled);
+    ui->speedButton200->setEnabled(enabled);
+    ui->speedButton500->setEnabled(enabled);
+    ui->speedButton1000->setEnabled(enabled);
+}
+
+void QGCMAVLinkLogPlayer::unloadReplayLink()
+{
+    const MAVLinkReplayLease lease = m_replaySource.activeLease();
+    const QPointer<TLogReplayLink> linkToDelete(m_logLink);
+
+    // Detach all player state before replaySourceEnded is emitted. A listener
+    // may synchronously start a successor replay, and this cleanup must never
+    // clear its pointer or overwrite its controls.
+    m_logLink = nullptr;
+    m_logLoaded = false;
     m_isPlaying = false;
-    if (m_logLink && m_logLink->toBeDeleted())
-    {
-        //Log loop has terminated with the intention of unloading the sim link
-        m_logLink->deleteLater();
-        m_logLink = 0;
-        m_logLoaded = false;
-        ui->speedButton75->setEnabled(false);
-        ui->speedButton100->setEnabled(false);
-        ui->speedButton150->setEnabled(false);
-        ui->speedButton200->setEnabled(false);
-        ui->speedButton500->setEnabled(false);
+    setSpeedControlsEnabled(false);
+
+    if (lease.isValid()) {
+        // Invalidate first. Already queued callbacks carrying this generation
+        // are rejected before the worker is stopped or destroyed.
+        m_replaySource.endSource(lease.generation);
+    }
+
+    if (linkToDelete) {
+        TLogReplayLink *const oldLink = linkToDelete.data();
+        oldLink->disconnect();
+        if (linkToDelete) {
+            delete oldLink;
+        }
+    }
+}
+
+void QGCMAVLinkLogPlayer::handleLogLinkTerminated(
+    const QPointer<TLogReplayLink> &finishedLink,
+    quint64 generation)
+{
+    if (!finishedLink || finishedLink.data() != m_logLink
+        || !m_replaySource.isActive(generation)
+        || !finishedLink->toBeDeleted()) {
+        return;
+    }
+
+    const QPointer<TLogReplayLink> linkToDelete(finishedLink);
+
+    // Natural completion belongs to this source only when both the guarded
+    // worker identity and its captured generation still match. Detach the old
+    // UI state before emitting replaySourceEnded because a listener may start
+    // the next source synchronously.
+    m_logLink = nullptr;
+    m_logLoaded = false;
+    m_isPlaying = false;
+    setSpeedControlsEnabled(false);
+    const QPointer<QGCMAVLinkLogPlayer> self(this);
+    m_replaySource.endSource(generation);
+
+    if (linkToDelete) {
+        linkToDelete->deleteLater();
+    }
+
+    // logFinished has no generation parameter. Suppress it if an end observer
+    // already installed a successor, otherwise legacy listeners could mistake
+    // the old EOF for completion of the new replay.
+    if (self && !m_logLink && !m_replaySource.activeLease().isValid()) {
         emit logFinished();
     }
 }

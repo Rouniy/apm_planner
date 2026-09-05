@@ -119,6 +119,10 @@ LinkManager::LinkManager(QObject *parent) :
 {
     m_vehicleTargetManager = new VehicleTargetManager(this);
     m_swarmTelemetryRegistry = new SwarmTelemetryRegistry(this);
+    connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionBegan,
+            this, &LinkManager::physicalLinkSessionBegan);
+    connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionEnded,
+            this, &LinkManager::physicalLinkSessionEnded);
     m_radioStatusMonitor = new RadioStatusMonitor(this);
     m_exactLinkTransmitter = new ExactLinkTransmitter(
         [this](int linkId, const QByteArray &frame) {
@@ -241,6 +245,14 @@ LinkManager::LinkManager(QObject *parent) :
     m_mavlinkDecoder.reset(new MAVLinkDecoder(this));
     m_mavlinkProtocol.reset(new MAVLinkProtocol());
     m_mavlinkProtocol->setConnectionManager(this);
+    connect(m_mavlinkProtocol.data(), &MAVLinkProtocol::packetReceived,
+            this, [this](LinkInterface *link, mavlink_message_t message) {
+        if (m_shuttingDown || !link) return;
+        const int id = link->getId();
+        if (m_connectionMap.value(id, nullptr) != link) return;
+        const quint64 epoch = currentPhysicalLinkSession(id);
+        if (epoch != 0) emit mavlinkMessageObserved(id, epoch, message);
+    });
     connect(m_mavlinkProtocol.data(),SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),m_mavlinkDecoder.data(),SLOT(receiveMessage(LinkInterface*,mavlink_message_t)));
     connect(m_mavlinkProtocol.data(),SIGNAL(messageReceived(LinkInterface*,mavlink_message_t)),this,SLOT(receiveMessage(LinkInterface*,mavlink_message_t)));
     connect(m_mavlinkProtocol.data(),SIGNAL(protocolStatusMessage(QString,QString)),this,SLOT(protocolStatusMessageRec(QString,QString)));
@@ -1154,6 +1166,11 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
         return;
     }
     emit messageReceived(guardedLink.data(), message);
+}
+
+quint64 LinkManager::currentPhysicalLinkSession(int linkId) const
+{
+    return m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId);
 }
 
 UASInterface* LinkManager::getUas(int id)
