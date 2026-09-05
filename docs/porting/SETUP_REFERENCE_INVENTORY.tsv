@@ -1,0 +1,55 @@
+record_type	order	reference_id	label	group	profile_flag	availability	qt_page_id	qt_status	baseline_gap
+mp10	1	InstallFirmwareViewModel	Install Firmware	Standalone	displayInstallFirmware	offline	InstallFirmwareView	ported	no
+mp10	2	ConfigFirmwareLegacyViewModel	Install Firmware Legacy	Standalone	displayInstallFirmware	offline		missing	gap-1-of-11
+mp10	3	ConfigSecureApViewModel	Secure	Standalone	always	offline		missing	gap-2-of-11
+mp10	4	ConfigSecureViewModel	Secure (Bootloader Keys)	Standalone	always	connected		missing	gap-3-of-11
+mp10	5	ConfigTradHeli4ViewModel	Heli Setup (4.0+)	Mandatory Hardware	displayFrameType	connected+Copter+H_SWASH_TYPE(reference)	ConfigTradHeli4View	ported-with-documented-H_SW_TYPE-correction	no
+mp10	6	ConfigFrameClassTypeViewModel	Frame Type	Mandatory Hardware	displayFrameType	connected+Copter	ConfigFrameClassTypeView	ported	no
+mp10	7	ConfigFrameTypeViewModel	Frame Type (Legacy)	Mandatory Hardware	displayFrameType	connected+Copter	ConfigFrameTypeView	ported	no
+mp10	8	ConfigDefaultSettingsViewModel	Default Settings	Mandatory Hardware	displayFrameType	connected+Copter	ConfigDefaultSettingsView	ported	no
+mp10	9	ConfigAccelCalibrationViewModel	Accel Calibration	Mandatory Hardware	displayAccelCalibration	connected	ConfigAccelCalibrationView	ported	no
+mp10	10	ConfigCompassViewModel	Compass	Mandatory Hardware	displayCompassConfiguration	connected	ConfigCompassView	ported	no
+mp10	11	ConfigCompassLegacyViewModel	Compass (Legacy)	Mandatory Hardware	displayCompassConfiguration	connected	ConfigCompassLegacyView	ported	no
+mp10	12	ConfigRadioInputViewModel	Radio Calibration	Mandatory Hardware	displayRadioCalibration	connected	ConfigRadioInputView	ported	no
+mp10	13	ConfigRadioOutputViewModel	Servo Output	Mandatory Hardware	displayServoOutput	connected	ConfigRadioOutputView	ported	no
+mp10	14	ConfigSerialViewModel	Serial Ports	Mandatory Hardware	displaySerialPorts	connected	ConfigSerialView	ported	no
+mp10	15	ConfigESCCalibrationViewModel	ESC Calibration	Mandatory Hardware	displayEscCalibration	connected	ConfigESCCalibrationView	ported	no
+mp10	16	ConfigFlightModesViewModel	Flight Modes	Mandatory Hardware	displayFlightModes	connected	ConfigFlightModesView	ported	no
+mp10	17	ConfigFailSafeViewModel	FailSafe	Mandatory Hardware	displayFailSafe	connected	ConfigFailSafeView	ported	no
+mp10	18	ConfigInitialParamsViewModel	Initial Parameters	Mandatory Hardware	displayInitialParams	connected	ConfigInitialParamsView	ported	no
+mp10	19	ConfigHWIDViewModel	HW ID	Mandatory Hardware	displayHWIDs	connected	ConfigHWIDView	ported	no
+mp10	20	ConfigADSBViewModel	ADSB	Mandatory Hardware	displayADSB	connected	ConfigADSBView	ported	no
+mp10	21	ConfigGpsInjectViewModel	RTK/GPS Inject	Optional Hardware	displayRTKInject	offline	ConfigGpsInjectView	ported	no
+mp10	22	ConfigCubeIDViewModel	CubeID Update	Optional Hardware	always	offline		missing	gap-4-of-11
+mp10	23	SikRadioViewModel	Sik Radio	Optional Hardware	displaySikRadio	offline	SikRadioView	ported	no
+mp10	24	NvModemViewModel	NV Modem	Optional Hardware	displaySikRadio	offline		missing	gap-5-of-11
+mp10	25	ConfigGPSOrderViewModel	CAN GPS Order	Optional Hardware	displayGPSOrder	connected	ConfigGPSOrderView	ported	no
+mp10	26	ConfigBatteryMonitoringViewModel	Battery Monitor	Optional Hardware	displayBattMonitor	connected	ConfigBatteryMonitoringView	ported	no
+mp10	27	ConfigBatteryMonitoring2ViewModel	Battery Monitor 2	Optional Hardware	displayBattMonitor	connected	ConfigBatteryMonitoring2View	ported	no
+mp10	28	ConfigDroneCanViewModel	DroneCAN/UAVCAN	Optional Hardware	displayCAN	offline	ConfigDroneCanView	ported	no
+mp10	29	ConfigJoystickViewModel	Joystick	Optional Hardware	displayJoystick	offline	ConfigJoystickView	ported-this-slice-via-shared-MainWindow-action	gap-6-of-11-closed
+mp10	30	ConfigCompassMotViewModel	Compass/Motor Calib	Optional Hardware	displayCompassMotorCalib	connected	ConfigCompassMotView	ported-with-safety-lifetime-extension	no
+mp10	31	ConfigRangeFinderViewModel	Range Finder	Optional Hardware	displayRangeFinder	connected	ConfigRangeFinderView	ported	no
+mp10	32	ConfigAirspeedViewModel	Airspeed	Optional Hardware	displayAirSpeed	connected	ConfigAirspeedView	ported	no
+mp10	33	ConfigPX4FlowViewModel	PX4Flow	Optional Hardware	displayPx4Flow	offline		missing	gap-7-of-11
+mp10	34	ConfigOptFlowViewModel	Optical Flow	Optional Hardware	displayOpticalFlow	connected	ConfigOptFlowView	ported	no
+mp10	35	ConfigHWOSDViewModel	OSD	Optional Hardware	displayOsd	connected	ConfigHWOSDView	ported	no
+mp10	36	ConfigMountViewModel	Camera Gimbal	Optional Hardware	displayCameraGimbal	connected	ConfigMountView	ported	no
+mp10	37	ConfigMotorTestViewModel	Motor Test	Optional Hardware	displayMotorTest	connected	ConfigMotorTestView	ported	no
+mp10	38	ConfigHWBTViewModel	Bluetooth Setup	Optional Hardware	displayBluetooth	offline	ConfigHWBTView	ported	no
+mp10	39	ConfigParachuteViewModel	Parachute	Optional Hardware	displayParachute	connected	ConfigParachuteView	ported	no
+mp10	40	ConfigHWESP8266ViewModel	ESP8266 Setup	Optional Hardware	displayEsp	connected	ConfigHWESP8266View	ported	no
+mp10	41	ConfigAntennaTrackerParamViewModel	Antenna Tracker	Optional Hardware	displayAntennaTracker	connected		missing	gap-8-of-11
+mp10	42	ConfigFFTViewModel	FFT Setup	Optional Hardware	displayFFTSetup	connected		missing	gap-9-of-11
+mp10	43	ConfigAntennaTrackerViewModel	Antenna Tracker (Serial)	Optional Hardware	displayAntennaTracker	offline	ConfigAntennaTrackerView	ported	no
+mp10	44	AntennaTrackerUIViewModel	Antenna Tracker (Live)	Optional Hardware	displayAntennaTracker	offline	AntennaTrackerUIView	ported	no
+mp10	45	ConfigHWCANViewModel	HW CAN	Optional Hardware	displayCAN	connected	ConfigHWCANView	ported	no
+mp10	46	MavFTPUIViewModel	MAVFtp	Optional Hardware	displayMavFTP	connected	MavFTPUIView	ported	no
+mp10	47	ConfigAdvancedViewModel	Advanced Tools	Advanced	always	advanced	ConfigAdvancedView	ported	no
+mp10	48	ConfigElevationSourcesViewModel	Elevation Sources	Advanced	always	advanced	ConfigElevationSourcesView	ported	no
+mp10	49	ConfigDeveloperToolsViewModel	Developer Tools	Advanced	always	advanced	ConfigDeveloperToolsView	ported	no
+mp10	50	ConfigMavCommandViewModel	Mission Command List	Advanced	always	advanced	ConfigMavCommandView	ported	no
+mp10	51	ConfigTerminalViewModel	Terminal	Advanced	displayTerminal	advanced	ConfigTerminalView	ported	no
+mp10	52	ConfigOnboardReplViewModel	Onboard Lua REPL	Advanced	displayREPL	advanced+connected		missing	gap-10-of-11
+mp10	53	ConfigScriptReplViewModel	Local Script REPL	Advanced	displayREPL	advanced+offline		missing	gap-11-of-11
+qt-extra	1	QmlPluginManagerView	QML Plugins	Advanced	always	advanced	QmlPluginManagerView	retained-useful-Qt-only	not-applicable

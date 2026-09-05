@@ -95,12 +95,14 @@ private:
     {
         QAbstractButton *button = nullptr;
         QStringList pageIds;
+        QString title;
         bool expanded = true;
     };
 
     QString firstVisiblePageId() const;
     bool addPageEntry(const BackstagePage &definition, QWidget *page);
     QWidget *ensurePageCreated(const QString &id);
+    void updateGroupButtonPresentation(GroupEntry &group);
     void updatePageButtonVisibility(const QString &id);
     void selectFallbackPage();
 

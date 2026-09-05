@@ -73,11 +73,15 @@
 #include "core/parameters/ParameterMetaDataRepository.h"
 #include "ui/BackstageView.h"
 
+#include <QAction>
 #include <QDir>
 #include <QDateTime>
 #include <QFrame>
 #include <QFile>
+#include <QFont>
+#include <QLabel>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QScrollArea>
 #include <QSettings>
 #include <QTimer>
@@ -114,6 +118,7 @@ const QString kBatteryMonitor = QStringLiteral("ConfigBatteryMonitoringView");
 const QString kBatteryMonitor2 = QStringLiteral("ConfigBatteryMonitoring2View");
 const QString kRangeFinder = QStringLiteral("ConfigRangeFinderView");
 const QString kAirspeed = QStringLiteral("ConfigAirspeedView");
+const QString kJoystick = QStringLiteral("ConfigJoystickView");
 const QString kOpticalFlow = QStringLiteral("ConfigOptFlowView");
 const QString kOsd = QStringLiteral("ConfigHWOSDView");
 const QString kCameraGimbal = QStringLiteral("ConfigMountView");
@@ -580,6 +585,15 @@ void SetupView::buildPages()
         return createDroneCanPage(parent);
     };
     m_backstage->addPage(droneCan);
+    BackstagePage joystick;
+    joystick.id = kJoystick;
+    joystick.header = tr("Joystick");
+    joystick.isSub = true;
+    joystick.allowsPartialParameters = true;
+    joystick.factory = [this](QWidget *parent) {
+        return createJoystickPage(parent);
+    };
+    m_backstage->addPage(joystick);
     BackstagePage compassMotor;
     compassMotor.id = kCompassMotor;
     compassMotor.header = tr("Compass/Motor Calib");
@@ -771,7 +785,9 @@ void SetupView::applicationToolActionsReady()
     const QString selectedPage = m_backstage->currentPageId();
     m_backstage->resetPage(kAdvancedTools);
     m_backstage->resetPage(kDeveloperTools);
-    if (selectedPage == kAdvancedTools || selectedPage == kDeveloperTools) {
+    m_backstage->resetPage(kJoystick);
+    if (selectedPage == kAdvancedTools || selectedPage == kDeveloperTools
+        || selectedPage == kJoystick) {
         m_backstage->restoreInitialPage(selectedPage);
     }
 }
@@ -1107,20 +1123,16 @@ void SetupView::refreshPageVisibility()
         kRadioOutput, m_connected && profile.displayServoOutput);
     m_backstage->setPageVisible(
         kSerialPorts,
-        profile.displaySerialPorts && m_connected
-            && firmwareFamily(m_uas) != ParameterFirmwareFamily::Unknown);
+        profile.displaySerialPorts && m_connected);
     m_backstage->setPageVisible(
         kEscCalibration, m_connected && profile.displayEscCalibration);
     m_backstage->setPageVisible(
         kFlightModes, m_connected && profile.displayFlightModes);
     m_backstage->setPageVisible(
         kFailSafe, m_connected && profile.displayFailSafe);
-    const ParameterFirmwareFamily family = firmwareFamily(m_uas);
     m_backstage->setPageVisible(
         kInitialParams,
-        profile.displayInitialParams && m_connected
-            && (family == ParameterFirmwareFamily::ArduCopter
-                || family == ParameterFirmwareFamily::ArduPlane));
+        profile.displayInitialParams && m_connected);
     m_backstage->setPageVisible(
         kHWID, m_connected && profile.displayHWIDs);
     m_backstage->setPageVisible(
@@ -1135,6 +1147,7 @@ void SetupView::refreshPageVisibility()
         kBatteryMonitor, m_connected && profile.displayBattMonitor);
     m_backstage->setPageVisible(
         kBatteryMonitor2, m_connected && profile.displayBattMonitor);
+    m_backstage->setPageVisible(kJoystick, profile.displayJoystick);
     CompassCalibrationService *const compassCalibration =
         LinkManager::instance()
         ? LinkManager::instance()->compassCalibrationService() : nullptr;
@@ -1155,8 +1168,7 @@ void SetupView::refreshPageVisibility()
         kCameraGimbal, m_connected && profile.displayCameraGimbal);
     m_backstage->setPageVisible(
         kMotorTest,
-        profile.displayMotorTest && m_connected
-            && firmwareFamily(m_uas) != ParameterFirmwareFamily::ArduSub);
+        profile.displayMotorTest && m_connected);
     m_backstage->setPageVisible(
         kBluetoothSetup, profile.displayBluetooth);
     m_backstage->setPageVisible(
@@ -2266,6 +2278,55 @@ QWidget *SetupView::createGpsInjectPage(QWidget *parent)
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setWidget(page);
     return scroll;
+}
+
+QWidget *SetupView::createJoystickPage(QWidget *parent)
+{
+    auto *content = new QWidget;
+    auto *layout = new QVBoxLayout(content);
+    layout->setContentsMargins(24, 24, 24, 24);
+    layout->setSpacing(12);
+
+    auto *title = new QLabel(tr("Joystick Setup"), content);
+    QFont titleFont = title->font();
+    titleFont.setPointSize(titleFont.pointSize() + 3);
+    titleFont.setBold(true);
+    title->setFont(titleFont);
+    layout->addWidget(title);
+
+    auto *description = new QLabel(
+        tr("Configure axes, reversal, flight-mode buttons and live input "
+           "using the application's shared joystick controller."), content);
+    description->setWordWrap(true);
+    layout->addWidget(description);
+
+    auto *openButton = new QPushButton(tr("Open Joystick Settings"), content);
+    openButton->setObjectName(QStringLiteral("JoystickSettingsButton"));
+    openButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    layout->addWidget(openButton, 0, Qt::AlignLeft);
+    layout->addStretch(1);
+
+    // MainWindow's shared action owns the one production JoystickInput and
+    // reuses its modeless JoystickWidget. The SETUP route deliberately invokes
+    // that action instead of creating a second live controller or dialog.
+    QAction *const action = window()
+        ? window()->findChild<QAction *>(
+              QStringLiteral("actionJoystickSettings"))
+        : nullptr;
+    openButton->setEnabled(action && action->isEnabled());
+    if (action) {
+        connect(action, &QAction::changed, openButton,
+                [action, openButton]() {
+            openButton->setEnabled(action->isEnabled());
+        });
+        connect(openButton, &QPushButton::clicked,
+                action, [action]() { action->trigger(); });
+    } else {
+        openButton->setToolTip(
+            tr("Joystick settings are unavailable in this window."));
+    }
+
+    return scrollablePage(content, kJoystick, parent);
 }
 
 QWidget *SetupView::createGPSOrderPage(QWidget *parent)

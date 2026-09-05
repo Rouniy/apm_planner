@@ -39,62 +39,167 @@ const QString kMandatoryGroup = QStringLiteral("MandatoryHardwareGroup");
 const QString kOptionalGroup = QStringLiteral("OptionalHardwareGroup");
 const QString kAdvancedGroup = QStringLiteral("AdvancedGroup");
 const QString kOpticalFlow = QStringLiteral("ConfigOptFlowView");
+const QString kJoystick = QStringLiteral("ConfigJoystickView");
+
+struct Mp10SetupRoute
+{
+    QString referenceId;
+    QString groupId;
+    QString qtPageId;
+};
+
+QList<Mp10SetupRoute> Mp10ReferenceRoutes()
+{
+    // Independent inventory transcribed from MP10 SetupViewModel.cs. Group
+    // header rows are intentionally excluded. An empty Qt ID is an explicit,
+    // reviewed port gap rather than a route the audit silently forgot.
+    return {
+        {QStringLiteral("InstallFirmwareViewModel"), {},
+         QStringLiteral("InstallFirmwareView")},
+        {QStringLiteral("ConfigFirmwareLegacyViewModel"), {}, {}},
+        {QStringLiteral("ConfigSecureApViewModel"), {}, {}},
+        {QStringLiteral("ConfigSecureViewModel"), {}, {}},
+
+        {QStringLiteral("ConfigTradHeli4ViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigTradHeli4View")},
+        {QStringLiteral("ConfigFrameClassTypeViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigFrameClassTypeView")},
+        {QStringLiteral("ConfigFrameTypeViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigFrameTypeView")},
+        {QStringLiteral("ConfigDefaultSettingsViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigDefaultSettingsView")},
+        {QStringLiteral("ConfigAccelCalibrationViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigAccelCalibrationView")},
+        {QStringLiteral("ConfigCompassViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigCompassView")},
+        {QStringLiteral("ConfigCompassLegacyViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigCompassLegacyView")},
+        {QStringLiteral("ConfigRadioInputViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigRadioInputView")},
+        {QStringLiteral("ConfigRadioOutputViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigRadioOutputView")},
+        {QStringLiteral("ConfigSerialViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigSerialView")},
+        {QStringLiteral("ConfigESCCalibrationViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigESCCalibrationView")},
+        {QStringLiteral("ConfigFlightModesViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigFlightModesView")},
+        {QStringLiteral("ConfigFailSafeViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigFailSafeView")},
+        {QStringLiteral("ConfigInitialParamsViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigInitialParamsView")},
+        {QStringLiteral("ConfigHWIDViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigHWIDView")},
+        {QStringLiteral("ConfigADSBViewModel"), kMandatoryGroup,
+         QStringLiteral("ConfigADSBView")},
+
+        {QStringLiteral("ConfigGpsInjectViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigGpsInjectView")},
+        {QStringLiteral("ConfigCubeIDViewModel"), kOptionalGroup, {}},
+        {QStringLiteral("SikRadioViewModel"), kOptionalGroup,
+         QStringLiteral("SikRadioView")},
+        {QStringLiteral("NvModemViewModel"), kOptionalGroup, {}},
+        {QStringLiteral("ConfigGPSOrderViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigGPSOrderView")},
+        {QStringLiteral("ConfigBatteryMonitoringViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigBatteryMonitoringView")},
+        {QStringLiteral("ConfigBatteryMonitoring2ViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigBatteryMonitoring2View")},
+        {QStringLiteral("ConfigDroneCanViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigDroneCanView")},
+        {QStringLiteral("ConfigJoystickViewModel"), kOptionalGroup,
+         kJoystick},
+        {QStringLiteral("ConfigCompassMotViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigCompassMotView")},
+        {QStringLiteral("ConfigRangeFinderViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigRangeFinderView")},
+        {QStringLiteral("ConfigAirspeedViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigAirspeedView")},
+        {QStringLiteral("ConfigPX4FlowViewModel"), kOptionalGroup, {}},
+        {QStringLiteral("ConfigOptFlowViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigOptFlowView")},
+        {QStringLiteral("ConfigHWOSDViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigHWOSDView")},
+        {QStringLiteral("ConfigMountViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigMountView")},
+        {QStringLiteral("ConfigMotorTestViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigMotorTestView")},
+        {QStringLiteral("ConfigHWBTViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigHWBTView")},
+        {QStringLiteral("ConfigParachuteViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigParachuteView")},
+        {QStringLiteral("ConfigHWESP8266ViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigHWESP8266View")},
+        {QStringLiteral("ConfigAntennaTrackerParamViewModel"), kOptionalGroup,
+         {}},
+        {QStringLiteral("ConfigFFTViewModel"), kOptionalGroup, {}},
+        {QStringLiteral("ConfigAntennaTrackerViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigAntennaTrackerView")},
+        {QStringLiteral("AntennaTrackerUIViewModel"), kOptionalGroup,
+         QStringLiteral("AntennaTrackerUIView")},
+        {QStringLiteral("ConfigHWCANViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigHWCANView")},
+        {QStringLiteral("MavFTPUIViewModel"), kOptionalGroup,
+         QStringLiteral("MavFTPUIView")},
+
+        {QStringLiteral("ConfigAdvancedViewModel"), kAdvancedGroup,
+         QStringLiteral("ConfigAdvancedView")},
+        {QStringLiteral("ConfigElevationSourcesViewModel"), kAdvancedGroup,
+         QStringLiteral("ConfigElevationSourcesView")},
+        {QStringLiteral("ConfigDeveloperToolsViewModel"), kAdvancedGroup,
+         QStringLiteral("ConfigDeveloperToolsView")},
+        {QStringLiteral("ConfigMavCommandViewModel"), kAdvancedGroup,
+         QStringLiteral("ConfigMavCommandView")},
+        {QStringLiteral("ConfigTerminalViewModel"), kAdvancedGroup,
+         QStringLiteral("ConfigTerminalView")},
+        {QStringLiteral("ConfigOnboardReplViewModel"), kAdvancedGroup, {}},
+        {QStringLiteral("ConfigScriptReplViewModel"), kAdvancedGroup, {}}
+    };
+}
+
+QSet<QString> KnownMissingMp10Routes()
+{
+    return {
+        QStringLiteral("ConfigFirmwareLegacyViewModel"),
+        QStringLiteral("ConfigSecureApViewModel"),
+        QStringLiteral("ConfigSecureViewModel"),
+        QStringLiteral("ConfigCubeIDViewModel"),
+        QStringLiteral("NvModemViewModel"),
+        QStringLiteral("ConfigPX4FlowViewModel"),
+        QStringLiteral("ConfigAntennaTrackerParamViewModel"),
+        QStringLiteral("ConfigFFTViewModel"),
+        QStringLiteral("ConfigOnboardReplViewModel"),
+        QStringLiteral("ConfigScriptReplViewModel")
+    };
+}
 
 QStringList ExpectedPageIds()
 {
-    return {
-        kInstallFirmware,
-        QStringLiteral("ConfigTradHeli4View"),
-        QStringLiteral("ConfigFrameClassTypeView"),
-        QStringLiteral("ConfigFrameTypeView"),
-        QStringLiteral("ConfigDefaultSettingsView"),
-        QStringLiteral("ConfigAccelCalibrationView"),
-        QStringLiteral("ConfigCompassView"),
-        QStringLiteral("ConfigCompassLegacyView"),
-        QStringLiteral("ConfigRadioInputView"),
-        QStringLiteral("ConfigRadioOutputView"),
-        QStringLiteral("ConfigSerialView"),
-        QStringLiteral("ConfigESCCalibrationView"),
-        QStringLiteral("ConfigFlightModesView"),
-        QStringLiteral("ConfigFailSafeView"),
-        QStringLiteral("ConfigInitialParamsView"),
-        QStringLiteral("ConfigHWIDView"),
-        QStringLiteral("ConfigADSBView"),
-        QStringLiteral("ConfigGpsInjectView"),
-        QStringLiteral("SikRadioView"),
-        QStringLiteral("ConfigGPSOrderView"),
-        QStringLiteral("ConfigBatteryMonitoringView"),
-        QStringLiteral("ConfigBatteryMonitoring2View"),
-        QStringLiteral("ConfigDroneCanView"),
-        QStringLiteral("ConfigCompassMotView"),
-        QStringLiteral("ConfigRangeFinderView"),
-        QStringLiteral("ConfigAirspeedView"),
-        kOpticalFlow,
-        QStringLiteral("ConfigHWOSDView"),
-        QStringLiteral("ConfigMountView"),
-        QStringLiteral("ConfigMotorTestView"),
-        QStringLiteral("ConfigHWBTView"),
-        QStringLiteral("ConfigParachuteView"),
-        QStringLiteral("ConfigHWESP8266View"),
-        QStringLiteral("ConfigAntennaTrackerView"),
-        QStringLiteral("AntennaTrackerUIView"),
-        QStringLiteral("ConfigHWCANView"),
-        QStringLiteral("MavFTPUIView"),
-        QStringLiteral("ConfigAdvancedView"),
-        QStringLiteral("ConfigElevationSourcesView"),
-        QStringLiteral("ConfigDeveloperToolsView"),
-        QStringLiteral("ConfigMavCommandView"),
-        QStringLiteral("ConfigTerminalView"),
-        QStringLiteral("QmlPluginManagerView")
-    };
+    QStringList result;
+    for (const Mp10SetupRoute &route : Mp10ReferenceRoutes()) {
+        if (!route.qtPageId.isEmpty()) {
+            result.append(route.qtPageId);
+        }
+    }
+    // Deliberately retained useful Qt extension, absent from MP10 SETUP.
+    result.append(QStringLiteral("QmlPluginManagerView"));
+    return result;
 }
 
 QStringList ExpectedNavigationOrder()
 {
-    QStringList result = ExpectedPageIds();
-    result.insert(1, kMandatoryGroup);
-    result.insert(18, kOptionalGroup);
-    result.insert(39, kAdvancedGroup);
+    QStringList result;
+    QString currentGroup;
+    for (const Mp10SetupRoute &route : Mp10ReferenceRoutes()) {
+        if (!route.groupId.isEmpty() && route.groupId != currentGroup) {
+            currentGroup = route.groupId;
+            result.append(currentGroup);
+        }
+        if (!route.qtPageId.isEmpty()) {
+            result.append(route.qtPageId);
+        }
+    }
+    result.append(QStringLiteral("QmlPluginManagerView"));
     return result;
 }
 
@@ -234,7 +339,46 @@ int RunSetupRouteRuntimeAudit()
     if (hadPendingId) identitySettings.setValue(QStringLiteral("gcsid"), pendingId);
     else identitySettings.remove(QStringLiteral("gcsid"));
     identitySettings.sync();
+    const QList<Mp10SetupRoute> mp10Routes = Mp10ReferenceRoutes();
+    const QSet<QString> knownMissing = KnownMissingMp10Routes();
+    result.Expect(mp10Routes.size() == 53,
+                  QStringLiteral("independent MP10 manifest is not 53 pages"));
+    result.Expect(knownMissing.size() == 10,
+                  QStringLiteral("current MP10 missing-route allowlist is not 10"));
+
+    QSet<QString> referenceIds;
+    QSet<QString> mappedQtIds;
+    QSet<QString> observedMissing;
+    for (const Mp10SetupRoute &route : mp10Routes) {
+        result.Expect(!route.referenceId.isEmpty(),
+                      QStringLiteral("MP10 manifest contains an empty ID"));
+        result.Expect(!referenceIds.contains(route.referenceId),
+                      QStringLiteral("duplicate MP10 route %1")
+                          .arg(route.referenceId));
+        referenceIds.insert(route.referenceId);
+        if (route.qtPageId.isEmpty()) {
+            observedMissing.insert(route.referenceId);
+        } else {
+            result.Expect(!mappedQtIds.contains(route.qtPageId),
+                          QStringLiteral("duplicate Qt mapping %1")
+                              .arg(route.qtPageId));
+            mappedQtIds.insert(route.qtPageId);
+        }
+    }
+    result.Expect(observedMissing == knownMissing,
+                  QStringLiteral("MP10 missing-route allowlist mismatch\n"
+                                 "expected: %1\nactual:   %2")
+                      .arg(QStringList(knownMissing.values()).join(", "),
+                           QStringList(observedMissing.values()).join(", ")));
+    QSet<QString> baselineGaps = knownMissing;
+    baselineGaps.insert(QStringLiteral("ConfigJoystickViewModel"));
+    result.Expect(baselineGaps.size() == 11
+                      && mappedQtIds.contains(kJoystick),
+                  QStringLiteral("the audited 11-page baseline gap or its "
+                                 "Joystick closure was lost"));
+
     QWidget host;
+    int joystickLaunchCount = 0;
     SetupView setup(&host);
     BackstageView *const backstage = setup.findChild<BackstageView *>(
         QStringLiteral("BackstageView"));
@@ -251,8 +395,8 @@ int RunSetupRouteRuntimeAudit()
     const QSignalBlocker lifecycleBlocker(backstage);
 
     const QStringList expectedPages = ExpectedPageIds();
-    result.Expect(expectedPages.size() == 43,
-                  QStringLiteral("the audit baseline itself is not 43 pages"));
+    result.Expect(expectedPages.size() == 44,
+                  QStringLiteral("the audited Qt inventory is not 44 pages"));
     result.Expect(backstage->pageIds() == expectedPages,
                   QStringLiteral("production page ID/order mismatch\nexpected: %1\nactual:   %2")
                       .arg(expectedPages.join(QStringLiteral(", ")),
@@ -262,8 +406,8 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("backstageNavigationContent"));
     const QStringList navigationOrder = NavigationOrder(navigationContent);
     const QStringList expectedNavigation = ExpectedNavigationOrder();
-    result.Expect(expectedNavigation.size() == 46,
-                  QStringLiteral("the navigation baseline itself is not 46 entries"));
+    result.Expect(expectedNavigation.size() == 47,
+                  QStringLiteral("the navigation baseline itself is not 47 entries"));
     result.Expect(navigationOrder == expectedNavigation,
                   QStringLiteral("production page/group order mismatch\nexpected: %1\nactual:   %2")
                       .arg(expectedNavigation.join(QStringLiteral(", ")),
@@ -355,6 +499,13 @@ int RunSetupRouteRuntimeAudit()
         backstage->page(QStringLiteral("ConfigAdvancedView")));
     QPointer<QWidget> oldDeveloper(
         backstage->page(QStringLiteral("ConfigDeveloperToolsView")));
+    QPointer<QWidget> oldJoystick(backstage->page(kJoystick));
+    auto *joystickAction = new QAction(&host);
+    joystickAction->setObjectName(QStringLiteral("actionJoystickSettings"));
+    QObject::connect(joystickAction, &QAction::triggered,
+                     &host, [&joystickLaunchCount]() {
+        ++joystickLaunchCount;
+    });
     const QStringList sharedActionNames = {
         QStringLiteral("actionMavlinkInspector"),
         QStringLiteral("actionMavlinkMirror"),
@@ -379,6 +530,28 @@ int RunSetupRouteRuntimeAudit()
                   QStringLiteral("Advanced Tools retained its pre-action page"));
     result.Expect(oldDeveloper.isNull(),
                   QStringLiteral("Developer Tools retained its pre-action page"));
+    result.Expect(oldJoystick.isNull(),
+                  QStringLiteral("Joystick retained its pre-action launcher"));
+
+    QAbstractButton *joystickNavigation =
+        backstage->findChild<QAbstractButton *>(kJoystick);
+    if (joystickNavigation) {
+        joystickNavigation->click();
+    }
+    QWidget *const joystickPage = backstage->page(kJoystick);
+    QAbstractButton *const joystickSettings = joystickPage
+        ? joystickPage->findChild<QAbstractButton *>(
+              QStringLiteral("JoystickSettingsButton"))
+        : nullptr;
+    result.Expect(joystickSettings && joystickSettings->isEnabled(),
+                  QStringLiteral("Joystick route does not expose the shared "
+                                 "settings action after action registration"));
+    if (joystickSettings) {
+        joystickSettings->click();
+        result.Expect(joystickLaunchCount == 1,
+                      QStringLiteral("Joystick route bypassed or failed to "
+                                     "trigger MainWindow's shared action"));
+    }
 
     const QStringList advancedButtons = {
         QStringLiteral("MAVLinkInspectorButton"),
@@ -466,7 +639,8 @@ int RunSetupRouteRuntimeAudit()
 
     if (result.failures() == 0) {
         qInfo().noquote()
-            << QStringLiteral("SETUP route audit: 43 pages + 3 groups passed");
+            << QStringLiteral("SETUP route audit: 53-page MP10 manifest, "
+                              "44 Qt pages + 3 groups passed");
     }
     return result.exitCode();
 }

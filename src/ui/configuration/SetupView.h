@@ -82,6 +82,7 @@ private:
     QWidget *createBluetoothSetupPage(QWidget *parent);
     QWidget *createParachutePage(QWidget *parent);
     QWidget *createGpsInjectPage(QWidget *parent);
+    QWidget *createJoystickPage(QWidget *parent);
     QWidget *createGPSOrderPage(QWidget *parent);
     QWidget *createBatteryMonitoring2Page(QWidget *parent);
     QWidget *createDroneCanPage(QWidget *parent);

@@ -18,6 +18,17 @@
 namespace {
 constexpr int kNavigationWidth = 210;
 
+QString groupTitleWithoutArrows(const QString &title)
+{
+    QString result = title.trimmed();
+    if (result.startsWith(QStringLiteral(">>"))
+        || result.startsWith(QStringLiteral("<<"))) {
+        result.remove(0, 2);
+        result = result.trimmed();
+    }
+    return result;
+}
+
 class BackstagePageButton final : public QAbstractButton
 {
 public:
@@ -207,7 +218,6 @@ void BackstageView::addGroup(const QString &title, const QString &objectName)
 
     auto *button = new QToolButton(this);
     button->setObjectName(id);
-    button->setText(title);
     button->setProperty("backstageGroup", true);
     button->setProperty("groupId", id);
     button->setCheckable(true);
@@ -215,7 +225,9 @@ void BackstageView::addGroup(const QString &title, const QString &objectName)
     button->setCursor(Qt::PointingHandCursor);
     button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_navigationLayout->insertWidget(m_navigationLayout->count() - 1, button);
-    m_groups.insert(id, GroupEntry{button, QStringList(), true});
+    m_groups.insert(id, GroupEntry{
+        button, QStringList(), groupTitleWithoutArrows(title), true});
+    updateGroupButtonPresentation(m_groups[id]);
     m_currentGroupId = id;
     connect(button, &QAbstractButton::clicked, this, [this, id](bool checked) {
         setGroupExpanded(id, checked);
@@ -445,6 +457,7 @@ bool BackstageView::setGroupExpanded(const QString &id, bool expanded)
     }
     iterator->expanded = expanded;
     iterator->button->setChecked(expanded);
+    updateGroupButtonPresentation(*iterator);
     bool currentWasHidden = false;
     for (const QString &pageId : iterator->pageIds) {
         updatePageButtonVisibility(pageId);
@@ -458,6 +471,19 @@ bool BackstageView::setGroupExpanded(const QString &id, bool expanded)
         selectFallbackPage();
     }
     return true;
+}
+
+void BackstageView::updateGroupButtonPresentation(GroupEntry &group)
+{
+    const QString arrows = group.expanded
+        ? QStringLiteral("<<") : QStringLiteral(">>");
+    group.button->setText(QStringLiteral("%1 %2")
+                              .arg(arrows, group.title));
+    group.button->setToolTip(
+        group.expanded
+            ? tr("Collapse %1").arg(group.title)
+            : tr("Expand %1").arg(group.title));
+    group.button->setAccessibleName(group.button->text());
 }
 
 bool BackstageView::setGroupVisible(const QString &id, bool visible)

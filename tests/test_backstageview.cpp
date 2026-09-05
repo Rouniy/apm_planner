@@ -102,15 +102,26 @@ void BackstageViewTest::collapsesPageGroups()
     auto *frameType = new QWidget;
     QVERIFY(view.addPage(QStringLiteral("menuFrameType"),
                          QStringLiteral("Frame Type"), frameType, true));
+    QAbstractButton *const groupButton = view.findChild<QAbstractButton *>(
+        QStringLiteral("mandatoryHardwareGroup"));
+    QVERIFY(groupButton);
+    QCOMPARE(groupButton->text(), QStringLiteral("<< Mandatory Hardware"));
+    QCOMPARE(groupButton->toolTip(),
+             QStringLiteral("Collapse Mandatory Hardware"));
     QCOMPARE(frameType->property("pageId").toString(), QStringLiteral("menuFrameType"));
     QVERIFY(view.isGroupExpanded(QStringLiteral("mandatoryHardwareGroup")));
     QVERIFY(view.setCurrentPage(QStringLiteral("menuFrameType")));
 
     QVERIFY(view.setGroupExpanded(QStringLiteral("mandatoryHardwareGroup"), false));
+    QCOMPARE(groupButton->text(), QStringLiteral(">> Mandatory Hardware"));
+    QCOMPARE(groupButton->toolTip(),
+             QStringLiteral("Expand Mandatory Hardware"));
     QVERIFY(!view.isPageVisible(QStringLiteral("menuFrameType")));
     QCOMPARE(view.currentPageId(), QStringLiteral("menuInstallFirmware"));
-    QVERIFY(view.setGroupExpanded(QStringLiteral("mandatoryHardwareGroup"), true));
+    groupButton->click();
     QVERIFY(view.isPageVisible(QStringLiteral("menuFrameType")));
+    QVERIFY(view.isGroupExpanded(QStringLiteral("mandatoryHardwareGroup")));
+    QCOMPARE(groupButton->text(), QStringLiteral("<< Mandatory Hardware"));
 
     QVERIFY(view.setGroupVisible(QStringLiteral("mandatoryHardwareGroup"), false));
     QVERIFY(!view.isGroupVisible(QStringLiteral("mandatoryHardwareGroup")));
