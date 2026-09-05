@@ -357,6 +357,7 @@ bool WarningTelemetrySource::isCurrentLease(const VehicleTargetLease &lease) con
 void WarningTelemetrySource::clearEpoch(bool acquire)
 {
     m_samples.clear(); m_lease = {}; m_homeValid = false;
+    m_lastHomeRequestAt = -1; m_homeRequestAttempts = 0;
     if (acquire && m_targets && m_targets->isTargetGenerationSettled()) m_lease = m_targets->acquireTarget();
     ++m_epoch;
     // The legacy LinkManager singleton may be destroyed after QApplication.
@@ -523,5 +524,25 @@ void WarningTelemetrySource::observeMessage(int linkId, const mavlink_message_t 
     if (message.msgid == MAVLINK_MSG_ID_MEMINFO) {
         const double wide = raw(message,"freemem32");
         if (std::isfinite(wide) && wide > 0) put("freemem",wide,at);
+    }
+    // HOME_POSITION is not a guaranteed stream. Ask only after both heartbeat
+    // and position are fresh, retry three times at 5 s then back off to 30 s
+    // (Home may become available much later, e.g. after GPS/arming). No timer
+    // sends into a stale/disconnected target and no missing value becomes zero.
+    if (!m_homeValid && at >= 0) {
+        const auto freshSample = [this, at](const QString &name) {
+            const auto sample = m_samples.constFind(name);
+            return sample != m_samples.cend() && freshAt(at, sample->at);
+        };
+        const qint64 interval = m_homeRequestAttempts < 3 ? 5000 : 30000;
+        if (freshSample("connected") && freshSample("lat") && freshSample("lng")
+            && (m_lastHomeRequestAt < 0
+                || (at >= m_lastHomeRequestAt && at - m_lastHomeRequestAt >= interval))) {
+            m_lastHomeRequestAt = at;
+            m_homeRequestAttempts = std::min(3, m_homeRequestAttempts + 1);
+            // Consume the rate slot before callbacks; a listener may inject
+            // a reply, switch targets, invalidate the epoch or delete us.
+            emit homePositionRequested(m_lease, m_epoch);
+        }
     }
 }

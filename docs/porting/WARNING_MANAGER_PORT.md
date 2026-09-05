@@ -62,6 +62,11 @@ Warning colors affect the background with the reference black/white contrast
 rule, and NoColor restores the configured foreground and transparent background.
 Unavailable values show an em dash and no warning color. The older raw-value
 selector remains as **Quick (Legacy)**, not as an exact-target coloring consumer.
+Descriptions and numbers now scale with each cell and fit their actual label
+rectangles. Local pixel-size rules override the application's global 11px theme;
+font-derived minimum hints cannot prevent shrinking the splitter/grid again.
+Refitting follows cell/label resize, field/unit/value edits and layout rebuilds.
+Warning colors and foreground contrast preserve the fitted sizes.
 
 ## Differences and remaining gates
 
@@ -76,8 +81,9 @@ selector remains as **Quick (Legacy)**, not as an exact-target coloring consumer
   component scope and derived-home differences remain explicit catalog gaps.
 - A shared bounded queue avoids the original busy-wait and double-speech paths;
   a per-rule audio-delivery/rejection history is not yet presented.
-- Quick currently uses fixed numeric font sizing/raw field labels instead of all
-  reference DisplayText descriptions and adaptive text fitting. Native/reference
+- Quick still uses raw field labels instead of all reference DisplayText
+  descriptions. Adaptive text fitting is restored and checked with the production
+  theme. Native/reference
   visual comparison, Windows/macOS speech plugins and physical hardware remain.
 - Static LinkManager destruction can occur after QApplication in the production
   audit. The source invalidates its state but suppresses epoch notification while
@@ -104,3 +110,35 @@ in the editor, persisted threshold 15 after restarting the application, physical
 disconnect clearing Quick immediately, reconnect restoring color/values, and
 normal exit 0 while the sender is still active.
 Evidence: `/tmp/apm-warning.2r8mcV/`.
+
+## Quick regression follow-up, 2026-09-05
+
+User-reported small text came from the initial fixed 24px implementation. The
+first adaptive fix passed most tests but the real theme overrode `setFont()` with
+11px; its dense-grid fit also used estimated rather than actual row geometry.
+Both are now fixed. Tests exercise grow/shrink, 1-to-12-cell layouts, long
+coordinates/descriptions/units and repeated warning/value updates with and
+without the exact production ancestor-font rule.
+
+The missing DistToHome producer was HOME_POSITION acquisition for a late-joining
+GCS. The source now emits a rate-limited read intent when heartbeat/position are
+fresh and Home is absent. MainWindow rechecks exact target/source/physical epochs
+and single-vehicle route eligibility, then sends REQUEST_MESSAGE(242) through
+VehicleCommandService. It never sets Home or assumes a missing distance is zero.
+See `WARNING_TELEMETRY_CATALOG.md` for cadence and compatibility limits.
+
+Final Qt5/audio build and **234/234 tests pass (57.18 seconds)**. A synthetic
+peer proves request/response -> 11.12 m -> stale dash -> recovery and normal
+exit 0. A read-only ten-second capture of the user's actual network SITL
+`192.168.0.43:14556 -> UDP14550`, system/component1/1, sees 977 packets including
+fresh position and zero current in both SYS_STATUS and BATTERY_STATUS, but no
+HOME_POSITION. Final X11 against that same SITL receives Home after the new
+modern request and displays current **0.00 A**, distance about **0.01 m**, and
+clearly larger/smaller text at 1120x720 -> 1600x950 -> 1120x720.
+Independent TLOG parsing at the checkpoint sees one HOME_POSITION, 314 global
+positions, 210 SYS_STATUS and 210 BATTERY_STATUS with current0 and zero BAD_DATA.
+Evidence: `/tmp/apm-quick-home.NlMkar/`; personally inspected `live-quick-small.png`,
+`live-quick-large.png` and `live-quick-shrunk.png`. The final live-SITL window is
+left open for the user with isolated settings. Claude TCP c200/c150 and Codex
+cross-review are recorded; no real flight, arming, mode or parameter write was
+performed for this verification.

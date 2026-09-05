@@ -40,6 +40,9 @@ public slots:
 
 signals:
     void epochChanged();
+    // Read-only acquisition intent. The application owner must revalidate the
+    // exact lease/source epoch and a live physical route before requesting Home.
+    void homePositionRequested(VehicleTargetLease lease, quint64 sourceEpoch);
 
 private:
     struct Sample { double value = 0; qint64 at = -1; };
@@ -55,6 +58,8 @@ private:
     quint64 m_epoch = 0;
     bool m_homeValid = false;
     double m_homeLatitude = 0, m_homeLongitude = 0, m_homeAltitude = 0;
+    qint64 m_lastHomeRequestAt = -1;
+    int m_homeRequestAttempts = 0;
 };
 
 #endif

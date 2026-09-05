@@ -127,6 +127,7 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCCore.h"
 #include "LinkManager.h"
 #include "comm/Px4FlowService.h"
+#include "comm/VehicleCommandService.h"
 #include "LinkManagerFactory.h"
 #include "comm/VehicleTargetManager.h"
 
@@ -1659,11 +1660,30 @@ void MainWindow::buildCommonWidgets()
         linkManager->vehicleTargetManager(), {}, this);
     m_warningTelemetry->setObjectName(QStringLiteral("WarningTelemetrySource"));
     const QPointer<WarningTelemetrySource> warningSource = m_warningTelemetry;
+    connect(m_warningTelemetry, &WarningTelemetrySource::homePositionRequested,
+            this, [warningSource, linkManager](const VehicleTargetLease &lease,
+                                             quint64 sourceEpoch) {
+        if (!warningSource || linkManager->isShuttingDown()
+            || warningSource->epoch() != sourceEpoch
+            || !warningSource->isCurrentLease(lease)) return;
+        const auto physicalEpoch = linkManager->currentPhysicalLinkSession(lease.endpoint.linkId);
+        // Replay never establishes a physical epoch. Keep the same route gate
+        // as other read-only single-vehicle services, including learned UDP.
+        if (physicalEpoch == 0
+            || !linkManager->singleEndpointRouteIsEligible(lease.endpoint, physicalEpoch)) return;
+        if (!warningSource || warningSource->epoch() != sourceEpoch
+            || !warningSource->isCurrentLease(lease)
+            || linkManager->currentPhysicalLinkSession(lease.endpoint.linkId) != physicalEpoch) return;
+        linkManager->vehicleCommandService()->sendCommandLong(
+            lease, QGC::MavlinkID(), QGC::ComponentID(), MAV_CMD_REQUEST_MESSAGE,
+            0, MAVLINK_MSG_ID_HOME_POSITION, 0, 0, 0, 0, 0, 0);
+    });
     connect(linkManager, &LinkManager::mavlinkMessageObserved,
             m_warningTelemetry, [warningSource, linkManager](int linkId, qulonglong epoch,
                                               const mavlink_message_t &message) {
         if (warningSource && epoch != 0
-            && linkManager->currentPhysicalLinkSession(linkId) == epoch)
+            && linkManager->currentPhysicalLinkSession(linkId) == epoch
+            && linkManager->isCurrentPhysicalIngress(linkManager->getLink(linkId)))
             warningSource->observeMessage(linkId, message);
     });
     const auto resetWarningLink = [warningSource](int linkId, qulonglong) {

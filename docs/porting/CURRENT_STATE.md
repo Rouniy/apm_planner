@@ -24,7 +24,29 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): **MAVLink Signing production transport integration**.
+Latest slice (2026-09-05): **Quick resize and missing Home acquisition**.
+Adaptive description/number fonts now fit actual cell geometry, override the
+production 11px stylesheet and grow/shrink with window/splitter/layout changes.
+The user-reported DistToHome dash came from no explicit Home request on late
+join. Fresh exact heartbeat+position now trigger REQUEST_MESSAGE(242) at bounded
+0/5/10-second attempts then 30-second backoff, fenced by target/source/physical
+epochs and the single-vehicle route. Only a real HOME_POSITION supplies Home;
+unknown or stale distance is not substituted with zero.
+
+Qt5/audio build and **234/234 tests pass (57.18 seconds)**. Synthetic UDP proves
+11.12 m request/response, stale dash/recovery and exit0. Actual network SITL
+192.168.0.43:14556 -> UDP14550 system/component1/1 was passively captured: 977
+packets/10 seconds, fresh coordinates, current0 in SYS_STATUS/BATTERY_STATUS,
+but no HOME_POSITION. Final X11 now displays 0.00 A and about0.01 m and visibly
+rescales at 1120x720 -> 1600x950 -> 1120x720. TLOG snapshot has one Home reply,
+314 global positions, 210 each SYS/BATTERY_STATUS and no BAD_DATA. Evidence:
+`/tmp/apm-quick-home.NlMkar/`. The final live-SITL window was left open for the
+user (PID2149325, exec74070, isolated live-config/live-appdata); do not confuse it
+with synthetic UDP14700/system234, which is stopped. Counts and port priorities
+remain unchanged. Pre-4.0 Home request fallback, raw DisplayText names, generic
+read-command ACK banners and other catalog/native-platform gaps remain explicit.
+
+Previous slice (2026-09-05): **MAVLink Signing production transport integration**.
 The application-owned key-domain manager shares bounded replay contexts across
 aliases, links and reconnects, with persistent stable profile IDs. Exact and
 legacy sends share one finalizer/signing boundary; protected links refuse raw

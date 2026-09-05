@@ -30,6 +30,8 @@ private slots:
     void radioAndServoInstances();
     void imuPressureNavAndDerived();
     void homeDistanceAndEpoch();
+    void missingHomeRequestsAreExactAndRateLimited();
+    void homeRequestReentrancyAndDeletion();
     void trimmedPayloadAndV1Extensions();
     void clockReentrancyAndDestroyedTargets();
     void clockDeletionAndExtremeTimes();
@@ -219,6 +221,68 @@ void WarningTelemetrySourceTest::homeDistanceAndEpoch()
     QVERIFY(std::abs(source.values().value("DistToHome")-22238.9853)<.1);
     now=15001; QVERIFY(!source.values().contains("DistToHome")); QVERIFY(source.values().contains("HomeAlt"));
     source.invalidateSourceEpoch(); QVERIFY(source.values().isEmpty());
+}
+
+void WarningTelemetrySourceTest::missingHomeRequestsAreExactAndRateLimited()
+{
+    VehicleTargetManager targets; targets.observeEndpoint(endpoint(1),true);
+    qint64 now=0; WarningTelemetrySource source(&targets,[&]{return now;});
+    QSignalSpy requests(&source, &WarningTelemetrySource::homePositionRequested);
+    mavlink_global_position_int_t position{};
+    position.lat=351000000; position.lon=331000000;
+    mavlink_message_t pos{}; mavlink_msg_global_position_int_encode(42,1,&pos,&position);
+    source.observeMessage(1,heartbeat()); // Heartbeat alone never invents position.
+    QCOMPARE(requests.size(),0);
+    source.observeMessage(2,pos); QCOMPARE(requests.size(),0); // Foreign physical link.
+    source.observeMessage(1,pos); QCOMPARE(requests.size(),1);
+    const auto lease=qvariant_cast<VehicleTargetLease>(requests.first().at(0));
+    QCOMPARE(lease.endpoint,endpoint(1)); QCOMPARE(lease.generation,source.lease().generation);
+    QCOMPARE(requests.first().at(1).toULongLong(),source.epoch());
+    QVERIFY(!source.values().contains("DistToHome"));
+    for (const qint64 tick : {4999,5000,9999,10000,39999,40000}) {
+        now=tick; source.observeMessage(1,heartbeat()); source.observeMessage(1,pos);
+        QCOMPARE(requests.size(), now<5000 ? 1 : now<10000 ? 2 : now<40000 ? 3 : 4);
+    }
+    // No position refresh: even a live heartbeat must not keep requesting Home.
+    now=80000; source.observeMessage(1,heartbeat()); QCOMPARE(requests.size(),4);
+    mavlink_home_position_t home{}; home.latitude=position.lat; home.longitude=position.lon;
+    mavlink_message_t reply{}; mavlink_msg_home_position_encode(42,1,&reply,&home);
+    source.observeMessage(2,reply); // Foreign Home must not satisfy the request.
+    source.observeMessage(1,pos); QCOMPARE(requests.size(),5);
+    source.observeMessage(1,reply);
+    QCOMPARE(source.values().value("DistToHome",-1),0.0); // Real coincident positions.
+    now=120000; source.observeMessage(1,heartbeat()); source.observeMessage(1,pos);
+    QCOMPARE(requests.size(),5); QCOMPARE(source.values().value("DistToHome",-1),0.0);
+    source.invalidateSourceEpoch(); QVERIFY(source.values().isEmpty());
+    source.observeMessage(1,pos); QCOMPARE(requests.size(),5);
+    source.observeMessage(1,heartbeat()); QCOMPARE(requests.size(),6);
+    targets.removeLink(1);
+    now=160000; source.observeMessage(1,heartbeat()); source.observeMessage(1,pos);
+    QCOMPARE(requests.size(),6);
+}
+
+void WarningTelemetrySourceTest::homeRequestReentrancyAndDeletion()
+{
+    VehicleTargetManager targets; targets.observeEndpoint(endpoint(1),true);
+    qint64 now=0; WarningTelemetrySource source(&targets,[&]{return now;});
+    mavlink_global_position_int_t position{}; position.lat=351000000; position.lon=331000000;
+    mavlink_message_t pos{}; mavlink_msg_global_position_int_encode(42,1,&pos,&position);
+    int requests=0;
+    connect(&source,&WarningTelemetrySource::homePositionRequested,&source,[&]{
+        ++requests;
+        source.observeMessage(1,pos); // Same-turn input cannot recurse into another request.
+        mavlink_home_position_t home{}; home.latitude=position.lat; home.longitude=position.lon;
+        mavlink_message_t reply{}; mavlink_msg_home_position_encode(42,1,&reply,&home);
+        source.observeMessage(1,reply);
+    });
+    source.observeMessage(1,heartbeat()); source.observeMessage(1,pos);
+    QCOMPARE(requests,1); QCOMPARE(source.values().value("DistToHome",-1),0.0);
+
+    auto *dying=new WarningTelemetrySource(&targets,[&]{return now;});
+    QPointer<WarningTelemetrySource> guard(dying);
+    connect(dying,&WarningTelemetrySource::homePositionRequested,&targets,[&]{delete dying;});
+    dying->observeMessage(1,heartbeat()); dying->observeMessage(1,pos);
+    QVERIFY(guard.isNull());
 }
 
 void WarningTelemetrySourceTest::trimmedPayloadAndV1Extensions()

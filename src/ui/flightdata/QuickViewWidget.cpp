@@ -5,11 +5,13 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QFontMetrics>
 #include <QGridLayout>
 #include <QInputDialog>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSettings>
 #include <QSpinBox>
 #include <QVBoxLayout>
@@ -26,13 +28,76 @@ class Cell final : public QWidget {
 public:
     explicit Cell(QWidget *parent) : QWidget(parent) {}
     std::function<void()> activate;
+    void setLabels(QLabel *description, QLabel *number) {
+        m_description = description;
+        m_number = number;
+        description->installEventFilter(this);
+        number->installEventFilter(this);
+    }
+    void setTextColors(const QString &description, const QString &number) {
+        m_descriptionColor = description;
+        m_numberColor = number;
+        updateTextSizes();
+    }
+    void updateTextSizes() {
+        if (!m_description || !m_number || !layout()) return;
+        const QRect available = contentsRect().marginsRemoved(layout()->contentsMargins());
+        // MP10 QuickView.Render scales the description with cell height and the
+        // number with the remaining height. Fit both axes, including long field
+        // names/units and negative coordinates, without changing their contents.
+        // Use actual label rectangles: layout rounding/minimums need not match
+        // an arithmetic 1:4 split, especially immediately after a grid rebuild.
+        fitFont(m_description, qMax(9, int(available.height() * 0.16)), m_descriptionColor);
+        fitFont(m_number, qMax(10, int(m_number->contentsRect().height() * 0.9)), m_numberColor);
+    }
 protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if ((watched == m_description || watched == m_number) && event->type() == QEvent::Resize)
+            updateTextSizes();
+        return QWidget::eventFilter(watched, event);
+    }
+    void resizeEvent(QResizeEvent *event) override {
+        QWidget::resizeEvent(event);
+        updateTextSizes();
+    }
     void mouseDoubleClickEvent(QMouseEvent *event) override {
         if (event->button() == Qt::LeftButton && activate) {
             const auto callback = activate;
             callback();
         }
     }
+private:
+    static void fitFont(QLabel *label, int maximumPixels, const QString &color) {
+        const int width = qMax(1, label->contentsRect().width() - 2);
+        const int height = qMax(1, label->contentsRect().height());
+        QFont font = label->font();
+        int low = 1;
+        int high = maximumPixels;
+        int best = 1;
+        while (low <= high) {
+            const int pixels = low + (high - low) / 2;
+            font.setPixelSize(pixels);
+            const QFontMetrics metrics(font);
+            const int textWidth = qMax(metrics.horizontalAdvance(label->text()),
+                                       metrics.boundingRect(label->text()).width());
+            if (textWidth <= width && metrics.height() <= height) {
+                best = pixels;
+                low = pixels + 1;
+            } else {
+                high = pixels - 1;
+            }
+        }
+        // The production theme sets QWidget { font-size: 11px; }. A plain
+        // setFont() loses to that rule on repolish, including warning updates.
+        // Keep the computed size in the same local rule as its foreground color.
+        const QString style = QStringLiteral("background: transparent; color: %1; font-size: %2px;")
+            .arg(color).arg(best);
+        if (label->styleSheet() != style) label->setStyleSheet(style);
+    }
+    QLabel *m_description = nullptr;
+    QLabel *m_number = nullptr;
+    QString m_descriptionColor = QStringLiteral("#ffffff");
+    QString m_numberColor = QStringLiteral("#ffffff");
 };
 }
 
@@ -121,13 +186,20 @@ void QuickViewWidget::rebuild()
         auto *label = new QLabel(cell);
         label->setObjectName(QStringLiteral("QuickDescription_%1").arg(i));
         label->setAlignment(Qt::AlignCenter);
+        label->setTextFormat(Qt::PlainText);
+        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
         label->setAttribute(Qt::WA_TransparentForMouseEvents);
         auto *number = new QLabel(cell);
         number->setObjectName(QStringLiteral("QuickNumber_%1").arg(i));
         number->setAlignment(Qt::AlignCenter);
+        number->setTextFormat(Qt::PlainText);
+        number->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
         number->setAttribute(Qt::WA_TransparentForMouseEvents);
-        layout->addWidget(label);
-        layout->addWidget(number, 1);
+        // Ignore font-derived minimum hints: larger text must not prevent the
+        // splitter/grid from becoming small again after a window enlargement.
+        layout->addWidget(label, 1);
+        layout->addWidget(number, 4);
+        cell->setLabels(label, number);
         m_grid->addWidget(cell, i / m_columns, i % m_columns);
         m_grid->setRowStretch(i / m_columns, 1);
         m_grid->setColumnStretch(i % m_columns, 1);
@@ -143,6 +215,10 @@ void QuickViewWidget::refresh()
         const QString unit = m_units.value(field);
         const auto value = m_values.constFind(field);
         const bool valid = value != m_values.cend() && std::isfinite(value.value());
+        const QString help = tr("Double-click to select a telemetry field. Right-click for layout.");
+        m_cells[i]->setToolTip(!valid && field == QStringLiteral("DistToHome")
+            ? tr("Distance needs a fresh vehicle position and HOME_POSITION from the selected vehicle. A connection alone is not enough.\n%1").arg(help)
+            : help);
         m_labels[i]->setText(field + (unit.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(unit)));
         m_numbers[i]->setText(valid ? QString::number(value.value(), 'f',
             field == QStringLiteral("lat") || field == QStringLiteral("lng") ? 7 : 2) : QStringLiteral("—"));
@@ -156,9 +232,8 @@ void QuickViewWidget::refresh()
         m_cells[i]->setProperty("warningColor", colored ? named : QStringLiteral("NoColor"));
         m_cells[i]->setStyleSheet(QStringLiteral("QWidget#QuickCell_%1 { background-color: %2; }")
             .arg(i).arg(colored ? background.name() : QStringLiteral("transparent")));
-        m_labels[i]->setStyleSheet(QStringLiteral("background: transparent; color: %1;")
-            .arg(colored ? foreground : QStringLiteral("#ffffff")));
-        m_numbers[i]->setStyleSheet(QStringLiteral("background: transparent; color: %1; font-size: 24px;").arg(foreground));
+        static_cast<Cell *>(m_cells[i])->setTextColors(
+            colored ? foreground : QStringLiteral("#ffffff"), foreground);
     }
 }
 

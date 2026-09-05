@@ -51,6 +51,27 @@ Distance uses a great-circle calculation (Earth radius 6371000 m) and handles
 the equator and dateline; MP10 uses a flat TrackerLocation projection with
 zero-coordinate exclusions. Operator-set tracker home is not yet an input.
 
+When Home is missing but exact heartbeat and position are fresh, the source
+emits `homePositionRequested(lease, sourceEpoch)`. MainWindow revalidates the
+source/target/physical epochs, current ingress peer revision and single-vehicle
+route, then sends read-only `MAV_CMD_REQUEST_MESSAGE`, param1=242, via the shared
+command service. Initial intents are at 0/5/10 seconds, then at most once every
+30 seconds until an actual Home reply. Rate admission happens before callbacks;
+target/physical epoch changes reset the policy. Stale or replay input cannot
+cause writes. A rejected local send still consumes its intent slot, so recovery
+after route/signing availability can take up to 30 seconds.
+
+No GPS-only gate is imposed: external navigation can establish an EKF/Home
+without GPS. An ACK for command512 cannot identify the requested message and is
+not accepted as a Home reply. Modern ArduPilot queues Home when available and
+otherwise accepts the request without providing a position; Quick stays absent.
+The legacy UAS layer still prints its generic success ACK text. A quieter
+read-request status policy and GET_HOME_POSITION fallback for pre-4.0 firmware
+remain deferred. GET_HOME_POSITION is not the primary request because newer
+ArduPilot can compile it out. MP10's zero-when-unknown and arm-transition WP0
+producer are intentionally not copied: the Qt view distinguishes missing Home
+from a genuinely measured zero distance and actively acquires it on late join.
+
 ## Sources and units
 
 Canonical fields use **m, m/s and degrees**, regardless of display preferences.
