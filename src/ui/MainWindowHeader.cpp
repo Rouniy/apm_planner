@@ -115,7 +115,8 @@ QToolButton#ardupilotLink {
     min-width: 150px;
     max-width: 150px;
 }
-QToolButton#refreshLinksButton {
+QToolButton#refreshLinksButton,
+QToolButton#addConnectionButton {
     min-width: 28px;
     max-width: 28px;
     min-height: 28px;
@@ -126,7 +127,8 @@ QToolButton#refreshLinksButton {
     background: #34d399;
     color: #06251a;
 }
-QToolButton#refreshLinksButton:hover { background: #10b981; color: #06251a; }
+QToolButton#refreshLinksButton:hover,
+QToolButton#addConnectionButton:hover { background: #10b981; color: #06251a; }
 QComboBox, QSpinBox {
     min-height: 28px;
     max-height: 28px;
@@ -325,6 +327,13 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     refresh->setText(QStringLiteral("⟳"));
     refresh->setFixedSize(28, 28);
     top->addWidget(refresh);
+    m_addConnectionButton = new QToolButton(connection);
+    m_addConnectionButton->setObjectName(QStringLiteral("addConnectionButton"));
+    m_addConnectionButton->setText(QStringLiteral("+"));
+    m_addConnectionButton->setToolTip(tr("Add Connection…"));
+    m_addConnectionButton->setFixedSize(28, 28);
+    m_addConnectionButton->setEnabled(false);
+    top->addWidget(m_addConnectionButton);
     m_connectButton = new QPushButton(tr("CONNECT"), connection);
     m_connectButton->setObjectName(QStringLiteral("connectButton"));
     m_connectButton->setFixedWidth(110);
@@ -359,6 +368,9 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
                     menu.addSeparator();
                     menu.addAction(m_connectionOptionsAction);
                 }
+                if (m_addConnectionAction) {
+                    menu.addAction(m_addConnectionAction);
+                }
                 menu.exec(mapToGlobal(position));
             });
 
@@ -372,6 +384,11 @@ MainWindowHeader::MainWindowHeader(QWidget *parent)
     m_autoHideAction->setChecked(savedAutoHide);
 
     connect(refresh, &QToolButton::clicked, this, &MainWindowHeader::refreshLinks);
+    connect(m_addConnectionButton, &QToolButton::clicked, this, [this]() {
+        if (m_addConnectionAction) {
+            m_addConnectionAction->trigger();
+        }
+    });
     connect(m_portCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindowHeader::updateCurrentLink);
     connect(m_baudSpin, &QSpinBox::editingFinished,
@@ -513,6 +530,19 @@ void MainWindowHeader::setToolsMenu(QMenu *menu)
 void MainWindowHeader::setConnectionOptionsAction(QAction *action)
 {
     m_connectionOptionsAction = action;
+}
+
+void MainWindowHeader::setAddConnectionAction(QAction *action)
+{
+    m_addConnectionAction = action;
+    m_addConnectionButton->setEnabled(action && action->isEnabled());
+    if (!action) {
+        return;
+    }
+    connect(action, &QAction::changed, m_addConnectionButton,
+            [this, action]() {
+                m_addConnectionButton->setEnabled(action->isEnabled());
+            });
 }
 
 void MainWindowHeader::setDefaultBaudRate(int baud)

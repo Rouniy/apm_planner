@@ -30,8 +30,10 @@ GlobalObject::~GlobalObject()
 void GlobalObject::loadSettings()
 {
     QSettings settings;
+    const uint legacyMavlinkId = settings.value(
+        QStringLiteral("GCS_sysid"), defaultMavlinkID()).toUInt();
     const uint loadedMavlinkId = settings.value(
-        QStringLiteral("gcsid"), defaultMavlinkID()).toUInt();
+        QStringLiteral("gcsid"), legacyMavlinkId).toUInt();
     settings.beginGroup("GLOBAL_SETTINGS");
     m_appDataDirectory = settings.value("APP_DATA_DIRECTORY", defaultAppDataDirectory()).toString();
     m_logDirectory = settings.value("LOG_DIRECTORY", defaultLogDirectory()).toString();
@@ -50,7 +52,9 @@ void GlobalObject::loadSettings()
 void GlobalObject::saveSettings()
 {
     QSettings settings;
-    settings.setValue(QStringLiteral("gcsid"), m_mavlinkID);
+    // `gcsid` is owned by Connection Options / Planner settings. Rewriting it
+    // from this session's cached identity would erase a restart-scoped change
+    // during ordinary shutdown or an unrelated directory save.
     settings.beginGroup("GLOBAL_SETTINGS");
     settings.setValue("APP_DATA_DIRECTORY", m_appDataDirectory);
     settings.setValue("LOG_DIRECTORY", m_logDirectory);

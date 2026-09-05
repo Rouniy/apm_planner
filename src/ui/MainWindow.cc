@@ -103,6 +103,7 @@ This file is part of the QGROUNDCONTROL project
 #include "docking/DockableView.h"
 #include "MainWindowHeader.h"
 #include "ConnectionOptionsWindow.h"
+#include "AddConnectionWindow.h"
 #include "ConfigView.h"
 #include "SetupView.h"
 #include "configuration/DisplayViewProfile.h"
@@ -701,6 +702,12 @@ void MainWindow::buildMissionPlannerToolsMenu()
     ui.menuTools->menuAction()->setVisible(true);
     m_mainWindowHeader->setConnectionOptionsAction(
         findChild<QAction *>(QStringLiteral("actionConnectionOptions")));
+    auto *addConnectionAction = new QAction(tr("Add Connection…"), this);
+    addConnectionAction->setObjectName(QStringLiteral("actionAddConnection"));
+    connect(addConnectionAction, &QAction::triggered, this, [this]() {
+        AddConnectionWindow::OpenWindow(this);
+    });
+    m_mainWindowHeader->setAddConnectionAction(addConnectionAction);
     if (hardwareSetupView) {
         // Setup can restore an action-backed lazy page before the TOOLS QAction
         // catalogue exists. Recreate only those pages now so implemented tools
@@ -3896,6 +3903,7 @@ void MainWindow::enableHeartbeat(bool enabled)
             UASManager::instance()->getUASList().at(i)->setHeartbeatEnabled(enabled);
         }
         storeSettings();
+        emit heartbeatChanged(enabled);
     }
 }
 
@@ -3905,23 +3913,32 @@ void MainWindow::setGroundStationSystemId(int systemId)
         systemId = 255;
     }
 
-    QGC::setMavlinkID(static_cast<quint8>(systemId));
+    // All settings surfaces share the restart-only identity policy. Updating
+    // only protocol/UAS here would split their identity from exact services
+    // with an outstanding ACK transaction.
     QSettings settings;
     settings.setValue(QStringLiteral("gcsid"), systemId);
     settings.sync();
 
-    if (MAVLinkProtocol *protocol = LinkManager::instance()->getProtocol()) {
-        protocol->setSystemId(static_cast<quint8>(systemId));
-    }
-    const QList<UASInterface *> systems = UASManager::instance()->getUASList();
-    for (UASInterface *uas : systems) {
-        uas->setGroundStationSystemId(systemId);
-    }
 }
 
 void MainWindow::showConnectionOptions()
 {
     ConnectionOptionsWindow::OpenWindow(this);
+}
+
+void MainWindow::applyConnectionOptions(
+    int baud, bool heartbeat, int gcsSystemId)
+{
+    Q_UNUSED(gcsSystemId);
+    QSettings settings;
+    settings.setValue(QStringLiteral("baudrate"), baud);
+    settings.sync();
+    m_mainWindowHeader->setDefaultBaudRate(baud);
+    enableHeartbeat(heartbeat);
+    // Changing the sender identity while exact operations are in flight can
+    // orphan their ACK correlation. The canonical gcsid is already persisted
+    // by the dialog and is applied consistently to every sender on restart.
 }
 
 void MainWindow::openAdditionalConnection(const QString &connection, int baud)

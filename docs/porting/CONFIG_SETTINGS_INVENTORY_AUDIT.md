@@ -162,6 +162,24 @@ file paths and seven-rate telemetry editor remain reachable through an
 explicitly named Legacy dialog; dead reconnect/donate/titlebar/low-power and
 split-brain MAVLink identity controls are hidden there.
 
+The standalone `TOOLS → Connection Options` dialog now owns three additional
+MP10 settings that are also consumed by the connection/runtime layer:
+
+| Control | Canonical key | Default | Qt owner/consumer |
+|---|---|---:|---|
+| Default baud rate | `baudrate` | `115200` | Staged dialog; fallback for new `SerialConnection` instances and the empty header baud field |
+| Send GCS heartbeat | `CHK_GCSheartbeat` | `true` | Staged dialog; `MainWindow::enableHeartbeat()` updates current UAS instances and new UAS instances read the same policy |
+| GCS system id | `gcsid` | `255` | Staged dialog with read-only fallback from `GCS_sysid`; all application senders load it consistently on restart |
+
+The dialog preserves an unknown stored baud as an unselected staged value,
+matching MP10 instead of silently rewriting an older profile. Existing serial
+links persist their baud only in `SERIALLINK_COMM_PORTMAP`; they no longer
+overwrite the global default. Immediate live GCS-id mutation is withheld until
+the protocol, every UAS, every application-owned exact service and page-owned
+clients can switch sender identity atomically without invalidating an in-flight
+ACK transaction. This restart-scoped safety difference is recorded as
+`TOOLS-040`.
+
 The native `Flight Modes` page is shared by CONFIG and SETUP. It renders all
 six MP10 mode rows and PWM bands for Copter, Plane, Rover and PX4 schemas.
 ArduPilot slot choices come from packaged metadata (plus the MP10

@@ -210,8 +210,10 @@ public slots:
     void setPlannerAltitudeUnits(const QString &units);
     /** @brief Apply Mission Planner distance display units to PLAN live. */
     void setPlannerDistanceUnits(const QString &units);
-    /** @brief Show Mission Planner's additional-connections window. */
+    /** @brief Show Mission Planner's connection-default settings window. */
     void showConnectionOptions();
+    /** @brief Apply staged MP10 connection defaults to safe live consumers. */
+    void applyConnectionOptions(int baud, bool heartbeat, int gcsSystemId);
     /** @brief Create one additional connection selected by ConnectionOptions. */
     void openAdditionalConnection(const QString &connection, int baud);
     /** @brief Show the application About box */
@@ -343,6 +345,7 @@ signals:
     void x11EventOccured(XEvent *event);
 #endif //MOUSE_ENABLED_LINUX
     void autoProxyChanged(bool);
+    void heartbeatChanged(bool enabled);
     void plannerAltitudeUnitsChanged(const QString &units);
     void plannerDistanceUnitsChanged(const QString &units);
 

@@ -403,6 +403,8 @@ void QGCSettingsWidget::showEvent(QShowEvent *evt)
 
         ui->heartbeatCheckBox->setChecked(MainWindow::instance()->heartbeatEnabled());
         connect(ui->heartbeatCheckBox,SIGNAL(clicked(bool)),MainWindow::instance(),SLOT(enableHeartbeat(bool)));
+        connect(MainWindow::instance(), &MainWindow::heartbeatChanged,
+                ui->heartbeatCheckBox, &QCheckBox::setChecked);
 
         ui->mavlinkLoggingCheckBox->setChecked(LinkManager::instance()->loggingEnabled());
         connect(ui->mavlinkLoggingCheckBox,SIGNAL(clicked(bool)),LinkManager::instance(),SLOT(enableLogging(bool)));
@@ -445,7 +447,14 @@ void QGCSettingsWidget::showEvent(QShowEvent *evt)
         connect(ui->rcChannelDataLineEdit, SIGNAL(editingFinished()), this, SLOT(ratesChanged()));
         connect(ui->rawSensorLineEdit, SIGNAL(editingFinished()), this, SLOT(ratesChanged()));
 
-        ui->MavlinkspinBox->setValue(QGC::MavlinkID());
+        QSettings identitySettings;
+        const int configuredId = identitySettings.value(
+            QStringLiteral("gcsid"), identitySettings.value(
+                QStringLiteral("GCS_sysid"), 255)).toInt();
+        ui->MavlinkspinBox->setValue(
+            configuredId >= 1 && configuredId <= 255 ? configuredId : 255);
+        ui->MavlinkspinBox->setToolTip(
+            tr("GCS system id changes apply after restart."));
         connect(ui->MavlinkspinBox, SIGNAL(valueChanged(int)), this, SLOT(mavIdChanged(int)));
 
         ui->ComponentspinBox->setValue(QGC::ComponentID());

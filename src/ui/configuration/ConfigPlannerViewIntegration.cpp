@@ -298,6 +298,8 @@ void BindConfigPlannerViewToApplication(ConfigPlannerView *view)
     });
     QObject::connect(view, &ConfigPlannerView::heartbeatChanged,
                      mainWindow, &MainWindow::enableHeartbeat);
+    QObject::connect(mainWindow, &MainWindow::heartbeatChanged,
+                     view, &ConfigPlannerView::setHeartbeatEnabled);
     QObject::connect(view, &ConfigPlannerView::mavlinkLoggingChanged,
                      links, &LinkManager::enableLogging);
     QObject::connect(view, &ConfigPlannerView::autoProxyChanged,

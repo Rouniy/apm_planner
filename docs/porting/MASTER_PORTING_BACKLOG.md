@@ -64,9 +64,11 @@ safety-critical core, all-or-nothing executor и включённое bounded na
 Run Step/Takeoff executor с immutable revalidation, общей Swarm/COMMAND_ACK
 резервацией и fail-closed partial/uncertain состояниями; focused и полный
 194-test suite проходят, новый X11 smoke ещё не зафиксирован. Дальнейшая Swarm
-работа перенесена за оставшиеся single-vehicle Tools; сначала исправляется
-регрессия action-binding в SETUP Advanced/Developer Tools исправлена и покрыта
-page-before-actions тестом; теперь портируются остальные одиночные диалоги,
+работа перенесена за оставшиеся single-vehicle Tools. Регрессия action-binding
+в SETUP Advanced/Developer Tools исправлена и покрыта page-before-actions
+тестом. `Connection Options` теперь открывает точную форму настроек MP10, а
+прежний add-link workflow сохранён отдельной кнопкой `+`; теперь портируются
+остальные одиночные диалоги,
 после чего приоритет переходит к Settings/CONFIG.
 Оставшиеся специализированные Tools сохраняются в точном меню, но
 включаются только после полноценной реализации. Пункты 3–4 остаются важными пробелами;
@@ -74,10 +76,11 @@ Qt Widgets и доверенный QML API можно сочетать по на
 
 1. Убрать пустую полосу у правой границы PLAN и зафиксировать геометрию при
    1120×720, 1280×800, 1920×1080 и HiDPI.
-2. Tools → MAVLink Inspector должен открывать отдельное независимое modeless
-   окно, а не выглядеть/вести себя как встроенная панель; текущий source уже
-   ставит `Qt::Window`, но это надо воспроизвести на пользовательской сборке и
-   заменить неоднозначный child-`QWidget` lifecycle явным window-классом.
+2. Tools → MAVLink Inspector уже открывает отдельное независимое modeless
+   окно, но его data model смешивает physical links и одинаковые message id
+   разных components. Следующий slice должен сначала закрепить один exact
+   source и ключ `(link, sysid, compid, msgid)`, затем добавить MP10
+   Pause/Resume, Clear, Filter, Show GCS Traffic и bounded Graph It.
 3. Довести главный DATA HUD/OSD до видимого набора MP: вертикальная скорость
    уже приходит в модель и рисуется только малоконтрастной стрелкой VSI;
    требуется явно видимое числовое значение и проверка остальных полей.
@@ -180,6 +183,12 @@ viewport, scrollbar не создаёт второй пустой столбец
 новое modeless top-level окно, replay использует guarded multicast; unit и
 real-X11 multi-instance/close/shutdown проверки проходят. Фильтры, графики и
 современный dialect остаются отдельной функциональной работой.
+
+Аудит 2026-09-05 уточнил главный функциональный дефект: текущий store
+игнорирует `LinkInterface*` и ключует данные только `(sysid,msgid)`, поэтому
+смешивает physical links, replay/live и компоненты одного system. MP10
+показывает `Vehicle → Component → Message → Field` на одном активном physical
+link. Исправление exact-source/store предшествует косметическим контролам.
 
 - Проверить оба входа: верхнее Tools menu/Ctrl+I и SETUP Advanced Tools.
 - Сначала проверить текущий бинарник: source уже создаёт `QGCMAVLinkInspector`

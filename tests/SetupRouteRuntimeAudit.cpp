@@ -1,6 +1,10 @@
 #include "SetupRouteRuntimeAudit.h"
 
 #include "ui/BackstageView.h"
+#include "ui/MainWindow.h"
+#include "comm/LinkManager.h"
+#include "comm/MAVLinkProtocol.h"
+#include "configuration.h"
 #include "ui/configuration/SetupView.h"
 #include "ui/configuration/PlannerStartupUdpOptions.h"
 
@@ -205,6 +209,28 @@ int RunSetupRouteRuntimeAudit()
     ConfigureIsolatedSettings();
 
     AuditResult result;
+    // The retained legacy Planner surface must not bypass Connection Options'
+    // restart-only sender identity policy while exact services are running.
+    const int runningId = QGC::MavlinkID();
+    MAVLinkProtocol *const protocol = LinkManager::instance()->getProtocol();
+    const int protocolId = protocol->systemId();
+    QSettings identitySettings;
+    const bool hadPendingId = identitySettings.contains(QStringLiteral("gcsid"));
+    const QVariant pendingId = identitySettings.value(QStringLiteral("gcsid"));
+    const int nextId = runningId == 23 ? 24 : 23;
+    MainWindow::instance()->setGroundStationSystemId(nextId);
+    result.Expect(identitySettings.value(QStringLiteral("gcsid")).toInt() == nextId,
+                  QStringLiteral("legacy GCS id change was not persisted"));
+    result.Expect(QGC::MavlinkID() == runningId && protocol->systemId() == protocolId,
+                  QStringLiteral("legacy GCS id change mutated the running identity"));
+    MainWindow::instance()->setGroundStationSystemId(0);
+    result.Expect(identitySettings.value(QStringLiteral("gcsid")).toInt() == 255
+                      && QGC::MavlinkID() == runningId
+                      && protocol->systemId() == protocolId,
+                  QStringLiteral("invalid legacy GCS id was not deferred as 255"));
+    if (hadPendingId) identitySettings.setValue(QStringLiteral("gcsid"), pendingId);
+    else identitySettings.remove(QStringLiteral("gcsid"));
+    identitySettings.sync();
     QWidget host;
     SetupView setup(&host);
     BackstageView *const backstage = setup.findChild<BackstageView *>(

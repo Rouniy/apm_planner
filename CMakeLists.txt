@@ -441,6 +441,10 @@ set(SOURCES
     src/ui/AboutDialog.ui
     src/ui/BackstageView.cpp
     src/ui/BackstageView.h
+    src/ui/AddConnectionViewModel.cpp
+    src/ui/AddConnectionViewModel.h
+    src/ui/AddConnectionWindow.cpp
+    src/ui/AddConnectionWindow.h
     src/ui/ConnectionOptionsViewModel.cpp
     src/ui/ConnectionOptionsViewModel.h
     src/ui/ConnectionOptionsWindow.cpp
@@ -1590,7 +1594,7 @@ endif()
 if(BUILD_TESTING)
     # Run the complete SETUP factory audit inside the production executable so
     # it reuses the application's already-compiled object graph. The audit mode
-    # constructs no MainWindow, blocks page lifecycle side effects and exits
+    # reuses QGCCore's MainWindow, blocks page lifecycle side effects and exits
     # before the normal application event loop starts.
     target_sources(${APM_PLANNER_TARGET} PRIVATE
         tests/SetupRouteRuntimeAudit.cpp
@@ -5361,6 +5365,19 @@ if(BUILD_TESTING)
 
     add_executable(connectionoptions_tests
         tests/test_connectionoptionswindow.cpp
+        src/comm/SerialLinkInterface.h
+        src/AppPaths.cpp
+        src/AppPaths.h
+        src/comm/LinkInterface.cpp
+        src/comm/LinkInterface.h
+        src/comm/serialconnection.cc
+        src/comm/serialconnection.h
+        src/globalobject.cc
+        src/globalobject.h
+        src/ui/AddConnectionViewModel.cpp
+        src/ui/AddConnectionViewModel.h
+        src/ui/AddConnectionWindow.cpp
+        src/ui/AddConnectionWindow.h
         src/ui/ConnectionOptionsViewModel.cpp
         src/ui/ConnectionOptionsViewModel.h
         src/ui/ConnectionOptionsWindow.cpp
@@ -5368,6 +5385,9 @@ if(BUILD_TESTING)
     )
     target_include_directories(connectionoptions_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/comm
+        ${MAVLINKPATH}
+        ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(connectionoptions_tests PRIVATE
         Qt::Core

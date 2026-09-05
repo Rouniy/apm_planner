@@ -39,6 +39,7 @@ public:
                               QAction *help);
     void setToolsMenu(QMenu *menu);
     void setConnectionOptionsAction(QAction *action);
+    void setAddConnectionAction(QAction *action);
 
     void disableConnectWidget(bool disable);
     void overrideDisableConnectWidget(bool disable);
@@ -82,6 +83,7 @@ private:
     QWidget *m_connectionPanel = nullptr;
     QButtonGroup *m_navigationGroup = nullptr;
     QToolButton *m_toolsButton = nullptr;
+    QToolButton *m_addConnectionButton = nullptr;
     QComboBox *m_portCombo = nullptr;
     QSpinBox *m_baudSpin = nullptr;
     QComboBox *m_targetCombo = nullptr;
@@ -91,6 +93,7 @@ private:
     QProgressBar *m_connectionProgress = nullptr;
     QAction *m_autoHideAction = nullptr;
     QAction *m_connectionOptionsAction = nullptr;
+    QAction *m_addConnectionAction = nullptr;
     bool m_disableOverride = false;
     bool m_autoHideEnabled = false;
     bool m_headerHovered = false;

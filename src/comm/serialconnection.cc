@@ -264,7 +264,9 @@ void SerialConnection::writeSettings()
 {
     QSettings settings;
     settings.setValue("SERIALLINK_COMM_PORT", getPortName());
-    settings.setValue(QStringLiteral("baudrate"), getBaudRate());
+    // `baudrate` is the MP10 default for newly created serial connections.
+    // Persist this link's value only in the per-port map below so changing an
+    // existing link cannot silently overwrite Connection Options.
     settings.setValue("SERIALLINK_COMM_PARITY", getParityType());
     settings.setValue("SERIALLINK_COMM_STOPBITS", getStopBits());
     settings.setValue("SERIALLINK_COMM_DATABITS", getDataBits());
