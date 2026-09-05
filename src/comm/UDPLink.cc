@@ -36,10 +36,27 @@ This file is part of the QGROUNDCONTROL project
 #include <iostream>
 #include <QHostInfo>
 
+#include <limits>
+
 #include "logging.h"
 #include "UDPLink.h"
 #include "LinkManager.h"
 #include "QGC.h"
+
+namespace
+{
+QHostAddress resolvedIpv4Address(const QHostInfo &info)
+{
+    QHostAddress result;
+    for (const QHostAddress &candidate : info.addresses()) {
+        // Preserve the historical IPv4-only peer behavior.
+        if (candidate.protocol() == QAbstractSocket::IPv4Protocol) {
+            result = candidate;
+        }
+    }
+    return result;
+}
+}
 
 
 UDPLink::UDPLink(QHostAddress host, quint16 port, bool retryOnBindFailure) :
@@ -61,13 +78,11 @@ UDPLink::UDPLink(QHostAddress host, quint16 port, bool retryOnBindFailure) :
 UDPLink::~UDPLink()
 {
     // Tell the thread to exit
+    m_peerState.advanceRevision();
     _running = false;
 
     // Wait for it to exit
     wait();
-    while(_outQueue.count() > 0) {
-        delete _outQueue.dequeue();
-    }
 }
 
 /**
@@ -138,14 +153,22 @@ void UDPLink::run()
 
 void UDPLink::setAddress(QHostAddress host)
 {
+    if (this->host == host) {
+        return;
+    }
     this->host = host;
+    m_peerState.advanceRevision();
     emit linkChanged(this);
     _shouldRestartConnection = true;
 }
 
 void UDPLink::setPort(int port)
 {
+    if (this->port == port) {
+        return;
+    }
     this->port = port;
+    m_peerState.advanceRevision();
     this->name = tr("UDP Link (port:%1)").arg(this->port);
     emit nameChanged(this->name);
     emit linkChanged(this);
@@ -158,42 +181,36 @@ void UDPLink::setPort(int port)
 void UDPLink::addHost(const QString& host)
 {
     QLOG_INFO() << "UDP:" << "ADDING HOST:" << host;
-    if (host.contains(":"))
-    {
-        QLOG_DEBUG() << "HOST: " << host.split(":").first();
-        QHostInfo info = QHostInfo::fromName(host.split(":").first());
-        if (info.error() == QHostInfo::NoError)
-        {
-            // Add host
-            QList<QHostAddress> hostAddresses = info.addresses();
-            QHostAddress address;
-            for (int i = 0; i < hostAddresses.size(); i++)
-            {
-                // Exclude loopback IPv4 and all IPv6 addresses
-                if (!hostAddresses.at(i).toString().contains(":"))
-                {
-                    address = hostAddresses.at(i);
-                }
-            }
-            hosts.append(address);
-            QLOG_DEBUG() << "Address:" << address.toString();
-            // Set port according to user input
-            ports.append(host.split(":").last().toInt());
+    QString hostName = host.trimmed();
+    quint16 requestedPort = port;
+    if (hostName.contains(QLatin1Char(':'))) {
+        const QStringList parts = hostName.split(QLatin1Char(':'));
+        bool portOk = false;
+        const uint parsedPort = parts.last().toUInt(&portOk);
+        if (!portOk || parsedPort == 0
+                || parsedPort > std::numeric_limits<quint16>::max()) {
+            return;
         }
+        hostName = parts.first().trimmed();
+        requestedPort = static_cast<quint16>(parsedPort);
+        QLOG_DEBUG() << "HOST:" << hostName;
     }
-    else
-    {
-        QHostInfo info = QHostInfo::fromName(host);
-        if (info.error() == QHostInfo::NoError)
-        {
-            // Add host
-            hosts.append(info.addresses().first());
-            // Set port according to default (this port)
-            ports.append(port);
-        }
+
+    // QHostInfo::fromName may block; resolution deliberately stays outside
+    // the peer-state lock.
+    const QHostInfo info = QHostInfo::fromName(hostName);
+    if (info.error() != QHostInfo::NoError) {
+        return;
     }
+    const QHostAddress address = resolvedIpv4Address(info);
+    const UdpPeerUpdate update =
+            m_peerState.upsertPeer(address, requestedPort);
+    if (!update.accepted || !update.changed) {
+        return;
+    }
+    QLOG_DEBUG() << "Address:" << address.toString();
     emit linkChanged(this);
-        _shouldRestartConnection = true;
+    _shouldRestartConnection = true;
 }
 
 void UDPLink::removeHost(const QString& hostname)
@@ -201,84 +218,83 @@ void UDPLink::removeHost(const QString& hostname)
     QString host = hostname;
     if (host.contains(":")) host = host.split(":").first();
     host = host.trimmed();
-    QHostInfo info = QHostInfo::fromName(host);
-    QHostAddress address;
-    QList<QHostAddress> hostAddresses = info.addresses();
-    for (int i = 0; i < hostAddresses.size(); i++)
-    {
-        // Exclude loopback IPv4 and all IPv6 addresses
-        if (!hostAddresses.at(i).toString().contains(":"))
-        {
-            address = hostAddresses.at(i);
-        }
+    // DNS resolution is intentionally outside the peer-state lock.
+    const QHostInfo info = QHostInfo::fromName(host);
+    if (info.error() != QHostInfo::NoError) {
+        return;
     }
-    for (int i = 0; i < hosts.count(); ++i)
-    {
-        if (hosts.at(i) == address)
-        {
-            hosts.removeAt(i);
-            ports.removeAt(i);
-        }
+    const QHostAddress address = resolvedIpv4Address(info);
+    const UdpPeerUpdate update = m_peerState.removePeer(address);
+    if (!update.accepted || !update.changed) {
+        return;
     }
+    emit linkChanged(this);
     _shouldRestartConnection = true;
 }
 
 void UDPLink::writeBytes(const char* data, qint64 size)
 {
-    if (!socket) {
+    if (!data || size <= 0) {
         return;
     }
-    QByteArray* qdata = new QByteArray(data, size);
-    QMutexLocker lock(&_mutex);
-    _outQueue.enqueue(qdata);
+    m_peerState.enqueueLatest(QByteArray(data, size));
+}
+
+bool UDPLink::enqueueForPeerRevision(const QByteArray &bytes,
+                                     quint64 expectedRevision)
+{
+    return m_peerState.enqueueForRevision(bytes, expectedRevision);
 }
 
 bool UDPLink::_dequeBytes()
 {
-    QMutexLocker lock(&_mutex);
-    if(_outQueue.count() > 0) {
-        QByteArray* qdata = _outQueue.dequeue();
-        lock.unlock();
-        _sendBytes(qdata->data(), qdata->size());
-        delete qdata;
-        lock.relock();
+    const std::optional<UdpPeerDatagram> datagram =
+            m_peerState.takeNextCurrent();
+    if (datagram) {
+        _sendBytes(*datagram);
     }
-    return (_outQueue.count() > 0);
+    return m_peerState.hasQueuedDatagrams();
 }
 
-void UDPLink::_sendBytes(const char* data, qint64 size)
+void UDPLink::_sendBytes(const UdpPeerDatagram &datagram)
 {
-    // Broadcast to all connected systems
-    for (int h = 0; h < hosts.size(); h++)
+    // The destinations are the immutable enqueue-time snapshot. A peer change
+    // can only make the envelope stale; it can never redirect these bytes.
+    for (int h = 0; h < datagram.peers.hosts.size(); h++)
     {
-        QHostAddress currentHost = hosts.at(h);
-        quint16 currentPort = ports.at(h);
+        const QHostAddress currentHost = datagram.peers.hosts.at(h);
+        const quint16 currentPort = datagram.peers.ports.at(h);
 //#define UDPLINK_DEBUG
 #ifdef UDPLINK_DEBUG
         QString bytes;
         QString ascii;
-        for (int i=0; i<size; i++)
+        for (int i=0; i<datagram.bytes.size(); i++)
         {
-            unsigned char v = data[i];
+            unsigned char v = datagram.bytes.at(i);
             bytes.append(QString().sprintf("%02x ", v));
-            if (data[i] > 31 && data[i] < 127)
+            if (datagram.bytes.at(i) > 31 && datagram.bytes.at(i) < 127)
             {
-                ascii.append(data[i]);
+                ascii.append(datagram.bytes.at(i));
             }
             else
             {
                 ascii.append(219);
             }
         }
-        QLOG_TRACE() << "Sent" << size << "bytes to" << currentHost.toString() << ":" << currentPort << "data:";
+        QLOG_TRACE() << "Sent" << datagram.bytes.size() << "bytes to" << currentHost.toString() << ":" << currentPort << "data:";
         QLOG_TRACE() << bytes;
         QLOG_TRACE() << "ASCII:" << ascii;
 #endif
-        socket->writeDatagram(data, size, currentHost, currentPort);
+        if (!socket) {
+            return;
+        }
+        socket->writeDatagram(datagram.bytes, currentHost, currentPort);
 
         // Log the amount and time written out for future data rate calculations.
         QMutexLocker dataRateLocker(&dataRateMutex);
-        logDataRateToBuffer(outDataWriteAmounts, outDataWriteTimes, &outDataIndex, size, QDateTime::currentMSecsSinceEpoch());
+        logDataRateToBuffer(outDataWriteAmounts, outDataWriteTimes,
+                            &outDataIndex, datagram.bytes.size(),
+                            QDateTime::currentMSecsSinceEpoch());
     }
 }
 
@@ -299,12 +315,27 @@ void UDPLink::readBytes()
         quint16 senderPort;
         socket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
-        // FIXME TODO Check if this method is better than retrieving the data by individual processes
-        emit bytesReceived(this, datagram);
+        // Learn/replace the sender before publishing bytes. Both the peer list
+        // and the revision stamped onto this datagram come from one lock scope.
+        const UdpPeerUpdate peer =
+                m_peerState.upsertPeer(sender, senderPort);
 
         // Log this data reception for this timestep
-        QMutexLocker dataRateLocker(&dataRateMutex);
-        logDataRateToBuffer(inDataWriteAmounts, inDataWriteTimes, &inDataIndex, datagram.length(), QDateTime::currentMSecsSinceEpoch());
+        {
+            QMutexLocker dataRateLocker(&dataRateMutex);
+            logDataRateToBuffer(inDataWriteAmounts, inDataWriteTimes,
+                                &inDataIndex, datagram.length(),
+                                QDateTime::currentMSecsSinceEpoch());
+        }
+
+        if (!peer.accepted) {
+            continue;
+        }
+
+        // The strict consumer uses the revision-bearing signal. Keep the
+        // inherited signal for legacy non-protocol observers.
+        emit datagramReceivedWithPeerRevision(datagram, peer.revision);
+        emit bytesReceived(this, datagram);
 
 #ifdef UDPLINK_DEBUG
         // Echo data for debugging purposes
@@ -318,18 +349,6 @@ void UDPLink::readBytes()
 //        std::cerr << std::endl;
 #endif
 
-        // Add host to broadcast list if not yet present
-        if (!hosts.contains(sender))
-        {
-            hosts.append(sender);
-            ports.append(senderPort);
-            //        ports->insert(sender, senderPort);
-        }
-        else
-        {
-            int index = hosts.indexOf(sender);
-            ports.replace(index, senderPort);
-        }
         if(!_running)
             break;
     }
@@ -354,6 +373,7 @@ qint64 UDPLink::bytesAvailable()
 bool UDPLink::disconnect()
 {
     QLOG_INFO() << "UDP disconnect";
+    m_peerState.advanceRevision();
     _running = false;
     return true;
 }
@@ -366,6 +386,12 @@ bool UDPLink::disconnect()
 bool UDPLink::connect()
 {
     QLOG_INFO() << "UDPLink::UDP connect " << host << ":" << port;
+    if (isRunning()) {
+        return true;
+    }
+    if (!m_peerState.advanceRevision()) {
+        return false;
+    }
     start(NormalPriority);
     return true;
 }
@@ -418,6 +444,21 @@ QString UDPLink::getShortName() const
 QString UDPLink::getDetail() const
 {
     return QString::number(port);
+}
+
+UDPLink::PeerSnapshot UDPLink::peerSnapshot() const
+{
+    return m_peerState.snapshot();
+}
+
+QList<QHostAddress> UDPLink::getHosts() const
+{
+    return peerSnapshot().hosts;
+}
+
+QList<quint16> UDPLink::getPorts() const
+{
+    return peerSnapshot().ports;
 }
 
 void UDPLink::setName(QString name)

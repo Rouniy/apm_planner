@@ -24,6 +24,30 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
+Latest single-vehicle slice (2026-09-05): native **Download Logs (MAVLink)**
+replaces the production legacy dialog route. Refresh, Selected/All downloads,
+missing-range repair, Cancel, guarded Erase and actual streaming Create KML are
+wired through one application-owned exact-link service. File replacement is
+atomic; list identities cannot cross vehicles or picker changes. UDP ingress and
+queued output now carry peer revisions, peer changes retire the old physical
+epoch, and queued lifecycle callbacks cannot dereference a removed link. The
+new production runtime audit found and verifies that older removal crash.
+Full Qt 5 build and **206/206 tests** pass. Real X11 verifies the TOOLS click,
+two-entry list, Selected/All SHA-256 equality after intentionally missing packets,
+400/4000-point KML files, cancellation preserving an existing destination,
+independent busy window, two erase requests to a synthetic peer only, empty
+refresh and normal application exit 0 with the tool open. Evidence:
+`/tmp/apm-download-logs.FmmrKU/`; details and remaining limits:
+`DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
+
+Next bounded single-vehicle slice: FFT Setup / Advanced Tools FFT, not Swarm.
+The independent audit identifies a real missing page rather than an alias to
+Spectrogram: variable-size averaged multi-IMU spectra, notch suggestion, and
+exact `INS_LOG_BAT_CNT`, `INS_LOG_BAT_MASK`, `LOG_BITMASK` parameter controls.
+Reuse the parser/batch reconstruction and QCustomPlot foundations; retain the
+separate time-frequency Spectrogram tool. Settings/CONFIG remains next after the
+remaining single-vehicle tool gaps; the ten absent SETUP routes are still absent.
+
 The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`). The later verified checkpoints include `9d69cebb` (PLAN wrapper geometry), `9b180eba` (waypoint row actions), `e6d9e75b` (independent Inspector windows), `fbeacd6e` (Antenna Tracker pages), `e7d5e58b` (their parity-ledger checkpoint), `ed0d3706` (exact Waypoint Leader foundations), `a3594d95` (bounded Waypoint Leader profile control), `b1a12a39` (hardened exact swarm command dispatch), `5ad9d0d9` (exact swarm parameter transactions), `93c652b5` (complete disabled Waypoint Leader window shell) and `938db3bc` (fresh exact mission-observation lifecycle).
 
 At this checkpoint:

@@ -65,6 +65,8 @@ class MovingBasePositionStore;
 class MovingBaseService;
 class CompassCalibrationService;
 class ExactLinkTransmitter;
+class ExactLogTransferService;
+class UDPLink;
 class ExactMissionSnapshotService;
 class RadioStatusMonitor;
 class ParameterService;
@@ -73,6 +75,7 @@ class MavFtpServiceInterface;
 class QGCUASParamManager;
 class LinkManager : public QObject
 {
+    friend class LinkManagerFactory;
     Q_OBJECT
 public:
     explicit LinkManager(QObject *parent = nullptr);
@@ -95,6 +98,7 @@ public:
     SwarmWaypointLeaderExecutor *swarmWaypointLeaderExecutor() const;
     ExactMissionSnapshotService *exactMissionSnapshotService() const;
     ExactLinkTransmitter *exactLinkTransmitter() const;
+    ExactLogTransferService *exactLogTransferService() const;
     // Link-scoped SiK RADIO_STATUS / legacy RADIO statistics (MP10 localsnrdb).
     RadioStatusMonitor *radioStatusMonitor() const;
     VehicleCommandService *vehicleCommandService() const;
@@ -120,6 +124,11 @@ public:
     LinkInterface* getLink(int linkId) const;
     // Physical connection epoch, available before any vehicle heartbeat.
     quint64 currentPhysicalLinkSession(int linkId) const;
+    // Datagram peer changes are connection boundaries, including a port
+    // change on the same host. Reject bytes queued before that boundary.
+    bool isCurrentPhysicalIngress(LinkInterface *link) const;
+    void receiveUdpDatagram(UDPLink *link, const QByteArray &bytes,
+                            quint64 peerRevision);
     /** Best-effort raw write to one currently connected physical link. */
     bool writeRawBytes(int linkId, const QByteArray &bytes);
     /** Submit an already finalized MAVLink frame without re-sequencing it. */
@@ -211,6 +220,8 @@ private:
     SwarmWaypointLeaderExecutor *m_swarmWaypointLeaderExecutor = nullptr;
     ExactMissionSnapshotService *m_exactMissionSnapshotService = nullptr;
     ExactLinkTransmitter *m_exactLinkTransmitter = nullptr;
+    ExactLogTransferService *m_exactLogTransferService = nullptr;
+    QHash<int, quint64> m_udpIngressRevision;
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;
     GuidedTargetService *m_guidedTargetService = nullptr;

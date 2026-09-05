@@ -112,7 +112,8 @@ This file is part of the QGROUNDCONTROL project
 #include "configuration/QmlPluginManagerView.h"
 #include "TerminalConsole.h"
 #include "AP2DataPlot2D.h"
-#include "uas/LogDownloadDialog.h"
+#include "LogDownloadWindow.h"
+#include "LogDownloadViewModel.h"
 #include "QGCCore.h"
 #include "LinkManager.h"
 #include "LinkManagerFactory.h"
@@ -618,6 +619,7 @@ MainWindow::~MainWindow()
     // publishers are still alive; QObject then removes all subscriptions
     // synchronously and no destroyed-lambda needs to touch a raw logPlayer.
     closeMavlinkInspectorWindows();
+    closeLogDownloadWindows();
 
     closeTerminalConsole();
 
@@ -2125,6 +2127,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;
     closeMavlinkInspectorWindows();
+    closeLogDownloadWindows();
     if (logPlayer) {
         logPlayer->shutdown();
     }
@@ -2988,13 +2991,37 @@ void MainWindow::showPluginManager()
 
 void MainWindow::showLogDownload()
 {
-    auto *dialog = new LogDownloadDialog(this);
-    dialog->setObjectName(QStringLiteral("LogDownloadWindow"));
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setWindowModality(Qt::NonModal);
+    auto *manager = LinkManager::instance();
+    auto *targets = manager->vehicleTargetManager();
+    auto *registry = manager->swarmTelemetryRegistry();
+    auto *model = new LogDownloadViewModel(manager->exactLogTransferService(),
+        [targets, registry]() {
+            const auto target = targets->acquireTarget();
+            if (!target.isValid() || !targets->isTargetGenerationSettled()) {
+                return SwarmVehicleInstanceLease{};
+            }
+            return registry->acquireVehicle(target.endpoint);
+        });
+    const auto updateSource = [model, targets]() {
+        const auto target = targets->acquireTarget();
+        model->setTargetSource(target.isValid()
+            ? QStringLiteral("%1 / SYS %2:%3").arg(target.endpoint.linkName)
+                .arg(target.endpoint.systemId).arg(target.endpoint.componentId)
+            : QString());
+    };
+    connect(targets, &VehicleTargetManager::currentTargetChanged,
+            model, updateSource);
+    updateSource();
+    auto *dialog = new LogDownloadWindow(model, this);
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+}
+
+void MainWindow::closeLogDownloadWindows()
+{
+    const auto windows = findChildren<LogDownloadWindow *>();
+    for (auto *window : windows) delete window;
 }
 
 QString MainWindow::plannerAltitudeUnits() const

@@ -565,6 +565,7 @@ private slots:
 private:
     void buildMissionPlannerToolsMenu();
     void closeMavlinkInspectorWindows();
+    void closeLogDownloadWindows();
     void pruneMavlinkInspectorWindows();
 
     bool m_heartbeatEnabled;

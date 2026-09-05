@@ -9,11 +9,50 @@
 
 void LinkManagerFactory::connectLinkSignals(LinkInterface *link, LinkManager *lmgr)
 {
-    connect(link,SIGNAL(bytesReceived(LinkInterface*,QByteArray)),lmgr->getProtocol(),SLOT(receiveBytes(LinkInterface*,QByteArray)));
-    connect(link,SIGNAL(connected(LinkInterface*)),lmgr,SLOT(linkConnected(LinkInterface*)));
-    connect(link,SIGNAL(disconnected(LinkInterface*)),lmgr,SLOT(linkDisonnected(LinkInterface*)));
-    connect(link,SIGNAL(error(LinkInterface*,QString)),lmgr,SLOT(linkErrorRec(LinkInterface*,QString)));
-    connect(link, SIGNAL(linkChanged(LinkInterface*)),lmgr,SLOT(linkUpdated(LinkInterface*)));
+    if (auto *udp = qobject_cast<UDPLink *>(link)) {
+        const QPointer<UDPLink> guardedLink(udp);
+        connect(udp, &UDPLink::datagramReceivedWithPeerRevision, lmgr,
+                [lmgr, guardedLink](const QByteArray &bytes, quint64 revision) {
+            if (guardedLink) {
+                lmgr->receiveUdpDatagram(guardedLink, bytes, revision);
+            }
+        }, Qt::QueuedConnection);
+    } else {
+        const QPointer<LinkInterface> guardedLink(link);
+        connect(link, &LinkInterface::bytesReceived, lmgr,
+                [lmgr, guardedLink](LinkInterface *, const QByteArray &bytes) {
+            if (guardedLink && lmgr->getLink(guardedLink->getId()) == guardedLink) {
+                lmgr->getProtocol()->receiveBytes(guardedLink, bytes);
+            }
+        }, Qt::QueuedConnection);
+    }
+    // Queued lifecycle signals may outlive removal and deletion of the worker.
+    // Never dereference the raw pointer copied into an old signal argument.
+    const QPointer<LinkInterface> guardedLink(link);
+    connect(link, QOverload<LinkInterface *>::of(&LinkInterface::connected),
+            lmgr, [lmgr, guardedLink](LinkInterface *) {
+        if (guardedLink && lmgr->getLink(guardedLink->getId()) == guardedLink) {
+            lmgr->linkConnected(guardedLink);
+        }
+    });
+    connect(link, QOverload<LinkInterface *>::of(&LinkInterface::disconnected),
+            lmgr, [lmgr, guardedLink](LinkInterface *) {
+        if (guardedLink && lmgr->getLink(guardedLink->getId()) == guardedLink) {
+            lmgr->linkDisonnected(guardedLink);
+        }
+    });
+    connect(link, &LinkInterface::error,
+            lmgr, [lmgr, guardedLink](LinkInterface *, const QString &error) {
+        if (guardedLink && lmgr->getLink(guardedLink->getId()) == guardedLink) {
+            lmgr->linkErrorRec(guardedLink, error);
+        }
+    });
+    connect(link, &LinkInterface::linkChanged,
+            lmgr, [lmgr, guardedLink](LinkInterface *) {
+        if (guardedLink && lmgr->getLink(guardedLink->getId()) == guardedLink) {
+            lmgr->linkUpdated(guardedLink);
+        }
+    });
 }
 
 int LinkManagerFactory::addSerialConnection()

@@ -90,8 +90,8 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
         [this, &guardedLink, linkId, &linkState]() {
         return guardedLink
             && (!m_connectionManager
-                || m_connectionManager->getLink(linkId)
-                    == guardedLink.data())
+                || m_connectionManager->isCurrentPhysicalIngress(
+                    guardedLink.data()))
             && m_linkReceiveStates.value(linkId) == linkState;
     };
 

@@ -1,5 +1,6 @@
 #include "SetupRouteRuntimeAudit.h"
 #include "InspectorRuntimeAudit.h"
+#include "LogDownloadRuntimeAudit.h"
 
 #include "ui/BackstageView.h"
 #include "ui/MainWindow.h"
@@ -315,6 +316,8 @@ int RunSetupRouteRuntimeAudit()
     ConfigureIsolatedSettings();
 
     AuditResult result;
+    result.Expect(RunLogDownloadRuntimeAudit() == 0,
+                  QStringLiteral("production UDP/log route audit failed"));
     result.Expect(RunInspectorRuntimeAudit() == 0,
                   QStringLiteral("production Inspector route/ingress audit failed"));
     // The retained legacy Planner surface must not bypass Connection Options'

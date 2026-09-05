@@ -47,6 +47,7 @@ This file is part of the APM_PLANNER project
 #include "UASObject.h"
 #include "CompassCalibrationService.h"
 #include "ExactLinkTransmitter.h"
+#include "ExactLogTransferService.h"
 #include "ExactMissionSnapshotService.h"
 #include "GuidedTargetService.h"
 #include "MavFtpService.h"
@@ -141,6 +142,42 @@ LinkManager::LinkManager(QObject *parent) :
             emit mavlinkMessageSubmitted(id, epoch, message);
         }
     });
+    m_exactLogTransferService = new ExactLogTransferService(
+        m_swarmTelemetryRegistry, m_exactLinkTransmitter,
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            LinkInterface *const link = getLink(lease.endpoint.linkId);
+            if (!link || !link->isConnected()
+                || !isCurrentPhysicalIngress(link)) {
+                if (error) *error = tr("The selected physical link is unavailable or its peer changed.");
+                return false;
+            }
+            if (auto *udp = qobject_cast<UDPLink *>(link)) {
+                const auto peers = udp->peerSnapshot();
+                if (peers.hosts.size() != 1 || peers.ports.size() != 1) {
+                    if (error) *error = tr("Download Logs requires one UDP peer. Use a separate connection for each vehicle.");
+                    return false;
+                }
+            }
+            return true;
+        }, this);
+    m_exactLogTransferService->setLocalIdentity(
+        QGC::MavlinkID(), QGC::ComponentID());
+    m_exactLogTransferService->setRouteIdentityProvider(
+        [this](const SwarmVehicleInstanceLease &lease) -> QString {
+            LinkInterface *const link = getLink(lease.endpoint.linkId);
+            if (!link || !link->isConnected()
+                || !isCurrentPhysicalIngress(link)) return {};
+            if (auto *udp = qobject_cast<UDPLink *>(link)) {
+                const auto peers = udp->peerSnapshot();
+                if (peers.revision != m_udpIngressRevision.value(link->getId())
+                    || peers.hosts.size() != 1 || peers.ports.size() != 1) return {};
+                return QStringLiteral("udp:%1:%2:%3")
+                    .arg(peers.revision).arg(peers.hosts.first().toString())
+                    .arg(peers.ports.first());
+            }
+            return QStringLiteral("link:%1:%2")
+                .arg(lease.endpoint.linkId).arg(lease.linkSessionEpoch);
+        });
     m_exactMissionSnapshotService = new ExactMissionSnapshotService(
         m_swarmTelemetryRegistry, m_exactLinkTransmitter,
         [this](const SwarmVehicleInstanceLease &lease, QString *error) {
@@ -262,7 +299,7 @@ LinkManager::LinkManager(QObject *parent) :
             this, [this](LinkInterface *link, mavlink_message_t message) {
         if (m_shuttingDown || !link) return;
         const int id = link->getId();
-        if (m_connectionMap.value(id, nullptr) != link) return;
+        if (!isCurrentPhysicalIngress(link)) return;
         const quint64 epoch = currentPhysicalLinkSession(id);
         if (epoch != 0) emit mavlinkMessageObserved(id, epoch, message);
     });
@@ -494,11 +531,13 @@ void LinkManager::shutdown()
     // application shutdown.
     m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
+    m_exactLogTransferService->shutdown();
 
     // Make every outbound lookup fail and detach ingress. Links remain live
     // while UASManager quiesces DroneCAN and other vehicle-owned transports.
     const QMap<int, LinkInterface *> links = m_connectionMap;
     m_connectionMap.clear();
+    m_udpIngressRevision.clear();
     m_startupUdpLinkIds.clear();
     for (auto it = links.constBegin(); it != links.constEnd(); ++it) {
         const int linkId = it.key();
@@ -665,19 +704,20 @@ void LinkManager::saveSettings()
             settings.setValue("type","UDP_LINK");
             settings.beginWriteArray("HOSTS");
             int storageCount = 0;
-            for (int j=0;j<link->getHosts().size();j++)
+            const auto peers = link->peerSnapshot();
+            for (int j=0;j<peers.hosts.size();j++)
             {
-                QString hostName = link->getHosts().at(j).toString();
+                QString hostName = peers.hosts.at(j).toString();
                 if(hostName != "10.1.1.1")  // never store 10.1.1.1 which are created by Solo see issue #1121
                 {
                     hostName.append(':');
-                    hostName.append(QString::number(link->getPorts().at(j)));
+                    hostName.append(QString::number(peers.ports.at(j)));
                     if(!knownHosts.contains(hostName))  // store all adresses only once
                     {
                         knownHosts.insert(hostName);
                         settings.setArrayIndex(storageCount++);
-                        settings.setValue("host",link->getHosts().at(j).toString());
-                        settings.setValue("port",link->getPorts().at(j));
+                        settings.setValue("host",peers.hosts.at(j).toString());
+                        settings.setValue("port",peers.ports.at(j));
                     }
                 }
             }
@@ -806,6 +846,11 @@ ExactLinkTransmitter *LinkManager::exactLinkTransmitter() const
     return m_exactLinkTransmitter;
 }
 
+ExactLogTransferService *LinkManager::exactLogTransferService() const
+{
+    return m_exactLogTransferService;
+}
+
 RadioStatusMonitor *LinkManager::radioStatusMonitor() const
 {
     return m_radioStatusMonitor;
@@ -887,7 +932,7 @@ void LinkManager::addLink(LinkInterface *link)
     const bool alreadyConnected = link->isConnected();
     const LinkInterface::LinkType linkType = link->getLinkType();
     m_connectionMap.insert(linkId, link);
-    if (alreadyConnected) {
+    if (alreadyConnected && !qobject_cast<UDPLink *>(link)) {
         activateLinkSession(link);
     } else {
         m_exactLinkTransmitter->setMotorStopLinkEligible(
@@ -913,15 +958,55 @@ LinkInterface* LinkManager::getLink(int linkId) const
     return m_connectionMap.value(linkId, nullptr);
 }
 
+bool LinkManager::isCurrentPhysicalIngress(LinkInterface *link) const
+{
+    if (m_shuttingDown || !link || getLink(link->getId()) != link) return false;
+    if (auto *udp = qobject_cast<UDPLink *>(link)) {
+        const quint64 revision = udp->peerSnapshot().revision;
+        return revision != 0 && revision == m_udpIngressRevision.value(link->getId());
+    }
+    return true;
+}
+
+void LinkManager::receiveUdpDatagram(UDPLink *link, const QByteArray &bytes,
+                                     quint64 peerRevision)
+{
+    if (m_shuttingDown || !link || getLink(link->getId()) != link
+        || !link->isConnected() || peerRevision == 0
+        || link->peerSnapshot().revision != peerRevision) return;
+    const QPointer<UDPLink> guardedLink(link);
+    const int id = link->getId();
+    if (m_udpIngressRevision.value(id) != peerRevision
+        || currentPhysicalLinkSession(id) == 0) {
+        // Retire the OLD epoch while it still names the old peer revision.
+        // Final writes during retirement must fail, never reach the new peer.
+        invalidateLinkSession(id);
+        if (!guardedLink || getLink(id) != guardedLink
+            || !guardedLink->isConnected()
+            || guardedLink->peerSnapshot().revision != peerRevision) return;
+        m_udpIngressRevision.insert(id, peerRevision);
+        if (!activateLinkSession(link)) return;
+    }
+    if (!guardedLink || !isCurrentPhysicalIngress(guardedLink)
+        || m_udpIngressRevision.value(id) != peerRevision) return;
+    m_mavlinkProtocol->receiveBytes(guardedLink, bytes);
+}
+
 bool LinkManager::writeRawBytes(int linkId, const QByteArray &bytes)
 {
     QPointer<LinkInterface> link(m_connectionMap.value(linkId, nullptr));
     if (!link || !link->isConnected() || bytes.isEmpty()) {
         return false;
     }
-    link->writeBytes(bytes.constData(), bytes.size());
+    if (auto *udp = qobject_cast<UDPLink *>(link.data())) {
+        if (!udp->enqueueForPeerRevision(bytes, m_udpIngressRevision.value(linkId))) {
+            return false;
+        }
+    } else {
+        link->writeBytes(bytes.constData(), bytes.size());
+    }
     return link && m_connectionMap.value(linkId, nullptr) == link
-        && link->isConnected();
+        && link->isConnected() && isCurrentPhysicalIngress(link);
 }
 
 bool LinkManager::writeMavlinkMessage(
@@ -977,6 +1062,7 @@ void LinkManager::removeLink(int linkId)
     // shutting down. Deleting a still-running QThread is undefined and was a
     // second shutdown-crash path when a connection was removed at runtime.
     m_connectionMap.remove(linkId);
+    m_udpIngressRevision.remove(linkId);
     m_startupUdpLinkIds.remove(linkId);
     if (m_mavlinkProtocol) {
         disconnect(link,
@@ -1130,9 +1216,11 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
                                 ingressSwarmSession]() {
         return guardedLink
             && m_connectionMap.value(linkId, nullptr) == guardedLink.data()
+            && isCurrentPhysicalIngress(guardedLink)
             && m_swarmTelemetryRegistry->currentLinkSessionEpoch(linkId)
                 == ingressSwarmSession;
     };
+    if (!linkIsCurrent()) return;
     m_vehicleCommandService->observeMessage(linkId, message);
     if (!linkIsCurrent()) {
         return;
@@ -1198,6 +1286,8 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
     if (!linkIsCurrent()) {
         return;
     }
+    m_exactLogTransferService->observeMessage(linkId, ingressSwarmSession, message);
+    if (!linkIsCurrent()) return;
     emit messageReceived(guardedLink.data(), message);
 }
 
@@ -1378,6 +1468,14 @@ void LinkManager::linkConnected(LinkInterface* link)
         return;
     }
     const int linkId = link->getId();
+    if (qobject_cast<UDPLink *>(link)) {
+        // A bound listening socket is not a peer session. Its first stamped
+        // datagram establishes the exact physical identity before parsing.
+        invalidateLinkSession(linkId);
+        m_udpIngressRevision.remove(linkId);
+        emit linkChanged(linkId);
+        return;
+    }
     if (!activateLinkSession(link)) {
         return;
     }
@@ -1398,6 +1496,7 @@ void LinkManager::linkDisonnected(LinkInterface* link)
         // every physical disconnect as an epoch boundary immediately: an old
         // heartbeat/lease must never authorize commands to the next peer.
         invalidateLinkSession(linkId);
+        m_udpIngressRevision.remove(linkId);
     }
     if (m_connectionMap.contains(linkId)) {
         emit linkChanged(linkId);

@@ -42,12 +42,16 @@ This file is part of the QGROUNDCONTROL project
 #include <QByteArray>
 #include <QNetworkProxy>
 
+#include "UdpPeerState.h"
+
 class UDPLink : public LinkInterface
 {
     Q_OBJECT
     //Q_INTERFACES(UDPLinkInterface:LinkInterface)
 
 public:
+    using PeerSnapshot = UdpPeerSnapshot;
+
     UDPLink(QHostAddress host = QHostAddress::Any, quint16 port = 14550,
             bool retryOnBindFailure = true);
 
@@ -75,12 +79,13 @@ public:
     int getParityType() const;
     int getDataBitsType() const;
     int getStopBitsType() const;
-    QList<QHostAddress> getHosts() const {
-        return hosts;
-    }
-    QList<quint16> getPorts() const {
-        return ports;
-    }
+    PeerSnapshot peerSnapshot() const;
+    QList<QHostAddress> getHosts() const;
+    QList<quint16> getPorts() const;
+
+    /** Queue bytes only for the exact peer identity validated by the caller. */
+    bool enqueueForPeerRevision(const QByteArray &bytes,
+                                quint64 expectedRevision);
 
     // Extensive statistics for scientific purposes
     qint64 getConnectionSpeed() const;
@@ -113,6 +118,11 @@ public slots:
     bool connect();
     bool disconnect();
 
+signals:
+    /** Datagram and the peer-set revision learned before this emission. */
+    void datagramReceivedWithPeerRevision(QByteArray bytes,
+                                          quint64 peerRevision);
+
 private:
     QString name;
     QHostAddress host;
@@ -122,10 +132,7 @@ private:
     bool connectState;
     bool _shouldRestartConnection;
     bool _retryOnBindFailure;
-    QList<QHostAddress> hosts;
-    QList<quint16> ports;
-
-    QMutex dataMutex;
+    UdpPeerState m_peerState;
 
     void setName(QString name);
 
@@ -133,11 +140,8 @@ private:
 	bool hardwareConnect(void);
 
     bool                _running;
-    QMutex              _mutex;
-    QQueue<QByteArray*> _outQueue;
-
     bool _dequeBytes    ();
-    void _sendBytes     (const char* data, qint64 size);
+    void _sendBytes     (const UdpPeerDatagram &datagram);
 
 
 };

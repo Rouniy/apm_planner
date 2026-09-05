@@ -374,6 +374,12 @@ set(SOURCES
     src/comm/UDPClientLink.h
     src/comm/UDPLink.cc
     src/comm/UDPLink.h
+    src/comm/UdpPeerState.cpp
+    src/comm/UdpPeerState.h
+    src/comm/LogDownloadTracker.cpp
+    src/comm/LogDownloadTracker.h
+    src/comm/ExactLogTransferService.cpp
+    src/comm/ExactLogTransferService.h
     src/comm/VehicleOverview.cc
     src/comm/VehicleOverview.h
     src/comm/arduino_intelhex.cpp
@@ -557,6 +563,12 @@ set(SOURCES
     src/ui/Loghandling/DataFlashSpectrogramAnalyzer.h
     src/ui/Loghandling/DataFlashSpectrogramService.cpp
     src/ui/Loghandling/DataFlashSpectrogramService.h
+    src/ui/Loghandling/DataFlashKmlExporter.cpp
+    src/ui/Loghandling/DataFlashKmlExporter.h
+    src/ui/LogDownloadViewModel.cpp
+    src/ui/LogDownloadViewModel.h
+    src/ui/LogDownloadWindow.cpp
+    src/ui/LogDownloadWindow.h
     src/ui/Loghandling/ILogParser.h
     src/ui/Loghandling/ILogdataSink.h
     src/ui/Loghandling/IParserCallback.h
@@ -1615,6 +1627,8 @@ if(BUILD_TESTING)
         tests/SetupRouteRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
+        tests/LogDownloadRuntimeAudit.cpp
+        tests/LogDownloadRuntimeAudit.h
     )
     target_include_directories(${APM_PLANNER_TARGET} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
@@ -3313,6 +3327,51 @@ if(BUILD_TESTING)
     set_tests_properties(externalguidedwindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    set(LOG_DOWNLOAD_CORE_SOURCES
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/LogDownloadTracker.cpp
+        src/comm/ExactLogTransferService.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/SwarmTelemetryRegistry.cpp
+        src/comm/VehicleEndpoint.cpp
+    )
+    set(DATAFLASH_KML_SOURCES
+        tests/LogDownloadTestLogging.cpp
+        src/ui/Loghandling/DataFlashKmlExporter.cpp
+        src/ui/Loghandling/BinLogParser.cpp
+        src/ui/Loghandling/AsciiLogParser.cpp
+        src/ui/Loghandling/LogParserBase.cpp
+        src/ui/Loghandling/AP2DataPlotStatus.cpp
+    )
+    add_executable(logdownloadtracker_tests
+        tests/test_logdownloadtracker.cpp src/comm/LogDownloadTracker.cpp)
+    add_executable(udplinkpeers_tests
+        tests/test_udplinkpeers.cpp src/comm/UdpPeerState.cpp)
+    target_link_libraries(udplinkpeers_tests PRIVATE Qt::Network)
+    add_executable(exactlogtransferservice_tests
+        tests/test_exactlogtransferservice.cpp ${LOG_DOWNLOAD_CORE_SOURCES})
+    add_executable(dataflashkmlexporter_tests
+        tests/test_dataflashkmlexporter.cpp ${DATAFLASH_KML_SOURCES})
+    add_executable(logdownloadviewmodel_tests
+        tests/test_logdownloadviewmodel.cpp src/ui/LogDownloadViewModel.cpp
+        ${LOG_DOWNLOAD_CORE_SOURCES} ${DATAFLASH_KML_SOURCES})
+    add_executable(logdownloadwindow_tests
+        tests/test_logdownloadwindow.cpp src/ui/LogDownloadWindow.cpp
+        src/ui/LogDownloadViewModel.cpp
+        ${LOG_DOWNLOAD_CORE_SOURCES} ${DATAFLASH_KML_SOURCES})
+    foreach(log_test IN ITEMS logdownloadtracker_tests udplinkpeers_tests
+            exactlogtransferservice_tests dataflashkmlexporter_tests
+            logdownloadviewmodel_tests logdownloadwindow_tests)
+        target_include_directories(${log_test} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Loghandling
+            ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+        target_link_libraries(${log_test} PRIVATE Qt::Core Qt::Widgets Qt::Test)
+        add_test(NAME ${log_test} COMMAND ${log_test})
+        set_tests_properties(${log_test} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
 
     add_executable(dataflashspectrogramanalyzer_tests
         tests/test_dataflashspectrogramanalyzer.cpp
