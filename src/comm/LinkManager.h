@@ -200,6 +200,8 @@ private:
     bool exactVehicleRouteIsEligible(
         const SwarmVehicleInstanceLease &lease,
         QString *error = nullptr) const;
+    bool singleVehicleParameterRouteIsEligible(
+        const SwarmVehicleInstanceLease &lease, QString *error) const;
     void syncActiveUasToTarget();
     void syncTargetToActiveUas(UASInterface *uas);
 

@@ -258,6 +258,12 @@ LinkManager::LinkManager(QObject *parent) :
                 return exactVehicleRouteIsEligible(lease, error);
             });
     Q_ASSERT(exactParametersConfigured);
+    const bool singleVehicleParametersConfigured =
+        m_parameterService->configureSingleVehicleExactRoute(
+            [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+                return singleVehicleParameterRouteIsEligible(lease, error);
+            });
+    Q_ASSERT(singleVehicleParametersConfigured);
     connect(m_swarmTelemetryRegistry,
             &SwarmTelemetryRegistry::endpointRetired,
             m_parameterService,
@@ -311,6 +317,37 @@ LinkManager::LinkManager(QObject *parent) :
             &ExactLinkTransmitter::setOutboundVersion);
 
     QTimer::singleShot(500, this, SLOT(reloadSettings()));
+}
+
+bool LinkManager::singleVehicleParameterRouteIsEligible(
+    const SwarmVehicleInstanceLease &lease, QString *error) const
+{
+    if (error) error->clear();
+    LinkInterface *const link = getLink(lease.endpoint.linkId);
+    if (m_shuttingDown || !lease.isValid() || !link || !link->isConnected()
+        || currentPhysicalLinkSession(link->getId()) != lease.linkSessionEpoch
+        || !isCurrentPhysicalIngress(link)) {
+        if (error) *error = tr("The selected physical link is unavailable or its peer changed.");
+        return false;
+    }
+    switch (link->getLinkType()) {
+    case LinkInterface::SERIAL_LINK:
+    case LinkInterface::TCP_LINK:
+    case LinkInterface::UDP_CLIENT_LINK:
+        return true;
+    case LinkInterface::UDP_LINK: {
+        auto *udp = qobject_cast<UDPLink *>(link);
+        if (!udp) return false;
+        const auto peers = udp->peerSnapshot();
+        if (peers.revision == m_udpIngressRevision.value(link->getId())
+            && peers.hosts.size() == 1 && peers.ports.size() == 1) return true;
+        if (error) *error = tr("FFT parameters require one UDP peer; use a separate connection for each vehicle.");
+        return false;
+    }
+    default:
+        if (error) *error = tr("This transport is not a supported single-vehicle parameter route.");
+        return false;
+    }
 }
 
 bool LinkManager::exactVehicleRouteIsEligible(

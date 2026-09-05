@@ -131,10 +131,49 @@ bool ParameterService::configureExactTransactions(
         && static_cast<bool>(m_exactRouteValidator);
 }
 
+bool ParameterService::configureSingleVehicleExactRoute(
+    ExactRouteValidator routeValidator)
+{
+    if (m_exactApiInFlight || m_exactOperationActive
+        || !m_exactReservations.isEmpty() || !routeValidator) {
+        return false;
+    }
+    m_singleVehicleExactRouteValidator = std::move(routeValidator);
+    return static_cast<bool>(m_singleVehicleExactRouteValidator);
+}
+
 ParameterService::ExactReservationResult
 ParameterService::reserveExactEndpoints(
     QObject *owner,
     const QList<SwarmVehicleInstanceLease> &leases,
+    ExactReservationToken *reservationOut,
+    QString *error)
+{
+    return reserveExactEndpointsWithPolicy(
+        owner, leases, ExactReservationPolicy::Swarm,
+        VehicleTargetLease(), reservationOut, error);
+}
+
+ParameterService::ExactReservationResult
+ParameterService::reserveSingleVehicleEndpoint(
+    QObject *owner,
+    const VehicleTargetLease &target,
+    const SwarmVehicleInstanceLease &lease,
+    ExactReservationToken *reservationOut,
+    QString *error)
+{
+    return reserveExactEndpointsWithPolicy(
+        owner, QList<SwarmVehicleInstanceLease>{lease},
+        ExactReservationPolicy::SingleVehicle,
+        target, reservationOut, error);
+}
+
+ParameterService::ExactReservationResult
+ParameterService::reserveExactEndpointsWithPolicy(
+    QObject *owner,
+    const QList<SwarmVehicleInstanceLease> &leases,
+    ExactReservationPolicy policy,
+    const VehicleTargetLease &target,
     ExactReservationToken *reservationOut,
     QString *error)
 {
@@ -167,20 +206,44 @@ ParameterService::reserveExactEndpoints(
         }
         return ExactReservationResult::InvalidOwner;
     }
-    if (!m_exactLeaseValidator || !m_exactRouteValidator) {
+    const bool singleVehicle =
+        policy == ExactReservationPolicy::SingleVehicle;
+    const bool routeConfigured = singleVehicle
+        ? static_cast<bool>(m_singleVehicleExactRouteValidator)
+        : static_cast<bool>(m_exactRouteValidator);
+    if (!m_exactLeaseValidator || !routeConfigured) {
         if (error) {
             *error = QStringLiteral(
                 "The exact vehicle registry or route validator is unavailable.");
         }
         return ExactReservationResult::ContextUnavailable;
     }
-    if (leases.isEmpty()
+    if ((singleVehicle && leases.size() != 1)
+        || leases.isEmpty()
         || leases.size() > SwarmTelemetryRegistry::MaximumVehicleEndpoints) {
         if (error) {
             *error = QStringLiteral(
                 "The exact parameter group is empty or too large.");
         }
         return ExactReservationResult::InvalidLease;
+    }
+    if (singleVehicle
+        && (!target.isValid()
+            || !target.endpoint.sameIdentity(leases.first().endpoint))) {
+        if (error) {
+            *error = QStringLiteral(
+                "The selected vehicle target does not match the exact instance.");
+        }
+        return ExactReservationResult::InvalidLease;
+    }
+    if (singleVehicle
+        && (!targetIsCurrent(target)
+            || !m_targetManager->isTargetGenerationSettled())) {
+        if (error) {
+            *error = QStringLiteral(
+                "The selected vehicle target is stale or still changing.");
+        }
+        return ExactReservationResult::StaleLease;
     }
 
     QSet<VehicleEndpoint> endpoints;
@@ -204,6 +267,15 @@ ParameterService::reserveExactEndpoints(
             }
             return ExactReservationResult::StaleLease;
         }
+        if (singleVehicle
+            && (!targetIsCurrent(target)
+                || !m_targetManager->isTargetGenerationSettled())) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The selected vehicle target changed during instance validation.");
+            }
+            return ExactReservationResult::StaleLease;
+        }
         if (exactEndpointReserved(lease.endpoint)
             || legacyOperationTouches(lease.endpoint)) {
             if (error) {
@@ -219,7 +291,8 @@ ParameterService::reserveExactEndpoints(
     // route and lease has survived the callback boundary.
     for (const SwarmVehicleInstanceLease &lease : leases) {
         QString routeError;
-        const bool routeEligible = exactRouteIsEligible(lease, &routeError);
+        const bool routeEligible = exactRouteIsEligible(
+            lease, policy, &routeError);
         if (serviceGuard.isNull()) {
             return ExactReservationResult::ContextUnavailable;
         }
@@ -239,6 +312,15 @@ ParameterService::reserveExactEndpoints(
             }
             return ExactReservationResult::InvalidOwner;
         }
+        if (singleVehicle
+            && (!targetIsCurrent(target)
+                || !m_targetManager->isTargetGenerationSettled())) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The selected vehicle target changed during route validation.");
+            }
+            return ExactReservationResult::StaleLease;
+        }
     }
     for (const SwarmVehicleInstanceLease &lease : leases) {
         const bool leaseCurrent = exactLeaseIsCurrent(lease);
@@ -249,6 +331,15 @@ ParameterService::reserveExactEndpoints(
             if (error) {
                 *error = QStringLiteral(
                     "The exact parameter group changed during route validation.");
+            }
+            return ExactReservationResult::StaleLease;
+        }
+        if (singleVehicle
+            && (!targetIsCurrent(target)
+                || !m_targetManager->isTargetGenerationSettled())) {
+            if (error) {
+                *error = QStringLiteral(
+                    "The selected vehicle target changed during route validation.");
             }
             return ExactReservationResult::StaleLease;
         }
@@ -273,6 +364,8 @@ ParameterService::reserveExactEndpoints(
     ExactReservationRecord record;
     record.owner = ownerGuard;
     record.leases = leases;
+    record.policy = policy;
+    record.target = target;
     record.ownerDestroyedConnection = connect(
         owner, &QObject::destroyed, this,
         [this, reservationId]() {
@@ -1850,10 +1943,10 @@ ParameterService::submitExactOperation(
             serviceGuard->m_exactApiInFlight = false;
         }
     });
-    if (!m_exactLeaseValidator || !m_exactRouteValidator) {
+    if (!m_exactLeaseValidator) {
         if (error) {
             *error = QStringLiteral(
-                "The exact vehicle registry or route validator is unavailable.");
+                "The exact vehicle registry is unavailable.");
         }
         return ExactSubmitResult::ContextUnavailable;
     }
@@ -1896,6 +1989,26 @@ ParameterService::submitExactOperation(
             ? ExactSubmitResult::InvalidOwner
             : ExactSubmitResult::InvalidReservation;
     }
+    const ExactReservationPolicy reservationPolicy = reserved->policy;
+    const VehicleTargetLease reservationTarget = reserved->target;
+    const bool routeConfigured =
+        reservationPolicy == ExactReservationPolicy::SingleVehicle
+        ? static_cast<bool>(m_singleVehicleExactRouteValidator)
+        : static_cast<bool>(m_exactRouteValidator);
+    if (!routeConfigured) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact parameter route validator is unavailable.");
+        }
+        return ExactSubmitResult::ContextUnavailable;
+    }
+    if (!exactReservationTargetIsCurrent(*reserved)) {
+        if (error) {
+            *error = QStringLiteral(
+                "The selected vehicle target is stale or still changing.");
+        }
+        return ExactSubmitResult::StaleLease;
+    }
     const bool initialLeaseCurrent = exactLeaseIsCurrent(lease);
     if (serviceGuard.isNull()) {
         return ExactSubmitResult::ContextUnavailable;
@@ -1903,6 +2016,24 @@ ParameterService::submitExactOperation(
     if (!initialLeaseCurrent) {
         if (error) {
             *error = QStringLiteral("The exact vehicle lease is stale.");
+        }
+        return ExactSubmitResult::StaleLease;
+    }
+    reserved = m_exactReservations.find(reservation.reservationId);
+    if (reserved == m_exactReservations.end()
+        || reserved->closing || reserved->owner != ownerGuard
+        || reserved->leases != reservation.leases
+        || !exactReservationContains(*reserved, lease)
+        || m_exactEndpointReservations.value(lease.endpoint, 0)
+            != reservation.reservationId
+        || reserved->policy != reservationPolicy
+        || reserved->target.generation != reservationTarget.generation
+        || !reserved->target.endpoint.sameIdentity(
+            reservationTarget.endpoint)
+        || !exactReservationTargetIsCurrent(*reserved)) {
+        if (error) {
+            *error = QStringLiteral(
+                "The selected vehicle target changed during instance validation.");
         }
         return ExactSubmitResult::StaleLease;
     }
@@ -1943,7 +2074,8 @@ ParameterService::submitExactOperation(
     }
 
     QString routeError;
-    const bool routeEligible = exactRouteIsEligible(lease, &routeError);
+    const bool routeEligible = exactRouteIsEligible(
+        lease, reservationPolicy, &routeError);
     if (serviceGuard.isNull()) {
         return ExactSubmitResult::ContextUnavailable;
     }
@@ -1979,6 +2111,17 @@ ParameterService::submitExactOperation(
         }
         return ExactSubmitResult::Busy;
     }
+    if (reserved->policy != reservationPolicy
+        || reserved->target.generation != reservationTarget.generation
+        || !reserved->target.endpoint.sameIdentity(
+            reservationTarget.endpoint)
+        || !exactReservationTargetIsCurrent(*reserved)) {
+        if (error) {
+            *error = QStringLiteral(
+                "The selected vehicle target changed during route validation.");
+        }
+        return ExactSubmitResult::StaleLease;
+    }
     const bool finalLeaseCurrent = exactLeaseIsCurrent(lease);
     if (serviceGuard.isNull()) {
         return ExactSubmitResult::ContextUnavailable;
@@ -1987,6 +2130,21 @@ ParameterService::submitExactOperation(
         if (error) {
             *error = QStringLiteral(
                 "The exact vehicle lease changed during route validation.");
+        }
+        return ExactSubmitResult::StaleLease;
+    }
+    reserved = m_exactReservations.find(reservation.reservationId);
+    if (reserved == m_exactReservations.end()
+        || reserved->closing || reserved->owner != ownerGuard
+        || reserved->leases != reservation.leases
+        || reserved->policy != reservationPolicy
+        || reserved->target.generation != reservationTarget.generation
+        || !reserved->target.endpoint.sameIdentity(
+            reservationTarget.endpoint)
+        || !exactReservationTargetIsCurrent(*reserved)) {
+        if (error) {
+            *error = QStringLiteral(
+                "The exact reservation or selected target changed during validation.");
         }
         return ExactSubmitResult::StaleLease;
     }
@@ -2186,6 +2344,13 @@ void ParameterService::handleExactRetryTimeout()
     const ExactOperationToken token = m_exactOperation.token;
     QPointer<ParameterService> guard(this);
     const bool write = token.kind == ExactOperationKind::Write;
+    auto reservation = m_exactReservations.constFind(token.reservationId);
+    if (reservation == m_exactReservations.constEnd()
+        || !exactReservationTargetIsCurrent(*reservation)) {
+        retireExactVehicle(token.lease);
+        return;
+    }
+    const ExactReservationPolicy reservationPolicy = reservation->policy;
     if (write
         && m_exactClock.elapsed() >= m_exactOperation.absoluteDeadlineMs) {
         finishExactOperation(
@@ -2222,8 +2387,16 @@ void ParameterService::handleExactRetryTimeout()
         || m_exactOperation.token.operationId != token.operationId) {
         return;
     }
+    reservation = m_exactReservations.constFind(token.reservationId);
+    if (reservation == m_exactReservations.constEnd()
+        || reservation->policy != reservationPolicy
+        || !exactReservationTargetIsCurrent(*reservation)) {
+        retireExactVehicle(token.lease);
+        return;
+    }
     QString routeError;
-    const bool routeEligible = exactRouteIsEligible(token.lease, &routeError);
+    const bool routeEligible = exactRouteIsEligible(
+        token.lease, reservationPolicy, &routeError);
     if (guard.isNull()) {
         return;
     }
@@ -2247,11 +2420,29 @@ void ParameterService::handleExactRetryTimeout()
         || m_exactOperation.token.operationId != token.operationId) {
         return;
     }
+    reservation = m_exactReservations.constFind(token.reservationId);
+    if (reservation == m_exactReservations.constEnd()
+        || reservation->policy != reservationPolicy
+        || !exactReservationTargetIsCurrent(*reservation)) {
+        retireExactVehicle(token.lease);
+        return;
+    }
     const bool finalLeaseCurrent = exactLeaseIsCurrent(token.lease);
     if (guard.isNull()) {
         return;
     }
     if (!finalLeaseCurrent) {
+        retireExactVehicle(token.lease);
+        return;
+    }
+    reservation = m_exactReservations.constFind(token.reservationId);
+    if (!m_exactOperationActive
+        || m_exactOperation.token.operationId != token.operationId) {
+        return;
+    }
+    if (reservation == m_exactReservations.constEnd()
+        || reservation->policy != reservationPolicy
+        || !exactReservationTargetIsCurrent(*reservation)) {
         retireExactVehicle(token.lease);
         return;
     }
@@ -2332,6 +2523,13 @@ bool ParameterService::observeExactParameterValue(
     const quint64 operationId = m_exactOperation.token.operationId;
     const SwarmVehicleInstanceLease operationLease =
         m_exactOperation.token.lease;
+    const auto reservation = m_exactReservations.constFind(
+        m_exactOperation.token.reservationId);
+    if (reservation == m_exactReservations.constEnd()
+        || !exactReservationTargetIsCurrent(*reservation)) {
+        retireExactVehicle(operationLease);
+        return true;
+    }
     if (m_exactOperation.token.kind == ExactOperationKind::Write
         && m_exactClock.elapsed()
             >= m_exactOperation.absoluteDeadlineMs) {
@@ -2354,6 +2552,13 @@ bool ParameterService::observeExactParameterValue(
     }
     if (!m_exactOperationActive
         || m_exactOperation.token.operationId != operationId) {
+        return true;
+    }
+    const auto currentReservation = m_exactReservations.constFind(
+        m_exactOperation.token.reservationId);
+    if (currentReservation == m_exactReservations.constEnd()
+        || !exactReservationTargetIsCurrent(*currentReservation)) {
+        retireExactVehicle(operationLease);
         return true;
     }
     const bool ingested = m_store->ingest(
@@ -2616,13 +2821,29 @@ bool ParameterService::exactLeaseIsCurrent(
 }
 
 bool ParameterService::exactRouteIsEligible(
-    const SwarmVehicleInstanceLease &lease, QString *error) const
+    const SwarmVehicleInstanceLease &lease,
+    ExactReservationPolicy policy,
+    QString *error) const
 {
     if (error) {
         error->clear();
     }
-    const ExactRouteValidator validator = m_exactRouteValidator;
+    const ExactRouteValidator validator =
+        policy == ExactReservationPolicy::SingleVehicle
+        ? m_singleVehicleExactRouteValidator : m_exactRouteValidator;
     return lease.isValid() && validator && validator(lease, error);
+}
+
+bool ParameterService::exactReservationTargetIsCurrent(
+    const ExactReservationRecord &reservation) const
+{
+    return reservation.policy != ExactReservationPolicy::SingleVehicle
+        || (reservation.leases.size() == 1
+            && reservation.target.isValid()
+            && reservation.target.endpoint.sameIdentity(
+                reservation.leases.first().endpoint)
+            && targetIsCurrent(reservation.target)
+            && m_targetManager->isTargetGenerationSettled());
 }
 
 bool ParameterService::exactReservationContains(
@@ -2959,7 +3180,32 @@ void ParameterService::handleTargetGenerationChanged(
         return;
     }
     m_lastHandledTargetGeneration = generation;
+    QList<SwarmVehicleInstanceLease> staleSingleVehicleLeases;
+    for (auto reservation = m_exactReservations.begin();
+         reservation != m_exactReservations.end(); ++reservation) {
+        if (reservation->policy == ExactReservationPolicy::SingleVehicle
+            && reservation->target.generation != generation) {
+            reservation->closing = true;
+            for (const SwarmVehicleInstanceLease &lease :
+                 reservation->leases) {
+                if (!staleSingleVehicleLeases.contains(lease)) {
+                    staleSingleVehicleLeases.append(lease);
+                }
+            }
+        }
+    }
+    QPointer<ParameterService> guard(this);
+    for (const SwarmVehicleInstanceLease &lease :
+         staleSingleVehicleLeases) {
+        retireExactVehicle(lease);
+        if (guard.isNull()) {
+            return;
+        }
+    }
     cancelTransactions(generation);
+    if (guard.isNull()) {
+        return;
+    }
     syncSelectedEndpoint();
 }
 

@@ -51,13 +51,14 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
         &actionSource, QStringLiteral("actionMovingBase"));
     QAction *proximity = makeAction(
         &actionSource, QStringLiteral("actionProximity"));
+    QAction *fft = makeAction(&actionSource, QStringLiteral("actionFftAnalysis"));
 
     ConfigAdvancedView view(&actionSource);
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
-    QCOMPARE(view.ImplementedActionCount(), 10);
-    QVERIFY(view.Log().contains(QStringLiteral("10 of 16")));
+    QCOMPARE(view.ImplementedActionCount(), 11);
+    QVERIFY(view.Log().contains(QStringLiteral("11 of 16")));
 
     QSignalSpy inspectorSpy(inspector, &QAction::triggered);
     QSignalSpy mirrorSpy(mirror, &QAction::triggered);
@@ -69,6 +70,11 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QSignalSpy followMeSpy(followMe, &QAction::triggered);
     QSignalSpy movingBaseSpy(movingBase, &QAction::triggered);
     QSignalSpy proximitySpy(proximity, &QAction::triggered);
+    QSignalSpy fftSpy(fft, &QAction::triggered);
+    auto *fftButton = view.findChild<QPushButton *>(QStringLiteral("FftButton"));
+    QVERIFY(fftButton && fftButton->isEnabled());
+    fftButton->click();
+    QCOMPARE(fftSpy.count(), 1);
 
     auto *inspectorButton = view.findChild<QPushButton *>(
         QStringLiteral("MAVLinkInspectorButton"));

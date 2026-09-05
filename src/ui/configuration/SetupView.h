@@ -18,6 +18,7 @@ class ConfigCompassView;
 class ConfigCompassMotView;
 class ConfigGpsInjectView;
 class ConfigDroneCanView;
+class ConfigFFTView;
 class DroneCanMavlinkTransport;
 class FrameDefaultCatalogService;
 class LinkInterface;
@@ -32,6 +33,8 @@ class SetupView final : public QWidget
 public:
     explicit SetupView(QWidget *parent = nullptr);
     ~SetupView() override;
+    /** Shared metadata/exact-target binding for the page and independent FFT windows. */
+    void bindFFTView(ConfigFFTView *view);
 
 signals:
     void advancedModeChanged(bool advanced);
@@ -74,6 +77,7 @@ private:
     QWidget *createADSBPage(QWidget *parent);
     QWidget *createHWOSDPage(QWidget *parent);
     QWidget *createESP8266Page(QWidget *parent);
+    QWidget *createFFTPage(QWidget *parent);
     QWidget *createAntennaTrackerSerialPage(QWidget *parent);
     QWidget *createAntennaTrackerLivePage(QWidget *parent);
     // One shared MP10 AntennaTrackerUIViewModel for both tracker pages.

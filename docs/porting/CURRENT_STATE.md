@@ -18,13 +18,40 @@ The immediate user-directed order is:
 
 1. Keep the fixed SETUP Advanced/Developer Tools action rebinding green, including MAVLink Inspector and every already implemented shared tool.
 2. Port the remaining non-swarm TOOLS dialogs/workflows for one vehicle; empty placeholders, no-op actions and accidentally disabled implemented forms are functional defects.
-3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 10/16 intended working actions.
+3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 11/16 intended working actions.
 4. Keep the Swarm family at the end of the active queue. Preserve its tested exact foundations without expanding them while single-vehicle workflows remain missing.
 5. Retain audited useful older APM Planner modules with honest Legacy/partial labels, track functional and GUI inaccuracies separately, and keep committing complete slices.
 
 ## Verified checkpoint
 
-Latest single-vehicle slice (2026-09-05): native **Download Logs (MAVLink)**
+Latest slice (2026-09-05): native **FFT Setup / Advanced Tools FFT**. Setup
+now registers **45 pages: 44 mapped MP10 routes plus QML Plugins**, against
+53 MP10 pages and the same three groups; nine explicit routes remain missing.
+FFT opens both as a real Setup page and an independent 1000×700 modeless
+window. Three metadata parameters, true bitmask editors, all-six-IMU batch
+spectra, IMU fallback, bins/start/magnitude, bounded cancellable analysis and
+notch suggestion are wired. Full Qt5/audio build and **213/213 tests** pass.
+X11 verifies both routes, six curves, synthetic UDP CNT 1024→1056 and MASK
+1→3 write ACKs, all three refresh reads, and normal exit 0 with FFT open.
+Evidence: `/tmp/apm-fft.T1Aeqm/`; implementation/limits: `FFT_PORT.md`.
+
+Live testing caught two defects beyond the initial green unit suite. A separate
+single-vehicle exact parameter reservation policy now supports ordinary
+serial/TCP/UDP-client and one learned UDP peer, with target generation,
+instance/link epoch and peer-revision checks; the stricter Swarm policy is
+unchanged. A pre-existing firmware-page hide callback no longer dereferences
+a destroyed MainWindow header during shutdown. Both have production runtime
+regressions. Claude independently reviewed FFT math/parser and the final
+single-vehicle policy through TCP 4096 (c180/c181/c182, final REVIEW-OK);
+Codex agents had disjoint edit leases and root owned builds/tests.
+
+User clarification: Setup entries disappearing only while disconnected and
+returning on reconnect matches MP10's `RequiresConnection` filtering; pages
+were not removed. The full factory inventory is independent of visibility.
+The current route audit forcibly exposes pages, so a separate real
+connected/disconnected/profile visibility matrix remains a future test gate.
+
+Previous single-vehicle slice (2026-09-05): native **Download Logs (MAVLink)**
 replaces the production legacy dialog route. Refresh, Selected/All downloads,
 missing-range repair, Cancel, guarded Erase and actual streaming Create KML are
 wired through one application-owned exact-link service. File replacement is
@@ -40,20 +67,19 @@ refresh and normal application exit 0 with the tool open. Evidence:
 `/tmp/apm-download-logs.FmmrKU/`; details and remaining limits:
 `DOWNLOAD_LOGS_PORT.md`. Earlier 200-test checkpoints below remain historical.
 
-Next bounded single-vehicle slice: FFT Setup / Advanced Tools FFT, not Swarm.
-The independent audit identifies a real missing page rather than an alias to
-Spectrogram: variable-size averaged multi-IMU spectra, notch suggestion, and
-exact `INS_LOG_BAT_CNT`, `INS_LOG_BAT_MASK`, `LOG_BITMASK` parameter controls.
-Reuse the parser/batch reconstruction and QCustomPlot foundations; retain the
-separate time-frequency Spectrogram tool. Settings/CONFIG remains next after the
-remaining single-vehicle tool gaps; the ten absent SETUP routes are still absent.
+Next single-vehicle candidates, not Swarm: Advanced Tools Param gen (real
+all-family forced metadata regeneration and live cache invalidation), then
+Setup PX4Flow (bounded image assembly and exact VIDEO_ONLY). Remaining Advanced
+gaps are Anon Log, MAVLink Signing, Warning Manager and Param gen; Support Proxy
+is also a placeholder in MP10 itself. Settings/CONFIG follows these working
+single-vehicle surfaces. The nine absent Setup routes remain explicitly tracked.
 
 The pre-Wave-1 functional checkpoint was `fb4f08b5` (`feat: port MinimOSD telemetry helper`), following `4290221f` (`feat: add antenna tracker output protocols`) and `e6fab89e` (`feat: port ESP8266 setup workflow`). The later verified checkpoints include `9d69cebb` (PLAN wrapper geometry), `9b180eba` (waypoint row actions), `e6d9e75b` (independent Inspector windows), `fbeacd6e` (Antenna Tracker pages), `e7d5e58b` (their parity-ledger checkpoint), `ed0d3706` (exact Waypoint Leader foundations), `a3594d95` (bounded Waypoint Leader profile control), `b1a12a39` (hardened exact swarm command dispatch), `5ad9d0d9` (exact swarm parameter transactions), `93c652b5` (complete disabled Waypoint Leader window shell) and `938db3bc` (fresh exact mission-observation lifecycle).
 
 At this checkpoint:
 
 - Test Speech is verified through the real Qt engine and the production CONFIG button. The previous binary was compiled without TextToSpeech: runtime speechd was installed, but `libqt5texttospeech5-dev` was missing and the old CMake default allowed a silent build. The development package is now installed; CMake requires Qt audio by default and this build explicitly uses `APM_REQUIRE_QT_AUDIO=ON`. Silent builds require an explicit opt-out and cannot count as speech evidence. Diagnostic states distinguish not compiled, missing engine, runtime error, queue unavailable and ready/busy; Planner refreshes the backend status asynchronously. The manual `speech_backend_probe` reports speechd ready and 306 voices, speaks the reference phrase and returns to idle with exit 0. An actual X11 Test Speech click produces a captured output-monitor signal (mean -16.6 dB) and the application exits normally; screenshots/WAV evidence are in `/tmp/apm-graph-speech-setup.irm6Qx/`. Full build and **200/200 tests** pass. This supersedes only the earlier silent-build audio limitation, not the remaining MP10 speech controls or native-platform checks.
-- SETUP now registers **44 pages: 43 mapped MP10 routes plus QML Plugins**, compared with 53 MP10 pages and the same three collapsible groups. Ten routes remain absent: Install Firmware Legacy, Secure, Secure (Bootloader Keys), CubeID Update, NV Modem, PX4Flow, Antenna Tracker parameters, FFT Setup, Onboard Lua REPL and Local Script REPL. The older audit already recorded the eleven-gap baseline; the previous runtime check only validated our own 43-route list and did not enforce that reference inventory. The new independent 53-page manifest and explicit missing-route allowlist prevent silent omissions. Joystick now appears in Optional Hardware and launches the existing shared modeless editor; this is useful legacy reuse, not full MP10 control parity. Late action registration is covered, and extra Serial Ports/Initial Parameters/Motor Test visibility restrictions were removed without relaxing their write gates. Modern Heli keeps the validated H_SW_TYPE correction. Group arrows now toggle `<<` expanded / `>>` collapsed as requested; current MP10 itself has a static prefix. Real X11 verifies both arrow states and the actual Joystick dialog (no physical device), with normal application exit 0; **200/200 tests** pass. Evidence and independent reference inventory are in `SETUP_INVENTORY_AUDIT.md`, `SETUP_REFERENCE_INVENTORY.tsv` and `/tmp/apm-graph-speech-setup.irm6Qx/`.
+- Historical pre-FFT checkpoint: SETUP registered **44 pages: 43 mapped MP10 routes plus QML Plugins**, compared with 53 MP10 pages and the same three collapsible groups. Ten routes were then absent: Install Firmware Legacy, Secure, Secure (Bootloader Keys), CubeID Update, NV Modem, PX4Flow, Antenna Tracker parameters, FFT Setup, Onboard Lua REPL and Local Script REPL. The older audit already recorded the eleven-gap baseline; the previous runtime check only validated our own 43-route list and did not enforce that reference inventory. The new independent 53-page manifest and explicit missing-route allowlist prevent silent omissions. Joystick now appears in Optional Hardware and launches the existing shared modeless editor; this is useful legacy reuse, not full MP10 control parity. Late action registration is covered, and extra Serial Ports/Initial Parameters/Motor Test visibility restrictions were removed without relaxing their write gates. Modern Heli keeps the validated H_SW_TYPE correction. Group arrows now toggle `<<` expanded / `>>` collapsed as requested; current MP10 itself has a static prefix. Real X11 verifies both arrow states and the actual Joystick dialog (no physical device), with normal application exit 0; **200/200 tests** pass. Evidence and independent reference inventory are in `SETUP_INVENTORY_AUDIT.md`, `SETUP_REFERENCE_INVENTORY.tsv` and `/tmp/apm-graph-speech-setup.irm6Qx/`.
 - The native `MAVLinkInspectorView` now includes Show GCS Traffic and Graph It alongside the exact-source tree, Pause/Clear/filter and bounded Hz/Bps cache. Finalized typed submissions are observed exactly once with physical-link epochs captured before writes and revalidated afterward; arbitrary raw passthrough is excluded. Negotiation requests initialize all fields and use the local GCS source and remote target. Numeric scalar/array graphs retain 10..100000 history points (default 500), render at most 2000 extrema-preserving points per series and refresh every 100 ms. Every modeless graph owns its original link/replay pin, survives Inspector close and observes both directions independently of parent Pause/checkbox. Replay disables the separate outbound checkbox. Full build and **200/200 tests** pass, including production parser/transmitter/graph-lifetime coverage. X11 verifies outgoing COMMAND_LONG, live sine telemetry, the history prompt and continued graph updates on UDP 15550 after Inspector close and a header switch to UDP 15551; application shutdown with the graph open exits 0. Evidence: `/tmp/apm-graph-speech-setup.irm6Qx/inspector-gcs.png`, `graph-history.png`, `graph-live.png`, `graph-after-inspector-close.png` and `header-after.png`. Modern dialect, real replay-file and native-platform evidence remain; old inspector/relay sources are compiled but no longer the production UI.
 - The focused `apmplanner3`, exact mission, exact command ACK, Swarm telemetry/rate and Waypoint Leader core builds completed successfully after the required standalone compiler preflights; concurrency stayed capped at `-j12`.
 - The complete test suite passes with the Tools catalogue, Link Statistics, Tlog Convert / Extract, MAVLink Mirror, NMEA Output, CoT/TAK, Device Operations, DataFlash Spectrogram, 3D Terrain View, External Guided, Follow Me, Moving Base, RF Propagation settings/core/exact-target telemetry/DATA+PLAN overlays, OSD Video local decode/tlog timeline/MJPEG writer/window, the exact multi-link Swarm telemetry registry, offline Sequence editor, functional Copter/Rover Formation, Follow Path and Follow Leader slices, the production Waypoint Leader and Sequence adapters/windows/executors, central exact COMMAND_ACK arbiter, exact parameter transactions and exact mission snapshot cache, CONFIG Onboard OSD, DisplayView profiles, Planner startup UDP, native HUD/speech/Message Severity Planner controls and exact-target periodic/high-message speech source/queue, the native Planner Settings page, shared CONFIG/SETUP MAVFTP, both Heli Setup schemas, both current/legacy Frame Type pages, the native current Compass parameter/onboard/fixed-yaw workflow, the dedicated Compass/Motor route, shared native Flight Modes, Plane QP Extended Tuning, the production SETUP factory audit and the native Inspector store/source/view/replay audits: **200/200 tests**.

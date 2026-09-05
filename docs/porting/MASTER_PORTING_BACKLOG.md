@@ -329,16 +329,19 @@ Rally; после cancel/target switch нет поздних изменений;
 snapshot и exact-target transaction, получает typed validation, busy/error/
 cancel states и lifecycle tests.
 
-#### 5C. Реализовать 11 отсутствующих MP10-страниц
+#### 5C. Реализовать 9 оставшихся отсутствующих MP10-страниц
+
+Два пробела исходного списка из 11 закрыты: Joystick — честный legacy launcher,
+FFT Setup — нативная страница и независимое окно с exact-параметрами и анализом
+логов (`FFT_PORT.md`, 213 тестов и X11). Это закрытие маршрутов, не заявление
+о полном аппаратном/визуальном паритете.
 
 - `Install Firmware Legacy`;
 - `ConfigAntennaTrackerParamView`;
 - `ConfigCubeIDView`;
-- `ConfigFFTView`;
 - `ConfigOnboardReplView`, `ConfigScriptReplView`;
 - `ConfigPX4FlowView`;
 - `ConfigSecureView`, `ConfigSecureApView`;
-- `Joystick`;
 - `NvModemView`;
 
 #### 5D. Antenna Tracker sequence
@@ -385,7 +388,8 @@ Gate для SETUP: все 53 MP10 routes классифицированы, ни 
 - CONFIG Onboard OSD — Wave 2.
 - Shared MAVFTP UI: завершить streaming/burst, capability gate, exclusive
   no-replace local save и live-hardware evidence.
-- Отсутствующие: FFT analysis window и Warning Manager.
+- FFT analysis window перенесён; остаются field-log/native-platform и
+  screenshot gates (`FFT_PORT.md`). Warning Manager пока отсутствует.
 
 Gate: изменение параметров всегда проходит typed metadata validation и ACK,
 dirty state никогда не переносится на новый target.

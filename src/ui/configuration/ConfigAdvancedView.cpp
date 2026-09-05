@@ -47,8 +47,8 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
                   QStringLiteral("actionMapTileCache"));
     AddUnavailableAction(tr("MAVLink Signing"),
                          QStringLiteral("MavlinkSigningButton"), notPorted);
-    AddUnavailableAction(tr("FFT"),
-                         QStringLiteral("FftButton"), notPorted);
+    AddToolAction(tr("FFT"), QStringLiteral("FftButton"),
+                  QStringLiteral("actionFftAnalysis"));
     AddToolAction(tr("Spectrogram"),
                   QStringLiteral("SpectrogramButton"),
                   QStringLiteral("actionDataFlashSpectrogram"));

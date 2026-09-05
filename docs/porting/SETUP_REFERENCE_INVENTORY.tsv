@@ -40,7 +40,7 @@ mp10	38	ConfigHWBTViewModel	Bluetooth Setup	Optional Hardware	displayBluetooth	o
 mp10	39	ConfigParachuteViewModel	Parachute	Optional Hardware	displayParachute	connected	ConfigParachuteView	ported	no
 mp10	40	ConfigHWESP8266ViewModel	ESP8266 Setup	Optional Hardware	displayEsp	connected	ConfigHWESP8266View	ported	no
 mp10	41	ConfigAntennaTrackerParamViewModel	Antenna Tracker	Optional Hardware	displayAntennaTracker	connected		missing	gap-8-of-11
-mp10	42	ConfigFFTViewModel	FFT Setup	Optional Hardware	displayFFTSetup	connected		missing	gap-9-of-11
+mp10	42	ConfigFFTViewModel	FFT Setup	Optional Hardware	displayFFTSetup	connected	ConfigFFTView	in-progress	gap-9-of-11 closed by native FFT page/window; exact parameters and bounded offline analysis; FFT_PORT.md
 mp10	43	ConfigAntennaTrackerViewModel	Antenna Tracker (Serial)	Optional Hardware	displayAntennaTracker	offline	ConfigAntennaTrackerView	ported	no
 mp10	44	AntennaTrackerUIViewModel	Antenna Tracker (Live)	Optional Hardware	displayAntennaTracker	offline	AntennaTrackerUIView	ported	no
 mp10	45	ConfigHWCANViewModel	HW CAN	Optional Hardware	displayCAN	connected	ConfigHWCANView	ported	no

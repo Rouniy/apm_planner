@@ -1,6 +1,9 @@
 #include "SetupRouteRuntimeAudit.h"
+#include "ui/ConfigFFTWindow.h"
+#include "ui/configuration/ConfigFFTView.h"
 #include "InspectorRuntimeAudit.h"
 #include "LogDownloadRuntimeAudit.h"
+#include "FirmwarePageLifetimeAudit.h"
 
 #include "ui/BackstageView.h"
 #include "ui/MainWindow.h"
@@ -133,7 +136,8 @@ QList<Mp10SetupRoute> Mp10ReferenceRoutes()
          QStringLiteral("ConfigHWESP8266View")},
         {QStringLiteral("ConfigAntennaTrackerParamViewModel"), kOptionalGroup,
          {}},
-        {QStringLiteral("ConfigFFTViewModel"), kOptionalGroup, {}},
+        {QStringLiteral("ConfigFFTViewModel"), kOptionalGroup,
+         QStringLiteral("ConfigFFTView")},
         {QStringLiteral("ConfigAntennaTrackerViewModel"), kOptionalGroup,
          QStringLiteral("ConfigAntennaTrackerView")},
         {QStringLiteral("AntennaTrackerUIViewModel"), kOptionalGroup,
@@ -168,7 +172,6 @@ QSet<QString> KnownMissingMp10Routes()
         QStringLiteral("NvModemViewModel"),
         QStringLiteral("ConfigPX4FlowViewModel"),
         QStringLiteral("ConfigAntennaTrackerParamViewModel"),
-        QStringLiteral("ConfigFFTViewModel"),
         QStringLiteral("ConfigOnboardReplViewModel"),
         QStringLiteral("ConfigScriptReplViewModel")
     };
@@ -316,6 +319,8 @@ int RunSetupRouteRuntimeAudit()
     ConfigureIsolatedSettings();
 
     AuditResult result;
+    result.Expect(RunFirmwarePageLifetimeAudit(),
+                  QStringLiteral("firmware page retained a destroyed header"));
     result.Expect(RunLogDownloadRuntimeAudit() == 0,
                   QStringLiteral("production UDP/log route audit failed"));
     result.Expect(RunInspectorRuntimeAudit() == 0,
@@ -346,8 +351,8 @@ int RunSetupRouteRuntimeAudit()
     const QSet<QString> knownMissing = KnownMissingMp10Routes();
     result.Expect(mp10Routes.size() == 53,
                   QStringLiteral("independent MP10 manifest is not 53 pages"));
-    result.Expect(knownMissing.size() == 10,
-                  QStringLiteral("current MP10 missing-route allowlist is not 10"));
+    result.Expect(knownMissing.size() == 9,
+                  QStringLiteral("current MP10 missing-route allowlist is not 9"));
 
     QSet<QString> referenceIds;
     QSet<QString> mappedQtIds;
@@ -375,10 +380,12 @@ int RunSetupRouteRuntimeAudit()
                            QStringList(observedMissing.values()).join(", ")));
     QSet<QString> baselineGaps = knownMissing;
     baselineGaps.insert(QStringLiteral("ConfigJoystickViewModel"));
+    baselineGaps.insert(QStringLiteral("ConfigFFTViewModel"));
     result.Expect(baselineGaps.size() == 11
-                      && mappedQtIds.contains(kJoystick),
+                      && mappedQtIds.contains(kJoystick)
+                      && mappedQtIds.contains(QStringLiteral("ConfigFFTView")),
                   QStringLiteral("the audited 11-page baseline gap or its "
-                                 "Joystick closure was lost"));
+                                 "Joystick/FFT closure was lost"));
 
     QWidget host;
     int joystickLaunchCount = 0;
@@ -398,8 +405,8 @@ int RunSetupRouteRuntimeAudit()
     const QSignalBlocker lifecycleBlocker(backstage);
 
     const QStringList expectedPages = ExpectedPageIds();
-    result.Expect(expectedPages.size() == 44,
-                  QStringLiteral("the audited Qt inventory is not 44 pages"));
+    result.Expect(expectedPages.size() == 45,
+                  QStringLiteral("the audited Qt inventory is not 45 pages"));
     result.Expect(backstage->pageIds() == expectedPages,
                   QStringLiteral("production page ID/order mismatch\nexpected: %1\nactual:   %2")
                       .arg(expectedPages.join(QStringLiteral(", ")),
@@ -409,8 +416,8 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("backstageNavigationContent"));
     const QStringList navigationOrder = NavigationOrder(navigationContent);
     const QStringList expectedNavigation = ExpectedNavigationOrder();
-    result.Expect(expectedNavigation.size() == 47,
-                  QStringLiteral("the navigation baseline itself is not 47 entries"));
+    result.Expect(expectedNavigation.size() == 48,
+                  QStringLiteral("the navigation baseline itself is not 48 entries"));
     result.Expect(navigationOrder == expectedNavigation,
                   QStringLiteral("production page/group order mismatch\nexpected: %1\nactual:   %2")
                       .arg(expectedNavigation.join(QStringLiteral(", ")),
@@ -519,6 +526,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("actionMovingBase"),
         QStringLiteral("actionMapTileCache"),
         QStringLiteral("actionDataFlashSpectrogram"),
+        QStringLiteral("actionFftAnalysis"),
         QStringLiteral("actionProximity"),
         QStringLiteral("actionMavlinkDeviceOperations"),
         QStringLiteral("actionTerrain3D"),
@@ -566,6 +574,7 @@ int RunSetupRouteRuntimeAudit()
         QStringLiteral("MovingBaseButton"),
         QStringLiteral("MapTileCacheButton"),
         QStringLiteral("SpectrogramButton"),
+        QStringLiteral("FftButton"),
         QStringLiteral("ProximityButton")
     };
     QAbstractButton *advancedNavigation = backstage->findChild<QAbstractButton *>(
@@ -640,10 +649,35 @@ int RunSetupRouteRuntimeAudit()
         }
     }
 
+    // The production Advanced action must open independent, concrete windows,
+    // not merely satisfy a catalogue of synthetic enabled QActions.
+    auto *main = MainWindow::instance();
+    QAction *fftAction = main->findChild<QAction *>(
+        QStringLiteral("actionFftAnalysis"));
+    result.Expect(fftAction && fftAction->isEnabled(),
+                  QStringLiteral("production FFT action is unavailable"));
+    if (fftAction) {
+        const auto before = main->findChildren<ConfigFFTWindow *>();
+        fftAction->trigger();
+        fftAction->trigger();
+        const auto after = main->findChildren<ConfigFFTWindow *>();
+        result.Expect(after.size() == before.size() + 2,
+                      QStringLiteral("FFT did not create independent windows"));
+        for (auto *window : after) {
+            if (before.contains(window)) continue;
+            result.Expect(window->isVisible() && window->isWindow()
+                              && window->windowModality() == Qt::NonModal
+                              && window->view() && window->view()->plot()
+                              && window->viewModel(),
+                          QStringLiteral("FFT window is blank or not modeless"));
+            delete window;
+        }
+    }
+
     if (result.failures() == 0) {
         qInfo().noquote()
             << QStringLiteral("SETUP route audit: 53-page MP10 manifest, "
-                              "44 Qt pages + 3 groups passed");
+                              "45 Qt pages + 3 groups passed");
     }
     return result.exitCode();
 }

@@ -36,6 +36,8 @@ This file is part of the APM_PLANNER project
 #include <QNetworkRequest>
 #include <QTimer>
 
+#include <utility>
+
 ApmCustomFirmwareConfig::ApmCustomFirmwareConfig(QWidget *parent) :
     QWidget(parent),
     mp_Ui(new Ui::ApmCustomFWConfig)
@@ -111,8 +113,20 @@ ApmCustomFirmwareConfig::ApmCustomFirmwareConfig(QWidget *parent) :
     connect(mp_Ui->fwDownloadButton, &QPushButton::clicked, this, &ApmCustomFirmwareConfig::firmwareDownloadBtnClicked);
 }
 
+ApmCustomFirmwareConfig::ApmCustomFirmwareConfig(
+    QObject *connectWidgetLifetime,
+    ConnectWidgetSetter connectWidgetSetter,
+    QWidget *parent)
+    : ApmCustomFirmwareConfig(parent)
+{
+    m_connectWidgetLifetime = connectWidgetLifetime;
+    m_connectWidgetSetter = std::move(connectWidgetSetter);
+    m_connectWidgetBindingResolved = true;
+}
+
 ApmCustomFirmwareConfig::~ApmCustomFirmwareConfig()
 {
+    setConnectWidgetDisabled(false);
     m_manifestTimeout->stop();
     m_firmwareTimeout->stop();
 
@@ -139,7 +153,8 @@ void ApmCustomFirmwareConfig::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
     QLOG_DEBUG() << "ApmCustomFirmwareConfig: Install Firmware selected";
-    MainWindow::instance()->toolBar().disableConnectWidget(true);
+    resolveConnectWidgetBinding();
+    setConnectWidgetDisabled(true);
 
     if (m_activationWorkScheduled) {
         return;
@@ -165,8 +180,53 @@ void ApmCustomFirmwareConfig::showEvent(QShowEvent *event)
 
 void ApmCustomFirmwareConfig::hideEvent(QHideEvent *event)
 {
-    MainWindow::instance()->toolBar().disableConnectWidget(false);
+    setConnectWidgetDisabled(false);
     QWidget::hideEvent(event);
+}
+
+void ApmCustomFirmwareConfig::resolveConnectWidgetBinding()
+{
+    if (m_connectWidgetBindingResolved) {
+        return;
+    }
+    m_connectWidgetBindingResolved = true;
+
+    // The page is embedded below MainWindow. Resolve its concrete header while
+    // the page is being shown, then retain only a guarded QObject lifetime.
+    // MainWindow's singleton pointer intentionally outlives member teardown and
+    // therefore must never be consulted from hide/destruction paths.
+    MainWindow *const mainWindow = qobject_cast<MainWindow *>(window());
+    if (!mainWindow) {
+        return;
+    }
+    MainWindowHeader *const header = &mainWindow->toolBar();
+    m_connectWidgetLifetime = header;
+    m_connectWidgetSetter = [header](bool disabled) {
+        header->disableConnectWidget(disabled);
+    };
+}
+
+void ApmCustomFirmwareConfig::setConnectWidgetDisabled(bool disabled)
+{
+    if (disabled) {
+        if (m_connectWidgetDisabled || !m_connectWidgetLifetime
+            || !m_connectWidgetSetter) {
+            return;
+        }
+        // Set state first because disableConnectWidget may synchronously cause
+        // visibility or owner changes.
+        m_connectWidgetDisabled = true;
+        m_connectWidgetSetter(true);
+        return;
+    }
+
+    if (!m_connectWidgetDisabled) {
+        return;
+    }
+    m_connectWidgetDisabled = false;
+    if (m_connectWidgetLifetime && m_connectWidgetSetter) {
+        m_connectWidgetSetter(false);
+    }
 }
 
 QTableWidgetItem *ApmCustomFirmwareConfig::createItem(const QString &itemText) const

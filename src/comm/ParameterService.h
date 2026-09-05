@@ -194,9 +194,17 @@ public:
     bool configureExactTransactions(
         ExactLeaseValidator leaseValidator,
         ExactRouteValidator routeValidator);
+    bool configureSingleVehicleExactRoute(
+        ExactRouteValidator routeValidator);
     ExactReservationResult reserveExactEndpoints(
         QObject *owner,
         const QList<SwarmVehicleInstanceLease> &leases,
+        ExactReservationToken *reservationOut,
+        QString *error = nullptr);
+    ExactReservationResult reserveSingleVehicleEndpoint(
+        QObject *owner,
+        const VehicleTargetLease &target,
+        const SwarmVehicleInstanceLease &lease,
         ExactReservationToken *reservationOut,
         QString *error = nullptr);
     bool releaseExactReservation(
@@ -379,10 +387,18 @@ private:
         quint8 localComponentId = MAV_COMP_ID_MISSIONPLANNER;
     };
 
+    enum class ExactReservationPolicy
+    {
+        Swarm,
+        SingleVehicle
+    };
+
     struct ExactReservationRecord
     {
         QPointer<QObject> owner;
         QList<SwarmVehicleInstanceLease> leases;
+        VehicleTargetLease target;
+        ExactReservationPolicy policy = ExactReservationPolicy::Swarm;
         bool closing = false;
         QMetaObject::Connection ownerDestroyedConnection;
     };
@@ -424,7 +440,11 @@ private:
     bool exactLeaseIsCurrent(
         const SwarmVehicleInstanceLease &lease) const;
     bool exactRouteIsEligible(
-        const SwarmVehicleInstanceLease &lease, QString *error) const;
+        const SwarmVehicleInstanceLease &lease,
+        ExactReservationPolicy policy,
+        QString *error) const;
+    bool exactReservationTargetIsCurrent(
+        const ExactReservationRecord &reservation) const;
     bool exactReservationContains(
         const ExactReservationRecord &reservation,
         const SwarmVehicleInstanceLease &lease) const;
@@ -484,6 +504,13 @@ private:
     void handleTargetGenerationSettled(qulonglong generation);
     void syncSelectedEndpoint();
     void cancelTransactions(quint64 currentGeneration);
+    ExactReservationResult reserveExactEndpointsWithPolicy(
+        QObject *owner,
+        const QList<SwarmVehicleInstanceLease> &leases,
+        ExactReservationPolicy policy,
+        const VehicleTargetLease &target,
+        ExactReservationToken *reservationOut,
+        QString *error);
     ExactSubmitResult submitExactOperation(
         const ExactReservationToken &reservation,
         const SwarmVehicleInstanceLease &lease,
@@ -578,6 +605,7 @@ private:
     quint8 m_localComponentId = MAV_COMP_ID_MISSIONPLANNER;
     ExactLeaseValidator m_exactLeaseValidator;
     ExactRouteValidator m_exactRouteValidator;
+    ExactRouteValidator m_singleVehicleExactRouteValidator;
     bool m_exactApiInFlight = false;
     QHash<quint64, ExactReservationRecord> m_exactReservations;
     QHash<VehicleEndpoint, quint64> m_exactEndpointReservations;

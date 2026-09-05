@@ -113,6 +113,7 @@ This file is part of the QGROUNDCONTROL project
 #include "TerminalConsole.h"
 #include "AP2DataPlot2D.h"
 #include "LogDownloadWindow.h"
+#include "ConfigFFTWindow.h"
 #include "LogDownloadViewModel.h"
 #include "QGCCore.h"
 #include "LinkManager.h"
@@ -619,6 +620,7 @@ MainWindow::~MainWindow()
     // publishers are still alive; QObject then removes all subscriptions
     // synchronously and no destroyed-lambda needs to touch a raw logPlayer.
     closeMavlinkInspectorWindows();
+    closeFftAnalysisWindows();
     closeLogDownloadWindows();
 
     closeTerminalConsole();
@@ -712,6 +714,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
         AddConnectionWindow::OpenWindow(this);
     });
     m_mainWindowHeader->setAddConnectionAction(addConnectionAction);
+    // FFT belongs to SETUP Advanced Tools, not the fixed 24-entry MP10 menu.
+    auto *fftAction = new QAction(tr("FFT"), this);
+    fftAction->setObjectName(QStringLiteral("actionFftAnalysis"));
+    connect(fftAction, &QAction::triggered, this, &MainWindow::showFftAnalysis);
     if (hardwareSetupView) {
         // Setup can restore an action-backed lazy page before the TOOLS QAction
         // catalogue exists. Recreate only those pages now so implemented tools
@@ -2127,6 +2133,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;
     closeMavlinkInspectorWindows();
+    closeFftAnalysisWindows();
     closeLogDownloadWindows();
     if (logPlayer) {
         logPlayer->shutdown();
@@ -3021,6 +3028,21 @@ void MainWindow::showLogDownload()
 void MainWindow::closeLogDownloadWindows()
 {
     const auto windows = findChildren<LogDownloadWindow *>();
+    for (auto *window : windows) delete window;
+}
+
+void MainWindow::showFftAnalysis()
+{
+    auto *window = new ConfigFFTWindow(nullptr, this);
+    if (hardwareSetupView) hardwareSetupView->bindFFTView(window->view());
+    window->show();
+    window->raise();
+    window->activateWindow();
+}
+
+void MainWindow::closeFftAnalysisWindows()
+{
+    const auto windows = findChildren<ConfigFFTWindow *>();
     for (auto *window : windows) delete window;
 }
 

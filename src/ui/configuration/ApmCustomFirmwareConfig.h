@@ -41,6 +41,8 @@ This file is part of the APM_PLANNER project
 #include <QFileInfo>
 #include <QPointer>
 
+#include <functional>
+
 class QTimer;
 
 // UI forward declaration allow faster compiling on UI changes
@@ -58,7 +60,13 @@ class ApmCustomFirmwareConfig : public QWidget
     Q_OBJECT
 
 public:
+    using ConnectWidgetSetter = std::function<void(bool)>;
+
     ApmCustomFirmwareConfig(QWidget *parent = nullptr);
+    /** Lifetime-bound injection used by alternate hosts and regression tests. */
+    ApmCustomFirmwareConfig(QObject *connectWidgetLifetime,
+                            ConnectWidgetSetter connectWidgetSetter,
+                            QWidget *parent);
     ~ApmCustomFirmwareConfig() override;
 
 protected:
@@ -179,6 +187,13 @@ private:
     bool operationBusy() const;
     bool captureSelectedDevice();
     void finishOperation();
+    void resolveConnectWidgetBinding();
+    void setConnectWidgetDisabled(bool disabled);
+
+    QPointer<QObject> m_connectWidgetLifetime;
+    ConnectWidgetSetter m_connectWidgetSetter;
+    bool m_connectWidgetBindingResolved{false};
+    bool m_connectWidgetDisabled{false};
 
 private slots:
     void FillDeviceList();

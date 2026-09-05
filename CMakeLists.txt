@@ -565,6 +565,20 @@ set(SOURCES
     src/ui/Loghandling/DataFlashSpectrogramService.h
     src/ui/Loghandling/DataFlashKmlExporter.cpp
     src/ui/Loghandling/DataFlashKmlExporter.h
+    src/ui/Loghandling/DataFlashFftCore.cpp
+    src/ui/Loghandling/DataFlashFftCore.h
+    src/ui/Loghandling/DataFlashFftAnalyzer.cpp
+    src/ui/Loghandling/DataFlashFftAnalyzer.h
+    src/ui/Loghandling/DataFlashFftService.cpp
+    src/ui/Loghandling/DataFlashFftService.h
+    src/ui/ConfigFFTWindow.cpp
+    src/ui/ConfigFFTWindow.h
+    src/ui/configuration/ConfigFFTView.cpp
+    src/ui/configuration/ConfigFFTView.h
+    src/ui/configuration/ConfigFFTViewModel.cpp
+    src/ui/configuration/ConfigFFTViewModel.h
+    src/ui/configuration/ConfigFFTIntegration.cpp
+    src/ui/configuration/ConfigFFTIntegration.h
     src/ui/LogDownloadViewModel.cpp
     src/ui/LogDownloadViewModel.h
     src/ui/LogDownloadWindow.cpp
@@ -1629,6 +1643,8 @@ if(BUILD_TESTING)
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
         tests/LogDownloadRuntimeAudit.h
+        tests/FirmwarePageLifetimeAudit.cpp
+        tests/FirmwarePageLifetimeAudit.h
     )
     target_include_directories(${APM_PLANNER_TARGET} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
@@ -3370,6 +3386,73 @@ if(BUILD_TESTING)
         target_link_libraries(${log_test} PRIVATE Qt::Core Qt::Widgets Qt::Test)
         add_test(NAME ${log_test} COMMAND ${log_test})
         set_tests_properties(${log_test} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
+
+    add_library(fft_analysis_test_support STATIC
+        src/ui/Loghandling/DataFlashFftCore.cpp
+        src/ui/Loghandling/DataFlashFftAnalyzer.cpp
+        src/ui/Loghandling/DataFlashFftService.cpp
+        src/ui/Loghandling/BinLogParser.cpp
+        src/ui/Loghandling/AsciiLogParser.cpp
+        src/ui/Loghandling/LogParserBase.cpp
+        src/ui/Loghandling/AP2DataPlotStatus.cpp)
+    target_include_directories(fft_analysis_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Loghandling
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(fft_analysis_test_support PUBLIC Qt::Widgets)
+    add_library(fft_view_test_support STATIC
+        src/ui/configuration/ConfigFFTView.cpp
+        src/ui/configuration/ConfigFFTViewModel.cpp
+        src/ui/ConfigFFTWindow.cpp
+        src/ui/qcustomplot.cpp)
+    target_include_directories(fft_view_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration)
+    target_link_libraries(fft_view_test_support PUBLIC
+        fft_analysis_test_support apm_parameter_core Qt::PrintSupport)
+    foreach(fft_part IN ITEMS core analyzer service)
+        add_executable(dataflashfft${fft_part}_tests
+            tests/test_dataflashfft${fft_part}.cpp)
+        target_link_libraries(dataflashfft${fft_part}_tests PRIVATE
+            fft_analysis_test_support Qt::Test)
+    endforeach()
+    foreach(fft_part IN ITEMS view viewmodel)
+        add_executable(configfft${fft_part}_tests
+            tests/test_configfft${fft_part}.cpp tests/LogDownloadTestLogging.cpp)
+        target_link_libraries(configfft${fft_part}_tests PRIVATE
+            fft_view_test_support Qt::Test)
+    endforeach()
+    add_executable(configfftintegration_tests
+        tests/test_configfftintegration.cpp tests/LogDownloadTestLogging.cpp
+        src/ui/configuration/ConfigFFTIntegration.cpp
+        src/comm/ParameterService.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleTargetManager.cpp
+        src/comm/SwarmTelemetryRegistry.cpp)
+    target_link_libraries(configfftintegration_tests PRIVATE
+        fft_view_test_support Qt::Test)
+    add_executable(parameterservicesinglevehicle_tests
+        tests/test_parameterservicesinglevehicle.cpp
+        src/comm/ParameterService.cpp
+        src/comm/ExactLinkTransmitter.cpp
+        src/comm/MAVLinkFrameParser.cpp
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleTargetManager.cpp
+        src/comm/SwarmTelemetryRegistry.cpp)
+    target_include_directories(parameterservicesinglevehicle_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(parameterservicesinglevehicle_tests PRIVATE
+        apm_parameter_core Qt::Test)
+    foreach(fft_test IN ITEMS dataflashfftcore_tests dataflashfftanalyzer_tests
+            dataflashfftservice_tests configfftview_tests configfftviewmodel_tests
+            configfftintegration_tests parameterservicesinglevehicle_tests)
+        add_test(NAME ${fft_test} COMMAND ${fft_test})
+        set_tests_properties(${fft_test} PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endforeach()
 

@@ -34,6 +34,9 @@
 #include "ConfigHWBTSerialService.h"
 #include "ConfigHWBTView.h"
 #include "ConfigHWESP8266View.h"
+#include "ConfigFFTView.h"
+#include "ConfigFFTIntegration.h"
+#include "comm/SwarmTelemetryRegistry.h"
 #include "ConfigInitialParamsView.h"
 #include "ConfigMavCommandView.h"
 #include "ConfigMotorTestView.h"
@@ -126,6 +129,7 @@ const QString kMotorTest = QStringLiteral("ConfigMotorTestView");
 const QString kBluetoothSetup = QStringLiteral("ConfigHWBTView");
 const QString kParachute = QStringLiteral("ConfigParachuteView");
 const QString kESP8266 = QStringLiteral("ConfigHWESP8266View");
+const QString kFFT = QStringLiteral("ConfigFFTView");
 const QString kAntennaTrackerSerial = QStringLiteral("ConfigAntennaTrackerView");
 const QString kAntennaTrackerLive = QStringLiteral("AntennaTrackerUIView");
 const QString kMavFtp = QStringLiteral("MavFTPUIView");
@@ -665,9 +669,18 @@ void SetupView::buildPages()
         return createESP8266Page(parent);
     };
     m_backstage->addPage(esp8266);
-    // MP10 lists these two tracker pages after FFT Setup. Qt does not register
-    // FFT Setup yet; both tracker pages work offline against a dedicated serial
-    // port and must not wait for the autopilot parameter overlay.
+    BackstagePage fft;
+    fft.id = kFFT;
+    fft.header = tr("FFT Setup");
+    fft.isSub = true;
+    fft.requiresConnection = true;
+    // Only parameter edits require a complete exact snapshot. Local-file FFT
+    // remains usable while the autopilot parameter list is loading.
+    fft.allowsPartialParameters = true;
+    fft.factory = [this](QWidget *parent) { return createFFTPage(parent); };
+    m_backstage->addPage(fft);
+    // Both tracker pages work offline against a dedicated serial port and
+    // must not wait for the autopilot parameter overlay.
     BackstagePage trackerSerial;
     trackerSerial.id = kAntennaTrackerSerial;
     trackerSerial.header = tr("Antenna Tracker (Serial)");
@@ -1175,6 +1188,8 @@ void SetupView::refreshPageVisibility()
         kParachute, m_connected && profile.displayParachute);
     m_backstage->setPageVisible(
         kESP8266, m_connected && profile.displayEsp);
+    m_backstage->setPageVisible(
+        kFFT, m_connected && profile.displayFFTSetup);
     m_backstage->setPageVisible(
         kAntennaTrackerSerial, profile.displayAntennaTracker);
     m_backstage->setPageVisible(
@@ -2327,6 +2342,30 @@ QWidget *SetupView::createJoystickPage(QWidget *parent)
     }
 
     return scrollablePage(content, kJoystick, parent);
+}
+
+void SetupView::bindFFTView(ConfigFFTView *view)
+{
+    if (!view) return;
+    const auto family = firmwareFamily(m_uas);
+    const QString version = m_officialFirmware ? m_firmwareVersion : QString();
+    view->setCatalog(m_metadataRepository->catalog(family, version),
+        m_metadataRepository->catalogMatchesFirmwareVersion(family, version));
+    auto *links = LinkManager::instance();
+    QPointer<SwarmTelemetryRegistry> registry(links->swarmTelemetryRegistry());
+    BindConfigFFTViewToExactParameters(view, links->parameterService(),
+        links->vehicleTargetManager(), [registry](const VehicleTargetLease &target) {
+            return registry && target.isValid()
+                ? registry->acquireVehicle(target.endpoint)
+                : SwarmVehicleInstanceLease{};
+        });
+}
+
+QWidget *SetupView::createFFTPage(QWidget *parent)
+{
+    auto *page = new ConfigFFTView(nullptr, parent);
+    bindFFTView(page);
+    return page;
 }
 
 QWidget *SetupView::createGPSOrderPage(QWidget *parent)

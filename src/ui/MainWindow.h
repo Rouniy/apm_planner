@@ -206,6 +206,7 @@ public slots:
     void showPluginManager();
     /** @brief Open MAVLink DataFlash log download as a modeless tool. */
     void showLogDownload();
+    void showFftAnalysis();
     /** @brief Apply Mission Planner altitude display units to PLAN live. */
     void setPlannerAltitudeUnits(const QString &units);
     /** @brief Apply Mission Planner distance display units to PLAN live. */
@@ -566,6 +567,7 @@ private:
     void buildMissionPlannerToolsMenu();
     void closeMavlinkInspectorWindows();
     void closeLogDownloadWindows();
+    void closeFftAnalysisWindows();
     void pruneMavlinkInspectorWindows();
 
     bool m_heartbeatEnabled;

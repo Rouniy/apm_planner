@@ -4,8 +4,10 @@
 #include "comm/LinkManager.h"
 #include "comm/LinkManagerFactory.h"
 #include "comm/MAVLinkFrameParser.h"
+#include "comm/ParameterService.h"
 #include "comm/SwarmTelemetryRegistry.h"
 #include "comm/UDPLink.h"
+#include "comm/VehicleTargetManager.h"
 #include "uas/UASInterface.h"
 #include "uas/UASManager.h"
 
@@ -16,6 +18,7 @@
 #include <QEventLoop>
 #include <QPointer>
 #include <QThread>
+#include <QTimer>
 #include <QUdpSocket>
 
 #include <cstring>
@@ -124,6 +127,22 @@ mavlink_message_t heartbeatMessage(quint8 systemId, quint8 componentId)
                   MAVLINK_MSG_ID_HEARTBEAT_MIN_LEN,
                   MAVLINK_MSG_ID_HEARTBEAT_LEN,
                   MAVLINK_MSG_ID_HEARTBEAT_CRC);
+    return message;
+}
+
+mavlink_message_t parameterValueMessage(quint8 systemId,
+                                        quint8 componentId,
+                                        const char *name,
+                                        float value)
+{
+    mavlink_message_t message{};
+    mavlink_msg_param_value_pack(
+        systemId, componentId, &message, name, value,
+        MAV_PARAM_TYPE_INT32, 1, 0);
+    forceMavlink2(&message, systemId, componentId,
+                  MAVLINK_MSG_ID_PARAM_VALUE_MIN_LEN,
+                  MAVLINK_MSG_ID_PARAM_VALUE_LEN,
+                  MAVLINK_MSG_ID_PARAM_VALUE_CRC);
     return message;
 }
 
@@ -452,6 +471,130 @@ int RunLogDownloadRuntimeAudit()
     result.expect(lease.linkSessionEpoch
                       == links->currentPhysicalLinkSession(linkId),
                   QStringLiteral("lease did not use the fresh peer epoch"));
+
+    // Setup pages use a target-pinned single-vehicle exact reservation.  It
+    // must work on the normal one-peer listening UDP route without weakening
+    // the strict multi-vehicle reservation policy.
+    ParameterService *const parameterService = links->parameterService();
+    VehicleTargetManager *const targetManager =
+        links->vehicleTargetManager();
+    result.expect(parameterService != nullptr && targetManager != nullptr,
+                  QStringLiteral("production parameter services are missing"));
+    if (parameterService && targetManager && lease.isValid()) {
+        QTimer leaseKeepalive;
+        QObject::connect(
+            &leaseKeepalive, &QTimer::timeout, &leaseKeepalive,
+            [&]() { sendFrame(&firstPeer, listenPort, heartbeat); });
+        leaseKeepalive.start(500);
+
+        result.expect(targetManager->selectTarget(
+                          linkId, systemId, componentId),
+                      QStringLiteral("UDP vehicle could not be selected"));
+        const VehicleTargetLease target = targetManager->acquireTarget();
+        result.expect(target.isValid()
+                          && target.endpoint.sameIdentity(lease.endpoint),
+                      QStringLiteral("selected target does not match exact UDP lease"));
+
+        // A UAS becoming active can start the legacy full-list request.  This
+        // audit owns no such request, so clear it before testing exclusivity.
+        parameterService->cancelCurrentParameterList();
+        processFor(20);
+        drainSocket(&firstPeer);
+
+        QObject parameterOwner;
+        ParameterService::ExactReservationToken parameterReservation;
+        QString parameterError;
+        ParameterService::ExactReservationResult reserveResult =
+            parameterService->reserveSingleVehicleEndpoint(
+                &parameterOwner, target, lease, &parameterReservation,
+                &parameterError);
+        if (reserveResult
+            == ParameterService::ExactReservationResult::Busy) {
+            // A just-cancelled untagged legacy request keeps its bounded
+            // ambiguity fence.  Let that production fence expire, then make
+            // one deterministic retry rather than weakening exclusivity.
+            processFor(ParameterService::DefaultExactWriteQuarantineMs + 50);
+            parameterError.clear();
+            reserveResult = parameterService->reserveSingleVehicleEndpoint(
+                &parameterOwner, target, lease, &parameterReservation,
+                &parameterError);
+        }
+        result.expect(
+            reserveResult
+                    == ParameterService::ExactReservationResult::Reserved
+                && parameterReservation.isValid(),
+            QStringLiteral("single-vehicle UDP reservation failed: %1")
+                .arg(parameterError));
+
+        QList<ParameterService::ExactOperationReport> parameterReports;
+        const QMetaObject::Connection reportConnection = QObject::connect(
+            parameterService, &ParameterService::exactOperationFinished,
+            &parameterOwner,
+            [&](const ParameterService::ExactOperationReport &report) {
+                if (report.token.reservationId
+                    == parameterReservation.reservationId) {
+                    parameterReports.append(report);
+                }
+            });
+        ParameterService::ExactOperationToken readToken;
+        if (parameterReservation.isValid()) {
+            ParameterService::ExactReadRequest readRequest;
+            readRequest.name = QStringLiteral("INS_LOG_BAT_CNT");
+            parameterError.clear();
+            result.expect(
+                parameterService->submitExactRead(
+                    parameterReservation, lease, readRequest, &readToken,
+                    &parameterError)
+                    == ParameterService::ExactSubmitResult::Started,
+                QStringLiteral("single-vehicle exact read failed: %1")
+                    .arg(parameterError));
+        }
+        mavlink_message_t parameterRequest{};
+        result.expect(
+            readToken.isValid()
+                && takeMessage(&firstPeer,
+                               MAVLINK_MSG_ID_PARAM_REQUEST_READ,
+                               &parameterRequest),
+            QStringLiteral("PARAM_REQUEST_READ did not reach learned UDP peer"));
+        if (readToken.isValid()) {
+            result.expect(
+                sendFrame(&firstPeer, listenPort,
+                          parameterValueMessage(
+                              systemId, componentId,
+                              "INS_LOG_BAT_CNT", 2.0f)),
+                QStringLiteral("synthetic PARAM_VALUE could not be sent"));
+            result.expect(
+                waitUntil([&]() {
+                    for (const auto &report : parameterReports) {
+                        if (report.token.operationId == readToken.operationId
+                            && report.terminalResult
+                                == ParameterService::ExactTerminalResult::ReadSucceeded) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }),
+                QStringLiteral("PARAM_VALUE did not complete exact UDP read"));
+        }
+        QObject::disconnect(reportConnection);
+        if (parameterReservation.isValid()) {
+            result.expect(
+                parameterService->releaseExactReservation(
+                    parameterReservation),
+                QStringLiteral("single-vehicle parameter reservation did not release"));
+        }
+
+        QObject strictOwner;
+        ParameterService::ExactReservationToken strictReservation;
+        parameterError.clear();
+        result.expect(
+            parameterService->reserveExactEndpoints(
+                &strictOwner, {lease}, &strictReservation,
+                &parameterError)
+                == ParameterService::ExactReservationResult::RouteUnavailable,
+            QStringLiteral("strict swarm reservation accepted listening UDP route"));
+        leaseKeepalive.stop();
+    }
 
     QObject operationOwner;
     ExactLogTransferToken firstListToken;
