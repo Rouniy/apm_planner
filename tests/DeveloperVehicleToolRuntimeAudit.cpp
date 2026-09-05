@@ -15,6 +15,7 @@
 #include <QEvent>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHash>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -288,7 +289,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 13 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 14 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
@@ -494,6 +495,146 @@ int RunDeveloperVehicleToolRuntimeAudit()
                "DataFlash split lost, duplicated, reordered, or fragmented data records");
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         qInfo() << "Developer runtime DataFlash split:" << splitOutputs
+                << page->Log();
+    }
+
+    // Drive the complete DashWare workflow before a vehicle exists. The
+    // fixture deliberately moves backwards in TimeUS and alternates message
+    // types, proving that the exporter preserves raw log order and creates
+    // sparse columns rather than carrying values between message types.
+    QTemporaryDir dashWareFiles;
+    expect(dashWareFiles.isValid(), "DashWare fixture directory unavailable");
+    const QString dashWareInput = dashWareFiles.filePath(
+        QStringLiteral("backwards samples.log"));
+    const QString dashWareOutput = dashWareFiles.filePath(
+        QStringLiteral("verified dashware.csv"));
+    const QString dashWareSuggestedOutput = dashWareFiles.filePath(
+        QStringLiteral("backwards samples-dashware.csv"));
+    const QByteArray dashWareFixture(
+        "FMT,150,15,TEST,Qf,TimeUS,Value\n"
+        "FMT,151,12,AUX,QB,TimeUS,State\n"
+        "TEST,2000,2.5\n"
+        "AUX,1500,7\n"
+        "TEST,1000,-3\n");
+    QFile dashWareSource(dashWareInput);
+    expect(dashWareSource.open(QIODevice::WriteOnly)
+               && dashWareSource.write(dashWareFixture)
+                   == dashWareFixture.size(),
+           "DashWare fixture could not be written");
+    dashWareSource.close();
+    auto *dashWare = page->findChild<QPushButton *>(
+        QStringLiteral("CreateDashWareCsvButton"));
+    expect(dashWare && dashWare->isEnabled(),
+           "offline DashWare export action disabled");
+
+    const auto openDashWareTypes = [&]() -> QInputDialog * {
+        if (!dashWare || !dashWare->isEnabled()) return nullptr;
+        dashWare->click();
+        QCoreApplication::processEvents();
+        auto *picker = page->findChild<QFileDialog *>(
+            QStringLiteral("DeveloperDashWareInputDialog"));
+        expect(picker != nullptr, "DashWare input picker missing");
+        if (!picker) return nullptr;
+        const QString filters = picker->nameFilters().join(QLatin1Char(' '));
+        expect(filters.contains(QStringLiteral("*.bin"))
+                   && filters.contains(QStringLiteral("*.log")),
+               "DashWare input picker does not expose binary and text logs");
+        auto *filename = picker->findChild<QLineEdit *>(
+            QStringLiteral("fileNameEdit"));
+        expect(filename != nullptr, "DashWare input filename editor missing");
+        if (filename) filename->setText(dashWareInput);
+        expect(picker->selectedFiles() == QStringList{dashWareInput},
+               "DashWare input selection is not exact");
+        expect(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection),
+               "DashWare input picker acceptance unavailable");
+        expect(waitFor([&] {
+            return page->findChild<QInputDialog *>(
+                QStringLiteral("DeveloperDashWareTypesDialog")) != nullptr;
+        }), "DashWare message-types dialog missing");
+        auto *types = page->findChild<QInputDialog *>(
+            QStringLiteral("DeveloperDashWareTypesDialog"));
+        expect(types && types->inputMode() == QInputDialog::TextInput
+                   && types->textValue()
+                       == QStringLiteral("GPS;ATT;NTUN;CTUN;MODE;BAT"),
+               "DashWare message-types default differs from MP10");
+        return types;
+    };
+
+    const auto acceptDashWareTypes = [&](QInputDialog *types)
+        -> QFileDialog * {
+        if (!types) return nullptr;
+        types->setTextValue(QStringLiteral("TEST;AUX"));
+        types->accept();
+        expect(waitFor([&] {
+            return page->findChild<QFileDialog *>(
+                QStringLiteral("DeveloperDashWareOutputDialog")) != nullptr;
+        }), "DashWare output picker missing");
+        auto *output = page->findChild<QFileDialog *>(
+            QStringLiteral("DeveloperDashWareOutputDialog"));
+        expect(output && output->acceptMode() == QFileDialog::AcceptSave,
+               "DashWare output picker is not a Save dialog");
+        if (output) {
+            const QString suggested = QFileInfo(
+                output->selectedFiles().value(0)).fileName();
+            expect(suggested == QStringLiteral("backwards samples-dashware.csv"),
+                   "DashWare output suggestion differs from MP10");
+        }
+        return output;
+    };
+
+    if (dashWare) {
+        // Cancel once at the type-selection boundary.
+        QInputDialog *types = openDashWareTypes();
+        if (types) types->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return dashWare->isEnabled(); })
+                   && !QFile::exists(dashWareSuggestedOutput)
+                   && !QFile::exists(dashWareOutput),
+               "cancelling DashWare type selection published output");
+
+        // Cancel once at the destination boundary as well.
+        types = openDashWareTypes();
+        QFileDialog *output = acceptDashWareTypes(types);
+        if (output) output->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return dashWare->isEnabled(); })
+                   && !QFile::exists(dashWareSuggestedOutput)
+                   && !QFile::exists(dashWareOutput),
+               "cancelling DashWare output selection published output");
+
+        // Complete the same production route and compare deterministic bytes.
+        types = openDashWareTypes();
+        output = acceptDashWareTypes(types);
+        if (output) {
+            auto *filename = output->findChild<QLineEdit *>(
+                QStringLiteral("fileNameEdit"));
+            expect(filename != nullptr,
+                   "DashWare output filename editor missing");
+            if (filename) filename->setText(dashWareOutput);
+            expect(output->selectedFiles() == QStringList{dashWareOutput},
+                   "DashWare output selection is not exact");
+            expect(QMetaObject::invokeMethod(output, "accept",
+                                             Qt::DirectConnection),
+                   "DashWare output picker acceptance unavailable");
+        }
+        auto *dashWareProgress = page->findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperDashWareProgressDialog"));
+        expect(dashWareProgress != nullptr,
+               "DashWare progress dialog missing after destination acceptance");
+        expect(waitFor([&] {
+            return dashWare->isEnabled() && QFile::exists(dashWareOutput);
+        }, 5000), "DashWare export did not finish through Tools route");
+        QFile dashWareResult(dashWareOutput);
+        const QByteArray expectedDashWareCsv(
+            "GLOBAL_TimeMS,TEST_TimeUS,TEST_Value,AUX_TimeUS,AUX_State,\n"
+            "2,2000,2.5,,,\n"
+            "1.5,,,1500,7,\n"
+            "1,1000,-3,,,\n");
+        expect(dashWareResult.open(QIODevice::ReadOnly)
+                   && dashWareResult.readAll() == expectedDashWareCsv,
+               "DashWare CSV header, sparse columns, time order, or trailing commas differ");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        qInfo() << "Developer runtime DashWare export:" << dashWareOutput
                 << page->Log();
     }
 

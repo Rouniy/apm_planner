@@ -35,6 +35,7 @@ public slots:
     // Paths already selected/confirmed by the caller; never sends telemetry.
     void ExtractGpsCorrections(const QString &input, const QString &output);
     void SplitDataFlashLog(const QString &input, int pieces);
+    void ExportDashWareCsv(QString input, QString output, QStringList types);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -62,9 +63,15 @@ private:
     void PickSplitCount(const QString &input, quint64 revision);
     void ConfirmSplit(const QString &input, int pieces, quint64 revision);
     void CancelSplit();
+    void PickDashWareInput();
+    void PickDashWareTypes(const QString &input, quint64 revision);
+    void PickDashWareOutput(const QString &input, const QStringList &types,
+                            quint64 revision);
+    void CancelDashWareExport();
     void RefreshOfflineFileActions();
     struct GpsExtractionState;
     struct SplitState;
+    struct DashWareState;
 
     QPointer<QObject> m_actionSource;
     QPointer<DeveloperVehicleToolService> m_vehicleTools;
@@ -85,6 +92,11 @@ private:
     QPointer<QProgressDialog> m_splitProgress;
     std::shared_ptr<SplitState> m_splitState;
     quint64 m_splitPromptRevision = 0;
+    QPushButton *m_dashWareButton = nullptr;
+    QPointer<QDialog> m_dashWarePrompt;
+    QPointer<QProgressDialog> m_dashWareProgress;
+    std::shared_ptr<DashWareState> m_dashWareState;
+    quint64 m_dashWarePromptRevision = 0;
     bool m_fileToolsClosing = false;
 };
 

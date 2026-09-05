@@ -713,6 +713,10 @@ set(SOURCES
     src/comm/GpsCorrectionExtractor.h
     src/ui/Loghandling/DataFlashLogSplitter.cpp
     src/ui/Loghandling/DataFlashLogSplitter.h
+    src/ui/Loghandling/DataFlashRawReader.h
+    src/ui/Loghandling/DataFlashModeNames.h
+    src/ui/Loghandling/DataFlashDashWareCsvExporter.cpp
+    src/ui/Loghandling/DataFlashDashWareCsvExporter.h
     src/comm/TlogReader.h
     src/comm/TlogExportService.cpp
     src/comm/TlogExportService.h
@@ -3878,6 +3882,22 @@ if(BUILD_TESTING)
     add_executable(dataflash_log_splitter_probe tests/DataFlashLogSplitterProbe.cpp)
     target_link_libraries(dataflash_log_splitter_probe PRIVATE dataflash_splitter_test_support)
 
+    add_library(dataflash_dashware_test_support STATIC
+        src/ui/Loghandling/DataFlashRawReader.h
+        src/ui/Loghandling/DataFlashModeNames.h
+        src/ui/Loghandling/DataFlashDashWareCsvExporter.cpp
+        src/ui/Loghandling/DataFlashDashWareCsvExporter.h)
+    target_include_directories(dataflash_dashware_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(dataflash_dashware_test_support PUBLIC Qt::Core)
+    add_executable(dataflashdashwarecsvexporter_tests tests/test_dataflashdashwarecsvexporter.cpp)
+    target_link_libraries(dataflashdashwarecsvexporter_tests PRIVATE
+        dataflash_dashware_test_support Qt::Test)
+    add_test(NAME dataflashdashwarecsvexporter_tests COMMAND dataflashdashwarecsvexporter_tests)
+    set_tests_properties(dataflashdashwarecsvexporter_tests PROPERTIES TIMEOUT 60)
+    add_executable(dataflash_dashware_probe tests/DataFlashDashWareProbe.cpp)
+    target_link_libraries(dataflash_dashware_probe PRIVATE dataflash_dashware_test_support)
+
     add_executable(configdevelopertoolsview_tests
         tests/test_configdevelopertoolsview.cpp
         src/ui/configuration/ActionPageView.cpp
@@ -3896,6 +3916,7 @@ if(BUILD_TESTING)
         developer_vehicle_tool_test_support
         gps_correction_test_support
         dataflash_splitter_test_support
+        dataflash_dashware_test_support
         Qt::Concurrent
         Qt::Core
         Qt::Widgets

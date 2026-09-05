@@ -2,6 +2,7 @@
 
 #include "DeveloperToolParsers.h"
 #include "comm/GpsCorrectionExtractor.h"
+#include "ui/Loghandling/DataFlashDashWareCsvExporter.h"
 #include "ui/Loghandling/DataFlashLogSplitter.h"
 
 #include <QAction>
@@ -36,6 +37,26 @@ struct ConfigDeveloperToolsView::SplitState
     std::atomic<qint64> processed{0};
     std::atomic<qint64> total{0};
 };
+
+struct ConfigDeveloperToolsView::DashWareState
+{
+    std::atomic_bool cancelled{false};
+    std::atomic<qint64> processed{0};
+    std::atomic<qint64> total{0};
+};
+
+namespace {
+QStringList normalizedDashWareTypes(const QStringList &values)
+{
+    QStringList result;
+    for (QString value : values) {
+        value = value.trimmed().toUpper();
+        if (!value.isEmpty() && !result.contains(value))
+            result.append(value);
+    }
+    return result;
+}
+}
 
 ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                                                    QWidget *parent)
@@ -84,8 +105,11 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
         [this]() { PickSplitInput(); });
     m_splitButton->setToolTip(tr("Split a recorded DataFlash .bin or .log file into complete, independently readable parts; no vehicle connection is required."));
     ++m_implementedActionCount;
-    AddUnavailableAction(tr("Create DashWare CSV"),
-                         QStringLiteral("CreateDashWareCsvButton"), notPorted);
+    m_dashWareButton = AddAction(tr("Create DashWare CSV"),
+        QStringLiteral("CreateDashWareCsvButton"),
+        [this]() { PickDashWareInput(); });
+    m_dashWareButton->setToolTip(tr("Export selected DataFlash message types to a DashWare-compatible CSV file; no vehicle connection is required."));
+    ++m_implementedActionCount;
     m_gpsExtractionButton = AddAction(tr("Extract GPS Corrections"),
         QStringLiteral("ExtractGpsCorrectionsButton"),
         [this]() { PickGpsCorrectionInput(); });
@@ -189,7 +213,8 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
         if (!service)
             reason = tr("The guarded vehicle tool service is unavailable.");
         else if (m_gpsExtractionState || m_gpsExtractionPrompt
-                 || m_splitState || m_splitPrompt)
+                 || m_splitState || m_splitPrompt
+                 || m_dashWareState || m_dashWarePrompt)
             reason = tr("Finish or cancel the current offline file operation first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
@@ -244,6 +269,7 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
     m_fileToolsClosing = true;
     CancelGpsExtraction();
     CancelSplit();
+    CancelDashWareExport();
     ActionPageView::closeEvent(event);
 }
 
@@ -255,6 +281,9 @@ ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
     ++m_splitPromptRevision;
     if (m_splitState)
         m_splitState->cancelled.store(true, std::memory_order_relaxed);
+    ++m_dashWarePromptRevision;
+    if (m_dashWareState)
+        m_dashWareState->cancelled.store(true, std::memory_order_relaxed);
     // The worker owns only copied paths and shared atomic state. Destruction
     // disconnects the watcher; it does not block the GUI waiting for file I/O.
 }
@@ -282,7 +311,8 @@ void ConfigDeveloperToolsView::CancelGpsExtraction()
 void ConfigDeveloperToolsView::PickGpsCorrectionInput()
 {
     if (m_fileToolsClosing || m_gpsExtractionState || m_gpsExtractionPrompt
-        || m_splitState || m_splitPrompt || m_vehiclePrompt
+        || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy()))
         return;
     const quint64 revision = ++m_gpsPromptRevision;
@@ -342,10 +372,12 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
     if (m_fileToolsClosing)
         return;
     const bool idle = !m_gpsExtractionState && !m_gpsExtractionPrompt
-        && !m_splitState && !m_splitPrompt && !m_vehiclePrompt
+        && !m_splitState && !m_splitPrompt
+        && !m_dashWareState && !m_dashWarePrompt && !m_vehiclePrompt
         && (!m_vehicleTools || !m_vehicleTools->busy());
     m_gpsExtractionButton->setEnabled(idle);
     m_splitButton->setEnabled(idle);
+    m_dashWareButton->setEnabled(idle);
 }
 
 void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const QString &output)
@@ -353,7 +385,8 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
     if (m_fileToolsClosing)
         return;
     if (m_gpsExtractionState || m_gpsExtractionPrompt
-        || m_splitState || m_splitPrompt || m_vehiclePrompt
+        || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -468,7 +501,8 @@ void ConfigDeveloperToolsView::CancelSplit()
 void ConfigDeveloperToolsView::PickSplitInput()
 {
     if (m_fileToolsClosing || m_splitState || m_splitPrompt
-        || m_gpsExtractionState || m_gpsExtractionPrompt || m_vehiclePrompt
+        || m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -576,7 +610,8 @@ void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
     if (m_fileToolsClosing)
         return;
     if (m_splitState || m_splitPrompt || m_gpsExtractionState
-        || m_gpsExtractionPrompt || m_vehiclePrompt
+        || m_gpsExtractionPrompt || m_dashWareState || m_dashWarePrompt
+        || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DataFlash log split: another file selection, offline operation, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -694,12 +729,238 @@ void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
     RefreshVehicleActions();
 }
 
+void ConfigDeveloperToolsView::CancelDashWareExport()
+{
+    ++m_dashWarePromptRevision;
+    if (m_dashWareState)
+        m_dashWareState->cancelled.store(true, std::memory_order_relaxed);
+    const QPointer<QDialog> prompt = m_dashWarePrompt;
+    m_dashWarePrompt.clear();
+    if (prompt)
+        prompt->reject();
+    if (m_dashWareProgress)
+        m_dashWareProgress->cancel();
+}
+
+void ConfigDeveloperToolsView::PickDashWareInput()
+{
+    if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt
+        || m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_splitState || m_splitPrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    const quint64 revision = ++m_dashWarePromptRevision;
+    auto *dialog = new QFileDialog(this, tr("Select DataFlash log"));
+    dialog->setObjectName(QStringLiteral("DeveloperDashWareInputDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setFileMode(QFileDialog::ExistingFile);
+    dialog->setNameFilter(tr("DataFlash logs (*.bin *.BIN *.log *.LOG)"));
+    m_dashWarePrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, revision](int result) {
+        if (m_fileToolsClosing || revision != m_dashWarePromptRevision)
+            return;
+        m_dashWarePrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result == QDialog::Accepted && files.size() == 1)
+            PickDashWareTypes(files.first(), revision);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::PickDashWareTypes(const QString &input,
+                                                  quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_dashWarePromptRevision)
+        return;
+    auto *dialog = new QInputDialog(this);
+    dialog->setObjectName(QStringLiteral("DeveloperDashWareTypesDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Create DashWare CSV"));
+    dialog->setLabelText(tr("Message types separated by semicolons (empty includes all declared types)"));
+    dialog->setInputMode(QInputDialog::TextInput);
+    dialog->setTextValue(QStringLiteral("GPS;ATT;NTUN;CTUN;MODE;BAT"));
+    m_dashWarePrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, input, revision](int result) {
+        if (m_fileToolsClosing || revision != m_dashWarePromptRevision)
+            return;
+        m_dashWarePrompt.clear();
+        if (result == QDialog::Accepted) {
+            const QStringList types = normalizedDashWareTypes(
+                dialog->textValue().split(QLatin1Char(';'),
+                                          Qt::KeepEmptyParts));
+            PickDashWareOutput(input, types, revision);
+        } else {
+            RefreshVehicleActions();
+        }
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::PickDashWareOutput(
+    const QString &input, const QStringList &types, quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_dashWarePromptRevision)
+        return;
+    const QFileInfo source(input);
+    auto *dialog = new QFileDialog(
+        this, tr("Save DashWare CSV"), source.absolutePath());
+    dialog->setObjectName(QStringLiteral("DeveloperDashWareOutputDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setOption(QFileDialog::DontConfirmOverwrite, false);
+    dialog->setAcceptMode(QFileDialog::AcceptSave);
+    dialog->setFileMode(QFileDialog::AnyFile);
+    dialog->setNameFilter(tr("CSV files (*.csv)"));
+    dialog->setDefaultSuffix(QStringLiteral("csv"));
+    dialog->selectFile(source.completeBaseName()
+                       + QStringLiteral("-dashware.csv"));
+    m_dashWarePrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, input, types, revision](int result) {
+        if (m_fileToolsClosing || revision != m_dashWarePromptRevision)
+            return;
+        m_dashWarePrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result == QDialog::Accepted && files.size() == 1)
+            ExportDashWareCsv(input, files.first(), types);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ExportDashWareCsv(
+    QString input, QString output, QStringList types)
+{
+    if (m_fileToolsClosing)
+        return;
+    if (m_dashWareState || m_dashWarePrompt || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
+        AppendLog(tr("DashWare CSV export: another file selection, offline operation, or vehicle operation is already active."));
+        RefreshOfflineFileActions();
+        return;
+    }
+    if (input.trimmed().isEmpty() || output.trimmed().isEmpty()) {
+        AppendLog(tr("DashWare CSV export: input and output paths are required."));
+        RefreshOfflineFileActions();
+        return;
+    }
+
+    const QStringList selectedTypes = normalizedDashWareTypes(types);
+    const auto state = std::make_shared<DashWareState>();
+    m_dashWareState = state;
+    m_dashWareButton->setEnabled(false);
+    AppendLog(tr("DashWare CSV export started: %1 to %2 (%3).")
+                  .arg(input, output,
+                       selectedTypes.isEmpty()
+                           ? tr("all declared message types")
+                           : selectedTypes.join(QLatin1Char(';'))));
+
+    auto *progress = new QProgressDialog(
+        tr("Exporting DataFlash rows to DashWare CSV…"), tr("Cancel"),
+        0, 1000, this);
+    progress->setObjectName(QStringLiteral("DeveloperDashWareProgressDialog"));
+    progress->setWindowTitle(tr("Create DashWare CSV"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    m_dashWareProgress = progress;
+    connect(progress, &QProgressDialog::canceled, this, [state]() {
+        state->cancelled.store(true, std::memory_order_relaxed);
+    });
+
+    using Result = DataFlashDashWareCsvExporter::Result;
+    auto *watcher = new QFutureWatcher<Result>(this);
+    auto *timer = new QTimer(watcher);
+    timer->setInterval(100);
+    const QPointer<QProgressDialog> guardedProgress(progress);
+    connect(timer, &QTimer::timeout, this,
+            [this, state, guardedProgress]() {
+        if (m_fileToolsClosing || !guardedProgress
+            || m_dashWareState != state
+            || state->cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        const qint64 total = state->total.load(std::memory_order_relaxed);
+        const qint64 done = state->processed.load(std::memory_order_relaxed);
+        if (total > 0) {
+            guardedProgress->setValue(int(qBound(
+                0.0L, 1000.0L * done / total, 1000.0L)));
+        }
+    });
+    connect(watcher, &QFutureWatcher<Result>::finished, this,
+            [this, state, watcher, timer, guardedProgress, output]() {
+        timer->stop();
+        const Result result = watcher->result();
+        watcher->deleteLater();
+        if (m_dashWareState != state)
+            return;
+        m_dashWareState.reset();
+        m_dashWareProgress.clear();
+        if (guardedProgress)
+            guardedProgress->deleteLater();
+        if (m_fileToolsClosing)
+            return;
+
+        if (result.cancelled) {
+            AppendLog(tr("DashWare CSV export cancelled; no output was published."));
+        } else if (!result.success) {
+            AppendLog(tr("DashWare CSV export failed: %1").arg(result.error));
+        } else {
+            AppendLog(tr("DashWare CSV export completed: %1 rows, %2 columns, %3 bytes written to %4.")
+                          .arg(result.rowsWritten).arg(result.columns)
+                          .arg(result.bytesWritten).arg(output));
+        }
+        for (const QString &warning : result.warnings)
+            AppendLog(tr("DashWare CSV export warning: %1").arg(warning));
+        RefreshVehicleActions();
+    });
+    timer->start();
+    watcher->setFuture(QtConcurrent::run(
+        [input, output, selectedTypes, state]() {
+        try {
+            return DataFlashDashWareCsvExporter::Export(
+                input, output, selectedTypes,
+                [state]() {
+                    return state->cancelled.load(std::memory_order_relaxed);
+                },
+                [state](qint64 processed, qint64 total) {
+                    state->processed.store(processed,
+                                           std::memory_order_relaxed);
+                    state->total.store(total, std::memory_order_relaxed);
+                });
+        } catch (const std::exception &error) {
+            Result result;
+            result.error = QString::fromUtf8(error.what());
+            return result;
+        } catch (...) {
+            Result result;
+            result.error = QStringLiteral("Unexpected DashWare CSV export error.");
+            return result;
+        }
+    }));
+    RefreshVehicleActions();
+}
+
 void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
 {
     const QPointer<ConfigDeveloperToolsView> guard(this);
     const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
     if (!service || m_vehiclePrompt || m_gpsExtractionState
-        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt)
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt)
         return;
     VehiclePlan plan;
     QString error;

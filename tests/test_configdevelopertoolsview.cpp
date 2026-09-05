@@ -168,6 +168,23 @@ QByteArray splittableAsciiLog(int dataRecords = 6)
     return log;
 }
 
+QByteArray dashWareAsciiLog(int dataRecords = 2)
+{
+    QByteArray log(
+        "FMT,128,89,FMT,BBnNZ,Type,Length,Name,Format,Columns\n"
+        "FMT,150,19,GPS,Qff,TimeUS,Lat,Lng\n");
+    for (int index = 0; index < dataRecords; ++index) {
+        log += "GPS,";
+        log += QByteArray::number((index + 1) * 1000000);
+        log += ',';
+        log += QByteArray::number(1.5 + 2.0 * index, 'f', 1);
+        log += ',';
+        log += QByteArray::number(2.5 + 2.0 * index, 'f', 1);
+        log += '\n';
+    }
+    return log;
+}
+
 bool writeFixture(const QString &path, const QByteArray &bytes)
 {
     QFile file(path);
@@ -239,6 +256,12 @@ private slots:
     void splitCancellationAndLifetime_data();
     void splitCancellationAndLifetime();
     void splitAndOtherOperationsInterlock();
+    void dashWareDialogsAreCancellableAndUseMpDefaults();
+    void dashWareExportCompletesOfflineAndReportsCounts();
+    void dashWareFailurePreservesExistingOutput();
+    void dashWareCancellationAndLifetime_data();
+    void dashWareCancellationAndLifetime();
+    void dashWareAndOtherOperationsInterlock();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -247,8 +270,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
     QCOMPARE(view.objectName(), QStringLiteral("ConfigDeveloperToolsView"));
     QCOMPARE(view.Title(), QStringLiteral("Developer Tools"));
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 4);
-    QVERIFY(view.Log().contains(QStringLiteral("4 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 5);
+    QVERIFY(view.Log().contains(QStringLiteral("5 of 32")));
 
     const QList<QPushButton *> buttons = view.findChildren<QPushButton *>();
     QCOMPARE(buttons.size(), 32);
@@ -260,13 +283,15 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
             QVERIFY(!button->toolTip().isEmpty());
         }
     }
-    QCOMPARE(enabled, 4);
+    QCOMPARE(enabled, 5);
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeMavlinkPacketButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeHardwareIdButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("SplitDataFlashLogButton"))->isEnabled());
+    QVERIFY(view.findChild<QPushButton *>(
+        QStringLiteral("CreateDashWareCsvButton"))->isEnabled());
     QVERIFY(!view.findChild<QPushButton *>(
         QStringLiteral("RebootVehicleButton"))->isEnabled());
 }
@@ -293,8 +318,8 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 7);
-    QVERIFY(view.Log().contains(QStringLiteral("7 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 8);
+    QVERIFY(view.Log().contains(QStringLiteral("8 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
@@ -328,9 +353,9 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     VehicleFixture fixture;
     view.setVehicleToolService(&fixture.service);
-    QCOMPARE(view.ImplementedActionCount(), 13);
+    QCOMPARE(view.ImplementedActionCount(), 14);
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 7);
+    QCOMPARE(view.ImplementedActionCount(), 8);
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()
@@ -385,7 +410,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 10);
+    QCOMPARE(view.ImplementedActionCount(), 11);
     QVERIFY(tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     fixture.heartbeat(true);
@@ -396,7 +421,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     fixture.registry.endLinkSession(fixture.endpoint.linkId, fixture.session);
     QTRY_VERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 4);
+    QCOMPARE(view.ImplementedActionCount(), 5);
     QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(fixture.frames.isEmpty());
 }
@@ -1031,6 +1056,242 @@ void ConfigDeveloperToolsViewTest::splitAndOtherOperationsInterlock()
     QVERIFY(!QFile::exists(correctionOutput));
     for (const QString &path : DataFlashLogSplitter::OutputPaths(input, 2))
         QVERIFY(!QFile::exists(path));
+}
+
+void ConfigDeveloperToolsViewTest::dashWareDialogsAreCancellableAndUseMpDefaults()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    const QString output = directory.filePath(
+        QStringLiteral("flight-dashware.csv"));
+    QVERIFY(writeFixture(input, dashWareAsciiLog()));
+    ConfigDeveloperToolsView view;
+    view.show();
+    auto *button = tool(view, "CreateDashWareCsvButton");
+    QVERIFY(button->isEnabled());
+
+    button->click();
+    auto *picker = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperDashWareInputDialog"));
+    QVERIFY(picker);
+    QVERIFY(picker->testOption(QFileDialog::DontUseNativeDialog));
+    QCOMPARE(picker->fileMode(), QFileDialog::ExistingFile);
+    QVERIFY(picker->nameFilters().join(QLatin1Char(' '))
+                .contains(QStringLiteral("*.log")));
+    QVERIFY(!button->isEnabled());
+    picker->reject();
+    QVERIFY(button->isEnabled());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    button->click();
+    picker = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperDashWareInputDialog"));
+    QVERIFY(picker);
+    picker->selectFile(input);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept",
+                                      Qt::DirectConnection));
+    auto *types = view.findChild<QInputDialog *>(
+        QStringLiteral("DeveloperDashWareTypesDialog"));
+    QVERIFY(types);
+    QCOMPARE(types->inputMode(), QInputDialog::TextInput);
+    QCOMPARE(types->textValue(),
+             QStringLiteral("GPS;ATT;NTUN;CTUN;MODE;BAT"));
+    QVERIFY(types->labelText().contains(QStringLiteral("empty includes all")));
+    types->reject();
+    QVERIFY(button->isEnabled());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+    button->click();
+    picker = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperDashWareInputDialog"));
+    QVERIFY(picker);
+    picker->selectFile(input);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept",
+                                      Qt::DirectConnection));
+    types = view.findChild<QInputDialog *>(
+        QStringLiteral("DeveloperDashWareTypesDialog"));
+    QVERIFY(types);
+    types->setTextValue(QStringLiteral(" gps ; ATT ; gps ;; "));
+    types->accept();
+    auto *save = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperDashWareOutputDialog"));
+    QVERIFY(save);
+    QCOMPARE(save->acceptMode(), QFileDialog::AcceptSave);
+    QCOMPARE(save->fileMode(), QFileDialog::AnyFile);
+    QVERIFY(!save->testOption(QFileDialog::DontConfirmOverwrite));
+    QCOMPARE(save->defaultSuffix(), QStringLiteral("csv"));
+    QCOMPARE(save->selectedFiles(), QStringList{output});
+    save->reject();
+    QVERIFY(button->isEnabled());
+    QVERIFY(!QFile::exists(output));
+    QVERIFY(!view.findChild<QProgressDialog *>(
+        QStringLiteral("DeveloperDashWareProgressDialog")));
+}
+
+void ConfigDeveloperToolsViewTest::dashWareExportCompletesOfflineAndReportsCounts()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    const QString output = directory.filePath(QStringLiteral("dashware.csv"));
+    QVERIFY(writeFixture(input, dashWareAsciiLog()));
+    ConfigDeveloperToolsView view;
+    view.show();
+    view.ExportDashWareCsv(input, output,
+                           {QStringLiteral(" gps "), QStringLiteral("GPS")});
+    auto *button = tool(view, "CreateDashWareCsvButton");
+    QVERIFY(!button->isEnabled());
+    QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
+    QVERIFY(view.findChild<QProgressDialog *>(
+        QStringLiteral("DeveloperDashWareProgressDialog")));
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 5000);
+    QVERIFY(QFile::exists(output));
+    const QByteArray csv = readFixture(output);
+    QCOMPARE(csv, QByteArray(
+        "GLOBAL_TimeMS,GPS_TimeUS,GPS_Lat,GPS_Lng,\n"
+        "1000,1000000,1.5,2.5,\n"
+        "2000,2000000,3.5,4.5,\n"));
+    QVERIFY(view.Log().contains(QStringLiteral("(GPS)")));
+    QVERIFY(view.Log().contains(QStringLiteral("export completed: 2 rows")));
+    QVERIFY(view.Log().contains(QStringLiteral("4 columns")));
+    QVERIFY(view.Log().contains(QString::number(csv.size())));
+}
+
+void ConfigDeveloperToolsViewTest::dashWareFailurePreservesExistingOutput()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("broken.log"));
+    const QString output = directory.filePath(QStringLiteral("dashware.csv"));
+    const QByteArray sentinel("existing csv must survive");
+    QVERIFY(!QFile::exists(input));
+    QVERIFY(writeFixture(output, sentinel));
+    ConfigDeveloperToolsView view;
+    view.show();
+    view.ExportDashWareCsv(input, output, {});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        tool(view, "CreateDashWareCsvButton")->isEnabled(), 5000);
+    QCOMPARE(readFixture(output), sentinel);
+    QVERIFY(view.Log().contains(QStringLiteral("export failed")));
+    QVERIFY(!view.Log().contains(QStringLiteral("export completed")));
+}
+
+void ConfigDeveloperToolsViewTest::dashWareCancellationAndLifetime_data()
+{
+    QTest::addColumn<QString>("operation");
+    QTest::newRow("cancel") << QStringLiteral("cancel");
+    QTest::newRow("close") << QStringLiteral("close");
+    QTest::newRow("destroy") << QStringLiteral("destroy");
+}
+
+void ConfigDeveloperToolsViewTest::dashWareCancellationAndLifetime()
+{
+    QFETCH(QString, operation);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    const QString output = directory.filePath(QStringLiteral("dashware.csv"));
+    const QString secondOutput = directory.filePath(
+        QStringLiteral("must-not-exist.csv"));
+    const QByteArray sentinel("old output");
+    QVERIFY(writeFixture(input, dashWareAsciiLog(20)));
+    QVERIFY(writeFixture(output, sentinel));
+    QPointer<ConfigDeveloperToolsView> view =
+        new ConfigDeveloperToolsView;
+    view->show();
+    QString logAtClose;
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view->ExportDashWareCsv(input, output, {QStringLiteral("GPS")});
+        view->ExportDashWareCsv(input, secondOutput,
+                                {QStringLiteral("GPS")});
+        QVERIFY(view->Log().contains(QStringLiteral("already active")));
+        auto *progress = view->findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperDashWareProgressDialog"));
+        QVERIFY(progress);
+        if (operation == QStringLiteral("destroy")) {
+            delete view.data();
+        } else if (operation == QStringLiteral("close")) {
+            logAtClose = view->Log();
+            view->close();
+        } else {
+            auto *cancel = progress->findChild<QPushButton *>();
+            QVERIFY(cancel);
+            cancel->click();
+        }
+    }
+    QCoreApplication::processEvents();
+    QCOMPARE(readFixture(output), sentinel);
+    QVERIFY(!QFile::exists(secondOutput));
+    if (operation == QStringLiteral("destroy")) {
+        QVERIFY(view.isNull());
+    } else if (operation == QStringLiteral("close")) {
+        QCOMPARE(view->Log(), logAtClose);
+        view->show();
+        QTRY_VERIFY(tool(*view, "CreateDashWareCsvButton")->isEnabled());
+        delete view.data();
+    } else {
+        QTRY_VERIFY(view->Log().contains(QStringLiteral("export cancelled")));
+        QVERIFY(tool(*view, "CreateDashWareCsvButton")->isEnabled());
+        delete view.data();
+    }
+}
+
+void ConfigDeveloperToolsViewTest::dashWareAndOtherOperationsInterlock()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.log"));
+    const QString output = directory.filePath(QStringLiteral("dashware.csv"));
+    const QString corrections = directory.filePath(QStringLiteral("flight.tlog"));
+    const QString correctionOutput = directory.filePath(
+        QStringLiteral("corrections.dat"));
+    QVERIFY(writeFixture(input, dashWareAsciiLog(20)));
+    QVERIFY(writeFixture(corrections, correctionLog()));
+    VehicleFixture fixture;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.show();
+
+    tool(view, "RebootVehicleButton")->click();
+    auto *consent = confirmation(view);
+    QVERIFY(consent);
+    QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
+    view.ExportDashWareCsv(input, output, {QStringLiteral("GPS")});
+    QVERIFY(!view.findChild<QProgressDialog *>(
+        QStringLiteral("DeveloperDashWareProgressDialog")));
+    consent->button(QMessageBox::Cancel)->click();
+
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view.ExportDashWareCsv(input, output, {QStringLiteral("GPS")});
+        QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+        QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
+        QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+        view.ExtractGpsCorrections(corrections, correctionOutput);
+        view.SplitDataFlashLog(input, 2);
+        QVERIFY(!view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperGpsProgressDialog")));
+        QVERIFY(!view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperSplitProgressDialog")));
+        tool(view, "RebootVehicleButton")->click();
+        QVERIFY(!confirmation(view));
+        QVERIFY(fixture.frames.isEmpty());
+        auto *progress = view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperDashWareProgressDialog"));
+        QVERIFY(progress);
+        progress->findChild<QPushButton *>()->click();
+    }
+    QTRY_VERIFY(tool(view, "CreateDashWareCsvButton")->isEnabled());
+    QTRY_VERIFY(tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QTRY_VERIFY(tool(view, "SplitDataFlashLogButton")->isEnabled());
+    QTRY_VERIFY(tool(view, "RebootVehicleButton")->isEnabled());
+    QVERIFY(!QFile::exists(output));
+    QVERIFY(!QFile::exists(correctionOutput));
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)

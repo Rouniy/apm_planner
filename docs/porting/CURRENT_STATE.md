@@ -24,7 +24,53 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Split DataFlash Log**.
+Latest slice (2026-09-06): **Create DashWare CSV**.
+The existing TOOLS/SETUP Developer action now exports BIN/text LOG offline
+through actual input/types/output dialogs, with MP10 default types
+`GPS;ATT;NTUN;CTUN;MODE;BAT` and `<basename>-dashware.csv`. Worker progress,
+Cancel, close/destruction and GPS/Split/vehicle interlock are wired. Developer
+is now **14/32 working,18 unavailable**, not a complete page.
+
+The bounded raw reader is shared with Split without changing its framing or
+publication rules. CSV keeps first-definition column order including MP10's
+artificial FMT header slot, sparse original-order rows, trailing empty cells,
+wire-format scales, exact integer timestamps and backward clock jumps.
+Time priority is TimeMS, TimeUS/1000, T, zero. Binary mode labels use the same
+first100001 MSG/PARM prescan and an immutable bundled MP10 mode snapshot.
+Quoted strings, explicit NaN/Infinity and no text ERR/EV column spill are
+intentional fixes; conflicting schemas, malformed framing and selected binary
+A fail explicitly. Known ordinary EOF tails and blank text lines warn.
+
+QSaveFile without direct fallback preserves old output on observed failure or
+cancellation. Canonical/symlink guards, two raw passes plus final source hash,
+pre-index second-pass schema matching and duplicate-header rejection prevent
+ordinary path alias and changing-file corruption. Successful explicit Save
+may atomically replace one confirmed regular output; this is not a hostile
+filesystem lock or a power-loss durability guarantee.
+
+Qt5/audio configure/build, focused5/5 (7.60s), **242/242 tests (29.85s)** and
+two production X11 runs exit0. Real pickers, cancellation, sparse CSV bytes
+and all prior GPS/Split/six vehicle paths pass. An independent stdlib reader
+compares5809 rows/36 columns from the real5.275MB BIN with raw records, including
+scaled floats and timestamps; the40-byte XKF5 tail is explicitly reported.
+The105MB/7million-record fixture produces147MB CSV in23.57s at10996KiB max RSS.
+Independent streaming comparison confirms all7million rows/four columns;
+cancellation at25% exits3 without output. See `DATAFLASH_DASHWARE_CSV.md`.
+Network SITL and original logs were not changed;
+runtime fixtures are stopped. Evidence: `/tmp/apm-dashware.iZuEbc/`.
+
+Claude TCP c212/c190–c192 review plus three Codex streams supplied independent
+reference/code checks, backend/UI/runtime work and raw-file verification.
+Root cross-checked disputed mode-prescan/FMT semantics against complete MP10
+control flow and scheduled all builds/tests. Next: **Download MAVFTP File**
+route to the already implemented exact browser, then remaining single-vehicle
+tools (offline APJ defaults/MagFit candidates) and later Signing transitions.
+Settings follows Tools; Swarm stays last. Advanced14 complete+1 partial,
+fixedTools24 plus Signing extension, SETUP46/eight absent reference routes and
+CONFIG15/15 factories/Planner21/64 controls are unchanged. Native platforms,
+reference pixel matching and actual DashWare consumer validation remain open.
+
+Previous slice (2026-09-06): **Split DataFlash Log**.
 The existing TOOLS/SETUP Developer action now works offline: pick BIN or text
 LOG, choose2–1000 pieces (default10), review named default-Cancel consent, then
 run with worker progress/cancel. Developer is now **13/32 working,19 unavailable**.

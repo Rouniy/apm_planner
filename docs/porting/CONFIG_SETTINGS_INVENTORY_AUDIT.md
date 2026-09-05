@@ -57,17 +57,20 @@ Upstream-placeholder Support Proxy stays disabled.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
 
-The separate Developer Tools page has exactly32 MP10 actions, not31. Thirteen
+The separate Developer Tools page has exactly32 MP10 actions, not31. Fourteen
 now have working implementations: the five decoders/shared windows plus Set
 QNH, Adjust Barometer Altitude, Force Accel/Compass Calibrated and Reboot/DFU,
-plus offline Extract GPS Corrections and Split DataFlash Log. Both run off the
-GUI thread with cancellation; Split stages every part before separate
+plus offline Extract GPS Corrections, Split DataFlash Log and Create DashWare
+CSV. All three run off the GUI thread with cancellation; Split stages every part before separate
 no-overwrite publication and reports any partial publication explicitly.
+DashWare preserves sparse raw-record order, source timestamp resets, MP10 schema
+and binary mode labels, with strict parsing and atomic confirmed CSV output.
+Full242/242, actual X11 pickers and independent real/large log checks pass.
 The six vehicle actions require fresh disarmed exact-target consent and report
-matched ACK/parameter echoes or explicit uncertainty. The remaining19 file,
+matched ACK/parameter echoes or explicit uncertainty. The remaining18 file,
 transport and recovery actions stay disabled. This is not additional CONFIG
 route coverage; see `DEVELOPER_VEHICLE_TOOLS.md`, `GPS_CORRECTION_EXTRACTION.md`,
-`DATAFLASH_LOG_SPLIT.md`
+`DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md`
 and the production route audit. Older RX-only Qt logs may omit this station's
 transmitted corrections. Current recording includes submitted typed MAVLink
 frames while enabled, with secret exclusion and unchanged heartbeat-triggered
