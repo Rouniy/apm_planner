@@ -1,10 +1,10 @@
 # MAVLink Signing — transport and key-store foundations
 
-This is **not an enabled vehicle-signing tool yet**. Advanced Tools remains
-14/16. Production transport now binds `apm_mavlink_signing`, but only an internal
-offline `LinkManager::configureSigning` API selects a key for an already
-provisioned vehicle. Required profiles now persist and restore locked before
-connection, but there is no operator UI/provisioning workflow yet. Ordinary
+The **local key manager is available**, but vehicle provisioning/change/disable
+is not. Advanced Tools has14 complete workflows plus this one local-only partial
+workflow. TOOLS and SETUP share the modeless `MavlinkSigningWindow`; it selects
+a key for an already-provisioned OFFLINE connection through `configureSigning`.
+Required profiles persist and restore locked before connection. Ordinary
 unconfigured links are still unprotected: a signature's presence alone
 does not imply authentication. Bootloader Ed25519 signing is a different workflow.
 
@@ -143,18 +143,17 @@ mutates the live signing clock; explicit unverified-signature UI remains a gap.
 
 ## Required next integration gates
 
-1. Connect the persisted fail-closed policy to the operator key-selection UI,
-   including locked/missing/corrupt vault states. The current internal binding
-   must not be advertised as a complete operator security configuration.
-   Locking/deleting a vault key must not silently
+1. Keep local key selection and persisted fail-closed restoration green while
+   adding vehicle transitions. The current local-only UI must not be advertised
+   as a complete vehicle-security workflow. Locking/deleting a vault key must not silently
    turn a protected link unsigned. RX history is RAM-only: process restart admits
    the one-minute new-stream replay window characterized by tests. Persistent RX
    high-water or a documented release policy remains before stronger claims.
-2. Add the modeless native key manager and exact-target provisioning service.
-   Unlock/KDF operations belong off the GUI thread. Separate local key selection
-   for an already signed vehicle from sending a new key over a user-confirmed
-   trusted channel. Add/Use/Delete/Disable/Close, counts, current-key status and
-   explicit locked/corrupt/unknown-key states are required. Lost master password
+2. Add the exact-target provisioning service and reviewed key-change/disable UI.
+   The modeless local vault/key manager and off-thread KDF are implemented;
+   local selection must stay separate from sending a key over a user-confirmed
+   trusted channel. Explicit uncertain/failed vehicle-transition states are
+   required. Lost master password
    has no recovery; never imply that signing encrypts telemetry or provisioning.
 3. Provision only on a fresh exact disarmed target with default-Cancel warning;
    SETUP_SIGNING has no ACK. Model uncertain/timeout outcomes truthfully, preserve
@@ -169,6 +168,48 @@ mutates the live signing clock; explicit unverified-signature UI remains a gap.
 
 The broader port objective remains unchanged: full functionality first,
 recognizable MP10 visuals afterwards, Settings/CONFIG next and Swarm last.
+
+## Local operator UI checkpoint, 2026-09-05
+
+`MavlinkSigningWindow` is a modeless, delete-on-close observer of the application
+vault service. It implements create/confirm, unlock/lock, Add, Delete and
+explicit named-key Use locally. Password/seed inputs are bounded, masked and
+cleared; optional seed visibility resets on submit/lock/close. Exact-case key
+names have quoted escaped tooltips; keys themselves are never displayed.
+Counts and selected profile/fingerprint/key status are metadata. The verified
+packet counter is explicitly labeled shared-key, not falsely per-link.
+Periodic refresh reads cached metadata only and does not rebuild unchanged
+lists or perform vault I/O.
+
+The first local activation warning names the physical connection, full profile
+ID and selected key; Cancel is default. It explains signed-only persistence,
+the already-provisioned-vehicle prerequisite, no supported local reset/rekey
+yet, and that nothing will be sent to a vehicle. Deletion separately warns it
+cannot disable vehicle signing or revoke loaded transport keys. Provision and
+Disable remain disabled with explanations. Closing cancels pending activation
+even before deferred deletion; reopening cannot reuse a closing observer.
+
+An asynchronous activation revalidates QObject identity, physical id, persistent
+profile id, offline state, epoch0 and a runtime revision changed by registration,
+endpoint edits and connect/disconnect. A brief connect-disconnect or offline
+address edit therefore cancels the stale selection. Revision is not persisted.
+`requestKeyByFingerprint` is also available in the worker, bounded to128 keys
+with nonmatch cleansing; this UI still chooses names explicitly.
+
+Qt5/audio build, focused5/5 and full237/237 tests pass (18.67 seconds).
+Production Setup runtime performs actual vault create/add and offline UDP-client
+Use Cancel/Accept, persisted fingerprint, epoch0/no TX, vault Lock retention and
+close/reopen. Both settings and app data are fresh per audit. Real X11 route audit
+and manual Tools/create/add/Cancel/reopen/app-shutdown pass, exit0.
+Evidence: `/tmp/apm-signing-ui.VUTMZC/`. The first focused run's stale closed
+confirmation came from the audit's manual event loop not draining DeferredDelete,
+not from production activation; that helper now matches QApplication's outer loop.
+
+This intentionally differs from MP10's coupled Use/provision and Disable/zero-key
+actions, raw Base64 key grid and duplicate-name replacement. The 24-item MP10
+TOOLS inventory remains intact; Local keys is an additional Qt entry. Advanced
+counts14 complete plus1 partial, never15 complete. Windows/macOS, high-DPI and
+final reference visual matching remain release/polish work.
 
 ## Persisted-profile and asynchronous-vault slice, 2026-09-05
 

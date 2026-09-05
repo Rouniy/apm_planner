@@ -46,12 +46,13 @@ then dispatches Plane to the native Q controller/INS page and Copter/Heli to
 the retained legacy ATC/PSC/WPNAV editor.
 
 The related SETUP `Advanced` launcher is a separate auxiliary-tools inventory:
-all 16 MP10 actions are present, fourteen open working shared tools and two are
-visibly disabled. MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target /
+all16 MP10 actions are present: fourteen complete shared workflows, one local-only
+Signing workflow and one disabled Support Proxy. MAVLink Inspector, Mavlink Mirror, NMEA, Cursor-on-Target /
 TAK, DataFlash Spectrogram, External Guided, Follow Me, Moving Base, Map Tile
 Cache and Proximity reuse working application actions. FFT, Param gen, Anon Log
 and Warning Manager now have native workflows; FFT Setup is also a direct page.
-MAVLink Signing and upstream-placeholder Support Proxy remain unavailable.
+Signing now opens a modeless local vault/key manager; vehicle provisioning and
+disable remain unavailable. Upstream-placeholder Support Proxy stays disabled.
 They must not be counted as working merely because every direct CONFIG route
 has a factory.
 
@@ -67,8 +68,11 @@ Required profiles restore locked before connection; corrupt/missing hinted
 policies stay blocked. The application-owned asynchronous vault service uses
 `mavlink-signing/authkeys.vault`, without implicitly creating a vault. These
 infrastructure settings do not increase the direct Planner-control count.
-Modeless Add/Use/Delete/Disable and provisioning remain gates in
-`MAVLINK_SIGNING_PORT.md`. The master passphrase is never
+Modeless create/unlock/lock/Add/Delete/offline Use locally now work. Vehicle
+provisioning/change/disable remain gates in `MAVLINK_SIGNING_PORT.md`.
+The runtime connection revision used to cancel stale key loads is not persisted.
+No extra QSettings key or full Advanced action is counted for the local UI.
+The master passphrase is never
 persisted; OpenSSL Crypto remains a required build dependency.
 
 Warning Manager persists compatible `warnings.xml` under the writable application

@@ -45,8 +45,9 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     AddToolAction(tr("Map Tile Cache"),
                   QStringLiteral("MapTileCacheButton"),
                   QStringLiteral("actionMapTileCache"));
-    AddUnavailableAction(tr("MAVLink Signing"),
-                         QStringLiteral("MavlinkSigningButton"), notPorted);
+    AddToolAction(tr("MAVLink Signing"),
+                  QStringLiteral("MavlinkSigningButton"),
+                  QStringLiteral("actionMavlinkSigning"), false);
     AddToolAction(tr("FFT"), QStringLiteral("FftButton"),
                   QStringLiteral("actionFftAnalysis"));
     AddToolAction(tr("Spectrogram"),
@@ -62,11 +63,11 @@ ConfigAdvancedView::ConfigAdvancedView(QObject *actionSource,
     AddUnavailableAction(tr("Support Proxy"),
                          QStringLiteral("SupportProxyButton"), notPorted);
 
-    AppendLog(tr("%1 of %2 Mission Planner Advanced tools are available. "
-                 "Unavailable actions remain disabled until their full "
-                 "workflow is ported.")
+    AppendLog(tr("%1 of %2 Mission Planner Advanced tools have complete workflows. "
+                 "%3 additional local-only tool is available; vehicle provisioning "
+                 "and disabling Signing are not yet available.")
                   .arg(m_implementedActionCount)
-                  .arg(ActionCount()));
+                  .arg(ActionCount()).arg(m_partialActionCount));
 }
 
 int ConfigAdvancedView::ImplementedActionCount() const
@@ -76,7 +77,7 @@ int ConfigAdvancedView::ImplementedActionCount() const
 
 QPushButton *ConfigAdvancedView::AddToolAction(
     const QString &label, const QString &buttonObjectName,
-    const QString &actionObjectName)
+    const QString &actionObjectName, bool completeWorkflow)
 {
     QAction *action = m_actionSource
         ? m_actionSource->findChild<QAction *>(actionObjectName)
@@ -100,7 +101,8 @@ QPushButton *ConfigAdvancedView::AddToolAction(
             AppendLog(tr("Opened %1.").arg(label));
         },
         action->isEnabled(), action->toolTip());
-    ++m_implementedActionCount;
+    if (completeWorkflow) ++m_implementedActionCount;
+    else ++m_partialActionCount;
 
     connect(action, &QAction::changed, button,
             [button, guardedAction]() {

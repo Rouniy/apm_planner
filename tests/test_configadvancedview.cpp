@@ -55,13 +55,17 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QAction *paramGen = makeAction(&actionSource, QStringLiteral("actionParameterMetaDataRegeneration"));
     QAction *anonAction = makeAction(&actionSource, QStringLiteral("actionAnonLog"));
     QAction *warningAction = makeAction(&actionSource, QStringLiteral("actionWarningManager"));
+    QAction *signingAction = makeAction(
+        &actionSource, QStringLiteral("actionMavlinkSigning"));
 
     ConfigAdvancedView view(&actionSource);
     QCOMPARE(view.objectName(), QStringLiteral("ConfigAdvancedView"));
     QCOMPARE(view.Title(), QStringLiteral("Advanced"));
     QCOMPARE(view.ActionCount(), 16);
     QCOMPARE(view.ImplementedActionCount(), 14);
+    QCOMPARE(view.PartialActionCount(), 1);
     QVERIFY(view.Log().contains(QStringLiteral("14 of 16")));
+    QVERIFY(view.Log().contains(QStringLiteral("1 additional local-only tool")));
     QSignalSpy warningSpy(warningAction, &QAction::triggered);
     auto *warningButton = view.findChild<QPushButton *>(QStringLiteral("WarningManagerButton"));
     QVERIFY(warningButton && warningButton->isEnabled());
@@ -159,7 +163,11 @@ void ConfigAdvancedViewTest::mirrorsMissionPlannerInventoryAndRoutesSharedAction
     QSignalSpy anonSpy(anonAction, &QAction::triggered);
     anonLog->click();
     QCOMPARE(anonSpy.count(), 1);
-    QVERIFY(signing && !signing->isEnabled());
+    QSignalSpy signingSpy(signingAction, &QAction::triggered);
+    QVERIFY(signing && signing->isEnabled());
+    signing->click();
+    QCOMPARE(signingSpy.count(), 1);
+    QVERIFY(view.Log().contains(QStringLiteral("Opened MAVLink Signing")));
 }
 
 void ConfigAdvancedViewTest::tracksSharedActionAvailability()
@@ -167,6 +175,8 @@ void ConfigAdvancedViewTest::tracksSharedActionAvailability()
     QWidget actionSource;
     QAction *inspector = makeAction(
         &actionSource, QStringLiteral("actionMavlinkInspector"));
+    QAction *signing = makeAction(
+        &actionSource, QStringLiteral("actionMavlinkSigning"));
     makeAction(&actionSource, QStringLiteral("actionMavlinkMirror"));
     makeAction(&actionSource, QStringLiteral("actionNmeaOutput"));
     makeAction(&actionSource, QStringLiteral("actionCotOutput"));
@@ -190,6 +200,17 @@ void ConfigAdvancedViewTest::tracksSharedActionAvailability()
 
     inspector->setEnabled(true);
     QVERIFY(button->isEnabled());
+
+    auto *signingButton = view.findChild<QPushButton *>(
+        QStringLiteral("MavlinkSigningButton"));
+    QVERIFY(signingButton && signingButton->isEnabled());
+    signing->setToolTip(QStringLiteral("Unlock the local signing vault"));
+    signing->setEnabled(false);
+    QVERIFY(!signingButton->isEnabled());
+    QCOMPARE(signingButton->toolTip(),
+             QStringLiteral("Unlock the local signing vault"));
+    signing->setEnabled(true);
+    QVERIFY(signingButton->isEnabled());
 }
 
 void ConfigAdvancedViewTest::failsClosedWhenApplicationActionsAreMissing()
@@ -199,6 +220,7 @@ void ConfigAdvancedViewTest::failsClosedWhenApplicationActionsAreMissing()
 
     QCOMPARE(view.ActionCount(), 16);
     QCOMPARE(view.ImplementedActionCount(), 0);
+    QCOMPARE(view.PartialActionCount(), 0);
     for (QPushButton *button : view.findChildren<QPushButton *>()) {
         QVERIFY(!button->isEnabled());
         QVERIFY(!button->toolTip().isEmpty());

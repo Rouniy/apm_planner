@@ -18,14 +18,17 @@ public:
                                 QWidget *parent = nullptr);
 
     int ImplementedActionCount() const;
+    int PartialActionCount() const { return m_partialActionCount; }
 
 private:
     QPushButton *AddToolAction(const QString &label,
                                const QString &buttonObjectName,
-                               const QString &actionObjectName);
+                               const QString &actionObjectName,
+                               bool completeWorkflow = true);
 
     QPointer<QObject> m_actionSource;
     int m_implementedActionCount = 0;
+    int m_partialActionCount = 0;
 };
 
 #endif // CONFIGADVANCEDVIEW_H

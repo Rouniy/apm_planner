@@ -1,9 +1,12 @@
 #include "SetupRouteRuntimeAudit.h"
 #include "ui/ConfigFFTWindow.h"
 #include "ui/configuration/ConfigFFTView.h"
+#include "ui/configuration/ConfigAdvancedView.h"
 #include "ui/configuration/ParameterMetaDataRegenerationWindow.h"
 #include "ui/AnonLogWindow.h"
+#include "ui/MavlinkSigningWindow.h"
 #include "ui/WarningManagerWindow.h"
+#include "services/MavAuthKeyService.h"
 #include "services/WarningEngine.h"
 #include "ui/flightdata/QuickViewWidget.h"
 #include "ui/Loghandling/LogAnonymizeService.h"
@@ -15,14 +18,17 @@
 #include "ui/MainWindow.h"
 #include "comm/LinkInterface.h"
 #include "comm/LinkManager.h"
+#include "comm/LinkManagerFactory.h"
 #include "comm/MAVLinkProtocol.h"
 #include "comm/VehicleTargetManager.h"
+#include "services/MavlinkSigningProfiles.h"
 #include "configuration.h"
 #include "UAS.h"
 #include "UASManager.h"
 #include "ui/configuration/DisplayViewProfile.h"
 #include "ui/configuration/SetupView.h"
 #include "ui/configuration/PlannerStartupUdpOptions.h"
+#include "AppPaths.h"
 
 #include <QAbstractButton>
 #include <QAbstractItemView>
@@ -31,13 +37,22 @@
 #include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDebug>
+#include <QDir>
+#include <QEvent>
+#include <QEventLoop>
+#include <QElapsedTimer>
+#include <QFileInfo>
 #include <QGroupBox>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QMenu>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProgressBar>
@@ -47,7 +62,10 @@
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTextEdit>
+#include <QThread>
 #include <QWidget>
+
+#include <functional>
 
 namespace {
 
@@ -387,6 +405,22 @@ public:
 private:
     int m_failures = 0;
 };
+
+bool WaitFor(const std::function<bool()> &condition, int timeoutMs = 6000)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (!condition() && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+        // This audit drives events without QApplication::exec(). Match the
+        // normal outer loop's deferred destruction of non-blocking dialogs.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QThread::msleep(1);
+    }
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 25);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    return condition();
+}
 
 class DisplayProfileRestore final
 {
@@ -853,6 +887,7 @@ int RunSetupRouteRuntimeAudit()
     });
     const QStringList sharedActionNames = {
         QStringLiteral("actionMavlinkInspector"),
+        QStringLiteral("actionMavlinkSigning"),
         QStringLiteral("actionMavlinkMirror"),
         QStringLiteral("actionNmeaOutput"),
         QStringLiteral("actionCotOutput"),
@@ -904,6 +939,7 @@ int RunSetupRouteRuntimeAudit()
 
     const QStringList advancedButtons = {
         QStringLiteral("MAVLinkInspectorButton"),
+        QStringLiteral("MavlinkSigningButton"),
         QStringLiteral("MavlinkMirrorButton"),
         QStringLiteral("NmeaButton"),
         QStringLiteral("CotTakButton"),
@@ -925,6 +961,11 @@ int RunSetupRouteRuntimeAudit()
     }
     QWidget *advancedPage = backstage->page(
         QStringLiteral("ConfigAdvancedView"));
+    auto *advancedTools = qobject_cast<ConfigAdvancedView *>(advancedPage);
+    result.Expect(advancedTools && advancedTools->ActionCount() == 16
+                      && advancedTools->ImplementedActionCount() == 14
+                      && advancedTools->PartialActionCount() == 1,
+                  QStringLiteral("Advanced Tools did not preserve its 14 complete + 1 local-only workflow status"));
     for (const QString &objectName : advancedButtons) {
         QAbstractButton *tool = advancedPage
             ? advancedPage->findChild<QAbstractButton *>(objectName) : nullptr;
@@ -993,6 +1034,294 @@ int RunSetupRouteRuntimeAudit()
     // The production Advanced action must open independent, concrete windows,
     // not merely satisfy a catalogue of synthetic enabled QActions.
     auto *main = MainWindow::instance();
+    auto *signingAction = main->findChild<QAction *>(
+        QStringLiteral("actionMavlinkSigning"));
+    auto *toolsMenu = main->findChild<QMenu *>(QStringLiteral("menuTools"));
+    const QString vaultPath = QDir(AppPaths::writableDataDirectory())
+        .filePath(QStringLiteral("mavlink-signing/authkeys.vault"));
+    const QFileInfo vaultBefore(vaultPath);
+    const bool vaultExistedBefore = vaultBefore.exists();
+    const qint64 vaultSizeBefore = vaultBefore.size();
+    const QDateTime vaultModifiedBefore = vaultBefore.lastModified();
+    const auto vaultIsUnchanged = [&]() {
+        const QFileInfo current(vaultPath);
+        return current.exists() == vaultExistedBefore
+            && (!vaultExistedBefore
+                || (current.size() == vaultSizeBefore
+                    && current.lastModified() == vaultModifiedBefore));
+    };
+    result.Expect(signingAction && signingAction->isEnabled()
+                      && signingAction->text().contains(
+                          QStringLiteral("Local keys"),
+                          Qt::CaseInsensitive)
+                      && toolsMenu
+                      && toolsMenu->actions().contains(signingAction),
+                  QStringLiteral("MAVLink Signing local tool is absent from TOOLS"));
+    result.Expect(!vaultExistedBefore,
+                  QStringLiteral("isolated Signing runtime audit started with an existing vault"));
+    QPointer<MavAuthKeyService> signingService = LinkManager::instance()
+        ? LinkManager::instance()->mavAuthKeyService() : nullptr;
+    result.Expect(signingService
+                      && signingService->parent() == LinkManager::instance()
+                      && !signingService->busy(),
+                  QStringLiteral("signing vault service is not application-owned and idle"));
+    if (signingAction) {
+        signingAction->trigger();
+        auto *window = main->findChild<MavlinkSigningWindow *>();
+        result.Expect(window && window->isWindow() && window->isVisible()
+                          && window->windowModality() == Qt::NonModal
+                          && window->testAttribute(Qt::WA_DeleteOnClose)
+                          && SemanticContentScore(window) >= 10,
+                      QStringLiteral("MAVLink Signing did not open a concrete modeless window"));
+        if (window) {
+            auto *banner = window->findChild<QLabel *>(
+                QStringLiteral("SigningLocalOnlyBanner"));
+            auto *master = window->findChild<QLineEdit *>(
+                QStringLiteral("SigningMasterPassword"));
+            auto *confirmation = window->findChild<QLineEdit *>(
+                QStringLiteral("SigningConfirmPassword"));
+            auto *seed = window->findChild<QLineEdit *>(
+                QStringLiteral("SigningKeySeed"));
+            auto *provision = window->findChild<QAbstractButton *>(
+                QStringLiteral("SigningProvisionVehicle"));
+            auto *disable = window->findChild<QAbstractButton *>(
+                QStringLiteral("SigningDisableVehicle"));
+            result.Expect(banner
+                              && banner->text().contains(
+                                  QStringLiteral("LOCAL KEYS ONLY"))
+                              && banner->text().contains(
+                                  QStringLiteral("does not send keys"),
+                                  Qt::CaseInsensitive),
+                          QStringLiteral("Signing window does not disclose its local-only boundary"));
+            result.Expect(master && confirmation && seed
+                              && master->echoMode() == QLineEdit::Password
+                              && confirmation->echoMode() == QLineEdit::Password
+                              && seed->echoMode() == QLineEdit::Password,
+                          QStringLiteral("Signing window exposes a password or seed"));
+            result.Expect(provision && disable
+                              && !provision->isEnabled()
+                              && !disable->isEnabled()
+                              && !provision->toolTip().isEmpty()
+                              && !disable->toolTip().isEmpty(),
+                          QStringLiteral("unported vehicle signing mutations are actionable or ambiguous"));
+            result.Expect(vaultIsUnchanged(),
+                          QStringLiteral("opening Signing created or changed a vault"));
+
+            LinkManager *const linkManager = LinkManager::instance();
+            LinkManager::ConnectionProfile profile;
+            profile.id = MavlinkSigningProfiles::newProfileId();
+            const int signingLinkId = LinkManagerFactory::addUdpClientConnection(
+                QHostAddress::LocalHost, 61977, profile);
+            QPointer<LinkInterface> signingLink = linkManager
+                ? linkManager->getLink(signingLinkId) : nullptr;
+            int submittedForFixture = 0;
+            if (linkManager) {
+                QObject::connect(linkManager,
+                        &LinkManager::mavlinkMessageSubmitted, window,
+                        [&submittedForFixture, signingLinkId](
+                                    int linkId, qulonglong,
+                                    const mavlink_message_t &) {
+                    if (linkId == signingLinkId) ++submittedForFixture;
+                });
+            }
+            result.Expect(signingLinkId >= 0 && signingLink
+                              && !signingLink->isConnected()
+                              && linkManager->currentPhysicalLinkSession(
+                                  signingLinkId) == 0
+                              && linkManager->connectionProfile(signingLinkId).id
+                                  == profile.id,
+                          QStringLiteral("Signing audit UDP client was not registered as an offline physical profile"));
+
+            auto *create = window->findChild<QAbstractButton *>(
+                QStringLiteral("SigningCreateVault"));
+            auto *add = window->findChild<QAbstractButton *>(
+                QStringLiteral("SigningAddKey"));
+            auto *lock = window->findChild<QAbstractButton *>(
+                QStringLiteral("SigningLockVault"));
+            auto *name = window->findChild<QLineEdit *>(
+                QStringLiteral("SigningKeyName"));
+            auto *keys = window->findChild<QListWidget *>(
+                QStringLiteral("SigningKeyList"));
+            auto *connections = window->findChild<QComboBox *>(
+                QStringLiteral("SigningConnection"));
+            auto *use = window->findChild<QAbstractButton *>(
+                QStringLiteral("SigningUseLocally"));
+            const bool signingControlsPresent = signingService && master
+                && confirmation && seed && create && add && lock && name
+                && keys && connections && use && signingLink;
+            result.Expect(signingControlsPresent,
+                          QStringLiteral("Signing local activation controls are incomplete"));
+            if (signingControlsPresent && !vaultExistedBefore) {
+                const QString masterPassword =
+                    QStringLiteral("runtime-audit-master-password");
+                const QString keyName =
+                    QStringLiteral("runtime-audit-local-key");
+                master->setText(masterPassword);
+                confirmation->setText(masterPassword);
+                create->click();
+                result.Expect(WaitFor([&] {
+                                  return signingService
+                                      && !signingService->busy()
+                                      && signingService->isUnlocked();
+                              }),
+                              QStringLiteral("Signing vault was not created asynchronously"));
+
+                name->setText(keyName);
+                seed->setText(QStringLiteral(
+                    "runtime audit deterministic signing seed"));
+                add->click();
+                result.Expect(WaitFor([&] {
+                                  return signingService
+                                      && !signingService->busy()
+                                      && signingService->keyNames().contains(
+                                          keyName);
+                              }),
+                              QStringLiteral("Signing key was not added asynchronously"));
+
+                const QString fixtureName = signingLink
+                    ? signingLink->getName() : QString();
+                const QString fixtureLabel = QStringLiteral("%1 [%2]")
+                    .arg(fixtureName, profile.id.left(12));
+                result.Expect(WaitFor([&] {
+                                  return connections->findText(
+                                      fixtureLabel, Qt::MatchExactly) >= 0;
+                              }),
+                              QStringLiteral("Signing window did not discover the offline UDP profile"));
+                const int connectionIndex = connections->findText(
+                    fixtureLabel, Qt::MatchExactly);
+                if (connectionIndex >= 0) {
+                    connections->setCurrentIndex(connectionIndex);
+                }
+                const auto keyItems = keys->findItems(
+                    keyName, Qt::MatchExactly);
+                if (!keyItems.isEmpty()) keys->setCurrentItem(keyItems.first());
+                result.Expect(connectionIndex >= 0 && !keyItems.isEmpty()
+                                  && use->isEnabled(),
+                              QStringLiteral("Signing key/profile selection is not actionable while offline"));
+
+                use->click();
+                QPointer<QMessageBox> firstConfirmation;
+                result.Expect(WaitFor([&] {
+                                  firstConfirmation = window->findChild<QMessageBox *>(
+                                      QStringLiteral("SigningUseConfirmation"));
+                                  return firstConfirmation
+                                      && firstConfirmation->isVisible();
+                              }),
+                              QStringLiteral("first local activation omitted its warning"));
+                if (firstConfirmation) {
+                    result.Expect(firstConfirmation->defaultButton()
+                                      == firstConfirmation->button(
+                                          QMessageBox::Cancel)
+                                      && firstConfirmation->escapeButton()
+                                          == firstConfirmation->button(
+                                              QMessageBox::Cancel),
+                                  QStringLiteral("Signing activation warning is not default-Cancel"));
+                    firstConfirmation->button(QMessageBox::Cancel)->click();
+                    WaitFor([&] { return firstConfirmation.isNull(); });
+                }
+                result.Expect(!linkManager->signingRequired(signingLinkId)
+                                  && linkManager->currentPhysicalLinkSession(
+                                      signingLinkId) == 0
+                                  && submittedForFixture == 0,
+                              QStringLiteral("cancelling local Signing changed policy, connected, or transmitted"));
+
+                use->click();
+                QPointer<QMessageBox> acceptedConfirmation;
+                result.Expect(WaitFor([&] {
+                                  acceptedConfirmation = window->findChild<QMessageBox *>(
+                                      QStringLiteral("SigningUseConfirmation"));
+                                  return acceptedConfirmation
+                                      && acceptedConfirmation->isVisible();
+                              }),
+                              QStringLiteral("confirmed local activation warning did not open"));
+                if (acceptedConfirmation) {
+                    acceptedConfirmation->button(QMessageBox::Yes)->click();
+                }
+                result.Expect(WaitFor([&] {
+                                  const auto status = linkManager
+                                      ->signingManager()->status(signingLinkId);
+                                  return signingService
+                                      && !signingService->busy()
+                                      && linkManager->signingRequired(signingLinkId)
+                                      && linkManager->signingReady(signingLinkId)
+                                      && status.protectedLink
+                                      && status.keyAvailable;
+                              }),
+                              QStringLiteral("accepted local Signing key was not activated"));
+                const auto activeStatus = linkManager->signingManager()
+                    ->status(signingLinkId);
+                QSettings policySettings;
+                const auto savedPolicy = MavlinkSigningProfiles::load(
+                    policySettings, profile.id, true);
+                result.Expect(savedPolicy.required
+                                  && savedPolicy.error.isEmpty()
+                                  && savedPolicy.fingerprint
+                                      == QByteArray::fromHex(
+                                          activeStatus.keyFingerprint.toLatin1())
+                                  && activeStatus.keyName == keyName
+                                  && linkManager->currentPhysicalLinkSession(
+                                      signingLinkId) == 0
+                                  && signingLink && !signingLink->isConnected()
+                                  && submittedForFixture == 0,
+                              QStringLiteral("local Signing activation was not persisted or crossed the offline/no-TX boundary"));
+
+                lock->click();
+                result.Expect(WaitFor([&] {
+                                  return signingService
+                                      && !signingService->busy()
+                                      && !signingService->isUnlocked();
+                              }),
+                              QStringLiteral("Signing vault did not lock asynchronously"));
+                const auto lockedStatus = linkManager->signingManager()
+                    ->status(signingLinkId);
+                result.Expect(lockedStatus.protectedLink
+                                  && lockedStatus.keyAvailable
+                                  && linkManager->signingRequired(signingLinkId)
+                                  && linkManager->signingReady(signingLinkId)
+                                  && submittedForFixture == 0,
+                              QStringLiteral("locking the vault silently removed active link protection"));
+            }
+
+            QPointer<MavlinkSigningWindow> original(window);
+            const QFileInfo vaultBeforeClose(vaultPath);
+            const bool vaultExistedBeforeClose = vaultBeforeClose.exists();
+            const qint64 vaultSizeBeforeClose = vaultBeforeClose.size();
+            const QDateTime vaultModifiedBeforeClose =
+                vaultBeforeClose.lastModified();
+            signingAction->trigger();
+            result.Expect(main->findChildren<MavlinkSigningWindow *>().size() == 1
+                              && main->findChild<MavlinkSigningWindow *>()
+                                  == original.data(),
+                          QStringLiteral("MAVLink Signing opened duplicate local observers"));
+            window->close();
+            QCoreApplication::sendPostedEvents(nullptr,
+                                                QEvent::DeferredDelete);
+            QCoreApplication::processEvents(QEventLoop::AllEvents);
+            result.Expect(original.isNull() && signingService
+                              && signingService->parent()
+                                  == LinkManager::instance()
+                              && QFileInfo(vaultPath).exists()
+                                  == vaultExistedBeforeClose
+                              && QFileInfo(vaultPath).size()
+                                  == vaultSizeBeforeClose
+                              && QFileInfo(vaultPath).lastModified()
+                                  == vaultModifiedBeforeClose,
+                          QStringLiteral("closing Signing destroyed its service or changed the vault"));
+            signingAction->trigger();
+            auto *reopened = main->findChild<MavlinkSigningWindow *>();
+            result.Expect(reopened && reopened != original.data()
+                              && reopened->isVisible()
+                              && signingService == LinkManager::instance()
+                                  ->mavAuthKeyService(),
+                          QStringLiteral("MAVLink Signing did not safely reopen on its application service"));
+            delete reopened;
+            if (signingLinkId >= 0
+                && linkManager->getLink(signingLinkId) == signingLink) {
+                linkManager->removeLink(signingLinkId);
+            }
+        }
+    }
+
     QAction *fftAction = main->findChild<QAction *>(
         QStringLiteral("actionFftAnalysis"));
     result.Expect(fftAction && fftAction->isEnabled(),

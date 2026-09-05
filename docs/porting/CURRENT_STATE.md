@@ -24,7 +24,43 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-05): **Persisted locked Signing profiles and async vault**.
+Latest slice (2026-09-05): **Modeless local Signing key manager**.
+TOOLS now includes an explicit `MAVLink Signing — Local keys` extension, and
+SETUP Advanced opens the same modeless observer. Fourteen full Advanced
+workflows remain; Signing adds **one working local-only partial workflow**,
+while Support Proxy remains unavailable. The fixed MP10 top-level inventory
+stays24; the new local-keys entry is a clearly named Qt extension.
+
+The window creates/unlocks/locks the application-owned encrypted vault, adds
+and deletes named keys, and selects a key for an already-provisioned OFFLINE
+physical connection. First protection and deletion require default-Cancel
+confirmation. Inputs are masked and cleared, seed visibility is explicit and
+reset, names/status are non-secret metadata, and no vehicle command is sent.
+Provider and activation callbacks revalidate physical object/id/profile plus a
+runtime edit/connect/disconnect revision. Close cancels pending local activation,
+not the application-owned vault; locking it does not revoke transport keys.
+The worker also supports bounded fingerprint lookup without exporting every key
+to the GUI; the current window deliberately uses explicit named-key selection.
+
+Qt5/audio build and **237/237 tests pass (18.67 seconds)**; focused tests5/5.
+The production runtime creates a fresh vault through the real window, adds a
+fixture key, exercises Cancel/Accept on an offline UDP-client profile, verifies
+persisted protection with epoch0/no TX, locks and reopens. The same full route
+audit passes X11. Manual X11 verifies Tools opening, masked create/add,
+named default-Cancel warning, unchanged policy after Cancel, close/reopen with
+the same unlocked vault and application shutdown with the window open (exit0).
+Evidence: `/tmp/apm-signing-ui.VUTMZC/`. No test window remains and no network
+SITL key was changed. The initial4/5 focused run exposed the audit's missing
+DeferredDelete drain after Cancel, now fixed; production widget tests already
+passed. Claude TCP c203/c204 and three Codex agents contributed independent
+review, widget/backend work and production-route coverage.
+
+Next: exact fresh-disarmed no-ACK provisioning and reviewed key-change/disable
+transitions, then isolated non-COMM_0 signed SITL and native-platform gates.
+Do not count Signing as a complete Advanced workflow yet. Settings/CONFIG
+remains next after single-vehicle tools; Swarm remains last.
+
+Previous slice (2026-09-05): **Persisted locked Signing profiles and async vault**.
 Manual UUID/startup-UDP identities and strict fingerprint/required-hint metadata
 now restore before any factory connection. Missing/corrupt policies, duplicate
 profiles and manual/startup port collisions stay blocked, including direct
@@ -99,16 +135,13 @@ an outdated Inspector audit checksum expectation; it now checks exact submitted
 bytes against the final wire frame. Codex review also added a 256-context lifetime
 cap without eviction, and Claude TCP c198/c199/c146 reviewed the final contracts.
 
-**Signing still has no usable operator dialog/provisioning workflow.** Only the
-internal offline `configureSigning` API binds an already provisioned vehicle.
-Protected-profile/key-selection policy is not persisted across app restart yet;
-normal UI-created links remain unprotected and a signature alone is not proof
-of authentication. Advanced remains **14/16**, SETUP **46 pages / eight absent
-reference routes**, CONFIG **15/15 factories, Planner 21/64 controls**.
-Next: fail-closed persisted protection/locked-vault startup, off-thread unlock
-and modeless Add/Use/Delete/Disable, exact fresh-disarmed no-ACK provisioning,
-then non-COMM_0 SITL enable/use/change/disable and X11/native-platform evidence.
-Do not enable the Signing action or vehicle-side signing before these gates.
+At that transport-only checkpoint, the operator dialog and persisted policy
+were still missing; the later checkpoints above supersede those gaps.
+Ordinary unconfigured links remain unprotected and a signature alone is not
+proof of authentication. SETUP remains **46 pages / eight absent reference
+routes**, CONFIG **15/15 factories, Planner 21/64 controls**. Vehicle provisioning,
+key-change/disable and non-COMM_0 SITL/native-platform release gates remain open;
+the local-only Signing window is not a claim that those transitions are complete.
 RX restart replay window, power-loss durability and historical binary-log secret
 sanitization remain explicit limits in `MAVLINK_SIGNING_PORT.md`.
 

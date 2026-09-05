@@ -88,6 +88,7 @@ public:
         QString id;
         bool signingRequired = false;
         QString error;
+        quint64 revision = 0; // Runtime edit/lifecycle fence; never persisted.
     };
     explicit LinkManager(QObject *parent = nullptr);
     static LinkManager* instance();
@@ -244,6 +245,7 @@ private:
     // enable switch effective on the next restart.
     QSet<int> m_startupUdpLinkIds;
     QHash<int, ConnectionProfile> m_connectionProfiles;
+    quint64 m_nextConnectionRevision = 0;
     QString m_connectionRestoreError;
     MavAuthKeyService *m_mavAuthKeyService = nullptr;
     QScopedPointer<MAVLinkDecoder> m_mavlinkDecoder;

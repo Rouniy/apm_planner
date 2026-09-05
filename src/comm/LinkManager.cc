@@ -1144,6 +1144,7 @@ void LinkManager::addLink(LinkInterface *link, const ConnectionProfile &requeste
         if (profile.error.isEmpty()) profile.error = tr("Cannot restore required signing policy.");
     }
     if (!profile.error.isEmpty()) profile.signingRequired = true;
+    profile.revision = ++m_nextConnectionRevision;
     m_connectionProfiles.insert(linkId, profile);
     m_exactLinkTransmitter->setSigningRequired(linkId, profile.signingRequired);
     m_connectionMap.insert(linkId, link);
@@ -1461,13 +1462,16 @@ void LinkManager::disconnectLink(int index)
 
 void LinkManager::linkUpdated(LinkInterface *link)
 {
+    if (!link || getLink(link->getId()) != link) return;
+    const int id = link->getId();
+    const QPointer<LinkInterface> guard(link);
     // Editing an automatically-created listener turns it into a manual link;
     // otherwise the visible change would be silently discarded on shutdown.
-    if (link) {
-        m_startupUdpLinkIds.remove(link->getId());
-    }
+    auto profile = m_connectionProfiles.find(id);
+    if (profile != m_connectionProfiles.end()) profile->revision = ++m_nextConnectionRevision;
+    m_startupUdpLinkIds.remove(id);
     emit linkChanged(link);
-    emit linkChanged(link->getId());
+    if (guard && getLink(id) == guard.data()) emit linkChanged(id);
 }
 
 QString LinkManager::getLinkName(int linkid)
@@ -1825,6 +1829,7 @@ void LinkManager::linkConnected(LinkInterface* link)
         return;
     }
     const int linkId = link->getId();
+    m_connectionProfiles[linkId].revision = ++m_nextConnectionRevision;
     if (m_shuttingDown || !signingReady(linkId)) {
         disconnectLink(linkId);
         return;
@@ -1853,6 +1858,7 @@ void LinkManager::linkDisonnected(LinkInterface* link)
     QLOG_DEBUG() << "LinkManager::linkDisonnected: "
                  << linkName << linkId;
     if (m_connectionMap.value(linkId, nullptr) == link) {
+        m_connectionProfiles[linkId].revision = ++m_nextConnectionRevision;
         // A live LinkInterface may reconnect under the same integer id. Treat
         // every physical disconnect as an epoch boundary immediately: an old
         // heartbeat/lease must never authorize commands to the next peer.

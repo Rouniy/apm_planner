@@ -33,6 +33,10 @@ public:
     // busy() remains true during the callback. Service destruction cancels
     // delivery; shutdown permits a pending callback only with failure/no key.
     quint64 requestKey(const QString &name, KeyCallback callback);
+    // Bounded worker-side lookup by the raw 32-byte SHA-256 fingerprint of a
+    // derived key. Aliases remain metadata and are not disclosed to callback.
+    quint64 requestKeyByFingerprint(const QByteArray &fingerprint,
+                                    KeyCallback callback);
 
     bool busy() const;
     bool isUnlocked() const;
@@ -53,7 +57,8 @@ private:
     struct State;
     std::unique_ptr<State> m_state;
     quint64 submit(int operation, const QString &name, const QString &secret,
-                   KeyCallback callback = {});
+                   KeyCallback callback = {},
+                   const QByteArray &fingerprint = {});
     quint64 refuse(const QString &error);
     void complete(quint64 token);
 };

@@ -156,9 +156,9 @@ int main(int argc, char *argv[])
         }
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                            setupRouteAuditSettings->path());
-        if (signingTransportAuditRequested) {
-            qputenv("APM_PLANNER_HOME", setupRouteAuditSettings->path().toUtf8());
-        }
+        // Every production audit uses fresh app data too: the local Signing
+        // dialog must never create/unlock a vault from an earlier test/user run.
+        qputenv("APM_PLANNER_HOME", setupRouteAuditSettings->path().toUtf8());
     }
 #endif
 

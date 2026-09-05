@@ -1,6 +1,7 @@
 #include "MavAuthKeyService.h"
 #include "MavAuthKeyStore.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QMutex>
 #include <QMutexLocker>
@@ -12,7 +13,10 @@
 #include <utility>
 
 namespace {
-enum Operation { Create, Unlock, AddSeed, RemoveKey, Lock, RequestKey };
+enum Operation {
+    Create, Unlock, AddSeed, RemoveKey, Lock, RequestKey,
+    RequestKeyByFingerprint
+};
 
 void cleanse(QByteArray &bytes)
 {
@@ -57,7 +61,14 @@ struct Job final
     QStringList names;
     QString error;
     QByteArray key;
-    ~Job() { cleanse(secret); cleanse(key); }
+    QByteArray fingerprint;
+    ~Job() { cleanse(secret); cleanse(key); cleanse(fingerprint); }
+};
+
+struct CleansedBytes final
+{
+    QByteArray bytes;
+    ~CleansedBytes() { cleanse(bytes); }
 };
 }
 
@@ -101,6 +112,49 @@ protected:
                 case RemoveKey: job->success = store.removeKey(job->name, &job->error); break;
                 case Lock: store.lock(); job->success = true; break;
                 case RequestKey: job->success = store.key(job->name, &job->key, &job->error); break;
+                case RequestKeyByFingerprint: {
+                    const QStringList keyNames = store.keyNames();
+                    if (!store.isUnlocked()) {
+                        job->error = QStringLiteral(
+                            "The signing-key vault is locked.");
+                        break;
+                    }
+                    if (keyNames.size() > MavAuthKeyStore::MaximumKeys) {
+                        job->error = QStringLiteral(
+                            "The signing-key vault exceeds its bounded key limit.");
+                        break;
+                    }
+                    for (const QString &keyName : keyNames) {
+                        CleansedBytes candidate;
+                        QString candidateError;
+                        if (!store.key(
+                                keyName, &candidate.bytes,
+                                &candidateError)) {
+                            job->error = candidateError.isEmpty()
+                                ? QStringLiteral(
+                                    "A signing key could not be inspected safely.")
+                                : candidateError;
+                            break;
+                        }
+                        const QByteArray fingerprint = QCryptographicHash::hash(
+                            candidate.bytes, QCryptographicHash::Sha256);
+                        const bool matches = fingerprint.size() == job->fingerprint.size()
+                            && CRYPTO_memcmp(
+                                   fingerprint.constData(),
+                                   job->fingerprint.constData(),
+                                   size_t(fingerprint.size())) == 0;
+                        if (matches) {
+                            job->key = std::move(candidate.bytes);
+                            job->success = true;
+                            break;
+                        }
+                    }
+                    if (!job->success && job->error.isEmpty()) {
+                        job->error = QStringLiteral(
+                            "No unlocked signing key matches the required fingerprint.");
+                    }
+                    break;
+                }
                 }
                 job->unlocked = store.isUnlocked();
                 job->names = store.keyNames();
@@ -174,6 +228,12 @@ quint64 MavAuthKeyService::lock()
 { return submit(Lock, {}, {}); }
 quint64 MavAuthKeyService::requestKey(const QString &name, KeyCallback callback)
 { return submit(RequestKey, name, {}, std::move(callback)); }
+quint64 MavAuthKeyService::requestKeyByFingerprint(
+    const QByteArray &fingerprint, KeyCallback callback)
+{
+    return submit(RequestKeyByFingerprint, {}, {}, std::move(callback),
+                  fingerprint);
+}
 
 bool MavAuthKeyService::busy() const { return bool(m_state->job); }
 bool MavAuthKeyService::isUnlocked() const { return m_state->unlocked; }
@@ -189,8 +249,9 @@ quint64 MavAuthKeyService::refuse(const QString &error)
     return 0;
 }
 
-quint64 MavAuthKeyService::submit(int operation, const QString &name, const QString &secret,
-                                KeyCallback callback)
+quint64 MavAuthKeyService::submit(
+    int operation, const QString &name, const QString &secret,
+    KeyCallback callback, const QByteArray &fingerprint)
 {
     if (QThread::currentThread() != thread()) return 0;
     if (m_state->stopping) return refuse(QStringLiteral("The vault service is shutting down."));
@@ -210,8 +271,13 @@ quint64 MavAuthKeyService::submit(int operation, const QString &name, const QStr
     if (operation == AddSeed && m_state->unlocked
         && m_state->names.size() >= MavAuthKeyStore::MaximumKeys)
         return refuse(QStringLiteral("The vault has reached its 128-key limit."));
-    if (operation == RequestKey && !callback)
+    if ((operation == RequestKey || operation == RequestKeyByFingerprint)
+        && !callback)
         return refuse(QStringLiteral("An explicit signing-key recipient is required."));
+    if (operation == RequestKeyByFingerprint
+        && fingerprint.size() != MavAuthKeyStore::KeyBytes)
+        return refuse(QStringLiteral(
+            "A signing-key fingerprint must contain 32 bytes."));
     auto job = std::make_shared<Job>();
     job->operation = operation;
     job->token = ++m_state->nextToken;
@@ -220,6 +286,8 @@ quint64 MavAuthKeyService::submit(int operation, const QString &name, const QStr
     // lifetime of a QLineEdit/caller's implicitly shared input buffer.
     job->secret = QString(secret.constData(), secret.size());
     job->callback = std::move(callback);
+    job->fingerprint = QByteArray(
+        fingerprint.constData(), fingerprint.size());
     m_state->job = job;
     m_state->error.clear();
     if (!m_state->worker->submit(job)) {

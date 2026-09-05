@@ -554,6 +554,19 @@ int RunSigningTransportRuntimeAudit()
                       && links->signingRequired(FirstAuditLinkId)
                       && !links->signingReady(FirstAuditLinkId),
                   QStringLiteral("persisted requirement was not restored locked"));
+    const quint64 firstAddedRevision = firstProfile.revision;
+    result.expect(firstAddedRevision != 0,
+                  QStringLiteral("new connection profile has a zero runtime revision"));
+
+    // Profile identity is persistent, while revision is deliberately a
+    // process-local fence for asynchronous key selection. Even an offline
+    // endpoint edit must invalidate a callback that captured the old shape.
+    links->linkUpdated(firstLink.data());
+    firstProfile = links->connectionProfile(FirstAuditLinkId);
+    result.expect(firstProfile.id == PrimaryProfileId
+                      && firstProfile.revision != 0
+                      && firstProfile.revision != firstAddedRevision,
+                  QStringLiteral("offline link edit changed identity or retained its runtime revision"));
     result.expect(links->currentPhysicalLinkSession(FirstAuditLinkId) == 0,
                   QStringLiteral("locked fake link acquired a physical epoch"));
     result.expect(!links->connectLink(FirstAuditLinkId)
@@ -574,6 +587,40 @@ int RunSigningTransportRuntimeAudit()
                   QStringLiteral("initial offline profile activation failed: %1")
                       .arg(initialActivationError));
 
+    quint64 revisionBeforeRemoval = firstProfile.revision;
+    if (links->signingReady(FirstAuditLinkId) && firstLink) {
+        const bool connected = links->connectLink(FirstAuditLinkId);
+        LinkManager::ConnectionProfile lifecycleProfile =
+            links->connectionProfile(FirstAuditLinkId);
+        result.expect(connected && firstLink->isConnected()
+                          && lifecycleProfile.id == PrimaryProfileId
+                          && lifecycleProfile.revision != revisionBeforeRemoval,
+                      QStringLiteral("connect did not preserve identity and advance runtime revision"));
+        const quint64 connectedRevision = lifecycleProfile.revision;
+
+        links->disconnectLink(FirstAuditLinkId);
+        lifecycleProfile = links->connectionProfile(FirstAuditLinkId);
+        result.expect(!firstLink->isConnected()
+                          && lifecycleProfile.id == PrimaryProfileId
+                          && lifecycleProfile.revision != connectedRevision,
+                      QStringLiteral("disconnect did not preserve identity and advance runtime revision"));
+        const quint64 disconnectedRevision = lifecycleProfile.revision;
+
+        const bool reconnected = links->connectLink(FirstAuditLinkId);
+        lifecycleProfile = links->connectionProfile(FirstAuditLinkId);
+        result.expect(reconnected && firstLink->isConnected()
+                          && lifecycleProfile.id == PrimaryProfileId
+                          && lifecycleProfile.revision != disconnectedRevision,
+                      QStringLiteral("reconnect did not preserve identity and advance runtime revision"));
+
+        // Leave the fixture offline for the pre-existing removal/restore
+        // policy audit. This final disconnect is itself another revision
+        // boundary and is the value against which re-addition is checked.
+        links->disconnectLink(FirstAuditLinkId);
+        lifecycleProfile = links->connectionProfile(FirstAuditLinkId);
+        revisionBeforeRemoval = lifecycleProfile.revision;
+    }
+
     // Removing a transient link must not erase its stable policy or retain an
     // active key implicitly. Re-adding the same connection profile is locked
     // again until an operator supplies the matching key while it is offline.
@@ -591,6 +638,8 @@ int RunSigningTransportRuntimeAudit()
     }
     firstProfile = links->connectionProfile(FirstAuditLinkId);
     result.expect(firstLink && firstProfile.id == PrimaryProfileId
+                      && firstProfile.revision != 0
+                      && firstProfile.revision != revisionBeforeRemoval
                       && firstProfile.signingRequired
                       && firstProfile.error.isEmpty()
                       && links->signingRequired(FirstAuditLinkId)

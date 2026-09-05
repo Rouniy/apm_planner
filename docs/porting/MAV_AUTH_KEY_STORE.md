@@ -17,16 +17,18 @@ shutdown hides names, drains the one admitted operation, cancels pending secret
 delivery and joins without terminating the worker or pumping GUI events.
 Existing transport keys are separate from vault state: locking the vault cannot
 silently make a protected link unsigned. Worker/vault tests are not evidence of
-a completed Signing dialog; modeless key management and vehicle provisioning
-remain disabled and unimplemented.
+a completed vehicle-signing workflow. Modeless local key management is now
+available through Tools/Setup; vehicle provisioning/change/disable remain
+unimplemented. `requestKeyByFingerprint` scans at most128 worker-owned keys,
+cleans nonmatches and exports only a match; the window uses explicit names.
 
 `MavAuthKeyStore` is a standalone, thread-confined encrypted key repository.
 It does **not** enable MAVLink signing, transmit SETUP_SIGNING, choose a vehicle,
 alter the parser/transmitter or make the Advanced Tools Signing button usable.
 Production transport/signature verification now uses an application-owned
-manager described in `MAVLINK_SIGNING_PORT.md`; this vault is not yet its UI
-key provider. Persisted fail-closed protection is implemented in that manager;
-operator key selection and the Signing dialog remain integration requirements.
+manager described in `MAVLINK_SIGNING_PORT.md`; its modeless UI uses this store
+only through `MavAuthKeyService`. Persisted fail-closed protection and offline
+operator key selection are implemented; vehicle transitions remain separate.
 
 Reference inspected: MP10 `ExtLibs/ArduPilot/Mavlink/MAVAuthKeys.cs` and
 `MavAuthKeyStore.cs`, plus `MissionPlanner.Tests/MavAuthKeyStoreTests.cs`.

@@ -118,6 +118,7 @@ This file is part of the QGROUNDCONTROL project
 #include "configuration/ParameterMetaDataRegenerationWindow.h"
 #include "AnonLogWindow.h"
 #include "WarningManagerWindow.h"
+#include "MavlinkSigningWindow.h"
 #include "services/WarningEngine.h"
 #include "services/WarningTelemetrySource.h"
 #include "flightdata/QuickViewWidget.h"
@@ -635,6 +636,7 @@ MainWindow::~MainWindow()
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
+    closeMavlinkSigningWindow();
     closeLogDownloadWindows();
 
     closeTerminalConsole();
@@ -743,6 +745,13 @@ void MainWindow::buildMissionPlannerToolsMenu()
     auto *warningAction = new QAction(tr("Warning Manager"), this);
     warningAction->setObjectName(QStringLiteral("actionWarningManager"));
     connect(warningAction, &QAction::triggered, this, &MainWindow::showWarningManager);
+    auto *signingAction = new QAction(tr("MAVLink Signing — Local keys…"), this);
+    signingAction->setObjectName(QStringLiteral("actionMavlinkSigning"));
+    signingAction->setToolTip(tr("Manage the encrypted key vault and select a local key for an offline connection. "
+                                "This does not provision or disable signing on a vehicle."));
+    connect(signingAction, &QAction::triggered, this, &MainWindow::showMavlinkSigningWindow);
+    ui.menuTools->addSeparator();
+    ui.menuTools->addAction(signingAction);
     if (hardwareSetupView) {
         // Setup can restore an action-backed lazy page before the TOOLS QAction
         // catalogue exists. Recreate only those pages now so implemented tools
@@ -2240,6 +2249,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
+    closeMavlinkSigningWindow();
     closeLogDownloadWindows();
     if (logPlayer) {
         logPlayer->shutdown();
@@ -3228,6 +3238,76 @@ void MainWindow::closeWarningManager()
     m_warningEngine = nullptr;
     delete m_warningTelemetry.data();
     m_warningTelemetry = nullptr;
+}
+
+void MainWindow::showMavlinkSigningWindow()
+{
+    if (aboutToCloseFlag) return;
+    auto *manager = LinkManager::instance();
+    if (manager->isShuttingDown()) return;
+    MavlinkSigningWindow *window = nullptr;
+    for (auto *candidate : findChildren<MavlinkSigningWindow *>()) {
+        if (!candidate->isClosing()) { window = candidate; break; }
+    }
+    if (!window) {
+        const QPointer<LinkManager> guardedManager(manager);
+        const auto connections = [guardedManager]() {
+            QVector<MavlinkSigningWindow::Connection> result;
+            if (!guardedManager || guardedManager->isShuttingDown()) return result;
+            for (int id : guardedManager->getLinks()) {
+                auto *link = guardedManager->getLink(id);
+                if (!link || link->getLinkType() == LinkInterface::SIM_LINK
+                    || link->getLinkType() == LinkInterface::UNKNOWN_LINK) continue;
+                const auto profile = guardedManager->connectionProfile(id);
+                const auto status = guardedManager->signingManager()->status(id);
+                MavlinkSigningWindow::Connection item;
+                item.linkId = id;
+                item.profileId = profile.id;
+                item.revision = profile.revision;
+                item.identity = link;
+                item.name = link->getName();
+                item.connected = link->isConnected();
+                item.required = guardedManager->signingRequired(id);
+                item.ready = status.keyAvailable;
+                item.fingerprint = status.keyFingerprint;
+                item.keyName = status.keyName;
+                item.error = profile.error;
+                item.signedReceived = status.counters.signedAccepted;
+                result.append(item);
+            }
+            return result;
+        };
+        const auto activate = [guardedManager](const MavlinkSigningWindow::Connection &snapshot,
+                const QString &keyName, const QByteArray &key, QString *error) {
+            // The worker may finish after a disconnect, edit or deletion. A
+            // transient integer id alone never authorizes this local change.
+            if (!guardedManager || guardedManager->isShuttingDown()
+                || !snapshot.identity || snapshot.connected) {
+                if (error) *error = tr("The selected offline connection is no longer available.");
+                return false;
+            }
+            auto *link = guardedManager->getLink(snapshot.linkId);
+            if (!link || link != snapshot.identity.data() || link->isConnected()
+                || guardedManager->currentPhysicalLinkSession(snapshot.linkId) != 0
+                || guardedManager->connectionProfile(snapshot.linkId).id != snapshot.profileId
+                || guardedManager->connectionProfile(snapshot.linkId).revision != snapshot.revision) {
+                if (error) *error = tr("The connection changed while its signing key was being loaded. Select it again.");
+                return false;
+            }
+            return guardedManager->configureSigning(snapshot.linkId, snapshot.profileId, keyName, key, error);
+        };
+        window = new MavlinkSigningWindow(manager->mavAuthKeyService(), connections, activate, this);
+    }
+    window->show();
+    window->raise();
+    window->activateWindow();
+}
+
+void MainWindow::closeMavlinkSigningWindow()
+{
+    // The application-owned vault survives window close; LinkManager drains it
+    // on shutdown. Destroy receivers before the link services are torn down.
+    for (auto *window : findChildren<MavlinkSigningWindow *>()) delete window;
 }
 
 void MainWindow::closeParameterMetaDataRegeneration()

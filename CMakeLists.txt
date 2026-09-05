@@ -616,6 +616,7 @@ set(SOURCES
     src/services/WarningEngine.cpp
     src/services/WarningTelemetrySource.cpp
     src/ui/WarningManagerWindow.cpp
+    src/ui/MavlinkSigningWindow.cpp
     src/ui/flightdata/QuickViewWidget.cpp
     src/ui/Loghandling/DataFlashFftService.h
     src/ui/ConfigFFTWindow.cpp
@@ -5404,6 +5405,15 @@ if(BUILD_TESTING)
         Qt::Test
     )
     add_test(NAME tlogexportservice_tests COMMAND tlogexportservice_tests)
+
+    add_executable(mavlinksigningwindow_tests
+        tests/test_mavlinksigningwindow.cpp
+        src/ui/MavlinkSigningWindow.cpp)
+    target_link_libraries(mavlinksigningwindow_tests PRIVATE
+        apm_mavlink_signing Qt::Widgets Qt::Test OpenSSL::Crypto)
+    add_test(NAME mavlinksigningwindow_tests COMMAND mavlinksigningwindow_tests)
+    set_tests_properties(mavlinksigningwindow_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
 
     add_library(warning_manager_test_support STATIC
         src/services/WarningEngine.cpp

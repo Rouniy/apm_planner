@@ -578,6 +578,8 @@ private:
     void closeAnonLog();
     void showWarningManager();
     void closeWarningManager();
+    void showMavlinkSigningWindow();
+    void closeMavlinkSigningWindow();
     QPointer<WarningEngine> m_warningEngine;
     QPointer<WarningTelemetrySource> m_warningTelemetry;
     QString m_warningLoadError;

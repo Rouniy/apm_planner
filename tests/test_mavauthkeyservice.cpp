@@ -47,6 +47,7 @@ private slots:
     void roundTripOwnerThreadExportAndReopen();
     void busyIsBoundedAndInputsAreImmutable();
     void wrongPasswordDuplicateAndMissingKeysPreserveData();
+    void fingerprintLookupIsAliasIndependentAndFailClosed();
     void missingCorruptAndInvalidInputsNeverCreateImplicitly();
     void observerClosureDoesNotOwnService();
     void callbackCanDeleteServiceOrThrow();
@@ -178,6 +179,73 @@ void MavAuthKeyServiceTest::wrongPasswordDuplicateAndMissingKeysPreserveData()
     QCOMPARE(fileBytes(path), original);
     QVERIFY(run(service, [&] { return service.unlock(Master); }));
     QCOMPARE(service.keyNames(), QStringList{"alpha"});
+}
+
+void MavAuthKeyServiceTest::
+fingerprintLookupIsAliasIndependentAndFailClosed()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    MavAuthKeyService service(dir.filePath("vault.keys"));
+    QVERIFY(run(service, [&] { return service.create(Master); }));
+    QVERIFY(run(service, [&] {
+        return service.addSeed("unmatched", "first seed");
+    }));
+    QVERIFY(run(service, [&] {
+        return service.addSeed("matching alias one", "shared seed");
+    }));
+    QVERIFY(run(service, [&] {
+        return service.addSeed("matching alias two", "shared seed");
+    }));
+    const QByteArray matchingKey = QCryptographicHash::hash(
+        QByteArray("shared seed"), QCryptographicHash::Sha256);
+    const QByteArray matchingFingerprint = QCryptographicHash::hash(
+        matchingKey, QCryptographicHash::Sha256);
+
+    QByteArray received;
+    QVERIFY(run(service, [&] {
+        return service.requestKeyByFingerprint(
+            matchingFingerprint,
+            [&](bool success, const QByteArray &key, const QString &error) {
+                QVERIFY(success);
+                QVERIFY(error.isEmpty());
+                received = key;
+            });
+    }));
+    QCOMPARE(received, matchingKey);
+
+    bool missingCalled = false;
+    const QByteArray missingFingerprint = QCryptographicHash::hash(
+        QByteArray("not a stored signing key"),
+        QCryptographicHash::Sha256);
+    QVERIFY(run(service, [&] {
+        return service.requestKeyByFingerprint(
+            missingFingerprint,
+            [&](bool success, const QByteArray &key, const QString &error) {
+                missingCalled = true;
+                QVERIFY(!success);
+                QVERIFY(key.isEmpty());
+                QVERIFY(!error.isEmpty());
+            });
+    }, false));
+    QVERIFY(missingCalled);
+    QCOMPARE(service.keyNames().size(), 3);
+
+    QSignalSpy finished(&service, &MavAuthKeyService::operationFinished);
+    bool invalidCalled = false;
+    const auto recipient = [&](bool, const QByteArray &, const QString &) {
+        invalidCalled = true;
+    };
+    for (const QByteArray &invalid : {
+             QByteArray(), QByteArray(31, 'x'), QByteArray(33, 'x')}) {
+        QCOMPARE(service.requestKeyByFingerprint(invalid, recipient),
+                 quint64(0));
+        QVERIFY(!service.busy());
+    }
+    QCOMPARE(service.requestKeyByFingerprint(matchingFingerprint, {}),
+             quint64(0));
+    QCOMPARE(finished.size(), 0);
+    QVERIFY(!invalidCalled);
 }
 
 void MavAuthKeyServiceTest::missingCorruptAndInvalidInputsNeverCreateImplicitly()
@@ -367,7 +435,12 @@ void MavAuthKeyServiceTest::shutdownDrainsAndCancelsSecretDelivery()
     QVERIFY(run(exporting, [&] { return exporting.addSeed("alpha", "seed"); }));
     QSignalSpy exported(&exporting, &MavAuthKeyService::operationFinished);
     bool callback = false;
-    const auto exportToken = exporting.requestKey("alpha", [&](bool ok, const QByteArray &key, const QString &error) {
+    const QByteArray exportKey = QCryptographicHash::hash(
+        QByteArray("seed"), QCryptographicHash::Sha256);
+    const QByteArray exportFingerprint = QCryptographicHash::hash(
+        exportKey, QCryptographicHash::Sha256);
+    const auto exportToken = exporting.requestKeyByFingerprint(
+        exportFingerprint, [&](bool ok, const QByteArray &key, const QString &error) {
         callback = true; QVERIFY(!ok); QVERIFY(key.isEmpty()); QVERIFY(!error.isEmpty());
     });
     exporting.shutdown();
@@ -401,6 +474,7 @@ void MavAuthKeyServiceTest::metaObjectContainsNoSecretChannel()
         const QMetaMethod method = meta->method(i);
         QVERIFY(!method.parameterTypes().contains("QByteArray"));
         QVERIFY(method.name() != "requestKey");
+        QVERIFY(method.name() != "requestKeyByFingerprint");
     }
 }
 
