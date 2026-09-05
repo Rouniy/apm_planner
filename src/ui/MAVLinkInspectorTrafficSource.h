@@ -29,10 +29,17 @@ public:
     bool bindReplay(quint64 generation, const QString &name);
 
     QString status() const;
+    quint64 activeToken() const;
+    bool supportsOutboundTraffic() const
+    {
+        return m_kind == SourceKind::Live && m_physicalLink && !m_terminal;
+    }
 
 public slots:
     void observeLive(QObject *physicalLink, int linkId, quint64 epoch,
                      mavlink_message_t message);
+    void observeOutbound(QObject *physicalLink, int linkId, quint64 epoch,
+                         mavlink_message_t message);
     void beginLiveSession(QObject *physicalLink, int linkId, quint64 epoch);
     void endLiveSession(int linkId, quint64 epoch);
     void removeLiveLink(int linkId);
@@ -42,6 +49,7 @@ public slots:
 
 signals:
     void messageReceived(mavlink_message_t message);
+    void outboundMessageReceived(mavlink_message_t message);
     void sourceReset();
     void statusChanged(QString status);
 
@@ -53,6 +61,15 @@ private:
         Replay
     };
 
+    enum class LiveDirection
+    {
+        Incoming,
+        Outgoing
+    };
+
+    void observeLiveDirection(QObject *physicalLink, int linkId,
+                              quint64 epoch, mavlink_message_t message,
+                              LiveDirection direction);
     bool liveSessionMatches(QObject *physicalLink, int linkId,
                             quint64 epoch) const;
     bool liveSessionIsCurrent(QObject *physicalLink, int linkId,

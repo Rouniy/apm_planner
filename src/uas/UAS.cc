@@ -2230,20 +2230,7 @@ void UAS::sendMessage(LinkInterface* link, mavlink_message_t message)
                         "by active Compass/Motor calibration:" << message.msgid;
         return;
     }
-    // Create buffer
-    uint8_t buffer[MAVLINK_MAX_PACKET_LEN];
-    // Write message into buffer, prepending start sign
-    int len = mavlink_msg_to_send_buffer(buffer, &message);
-    //static uint8_t messageKeys[256] = MAVLINK_MESSAGE_CRCS;
-    //mavlink_finalize_message_chan(&message, systemId, componentId, link->getId(), 0, message.len, messageKeys[message.msgid]);
-
-    // If link is connected
-    if (link->isConnected())
-    {
-        // Send the portion of the buffer now occupied by the message
-        link->writeBytes((const char*)buffer, len);
-    }
-    else
+    if (!LinkManager::instance()->writeMavlinkMessage(link, message))
     {
         QLOG_ERROR() << "LINK NOT CONNECTED, NOT SENDING!";
     }

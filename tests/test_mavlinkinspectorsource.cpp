@@ -12,12 +12,14 @@ class MAVLinkInspectorTrafficSourceTest final : public QObject
 private slots:
     void initTestCase();
     void liveSourceFiltersIdentityAndEpoch();
+    void outboundSourceUsesPinnedLiveIdentity();
     void disconnectedBindingActivatesOnFirstSession();
     void liveDisconnectFreezesAndReconnectResets();
     void liveRemovalIsTerminal();
     void liveObjectDestructionIsTerminal();
     void replaySourceFiltersGenerationAndEnds();
     void bindingIsOneShotAndKindSpecific();
+    void activeTokenTracksAcceptedSession();
     void reentrantStatusChangeBlocksDelivery();
     void reentrantResetChangeWins();
 };
@@ -104,6 +106,53 @@ void MAVLinkInspectorTrafficSourceTest::liveSourceFiltersIdentityAndEpoch()
     source.observeLive(&selectedLink, 7, 41, accepted);
     QCOMPARE(deliveredIds, QList<quint32>({30, 74}));
     QCOMPARE(statuses.size(), 2);
+}
+
+void MAVLinkInspectorTrafficSourceTest::outboundSourceUsesPinnedLiveIdentity()
+{
+    QList<quint32> incomingIds;
+    QList<quint32> outgoingIds;
+    QObject selectedLink;
+    QObject otherLink;
+    MAVLinkInspectorTrafficSource source;
+    connect(&source, &MAVLinkInspectorTrafficSource::messageReceived,
+            &source, [&incomingIds](const mavlink_message_t &message) {
+                incomingIds.append(message.msgid);
+            });
+    connect(&source, &MAVLinkInspectorTrafficSource::outboundMessageReceived,
+            &source, [&outgoingIds](const mavlink_message_t &message) {
+                outgoingIds.append(message.msgid);
+            });
+
+    QVERIFY(source.bindLive(&selectedLink, 14, 90,
+                            QStringLiteral("Pinned")));
+    mavlink_message_t outgoing{};
+    outgoing.msgid = 76;
+    source.observeOutbound(&otherLink, 14, 90, outgoing);
+    source.observeOutbound(&selectedLink, 13, 90, outgoing);
+    source.observeOutbound(&selectedLink, 14, 89, outgoing);
+    QCOMPARE(outgoingIds.size(), 0);
+
+    source.observeOutbound(&selectedLink, 14, 90, outgoing);
+    QCOMPARE(outgoingIds, QList<quint32>({76}));
+    QCOMPARE(incomingIds.size(), 0);
+
+    mavlink_message_t incoming{};
+    incoming.msgid = 77;
+    source.observeLive(&selectedLink, 14, 90, incoming);
+    QCOMPARE(incomingIds, QList<quint32>({77}));
+    QCOMPARE(outgoingIds, QList<quint32>({76}));
+
+    int replayOutgoing = 0;
+    MAVLinkInspectorTrafficSource replay;
+    connect(&replay,
+            &MAVLinkInspectorTrafficSource::outboundMessageReceived,
+            &replay, [&replayOutgoing](const mavlink_message_t &) {
+                ++replayOutgoing;
+            });
+    QVERIFY(replay.bindReplay(90, QStringLiteral("Replay")));
+    replay.observeOutbound(&selectedLink, 14, 90, outgoing);
+    QCOMPARE(replayOutgoing, 0);
 }
 
 void MAVLinkInspectorTrafficSourceTest::liveDisconnectFreezesAndReconnectResets()
@@ -286,6 +335,36 @@ void MAVLinkInspectorTrafficSourceTest::bindingIsOneShotAndKindSpecific()
     QVERIFY(replay.status().startsWith(QStringLiteral("Waiting")));
 }
 
+void MAVLinkInspectorTrafficSourceTest::activeTokenTracksAcceptedSession()
+{
+    QObject link;
+    MAVLinkInspectorTrafficSource live;
+    QCOMPARE(live.activeToken(), quint64(0));
+    QVERIFY(live.bindLive(&link, 5, 0, QStringLiteral("Serial")));
+    QCOMPARE(live.activeToken(), quint64(0));
+
+    live.beginLiveSession(&link, 5, 70);
+    QCOMPARE(live.activeToken(), quint64(70));
+    live.endLiveSession(5, 69);
+    QCOMPARE(live.activeToken(), quint64(70));
+    live.endLiveSession(5, 70);
+    QCOMPARE(live.activeToken(), quint64(0));
+
+    live.beginLiveSession(&link, 5, 71);
+    QCOMPARE(live.activeToken(), quint64(71));
+    live.removeLiveLink(5);
+    QCOMPARE(live.activeToken(), quint64(0));
+
+    MAVLinkInspectorTrafficSource replay;
+    QCOMPARE(replay.activeToken(), quint64(0));
+    QVERIFY(replay.bindReplay(800, QStringLiteral("Log")));
+    QCOMPARE(replay.activeToken(), quint64(800));
+    replay.endReplay(799);
+    QCOMPARE(replay.activeToken(), quint64(800));
+    replay.endReplay(800);
+    QCOMPARE(replay.activeToken(), quint64(0));
+}
+
 void MAVLinkInspectorTrafficSourceTest::reentrantStatusChangeBlocksDelivery()
 {
     int liveDeliveries = 0;
@@ -324,6 +403,26 @@ void MAVLinkInspectorTrafficSourceTest::reentrantStatusChangeBlocksDelivery()
     replay.observeReplay(30, message);
     QCOMPARE(replayDeliveries, 0);
     QVERIFY(replay.status().contains(QStringLiteral("ended")));
+
+    int outboundDeliveries = 0;
+    QObject outboundLink;
+    MAVLinkInspectorTrafficSource outbound;
+    QVERIFY(outbound.bindLive(&outboundLink, 6, 40,
+                              QStringLiteral("Outbound")));
+    connect(&outbound,
+            &MAVLinkInspectorTrafficSource::outboundMessageReceived,
+            &outbound, [&outboundDeliveries](const mavlink_message_t &) {
+                ++outboundDeliveries;
+            });
+    connect(&outbound, &MAVLinkInspectorTrafficSource::statusChanged,
+            &outbound, [&outbound](const QString &status) {
+                if (status.startsWith(QStringLiteral("Receiving"))) {
+                    outbound.endLiveSession(6, 40);
+                }
+            });
+    outbound.observeOutbound(&outboundLink, 6, 40, message);
+    QCOMPARE(outboundDeliveries, 0);
+    QCOMPARE(outbound.activeToken(), quint64(0));
 }
 
 void MAVLinkInspectorTrafficSourceTest::reentrantResetChangeWins()

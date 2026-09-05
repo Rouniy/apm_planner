@@ -3,6 +3,8 @@
 
 #include <QtTest>
 
+#include <QPointer>
+
 namespace
 {
 
@@ -50,6 +52,10 @@ private slots:
     void invalidAndV2OnlyMessagesDoNotConsumeV1Sequence();
     void writerFailureConsumesSequence();
     void forgettingLinkResetsSequenceAndVersion();
+    void successfulSubmissionReportsFinalizedMessageAndEpoch();
+    void failedZeroAndForgottenEpochsDoNotReportSubmission();
+    void reentrantEpochChangesNeverRelabelSubmission();
+    void reentrantDestructionDuringWriteIsSafe();
 };
 
 void ExactLinkTransmitterTest::targetedCommandAckCapabilityTracksLinkVersion()
@@ -234,6 +240,162 @@ void ExactLinkTransmitterTest::forgettingLinkResetsSequenceAndVersion()
     const mavlink_message_t reset = decodeFrame(frames.at(1).bytes);
     QCOMPARE(reset.magic, quint8(MAVLINK_STX));
     QCOMPARE(reset.seq, quint8(0));
+}
+
+void ExactLinkTransmitterTest::
+successfulSubmissionReportsFinalizedMessageAndEpoch()
+{
+    QVector<CapturedFrame> frames;
+    ExactLinkTransmitter transmitter(
+        [&frames](int linkId, const QByteArray &bytes) {
+            frames.append({linkId, bytes});
+            return true;
+        });
+    transmitter.setLinkSessionEpoch(37, 9001);
+
+    int submittedCount = 0;
+    int submittedLinkId = -1;
+    quint64 submittedEpoch = 0;
+    mavlink_message_t submittedMessage{};
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted,
+            this,
+            [&submittedCount, &submittedLinkId, &submittedEpoch,
+             &submittedMessage](int linkId, quint64 epoch,
+                                mavlink_message_t message) {
+                ++submittedCount;
+                submittedLinkId = linkId;
+                submittedEpoch = epoch;
+                submittedMessage = message;
+            });
+
+    const mavlink_message_t input =
+        commandMessage(MAV_CMD_NAV_RETURN_TO_LAUNCH);
+    QCOMPARE(transmitter.sendMessage(37, 91, 192, input),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(submittedCount, 1);
+    QCOMPARE(submittedLinkId, 37);
+    QCOMPARE(submittedEpoch, quint64(9001));
+    QCOMPARE(submittedMessage.sysid, quint8(91));
+    QCOMPARE(submittedMessage.compid, quint8(192));
+    QCOMPARE(submittedMessage.seq, quint8(0));
+    QCOMPARE(submittedMessage.magic, quint8(MAVLINK_STX));
+    QCOMPARE(submittedMessage.msgid,
+             quint32(MAVLINK_MSG_ID_COMMAND_LONG));
+
+    QCOMPARE(frames.size(), 1);
+    const mavlink_message_t decoded = decodeFrame(frames.constFirst().bytes);
+    QCOMPARE(decoded.sysid, submittedMessage.sysid);
+    QCOMPARE(decoded.compid, submittedMessage.compid);
+    QCOMPARE(decoded.seq, submittedMessage.seq);
+    QCOMPARE(decoded.checksum, submittedMessage.checksum);
+}
+
+void ExactLinkTransmitterTest::
+failedZeroAndForgottenEpochsDoNotReportSubmission()
+{
+    bool writerSucceeds = false;
+    ExactLinkTransmitter transmitter(
+        [&writerSucceeds](int, const QByteArray &) {
+            return writerSucceeds;
+        });
+    int submittedCount = 0;
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted,
+            this, [&submittedCount](int, quint64, mavlink_message_t) {
+                ++submittedCount;
+            });
+
+    transmitter.setLinkSessionEpoch(4, 100);
+    QCOMPARE(transmitter.sendMessage(
+                 4, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+             ExactLinkTransmitter::SendResult::TransportUnavailable);
+    QCOMPARE(submittedCount, 0);
+
+    writerSucceeds = true;
+    transmitter.setLinkSessionEpoch(4, 0);
+    QCOMPARE(transmitter.sendMessage(
+                 4, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(submittedCount, 0);
+
+    transmitter.setLinkSessionEpoch(4, 101);
+    transmitter.forgetLink(4);
+    QCOMPARE(transmitter.sendMessage(
+                 4, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(submittedCount, 0);
+}
+
+void ExactLinkTransmitterTest::
+reentrantEpochChangesNeverRelabelSubmission()
+{
+    enum class WriterAction {
+        RollEpoch,
+        ForgetLink,
+        Stable
+    };
+    WriterAction action = WriterAction::RollEpoch;
+    ExactLinkTransmitter *transmitterPointer = nullptr;
+    ExactLinkTransmitter transmitter(
+        [&action, &transmitterPointer](int linkId, const QByteArray &) {
+            if (action == WriterAction::RollEpoch) {
+                transmitterPointer->setLinkSessionEpoch(linkId, 202);
+            } else if (action == WriterAction::ForgetLink) {
+                transmitterPointer->forgetLink(linkId);
+            }
+            return true;
+        });
+    transmitterPointer = &transmitter;
+    QVector<quint64> submittedEpochs;
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted,
+            this,
+            [&submittedEpochs](int, quint64 epoch, mavlink_message_t) {
+                submittedEpochs.append(epoch);
+            });
+
+    transmitter.setLinkSessionEpoch(8, 201);
+    QCOMPARE(transmitter.sendMessage(
+                 8, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QVERIFY(submittedEpochs.isEmpty());
+
+    action = WriterAction::Stable;
+    QCOMPARE(transmitter.sendMessage(
+                 8, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(submittedEpochs, QVector<quint64>({202}));
+
+    action = WriterAction::ForgetLink;
+    QCOMPARE(transmitter.sendMessage(
+                 8, 250, 190, commandMessage(MAV_CMD_MISSION_START)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(submittedEpochs, QVector<quint64>({202}));
+}
+
+void ExactLinkTransmitterTest::reentrantDestructionDuringWriteIsSafe()
+{
+    ExactLinkTransmitter *transmitter = nullptr;
+    QPointer<ExactLinkTransmitter> guardedTransmitter;
+    transmitter = new ExactLinkTransmitter(
+        [&transmitter](int, const QByteArray &) {
+            delete transmitter;
+            transmitter = nullptr;
+            return true;
+        });
+    guardedTransmitter = transmitter;
+    int submittedCount = 0;
+    connect(transmitter, &ExactLinkTransmitter::messageSubmitted,
+            this, [&submittedCount](int, quint64, mavlink_message_t) {
+                ++submittedCount;
+            });
+    transmitter->setLinkSessionEpoch(12, 300);
+
+    const ExactLinkTransmitter::SendResult result =
+        transmitter->sendMessage(
+            12, 250, 190, commandMessage(MAV_CMD_MISSION_START));
+    QCOMPARE(result, ExactLinkTransmitter::SendResult::Sent);
+    QVERIFY(!transmitter);
+    QVERIFY(guardedTransmitter.isNull());
+    QCOMPARE(submittedCount, 0);
 }
 
 QTEST_APPLESS_MAIN(ExactLinkTransmitterTest)

@@ -78,9 +78,9 @@ Qt Widgets и доверенный QML API можно сочетать по на
    1120×720, 1280×800, 1920×1080 и HiDPI.
 2. Tools → MAVLink Inspector теперь использует отдельные modeless окна с
    exact physical-link/replay source и раздельными sysid/component/message
-   ключами; Pause/Resume, Clear и Filter работают. Следующий slice — exact
-   outbound observations, Show GCS Traffic и bounded Graph It, затем безопасный
-   Download Logs (точная цель, отмена, ограниченные retries, atomic output).
+   ключами; Pause/Resume, Clear, Filter, Show GCS Traffic и независимый Graph It
+   работают. Следующий slice — безопасный Download Logs (точная цель,
+   отмена, ограниченные retries, atomic output).
 3. Довести главный DATA HUD/OSD до видимого набора MP: вертикальная скорость
    уже приходит в модель и рисуется только малоконтрастной стрелкой VSI;
    требуется явно видимое числовое значение и проверка остальных полей.
@@ -189,10 +189,10 @@ generation. Отключение сохраняет снимок, новое с�
 отдельным диагностическим сигналом только для уже разобранных пакетов.
 
 - Сохранять оба входа: верхнее Tools menu/Ctrl+I и SETUP Advanced Tools.
-- Следующий этап: exact outbound observations после успешного frame writer,
-  без sniffing произвольного `writeRawBytes`, затем Show GCS Traffic.
-- Перенести Graph It: numeric scalar/array fields, immutable source identity,
-  bounded 10..100000 history (default 500), независимые modeless графики.
+- Exact outbound observations после успешной typed-записи и Show GCS Traffic
+  реализованы без sniffing произвольного `writeRawBytes`.
+- Graph It реализован для numeric scalar/array fields: исходный pin не меняется,
+  history 10..100000 (default 500), независимые modeless графики и 100ms refresh.
 - Обновлять vendored MAVLink dialect отдельным глобальным slice с parser и
   service regression tests; старый dialect не расширять в обход parser.
 - Подтвердить real replay-file unload/reload и native-platform evidence;

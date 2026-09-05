@@ -122,6 +122,8 @@ public:
     quint64 currentPhysicalLinkSession(int linkId) const;
     /** Best-effort raw write to one currently connected physical link. */
     bool writeRawBytes(int linkId, const QByteArray &bytes);
+    /** Submit an already finalized MAVLink frame without re-sequencing it. */
+    bool writeMavlinkMessage(LinkInterface *link, mavlink_message_t message);
     bool isUdpPortInUse(quint16 port) const;
     // Remove a link based on instance
     void removeLink(LinkInterface *link);
@@ -164,6 +166,9 @@ signals:
     void physicalLinkSessionEnded(int linkId, qulonglong epoch);
     void mavlinkMessageObserved(int linkId, qulonglong epoch,
                                mavlink_message_t message);
+    // Submitted to the transport, not a delivery/vehicle acknowledgement.
+    void mavlinkMessageSubmitted(int linkId, qulonglong epoch,
+                                mavlink_message_t message);
 
 public slots:
     void receiveMessage(LinkInterface* link,mavlink_message_t message);

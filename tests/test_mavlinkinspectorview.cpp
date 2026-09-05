@@ -2,12 +2,15 @@
 #include "ui/MAVLinkInspectorTrafficSource.h"
 #include "ui/MAVLinkInspectorWindow.h"
 
+#include <QApplication>
 #include <QCheckBox>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QTreeWidget>
+#include <QTimer>
 #include <QtTest>
 
 namespace {
@@ -31,26 +34,199 @@ class MAVLinkInspectorViewTest final : public QObject
 {
     Q_OBJECT
 private slots:
-    void completeOfflineSurfaceAndExplicitLimitations();
+    void completeOfflineSurfaceAndTrafficDisclosure();
     void componentTreeValuesAndStableSelection();
+    void outboundTrafficCheckboxAndPauseGate();
+    void replayDisablesSeparateOutboundTraffic();
+    void graphSelectionAndSessionTokenGuard();
     void filterRemovesOldNodesAndRestoresCachedValues();
     void pauseClearAndSessionReset();
     void independentSourceWindowsAndLifetime();
+    void ownedSourceTeardownDisconnectsUiCallbacks();
     void projectionRemainsBoundedAndSuppressesIntermediateSignals();
     void wireSizesIncludeVersionAndSignature();
 };
 
-void MAVLinkInspectorViewTest::completeOfflineSurfaceAndExplicitLimitations()
+void MAVLinkInspectorViewTest::completeOfflineSurfaceAndTrafficDisclosure()
 {
     MAVLinkInspectorView view;
     QCOMPARE(view.objectName(), QStringLiteral("MAVLinkInspectorView"));
     QVERIFY(view.findChild<QPushButton *>("PauseButton")->isEnabled());
     QVERIFY(view.findChild<QPushButton *>("ClearButton")->isEnabled());
     QVERIFY(!view.findChild<QPushButton *>("GraphButton")->isEnabled());
-    QVERIFY(!view.findChild<QCheckBox *>("ShowGcsTrafficCheckBox")->isEnabled());
-    QVERIFY(view.findChild<QLabel *>("InspectorLimitations")->text().contains("not yet"));
+    auto *traffic =
+        view.findChild<QCheckBox *>("ShowGcsTrafficCheckBox");
+    QVERIFY(!traffic->isEnabled());
+    QVERIFY(!traffic->isChecked());
+    QVERIFY(traffic->toolTip().contains(QStringLiteral("No MAVLink source")));
+    const QString disclosure =
+        view.findChild<QLabel *>("InspectorLimitations")->text();
+    QVERIFY(disclosure.contains(QStringLiteral("incoming and outgoing")));
+    QVERIFY(disclosure.contains(QStringLiteral("not delivery")));
     QVERIFY(view.findChild<QLabel *>("InspectorStatus")->text().contains("No MAVLink"));
     QCOMPARE(view.findChild<QTreeWidget *>("MessageTree")->topLevelItemCount(), 0);
+}
+
+void MAVLinkInspectorViewTest::outboundTrafficCheckboxAndPauseGate()
+{
+    QObject physicalLink;
+    MAVLinkInspectorView view;
+    auto *source = new MAVLinkInspectorTrafficSource;
+    view.attachSource(source);
+    auto *traffic =
+        view.findChild<QCheckBox *>("ShowGcsTrafficCheckBox");
+    QVERIFY(!traffic->isEnabled());
+    QVERIFY(source->bindLive(&physicalLink, 8, 0,
+                             QStringLiteral("Live")));
+    QVERIFY(source->supportsOutboundTraffic());
+    QVERIFY(traffic->isEnabled());
+    QCOMPARE(source->activeToken(), quint64(0));
+    source->beginLiveSession(&physicalLink, 8, 20);
+
+    source->observeOutbound(&physicalLink, 8, 20, valueMessage(40, 1));
+    QCOMPARE(view.packetStore().size(), 0);
+    source->observeLive(&physicalLink, 8, 20, valueMessage(1, 2));
+    QCOMPARE(view.packetStore().size(), 1);
+
+    traffic->setChecked(true);
+    source->observeOutbound(&physicalLink, 8, 20, valueMessage(40, 3));
+    QCOMPARE(view.packetStore().size(), 2);
+
+    traffic->setChecked(false);
+    QCOMPARE(view.packetStore().size(), 2);
+    source->observeOutbound(&physicalLink, 8, 20, valueMessage(41, 4));
+    QCOMPARE(view.packetStore().size(), 2);
+
+    traffic->setChecked(true);
+    view.setPaused(true);
+    source->observeOutbound(&physicalLink, 8, 20, valueMessage(41, 5));
+    QCOMPARE(view.packetStore().size(), 2);
+    view.setPaused(false);
+    source->observeLive(&physicalLink, 8, 20, valueMessage(2, 6));
+    QCOMPARE(view.packetStore().size(), 3);
+
+    source->endLiveSession(8, 20);
+    QVERIFY(traffic->isEnabled());
+    QVERIFY(traffic->isChecked());
+    source->removeLiveLink(8);
+    QVERIFY(!traffic->isEnabled());
+    QVERIFY(traffic->isChecked());
+    QCOMPARE(view.packetStore().size(), 3);
+}
+
+void MAVLinkInspectorViewTest::replayDisablesSeparateOutboundTraffic()
+{
+    MAVLinkInspectorView view;
+    auto *source = new MAVLinkInspectorTrafficSource;
+    view.attachSource(source);
+    auto *traffic =
+        view.findChild<QCheckBox *>("ShowGcsTrafficCheckBox");
+    QVERIFY(!traffic->isEnabled());
+
+    QVERIFY(source->bindReplay(44, QStringLiteral("Replay")));
+    QVERIFY(!source->supportsOutboundTraffic());
+    QVERIFY(!traffic->isEnabled());
+    QVERIFY(traffic->toolTip().contains(
+        QStringLiteral("no separate outbound GCS traffic")));
+}
+
+void MAVLinkInspectorViewTest::graphSelectionAndSessionTokenGuard()
+{
+    QObject physicalLink;
+    MAVLinkInspectorView view;
+    auto *source = new MAVLinkInspectorTrafficSource;
+    view.attachSource(source);
+    QVERIFY(source->bindLive(&physicalLink, 9, 30,
+                             QStringLiteral("Graph source")));
+    source->observeLive(&physicalLink, 9, 30, valueMessage(1, 123));
+    view.refreshView();
+
+    auto *tree = view.findChild<QTreeWidget *>("MessageTree");
+    auto *graph = view.findChild<QPushButton *>("GraphButton");
+    QTreeWidgetItem *const message =
+        tree->topLevelItem(0)->child(0)->child(0);
+    QTreeWidgetItem *const textField = fieldNamed(message, "name");
+    QTreeWidgetItem *const numericField = fieldNamed(message, "value");
+    QVERIFY(textField && numericField);
+    tree->setCurrentItem(message);
+    QVERIFY(!graph->isEnabled());
+    tree->setCurrentItem(textField);
+    QVERIFY(!graph->isEnabled());
+    tree->setCurrentItem(numericField);
+    QVERIFY(graph->isEnabled());
+    // Graph identity belongs to the item's typed roles, never to its
+    // presentation text or tree path.
+    numericField->setText(0, QStringLiteral("display text is not identity"));
+
+    int requests = 0;
+    int requestedHistory = 0;
+    quint64 requestedToken = 0;
+    MavlinkGraphSelection requestedSelection;
+    connect(&view, &MAVLinkInspectorView::graphRequested, &view,
+            [&](const MavlinkGraphSelection &selection, int history,
+                quint64 token) {
+        ++requests;
+        requestedSelection = selection;
+        requestedHistory = history;
+        requestedToken = token;
+    });
+
+    bool promptVerified = false;
+    QTimer::singleShot(0, &view, [&promptVerified]() {
+        auto *dialog = qobject_cast<QInputDialog *>(
+            QApplication::activeModalWidget());
+        if (!dialog) {
+            return;
+        }
+        promptVerified = dialog->windowTitle() == QStringLiteral("MAVLink Graph")
+            && dialog->labelText()
+                == QStringLiteral("Points of history (10..100000)")
+            && dialog->intValue() == 500 && dialog->intMinimum() == 10
+            && dialog->intMaximum() == 100000;
+        dialog->setIntValue(750);
+        dialog->accept();
+    });
+    graph->click();
+    QVERIFY(promptVerified);
+    QCOMPARE(requests, 1);
+    QCOMPARE(requestedHistory, 750);
+    QCOMPARE(requestedToken, quint64(30));
+    QCOMPARE(requestedSelection.systemId, quint8(1));
+    QCOMPARE(requestedSelection.componentId, quint8(1));
+    QCOMPARE(requestedSelection.messageId,
+             quint32(MAVLINK_MSG_ID_NAMED_VALUE_INT));
+    QCOMPARE(requestedSelection.messageName,
+             QStringLiteral("NAMED_VALUE_INT"));
+    QCOMPARE(requestedSelection.fieldName, QStringLiteral("value"));
+
+    auto *filter = view.findChild<QLineEdit *>("MessageFilter");
+    filter->setText(QStringLiteral("HEARTBEAT"));
+    QVERIFY(!graph->isEnabled());
+    filter->clear();
+    QVERIFY(graph->isEnabled());
+
+    QTimer::singleShot(0, &view, [&]() {
+        source->endLiveSession(9, 30);
+        source->beginLiveSession(&physicalLink, 9, 31);
+        auto *dialog = qobject_cast<QInputDialog *>(
+            QApplication::activeModalWidget());
+        if (dialog) {
+            dialog->accept();
+        }
+    });
+    graph->click();
+    QCOMPARE(requests, 1);
+    QCOMPARE(source->activeToken(), quint64(31));
+    QCOMPARE(tree->topLevelItemCount(), 0);
+    QVERIFY(!graph->isEnabled());
+
+    source->observeLive(&physicalLink, 9, 31, valueMessage(1, 456));
+    view.refreshView();
+    tree->setCurrentItem(fieldNamed(
+        tree->topLevelItem(0)->child(0)->child(0), "value"));
+    QVERIFY(graph->isEnabled());
+    view.clearView();
+    QVERIFY(!graph->isEnabled());
 }
 
 void MAVLinkInspectorViewTest::componentTreeValuesAndStableSelection()
@@ -171,6 +347,28 @@ void MAVLinkInspectorViewTest::independentSourceWindowsAndLifetime()
     secondSource->observeLive(&secondLink, 2, 2, valueMessage(42, 8));
     QCOMPARE(second->packetStore().size(), 2);
     delete secondWindow;
+}
+
+void MAVLinkInspectorViewTest::ownedSourceTeardownDisconnectsUiCallbacks()
+{
+    QObject physicalLink;
+    auto *view = new MAVLinkInspectorView;
+    auto *source = new MAVLinkInspectorTrafficSource;
+    view->attachSource(source);
+    QVERIFY(source->bindLive(&physicalLink, 22, 3,
+                             QStringLiteral("Owned source")));
+
+    QPointer<MAVLinkInspectorTrafficSource> guardedSource(source);
+    QPointer<QPushButton> guardedGraph(
+        view->findChild<QPushButton *>("GraphButton"));
+    QPointer<QCheckBox> guardedTraffic(
+        view->findChild<QCheckBox *>("ShowGcsTrafficCheckBox"));
+    QVERIFY(guardedGraph && guardedTraffic);
+
+    delete view;
+    QVERIFY(guardedSource.isNull());
+    QVERIFY(guardedGraph.isNull());
+    QVERIFY(guardedTraffic.isNull());
 }
 
 void MAVLinkInspectorViewTest::projectionRemainsBoundedAndSuppressesIntermediateSignals()

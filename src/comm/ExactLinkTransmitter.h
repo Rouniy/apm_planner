@@ -51,7 +51,12 @@ public:
     bool supportsTargetedCommandAck(int linkId) const;
     void setMotorStopLinkEligible(int linkId, bool eligible);
     bool motorStopLinkEligible(int linkId) const;
+    void setLinkSessionEpoch(int linkId, quint64 epoch);
     void forgetLink(int linkId);
+
+signals:
+    void messageSubmitted(int linkId, quint64 epoch,
+                          mavlink_message_t message);
 
 private:
     mavlink_status_t &transmitStatus(int linkId);
@@ -59,6 +64,7 @@ private:
     const FrameWriter m_frameWriter;
     QHash<int, mavlink_status_t> m_transmitStates;
     QHash<int, bool> m_motorStopLinkEligibility;
+    QHash<int, quint64> m_linkSessionEpochs;
 };
 
 #endif // EXACTLINKTRANSMITTER_H

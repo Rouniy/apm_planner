@@ -163,17 +163,17 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                     }
 
                     // Request AUTOPILOT_VERSION message to check if vehicle is mavlink 2.0 capable
-                    mavlink_command_long_t command;
-                    mavlink_message_t commandMessage;
-                    uint8_t sendbuffer[MAVLINK_MAX_PACKET_LEN];
+                    mavlink_command_long_t command{};
+                    mavlink_message_t commandMessage{};
+                    command.target_system = message.sysid;
+                    command.target_component = message.compid;
                     command.command = MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES;
                     command.param1 = 1.0f;
 
-                    mavlink_msg_command_long_encode(message.sysid, message.compid, &commandMessage, &command);
-                    // Write message into buffer, prepending start sign
-                    int len = mavlink_msg_to_send_buffer(sendbuffer, &commandMessage);
-                    guardedLink->writeBytes(
-                        reinterpret_cast<const char*>(sendbuffer), len);
+                    mavlink_msg_command_long_encode(m_systemID, m_componentID, &commandMessage, &command);
+                    if (m_connectionManager) {
+                        m_connectionManager->writeMavlinkMessage(guardedLink, commandMessage);
+                    }
                     if (!receiveSessionIsCurrent()) {
                         return;
                     }
@@ -182,11 +182,10 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                     command.command = MAV_CMD_REQUEST_MESSAGE;
                     command.param1 = MAVLINK_MSG_ID_AUTOPILOT_VERSION;
 
-                    mavlink_msg_command_long_encode(message.sysid, message.compid, &commandMessage, &command);
-                    // Write message into buffer, prepending start sign
-                    len = mavlink_msg_to_send_buffer(sendbuffer, &commandMessage);
-                    guardedLink->writeBytes(
-                        reinterpret_cast<const char*>(sendbuffer), len);
+                    mavlink_msg_command_long_encode(m_systemID, m_componentID, &commandMessage, &command);
+                    if (m_connectionManager) {
+                        m_connectionManager->writeMavlinkMessage(guardedLink, commandMessage);
+                    }
                     if (!receiveSessionIsCurrent()) {
                         return;
                     }

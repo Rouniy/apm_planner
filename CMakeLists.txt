@@ -617,6 +617,12 @@ set(SOURCES
     src/ui/MAVLinkInspectorTrafficSource.h
     src/ui/MAVLinkInspectorView.cpp
     src/ui/MAVLinkInspectorView.h
+    src/ui/MavlinkGraphSampleExtractor.cpp
+    src/ui/MavlinkGraphSampleExtractor.h
+    src/ui/MavlinkFieldGraphModel.cpp
+    src/ui/MavlinkFieldGraphModel.h
+    src/ui/MavlinkFieldGraphWindow.cpp
+    src/ui/MavlinkFieldGraphWindow.h
     src/ui/MAVLinkReplaySource.cpp
     src/ui/MAVLinkReplaySource.h
     src/comm/MAVLinkMessageMetaType.h
@@ -5191,10 +5197,27 @@ if(BUILD_TESTING)
         src/ui/MAVLinkInspectorView.h
         src/ui/MAVLinkInspectorWindow.cpp
         src/ui/MAVLinkInspectorWindow.h
+        src/ui/MavlinkGraphSampleExtractor.cpp
     )
+    add_executable(mavlinkgraph_tests
+        tests/test_mavlinkgraph.cpp
+        src/ui/MavlinkGraphSampleExtractor.cpp
+        src/ui/MavlinkFieldGraphModel.cpp
+    )
+    add_executable(mavlinkfieldgraphwindow_tests
+        tests/test_mavlinkfieldgraphwindow.cpp
+        src/ui/MavlinkGraphSampleExtractor.cpp
+        src/ui/MavlinkFieldGraphModel.cpp
+        src/ui/MavlinkFieldGraphWindow.cpp
+        src/ui/MavlinkFieldGraphWindow.h
+        src/ui/qcustomplot.cpp
+        src/ui/qcustomplot.h
+    )
+    target_link_libraries(mavlinkfieldgraphwindow_tests PRIVATE Qt::PrintSupport)
     foreach(inspector_test IN ITEMS mavlinkinspectorpacketstore_tests
             mavlinkinspectorsource_tests mavlinkreplaysource_tests
-            mavlinkinspectorview_tests)
+            mavlinkinspectorview_tests mavlinkgraph_tests
+            mavlinkfieldgraphwindow_tests)
         target_include_directories(${inspector_test} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src
             ${CMAKE_CURRENT_SOURCE_DIR}/src/ui

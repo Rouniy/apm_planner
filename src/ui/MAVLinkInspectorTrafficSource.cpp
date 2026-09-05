@@ -76,12 +76,43 @@ QString MAVLinkInspectorTrafficSource::status() const
     return m_status;
 }
 
+quint64 MAVLinkInspectorTrafficSource::activeToken() const
+{
+    if (!m_active || !m_accepting || m_terminal) {
+        return 0;
+    }
+    if (m_kind == SourceKind::Live) {
+        return m_liveEpoch;
+    }
+    if (m_kind == SourceKind::Replay) {
+        return m_replayGeneration;
+    }
+    return 0;
+}
+
 void MAVLinkInspectorTrafficSource::observeLive(QObject *physicalLink,
                                                 int linkId,
                                                 quint64 epoch,
                                                 mavlink_message_t message)
 {
     Q_ASSERT(QThread::currentThread() == thread());
+    observeLiveDirection(physicalLink, linkId, epoch, message,
+                         LiveDirection::Incoming);
+}
+
+void MAVLinkInspectorTrafficSource::observeOutbound(
+    QObject *physicalLink, int linkId, quint64 epoch,
+    mavlink_message_t message)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    observeLiveDirection(physicalLink, linkId, epoch, message,
+                         LiveDirection::Outgoing);
+}
+
+void MAVLinkInspectorTrafficSource::observeLiveDirection(
+    QObject *physicalLink, int linkId, quint64 epoch,
+    mavlink_message_t message, LiveDirection direction)
+{
     if (!liveSessionMatches(physicalLink, linkId, epoch)) {
         return;
     }
@@ -110,7 +141,11 @@ void MAVLinkInspectorTrafficSource::observeLive(QObject *physicalLink,
         || !liveSessionMatches(physicalLink, linkId, epoch)) {
         return;
     }
-    emit messageReceived(message);
+    if (direction == LiveDirection::Incoming) {
+        emit messageReceived(message);
+    } else {
+        emit outboundMessageReceived(message);
+    }
 }
 
 void MAVLinkInspectorTrafficSource::beginLiveSession(QObject *physicalLink,

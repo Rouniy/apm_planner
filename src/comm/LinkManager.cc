@@ -119,15 +119,28 @@ LinkManager::LinkManager(QObject *parent) :
 {
     m_vehicleTargetManager = new VehicleTargetManager(this);
     m_swarmTelemetryRegistry = new SwarmTelemetryRegistry(this);
-    connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionBegan,
-            this, &LinkManager::physicalLinkSessionBegan);
     connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionEnded,
-            this, &LinkManager::physicalLinkSessionEnded);
+            this, [this](int id, qulonglong epoch) {
+        m_exactLinkTransmitter->setLinkSessionEpoch(id, 0);
+        emit physicalLinkSessionEnded(id, epoch);
+    });
     m_radioStatusMonitor = new RadioStatusMonitor(this);
     m_exactLinkTransmitter = new ExactLinkTransmitter(
         [this](int linkId, const QByteArray &frame) {
             return writeRawBytes(linkId, frame);
         }, this);
+    connect(m_swarmTelemetryRegistry, &SwarmTelemetryRegistry::linkSessionBegan,
+            this, [this](int id, qulonglong epoch) {
+        m_exactLinkTransmitter->setLinkSessionEpoch(id, epoch);
+        emit physicalLinkSessionBegan(id, epoch);
+    });
+    connect(m_exactLinkTransmitter, &ExactLinkTransmitter::messageSubmitted,
+            this, [this](int id, quint64 epoch, mavlink_message_t message) {
+        if (!m_shuttingDown && epoch != 0
+            && currentPhysicalLinkSession(id) == epoch) {
+            emit mavlinkMessageSubmitted(id, epoch, message);
+        }
+    });
     m_exactMissionSnapshotService = new ExactMissionSnapshotService(
         m_swarmTelemetryRegistry, m_exactLinkTransmitter,
         [this](const SwarmVehicleInstanceLease &lease, QString *error) {
@@ -909,6 +922,26 @@ bool LinkManager::writeRawBytes(int linkId, const QByteArray &bytes)
     link->writeBytes(bytes.constData(), bytes.size());
     return link && m_connectionMap.value(linkId, nullptr) == link
         && link->isConnected();
+}
+
+bool LinkManager::writeMavlinkMessage(
+    LinkInterface *physicalLink, mavlink_message_t message)
+{
+    if (!physicalLink) return false;
+    const int id = physicalLink->getId();
+    if (getLink(id) != physicalLink) return false;
+    const QPointer<LinkInterface> guardedLink(physicalLink);
+    const quint64 epoch = currentPhysicalLinkSession(id);
+    quint8 buffer[MAVLINK_MAX_PACKET_LEN]{};
+    const quint16 length = mavlink_msg_to_send_buffer(buffer, &message);
+    const bool submitted = writeRawBytes(id, QByteArray(
+        reinterpret_cast<const char *>(buffer), length));
+    if (submitted && !m_shuttingDown && guardedLink
+        && getLink(id) == guardedLink && epoch != 0
+        && currentPhysicalLinkSession(id) == epoch) {
+        emit mavlinkMessageSubmitted(id, epoch, message);
+    }
+    return submitted;
 }
 
 bool LinkManager::isUdpPortInUse(quint16 port) const

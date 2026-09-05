@@ -2,6 +2,8 @@
 
 #include <mavlink_helpers.h>
 
+#include <QPointer>
+
 #include <cstring>
 #include <utility>
 
@@ -70,10 +72,22 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
     if (frameWriterInvoked) {
         *frameWriterInvoked = true;
     }
-    if (!m_frameWriter(
+    const quint64 submittedEpoch = m_linkSessionEpochs.value(linkId, 0);
+    // The writer is allowed to synchronously tear down this transmitter as
+    // part of link removal. Keep its callable alive independently of `this`
+    // and guard every access after the callback returns.
+    const FrameWriter frameWriter = m_frameWriter;
+    const QPointer<ExactLinkTransmitter> guardedThis(this);
+    if (!frameWriter(
             linkId,
             QByteArray(reinterpret_cast<const char *>(buffer), frameLength))) {
         return SendResult::TransportUnavailable;
+    }
+    if (submittedEpoch != 0 && guardedThis
+        && guardedThis->m_linkSessionEpochs.value(linkId, 0)
+            == submittedEpoch) {
+        emit guardedThis->messageSubmitted(
+            linkId, submittedEpoch, message);
     }
     return SendResult::Sent;
 }
@@ -154,10 +168,23 @@ bool ExactLinkTransmitter::motorStopLinkEligible(int linkId) const
         && m_motorStopLinkEligibility.value(linkId, false);
 }
 
+void ExactLinkTransmitter::setLinkSessionEpoch(int linkId, quint64 epoch)
+{
+    if (linkId < 0) {
+        return;
+    }
+    if (epoch == 0) {
+        m_linkSessionEpochs.remove(linkId);
+    } else {
+        m_linkSessionEpochs.insert(linkId, epoch);
+    }
+}
+
 void ExactLinkTransmitter::forgetLink(int linkId)
 {
     m_transmitStates.remove(linkId);
     m_motorStopLinkEligibility.remove(linkId);
+    m_linkSessionEpochs.remove(linkId);
 }
 
 mavlink_status_t &ExactLinkTransmitter::transmitStatus(int linkId)

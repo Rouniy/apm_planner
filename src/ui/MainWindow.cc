@@ -41,6 +41,7 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCMAVLinkLogPlayer.h"
 #include "MAVLinkInspectorView.h"
 #include "MAVLinkInspectorTrafficSource.h"
+#include "MavlinkFieldGraphWindow.h"
 #include "MAVLinkInspectorWindow.h"
 #include "LinkStatsWindow.h"
 #include "MavlinkLogWindow.h"
@@ -4052,20 +4053,23 @@ void MainWindow::showMavlinkInspector()
     connect(window, &QObject::destroyed,
             this, &MainWindow::pruneMavlinkInspectorWindows);
 
-    auto *source = new MAVLinkInspectorTrafficSource(inspector);
-    inspector->attachSource(source);
     const MAVLinkReplayLease replay = logPlayer
         ? logPlayer->activeReplayLease() : MAVLinkReplayLease{};
-    if (replay.isValid()) {
+    LinkManager *const links = LinkManager::instance();
+    const int linkId = m_mainWindowHeader->selectedLinkId();
+    const QPointer<LinkInterface> pinnedLink(links->getLink(linkId));
+    // Every graph gets its own subscription and the original physical pin,
+    // never the currently selected header or the lifetime of this inspector.
+    const auto bindSource = [this, replay, links, linkId, pinnedLink](
+            MAVLinkInspectorTrafficSource *source) {
+      if (replay.isValid()) {
         source->bindReplay(replay.generation, replay.displayName);
         connect(logPlayer, &QGCMAVLinkLogPlayer::replayMessageObserved,
                 source, &MAVLinkInspectorTrafficSource::observeReplay);
         connect(logPlayer, &QGCMAVLinkLogPlayer::replaySourceEnded,
                 source, &MAVLinkInspectorTrafficSource::endReplay);
-    } else {
-        LinkManager *const links = LinkManager::instance();
-        const int linkId = m_mainWindowHeader->selectedLinkId();
-        LinkInterface *const link = links->getLink(linkId);
+      } else {
+        LinkInterface *const link = pinnedLink.data();
         source->bindLive(link, linkId,
                         links->currentPhysicalLinkSession(linkId),
                         link ? links->getLinkName(linkId) : QString());
@@ -4083,11 +4087,49 @@ void MainWindow::showMavlinkInspector()
                 source->beginLiveSession(links->getLink(id), id, epoch);
             }
         });
+        connect(links, &LinkManager::mavlinkMessageSubmitted, source,
+                [links, source](int id, qulonglong epoch,
+                                mavlink_message_t message) {
+            if (epoch != 0 && links->currentPhysicalLinkSession(id) == epoch) {
+                source->observeOutbound(links->getLink(id), id, epoch, message);
+            }
+        });
         connect(links, &LinkManager::physicalLinkSessionEnded,
                 source, &MAVLinkInspectorTrafficSource::endLiveSession);
         connect(links, &LinkManager::linkRemoved,
                 source, &MAVLinkInspectorTrafficSource::removeLiveLink);
-    }
+      }
+    };
+    auto *source = new MAVLinkInspectorTrafficSource(inspector);
+    inspector->attachSource(source);
+    bindSource(source);
+    connect(inspector, &MAVLinkInspectorView::graphRequested, this,
+            [this, replay, links, linkId, pinnedLink, bindSource](
+                const MavlinkGraphSelection &selection, int history,
+                quint64 token) {
+        if (token == 0) return;
+        if (replay.isValid()) {
+            if (!logPlayer || replay.generation != token
+                || logPlayer->activeReplayLease().generation != token) return;
+        } else if (!pinnedLink || links->getLink(linkId) != pinnedLink
+                   || links->currentPhysicalLinkSession(linkId) != token) {
+            return;
+        }
+        auto *graph = new MavlinkFieldGraphWindow(selection, history, this);
+        auto *graphSource = new MAVLinkInspectorTrafficSource(graph);
+        connect(graphSource, &MAVLinkInspectorTrafficSource::messageReceived,
+                graph, &MavlinkFieldGraphWindow::receiveMessage);
+        connect(graphSource, &MAVLinkInspectorTrafficSource::outboundMessageReceived,
+                graph, &MavlinkFieldGraphWindow::receiveMessage);
+        connect(graphSource, &MAVLinkInspectorTrafficSource::sourceReset,
+                graph, &MavlinkFieldGraphWindow::clearSamples);
+        connect(graphSource, &MAVLinkInspectorTrafficSource::statusChanged,
+                graph, &MavlinkFieldGraphWindow::setSourceStatus);
+        bindSource(graphSource);
+        graph->show();
+        graph->raise();
+        graph->activateWindow();
+    });
 
     window->show();
     window->raise();
@@ -4096,6 +4138,8 @@ void MainWindow::showMavlinkInspector()
 
 void MainWindow::closeMavlinkInspectorWindows()
 {
+    const auto graphs = findChildren<MavlinkFieldGraphWindow *>();
+    for (auto *graph : graphs) delete graph;
     const QList<QPointer<MAVLinkInspectorWindow>> windows =
         m_mavlinkInspectorWindows;
     m_mavlinkInspectorWindows.clear();
