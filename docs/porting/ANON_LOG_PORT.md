@@ -34,9 +34,11 @@ commit boundary cannot undo a successfully published file.
 
 This is coordinate obfuscation, **not full sanitization**. A constant translation
 preserves flight shape; one known location can reveal the offset. Altitude,
-timestamps, identifiers, parameters, free text, relative tracks, embedded
-RTCM/log payloads and unrecognized location fields can still disclose sensitive
-data. The warning appears before work and in results. Never describe the output
+timestamps, identifiers, parameters, free text, relative tracks, other embedded
+payloads and unrecognized location fields can still disclose sensitive data.
+TLOG now drops the five explicitly identified opaque/secret message classes
+described below; this does not sanitize arbitrary embedded data. The warning
+appears before work and in results. Never describe the output
 as safe to publish without inspection.
 
 BIN retains non-coordinate bytes and record framing, uses authoritative FMTU
@@ -79,6 +81,17 @@ the message; they do not inflate the processed coordinate counter.
 reference omission of `lng` is corrected. Unrecognized embedded locations
   remain outside the claimed coverage.
 - Ambiguous binary field inference and unchecked overflow are not reproduced.
+- TLOG always drops GPS_INJECT_DATA, GPS_RTCM_DATA, FILE_TRANSFER_PROTOCOL,
+  LOG_DATA and SETUP_SIGNING, from every sender and even with zero offsets.
+  GPS corrections can carry a base-station position; file/log payloads and
+  signing keys cannot be made private by changing named coordinate fields.
+  Per-message aggregate counts/reasons appear in warnings, without raw payloads.
+- COMMAND_LONG is retained only for explicitly audited non-coordinate commands;
+  location-bearing and unknown commands are dropped instead of leaving param5/6
+  coordinates unchanged. COMMAND_INT shifts x/y only for explicit global-frame
+  location semantics, retains audited non-coordinate commands and drops the
+  rest. This deliberately loses some harmless unaudited commands. Do not widen
+  the allowlist merely from a NAV/DO name or command-number range.
 
 `coordinateFields` counts definitions for BIN and encountered field occurrences
 for LOG/TLOG; `patchedValues` reports the backend's processed nonzero BIN values
@@ -86,12 +99,25 @@ or actually changed LOG/TLOG values. General BIN multiplier application remains
 inherited type-based behavior (including the float magnitude heuristic), not a
 claim of every future FMTU scale. Geographic ranges are not normalized or clamped.
 The TLOG extension covers `lng` and explicit global location-bearing mission
-items; local frames/non-location commands, COMMAND_LONG param5/6 and reference-
-unlisted position messages remain outside claimed coverage.
+items and COMMAND_INT. Existing local-frame and non-location mission items stay
+unchanged; reference-unlisted position messages and unrecognized operator
+coordinate names remain partial-privacy gaps. `records` counts retained output
+records, excluding explicitly reported drops. Invalid framing/CRC/dialect or
+payload lengths still fail before the privacy filter; drops cannot conceal
+malformed input. Original files are never rewritten by this filter.
 
 ## Verification
 
-Full Qt5/audio/Concurrent configure/build and **225/225 tests** pass (16.70 s):
+Privacy-filter checkpoint (2026-09-06): Qt5/audio build, focused8/8 and full
+**240/240 tests pass (29.84 s)**. New fixtures cover all-sender/zero-offset
+opaque and secret drops, aggregate counters without payloads, malformed input,
+global COMMAND_INT and other GCS coordinates, known non-coordinate byte
+preservation and ambiguous-command drops. Production transport and Developer
+Tools X11 audits also pass; see `TLOG_RECORDING.md` and evidence
+`/tmp/apm-tlog-tx.JioGvl/`. This does not claim new native-platform or full
+anonymity coverage. The original BIN/text/X11 evidence below remains historical.
+
+Original full Qt5/audio/Concurrent configure/build and **225/225 tests** pass (16.70 s):
 `/tmp/apm-anonlog.I5u4vQ/configure.log`, `build-final.log`, `tests-final.log`.
 The first suite was 224/225: a text file with no FMT was accepted. It now fails
 unpublished; the final full run passes. Claude c190-c193 and three disjoint

@@ -1,6 +1,7 @@
 #include "SigningTransportRuntimeAudit.h"
 
 #include "comm/ExactLinkTransmitter.h"
+#include "comm/GpsCorrectionExtractor.h"
 #include "comm/LinkInterface.h"
 #include "comm/LinkManager.h"
 #include "comm/LinkManagerFactory.h"
@@ -27,12 +28,15 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QEvent>
+#include <QFile>
+#include <QFileInfo>
 #include <QHostAddress>
 #include <QPointer>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QTcpServer>
 #include <QThread>
+#include <QTemporaryDir>
 #include <QUdpSocket>
 #include <QVector>
 
@@ -54,6 +58,7 @@ constexpr int ProvisioningAuditLinkId = 910008;
 constexpr int InterruptedProvisioningAuditLinkId = 910009;
 constexpr int RetiredUasAuditLinkId = 910010;
 constexpr int RediscoveredUasAuditLinkId = 910011;
+constexpr int LoggingTeardownAuditLinkId = 910012;
 constexpr int WaitTimeoutMs = 1000;
 
 const QString PrimaryProfileId =
@@ -84,6 +89,8 @@ const QString RetiredUasProfileId =
     QStringLiteral("ab772fee-c647-48f4-9eae-dd89859f60ef");
 const QString RediscoveredUasProfileId =
     QStringLiteral("3eb5b624-45e7-432e-ae6a-3b7d2eb26eb5");
+const QString LoggingTeardownProfileId =
+    QStringLiteral("83a0b5de-1614-4ed4-820b-1b7c4075bb5d");
 
 struct StoredUdpDefinition
 {
@@ -490,6 +497,35 @@ mavlink_message_t radioStatusMessage()
     return message;
 }
 
+mavlink_message_t gpsInjectMessage(quint8 systemId, quint8 componentId,
+                                   const QByteArray &payload)
+{
+    mavlink_message_t message{};
+    quint8 data[MAVLINK_MSG_GPS_INJECT_DATA_FIELD_DATA_LEN]{};
+    const int size = std::min(payload.size(), int(sizeof(data)));
+    if (size > 0) {
+        std::memcpy(data, payload.constData(), size_t(size));
+    }
+    mavlink_msg_gps_inject_data_pack(
+        systemId, componentId, &message, 42, MAV_COMP_ID_AUTOPILOT1,
+        quint8(size), data);
+    return message;
+}
+
+mavlink_message_t gpsRtcmMessage(quint8 systemId, quint8 componentId,
+                                 const QByteArray &payload)
+{
+    mavlink_message_t message{};
+    quint8 data[MAVLINK_MSG_GPS_RTCM_DATA_FIELD_DATA_LEN]{};
+    const int size = std::min(payload.size(), int(sizeof(data)));
+    if (size > 0) {
+        std::memcpy(data, payload.constData(), size_t(size));
+    }
+    mavlink_msg_gps_rtcm_data_pack(
+        systemId, componentId, &message, 0, quint8(size), data);
+    return message;
+}
+
 mavlink_message_t setupSigningMessage(
     quint8 sourceSystem, quint8 sourceComponent,
     quint8 targetSystem, quint8 targetComponent,
@@ -560,6 +596,93 @@ bool nativeVerifierAccepts(const QVector<QByteArray> &frames,
         }
     }
     return true;
+}
+
+struct LoggedFrame
+{
+    quint64 timestampUsec = 0;
+    QByteArray frame;
+    mavlink_message_t message{};
+};
+
+bool readLoggedFrames(const QString &path, QVector<LoggedFrame> *frames,
+                      QString *error = nullptr)
+{
+    if (!frames) return false;
+    frames->clear();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) *error = file.errorString();
+        return false;
+    }
+    const QByteArray bytes = file.readAll();
+    qint64 cursor = 0;
+    while (cursor < bytes.size()) {
+        if (bytes.size() - cursor < 10) {
+            if (error) *error = QStringLiteral("truncated timestamp/frame header");
+            return false;
+        }
+        quint64 timestamp = 0;
+        for (int index = 0; index < 8; ++index) {
+            timestamp = (timestamp << 8)
+                | quint8(bytes.at(cursor + index));
+        }
+        const qint64 frameOffset = cursor + 8;
+        const quint8 magic = quint8(bytes.at(frameOffset));
+        const int payloadLength = quint8(bytes.at(frameOffset + 1));
+        int frameLength = 0;
+        if (magic == MAVLINK_STX_MAVLINK1) {
+            frameLength = payloadLength + 8;
+        } else if (magic == MAVLINK_STX) {
+            if (bytes.size() - frameOffset < MAVLINK_NUM_HEADER_BYTES) {
+                if (error) *error = QStringLiteral("truncated MAVLink 2 header");
+                return false;
+            }
+            const bool signedFrame =
+                quint8(bytes.at(frameOffset + 2)) & MAVLINK_IFLAG_SIGNED;
+            frameLength = MAVLINK_NUM_NON_PAYLOAD_BYTES + payloadLength
+                + (signedFrame ? MAVLINK_SIGNATURE_BLOCK_LEN : 0);
+        } else {
+            if (error) *error = QStringLiteral("invalid frame magic");
+            return false;
+        }
+        if (frameLength <= 0 || bytes.size() - frameOffset < frameLength) {
+            if (error) *error = QStringLiteral("truncated MAVLink frame");
+            return false;
+        }
+        const QByteArray frame = bytes.mid(frameOffset, frameLength);
+        mavlink_message_t message{};
+        if (!decodeFrame(frame, &message)) {
+            if (error) *error = QStringLiteral("invalid logged MAVLink frame");
+            return false;
+        }
+        frames->append({timestamp, frame, message});
+        cursor = frameOffset + frameLength;
+    }
+    return true;
+}
+
+QByteArray readFileBytes(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+int loggedFrameIndex(const QVector<LoggedFrame> &frames,
+                     const QByteArray &expected)
+{
+    for (int index = 0; index < frames.size(); ++index) {
+        if (frames.at(index).frame == expected) return index;
+    }
+    return -1;
+}
+
+bool loggedMessageId(const QVector<LoggedFrame> &frames, quint32 messageId)
+{
+    return std::any_of(frames.cbegin(), frames.cend(),
+                       [messageId](const LoggedFrame &frame) {
+        return frame.message.msgid == messageId;
+    });
 }
 
 quint64 currentSigningTimestamp()
@@ -1670,6 +1793,44 @@ int RunSigningTransportRuntimeAudit()
         });
 
     const QByteArray provisionedKey = alternateSigningKey();
+    QTemporaryDir tlogDirectory;
+    const QString mixedTlog = tlogDirectory.filePath(
+        QStringLiteral("mixed-rx-tx.tlog"));
+    const QString extractedCorrections = tlogDirectory.filePath(
+        QStringLiteral("mixed-rx-tx.rtcm"));
+    protocol->stopLogging();
+    const bool mixedLogStarted = tlogDirectory.isValid()
+        && protocol->startLogging(mixedTlog);
+    result.expect(mixedLogStarted,
+                  QStringLiteral("outbound TLOG audit logger did not start"));
+
+    // Start with an ordinary unprotected MAVLink 1 frame. The transition's
+    // SETUP_SIGNING follows on the same physical TCP fixture, then all traffic
+    // must be MAVLink 2 signed. This gives the log one genuine final frame of
+    // each wire form without synthesizing logger input.
+    const QByteArray loggedV1Payload = QByteArray::fromHex("d30000d4");
+    transmitter->setOutboundVersion(ProvisioningAuditLinkId, 1);
+    const int loggedV1WriteIndex = provisioningLink
+        ? provisioningLink->writes().size() : 0;
+    const auto loggedV1Result = transmitter->sendMessage(
+        ProvisioningAuditLinkId, localSystemId, localComponentId,
+        gpsInjectMessage(localSystemId, localComponentId,
+                         loggedV1Payload));
+    QByteArray loggedV1Wire;
+    if (provisioningLink
+        && provisioningLink->writes().size() == loggedV1WriteIndex + 1) {
+        loggedV1Wire = provisioningLink->writes().at(loggedV1WriteIndex);
+    }
+    result.expect(loggedV1Result == ExactLinkTransmitter::SendResult::Sent
+                      && !loggedV1Wire.isEmpty()
+                      && quint8(loggedV1Wire.at(0))
+                          == MAVLINK_STX_MAVLINK1,
+                  QStringLiteral("unprotected MAVLink 1 correction was not submitted"));
+    transmitter->setOutboundVersion(ProvisioningAuditLinkId, 2);
+    const int provisionManagerSubmissionBaseline =
+        provisionManagerSubmissions;
+    const int provisionExactSubmissionBaseline = provisionExactSubmissions;
+
     const int provisionWriteBaseline =
         provisioningLink ? provisioningLink->writes().size() : 0;
     provisioningError.clear();
@@ -1683,8 +1844,10 @@ int RunSigningTransportRuntimeAudit()
                       && provisioningLink->writes().size()
                           == provisionWriteBaseline + 1,
                   QStringLiteral("initial provisioning did not write exactly one frame"));
-    result.expect(provisionManagerSubmissions == 0
-                      && provisionExactSubmissions == 0,
+    result.expect(provisionManagerSubmissions
+                          == provisionManagerSubmissionBaseline
+                      && provisionExactSubmissions
+                          == provisionExactSubmissionBaseline,
                   QStringLiteral("secret provisioning frame escaped through outbound observers"));
 
     QByteArray provisionWire;
@@ -1772,6 +1935,376 @@ int RunSigningTransportRuntimeAudit()
                   }),
                   QStringLiteral("newly provisioned key did not authenticate vehicle traffic"));
 
+    const QByteArray loggedSignedPayload =
+        QByteArray::fromHex("d50100d600");
+    const int loggedSignedWriteIndex = provisioningLink
+        ? provisioningLink->writes().size() : 0;
+    const auto loggedSignedResult = transmitter->sendMessage(
+        ProvisioningAuditLinkId, localSystemId, localComponentId,
+        gpsRtcmMessage(localSystemId, localComponentId,
+                       loggedSignedPayload));
+    QByteArray loggedSignedWire;
+    if (provisioningLink
+        && provisioningLink->writes().size() == loggedSignedWriteIndex + 1) {
+        loggedSignedWire = provisioningLink->writes().at(
+            loggedSignedWriteIndex);
+    }
+    result.expect(loggedSignedResult
+                          == ExactLinkTransmitter::SendResult::Sent
+                      && isSignedMavlink2(loggedSignedWire),
+                  QStringLiteral("protected correction was not submitted as signed MAVLink 2"));
+    const int protectedRawWriteCount = provisioningLink
+        ? provisioningLink->writes().size() : 0;
+    result.expect(!links->writeRawBytes(
+                      ProvisioningAuditLinkId,
+                      QByteArrayLiteral("must not enter tlog"))
+                      && provisioningLink
+                      && provisioningLink->writes().size()
+                          == protectedRawWriteCount,
+                  QStringLiteral("protected raw bytes reached the transport during logging"));
+
+    protocol->stopLogging();
+    QVector<LoggedFrame> mixedFrames;
+    QString mixedLogError;
+    const bool mixedLogReadable = mixedLogStarted
+        && readLoggedFrames(mixedTlog, &mixedFrames, &mixedLogError);
+    result.expect(mixedLogReadable,
+                  QStringLiteral("mixed outbound TLOG is invalid: %1")
+                      .arg(mixedLogError));
+    const int loggedV1Index = loggedFrameIndex(mixedFrames, loggedV1Wire);
+    const int authenticatedIndex = loggedFrameIndex(
+        mixedFrames, authenticatedProvisionHeartbeat);
+    const int loggedSignedIndex = loggedFrameIndex(
+        mixedFrames, loggedSignedWire);
+    result.expect(loggedV1Index >= 0 && authenticatedIndex > loggedV1Index
+                      && loggedSignedIndex > authenticatedIndex,
+                  QStringLiteral("mixed RX/TX TLOG did not preserve transport order or exact frame bytes"));
+    if (loggedV1Index >= 0 && authenticatedIndex > loggedV1Index
+        && loggedSignedIndex > authenticatedIndex) {
+        result.expect(mixedFrames.at(loggedV1Index).timestampUsec != 0
+                          && mixedFrames.at(authenticatedIndex).timestampUsec
+                              != 0
+                          && mixedFrames.at(loggedSignedIndex).timestampUsec
+                              != 0,
+                      QStringLiteral("mixed RX/TX TLOG omitted a record timestamp"));
+    }
+    result.expect(!loggedMessageId(mixedFrames,
+                                   MAVLINK_MSG_ID_SETUP_SIGNING),
+                  QStringLiteral("SETUP_SIGNING secret was persisted in TLOG"));
+
+    const auto extracted = GpsCorrectionExtractor::Extract(
+        mixedTlog, extractedCorrections);
+    result.expect(extracted.success && !extracted.cancelled
+                      && extracted.messagesWritten == 2
+                      && readFileBytes(extractedCorrections)
+                          == loggedV1Payload + loggedSignedPayload,
+                  QStringLiteral("logged outbound GPS corrections did not round-trip through the extractor: %1")
+                      .arg(extracted.error));
+
+    // Ingress is appended before public frame/packet observers. An observer
+    // can replace the logger for future traffic, but cannot redirect the
+    // already-authenticated frame which caused that callback.
+    const QString observerOldTlog = tlogDirectory.filePath(
+        QStringLiteral("observer-old.tlog"));
+    const QString observerNewTlog = tlogDirectory.filePath(
+        QStringLiteral("observer-new.tlog"));
+    const QByteArray observerPayload = QByteArray::fromHex("e100e2");
+    const QByteArray observerInbound = nativeFrame(
+        gpsInjectMessage(provisioningSystemId, MAV_COMP_ID_AUTOPILOT1,
+                         observerPayload),
+        provisioningSystemId, MAV_COMP_ID_AUTOPILOT1, 99, false,
+        provisionedKey, 41, decodedSetup.initial_timestamp + 6000001ULL);
+    QObject observerLogScope;
+    bool observerSwitchedLogger = false;
+    bool observerReplacementStarted = false;
+    QObject::connect(
+        protocol, &MAVLinkProtocol::frameReceived, &observerLogScope,
+        [&](int linkId, const QByteArray &frame) {
+            if (linkId != ProvisioningAuditLinkId
+                || frame != observerInbound || observerSwitchedLogger) {
+                return;
+            }
+            observerSwitchedLogger = true;
+            protocol->stopLogging();
+            observerReplacementStarted = protocol->startLogging(
+                observerNewTlog);
+        });
+    const bool observerOldStarted = protocol->startLogging(observerOldTlog);
+    if (provisioningLink) provisioningLink->inject(observerInbound);
+    result.expect(observerOldStarted && waitUntil([&]() {
+                      return observerSwitchedLogger;
+                  }) && observerReplacementStarted,
+                  QStringLiteral("RX observer did not replace the active logger"));
+    protocol->stopLogging();
+    QVector<LoggedFrame> observerOldFrames;
+    QVector<LoggedFrame> observerNewFrames;
+    QString observerOldError;
+    QString observerNewError;
+    const bool observerOldReadable = readLoggedFrames(
+        observerOldTlog, &observerOldFrames, &observerOldError);
+    const bool observerNewReadable = readLoggedFrames(
+        observerNewTlog, &observerNewFrames, &observerNewError);
+    result.expect(observerOldReadable
+                      && loggedFrameIndex(observerOldFrames,
+                                          observerInbound) >= 0,
+                  QStringLiteral("accepted RX frame was not retained by its captured logger: %1")
+                      .arg(observerOldError));
+    result.expect(observerNewReadable
+                      && loggedFrameIndex(observerNewFrames,
+                                          observerInbound) < 0,
+                  QStringLiteral("RX observer redirected the current frame into its replacement logger: %1")
+                      .arg(observerNewError));
+
+    const QString rejectedIngressTlog = tlogDirectory.filePath(
+        QStringLiteral("rejected-ingress.tlog"));
+    const bool rejectedIngressStarted = protocol->startLogging(
+        rejectedIngressTlog);
+    QByteArray badObserverMac = observerInbound;
+    if (!badObserverMac.isEmpty()) {
+        badObserverMac[badObserverMac.size() - 1] = char(
+            quint8(badObserverMac.at(badObserverMac.size() - 1)) ^ 1U);
+    }
+    if (provisioningLink) {
+        provisioningLink->inject(badObserverMac);
+        provisioningLink->inject(observerInbound); // accepted-frame replay
+        provisioningLink->inject(nativeFrame(
+            autopilotHeartbeatMessage(provisioningSystemId, false),
+            provisioningSystemId, MAV_COMP_ID_AUTOPILOT1, 100, false));
+    }
+    // Deliver only the queued transport receiver. Avoid unrelated application
+    // timers adding legitimate outbound traffic to this negative log.
+    QCoreApplication::sendPostedEvents(links, QEvent::MetaCall);
+    protocol->stopLogging();
+    QVector<LoggedFrame> rejectedIngressFrames;
+    QString rejectedIngressError;
+    result.expect(rejectedIngressStarted
+                      && readLoggedFrames(rejectedIngressTlog,
+                                          &rejectedIngressFrames,
+                                          &rejectedIngressError)
+                      && rejectedIngressFrames.isEmpty(),
+                  QStringLiteral("unauthenticated/replayed ingress entered TLOG: %1")
+                      .arg(rejectedIngressError));
+
+    // A public post-submission observer runs after the frame has been logged.
+    // Replacing the logger there affects only future writes: this frame stays
+    // in the session captured before transport submission.
+    const QString submittedOldTlog = tlogDirectory.filePath(
+        QStringLiteral("submitted-old.tlog"));
+    const QString submittedNewTlog = tlogDirectory.filePath(
+        QStringLiteral("submitted-new.tlog"));
+    QObject submittedLogScope;
+    bool submittedSwitchedLogger = false;
+    bool submittedReplacementStarted = false;
+    QObject::connect(
+        links, &LinkManager::mavlinkMessageSubmitted, &submittedLogScope,
+        [&](int linkId, qulonglong, mavlink_message_t message) {
+            if (submittedSwitchedLogger
+                || linkId != ProvisioningAuditLinkId
+                || message.msgid != MAVLINK_MSG_ID_NAMED_VALUE_INT) {
+                return;
+            }
+            submittedSwitchedLogger = true;
+            protocol->stopLogging();
+            submittedReplacementStarted = protocol->startLogging(
+                submittedNewTlog);
+        });
+    const bool submittedOldStarted = protocol->startLogging(
+        submittedOldTlog);
+    const int submittedWriteIndex = provisioningLink
+        ? provisioningLink->writes().size() : 0;
+    const auto submittedSendResult = transmitter->sendMessage(
+        ProvisioningAuditLinkId, localSystemId, localComponentId,
+        namedValueMessage(localSystemId, localComponentId, 817));
+    QByteArray submittedWire;
+    if (provisioningLink
+        && provisioningLink->writes().size() == submittedWriteIndex + 1) {
+        submittedWire = provisioningLink->writes().at(submittedWriteIndex);
+    }
+    protocol->stopLogging();
+    QVector<LoggedFrame> submittedOldFrames;
+    QVector<LoggedFrame> submittedNewFrames;
+    QString submittedOldError;
+    QString submittedNewError;
+    const bool submittedOldReadable = readLoggedFrames(
+        submittedOldTlog, &submittedOldFrames, &submittedOldError);
+    const bool submittedNewReadable = readLoggedFrames(
+        submittedNewTlog, &submittedNewFrames, &submittedNewError);
+    result.expect(submittedOldStarted
+                      && submittedSendResult
+                          == ExactLinkTransmitter::SendResult::Sent
+                      && submittedSwitchedLogger
+                      && submittedReplacementStarted
+                      && submittedOldReadable && submittedNewReadable
+                      && loggedFrameIndex(submittedOldFrames,
+                                          submittedWire) >= 0
+                      && loggedFrameIndex(submittedNewFrames,
+                                          submittedWire) < 0,
+                  QStringLiteral("post-submit observer redirected the accepted outbound frame: %1 / %2")
+                      .arg(submittedOldError, submittedNewError));
+
+    // Outbound capture happens before transport submission. If the transport
+    // callback replaces the logger, the now-stale frame is skipped instead of
+    // being redirected into either session.
+    const QString transportOldTlog = tlogDirectory.filePath(
+        QStringLiteral("transport-old.tlog"));
+    const QString transportNewTlog = tlogDirectory.filePath(
+        QStringLiteral("transport-new.tlog"));
+    const bool transportOldStarted = protocol->startLogging(
+        transportOldTlog);
+    int transportSwitches = 0;
+    bool transportReplacementStarted = false;
+    QByteArray transportCallbackFrame;
+    if (provisioningLink) {
+        provisioningLink->setWriteObserver(
+            [&](const QByteArray &frame) {
+                if (transportSwitches != 0) return;
+                ++transportSwitches;
+                transportCallbackFrame = frame;
+                protocol->stopLogging();
+                transportReplacementStarted = protocol->startLogging(
+                    transportNewTlog);
+            });
+    }
+    const auto switchedWriteResult = transmitter->sendMessage(
+        ProvisioningAuditLinkId, localSystemId, localComponentId,
+        gpsRtcmMessage(localSystemId, localComponentId,
+                       QByteArray::fromHex("f100f2")));
+    if (provisioningLink) provisioningLink->setWriteObserver({});
+    protocol->stopLogging();
+    QVector<LoggedFrame> transportOldFrames;
+    QVector<LoggedFrame> transportNewFrames;
+    QString transportOldError;
+    QString transportNewError;
+    const bool transportOldReadable = readLoggedFrames(
+        transportOldTlog, &transportOldFrames, &transportOldError);
+    const bool transportNewReadable = readLoggedFrames(
+        transportNewTlog, &transportNewFrames, &transportNewError);
+    result.expect(transportOldStarted
+                      && switchedWriteResult
+                          == ExactLinkTransmitter::SendResult::Sent
+                      && transportSwitches == 1
+                      && transportReplacementStarted
+                      && isSignedMavlink2(transportCallbackFrame),
+                  QStringLiteral("transport logger-replacement fixture did not submit exactly once"));
+    result.expect(transportOldReadable && transportNewReadable
+                      && loggedFrameIndex(transportOldFrames,
+                                          transportCallbackFrame) < 0
+                      && loggedFrameIndex(transportNewFrames,
+                                          transportCallbackFrame) < 0,
+                  QStringLiteral("stale outbound frame was redirected across logger sessions: %1 / %2")
+                      .arg(transportOldError, transportNewError));
+
+    // A logger open failure emits a public diagnostic. The failing operation
+    // must release its stale QFile/session before that callback so a consumer
+    // can immediately install a usable replacement without the outer stack
+    // later clearing it.
+    const QString openFailureReplacement = tlogDirectory.filePath(
+        QStringLiteral("open-failure-replacement.tlog"));
+    QObject openFailureScope;
+    bool openFailureObserved = false;
+    bool openFailureReplacementStarted = false;
+    QObject::connect(
+        protocol, &MAVLinkProtocol::protocolStatusMessage,
+        &openFailureScope, [&](const QString &, const QString &) {
+            if (openFailureObserved) return;
+            openFailureObserved = true;
+            openFailureReplacementStarted = protocol->startLogging(
+                openFailureReplacement);
+        });
+    protocol->stopLogging();
+    protocol->startLogging(tlogDirectory.filePath(
+        QStringLiteral("missing-parent/failure.tlog")));
+    const int openFailureWriteIndex = provisioningLink
+        ? provisioningLink->writes().size() : 0;
+    const auto openFailureSend = transmitter->sendMessage(
+        ProvisioningAuditLinkId, localSystemId, localComponentId,
+        namedValueMessage(localSystemId, localComponentId, 818));
+    QByteArray openFailureWire;
+    if (provisioningLink
+        && provisioningLink->writes().size() == openFailureWriteIndex + 1) {
+        openFailureWire = provisioningLink->writes().at(
+            openFailureWriteIndex);
+    }
+    protocol->stopLogging();
+    QVector<LoggedFrame> openFailureFrames;
+    QString openFailureError;
+    result.expect(openFailureObserved && openFailureReplacementStarted
+                      && openFailureSend
+                          == ExactLinkTransmitter::SendResult::Sent
+                      && readLoggedFrames(openFailureReplacement,
+                                          &openFailureFrames,
+                                          &openFailureError)
+                      && loggedFrameIndex(openFailureFrames,
+                                          openFailureWire) >= 0,
+                  QStringLiteral("logger failure callback replacement was clobbered or unusable: %1")
+                      .arg(openFailureError));
+
+#if defined(Q_OS_LINUX)
+    // /dev/full accepts open(2) but rejects writes. This reaches QFile's real
+    // buffered write-error path without changing production buffering or
+    // exposing an injectable logger. The transport submission itself remains
+    // successful, and the error observer must be able to install a new log.
+    if (QFileInfo::exists(QStringLiteral("/dev/full"))) {
+        const QString writeFailureReplacement = tlogDirectory.filePath(
+            QStringLiteral("write-failure-replacement.tlog"));
+        QObject writeFailureScope;
+        int writeFailureNotifications = 0;
+        bool writeFailureReplacementStarted = false;
+        QObject::connect(
+            protocol, &MAVLinkProtocol::protocolStatusMessage,
+            &writeFailureScope, [&](const QString &, const QString &) {
+                if (writeFailureNotifications != 0) return;
+                ++writeFailureNotifications;
+                writeFailureReplacementStarted = protocol->startLogging(
+                    writeFailureReplacement);
+            });
+        protocol->stopLogging();
+        const bool fullLogStarted = protocol->startLogging(
+            QStringLiteral("/dev/full"));
+        bool allFailureTransportsSubmitted = true;
+        for (int index = 0;
+             index < 2048 && writeFailureNotifications == 0; ++index) {
+            allFailureTransportsSubmitted = allFailureTransportsSubmitted
+                && transmitter->sendMessage(
+                       ProvisioningAuditLinkId, localSystemId,
+                       localComponentId,
+                       namedValueMessage(localSystemId, localComponentId,
+                                         9000 + index))
+                    == ExactLinkTransmitter::SendResult::Sent;
+        }
+        const int replacementWriteIndex = provisioningLink
+            ? provisioningLink->writes().size() : 0;
+        const auto replacementSendResult = transmitter->sendMessage(
+            ProvisioningAuditLinkId, localSystemId, localComponentId,
+            namedValueMessage(localSystemId, localComponentId, 11049));
+        QByteArray replacementWire;
+        if (provisioningLink
+            && provisioningLink->writes().size()
+                == replacementWriteIndex + 1) {
+            replacementWire = provisioningLink->writes().at(
+                replacementWriteIndex);
+        }
+        protocol->stopLogging();
+        QVector<LoggedFrame> writeFailureFrames;
+        QString writeFailureError;
+        result.expect(fullLogStarted && allFailureTransportsSubmitted
+                          && writeFailureNotifications == 1
+                          && writeFailureReplacementStarted
+                          && replacementSendResult
+                              == ExactLinkTransmitter::SendResult::Sent
+                          && readLoggedFrames(writeFailureReplacement,
+                                              &writeFailureFrames,
+                                              &writeFailureError)
+                          && loggedFrameIndex(writeFailureFrames,
+                                              replacementWire) >= 0,
+                      QStringLiteral("write-error logger replacement was not isolated and usable: %1")
+                          .arg(writeFailureError));
+    }
+#endif
+
+    const QString refusedTlog = tlogDirectory.filePath(
+        QStringLiteral("refused.tlog"));
+    const bool refusedLogStarted = protocol->startLogging(refusedTlog);
     SigningProvisioningTarget repeatTarget;
     const int repeatWriteBaseline =
         provisioningLink ? provisioningLink->writes().size() : 0;
@@ -1788,6 +2321,19 @@ int RunSigningTransportRuntimeAudit()
                       && provisioningLink->writes().size()
                           == repeatWriteBaseline,
                   QStringLiteral("initial provisioning admitted a second attempt"));
+    result.expect(!links->writeRawBytes(
+                      ProvisioningAuditLinkId,
+                      QByteArrayLiteral("raw refused while protected")),
+                  QStringLiteral("protected route admitted raw bytes"));
+    protocol->stopLogging();
+    QVector<LoggedFrame> refusedFrames;
+    QString refusedLogError;
+    result.expect(refusedLogStarted
+                      && readLoggedFrames(refusedTlog, &refusedFrames,
+                                          &refusedLogError)
+                      && refusedFrames.isEmpty(),
+                  QStringLiteral("refused provisioning/raw attempt entered TLOG: %1")
+                      .arg(refusedLogError));
 
     links->removeLink(ProvisioningAuditLinkId);
     result.expect(provisioningLink.isNull(),
@@ -1813,6 +2359,27 @@ int RunSigningTransportRuntimeAudit()
                       && !restoredProvisioningLink->isConnected()
                       && restoredProvisioningLink->writes().isEmpty(),
                   QStringLiteral("unconfirmed provisioning policy did not restore locked"));
+    const QString lockedTlog = tlogDirectory.filePath(
+        QStringLiteral("locked-signing-failure.tlog"));
+    const bool lockedLogStarted = protocol->startLogging(lockedTlog);
+    bool lockedWriterInvoked = true;
+    const auto lockedSendResult = transmitter->sendMessage(
+        ProvisioningAuditLinkId, localSystemId, localComponentId,
+        gpsRtcmMessage(localSystemId, localComponentId,
+                       QByteArray::fromHex("aa55")),
+        &lockedWriterInvoked);
+    protocol->stopLogging();
+    QVector<LoggedFrame> lockedLogFrames;
+    QString lockedLogError;
+    result.expect(lockedLogStarted
+                      && lockedSendResult
+                          == ExactLinkTransmitter::SendResult::SigningUnavailable
+                      && !lockedWriterInvoked
+                      && readLoggedFrames(lockedTlog, &lockedLogFrames,
+                                          &lockedLogError)
+                      && lockedLogFrames.isEmpty(),
+                  QStringLiteral("signing-unavailable frame entered transport/TLOG: %1")
+                      .arg(lockedLogError));
     links->removeLink(ProvisioningAuditLinkId);
     result.expect(restoredProvisioningLink.isNull(),
                   QStringLiteral("restored provisioning fixture was not removed"));
@@ -1880,6 +2447,14 @@ int RunSigningTransportRuntimeAudit()
             });
     }
     const QByteArray interruptedKey = signingKey();
+    const QString interruptedTlog = tlogDirectory.filePath(
+        QStringLiteral("interrupted-secret.tlog"));
+    // Fixture discovery starts the normal heartbeat-triggered recorder.
+    // startLogging preserves an already open log, so select our test file
+    // explicitly before checking that private provisioning never enters it.
+    protocol->stopLogging();
+    const bool interruptedLogStarted = protocol->startLogging(
+        interruptedTlog);
     provisioningError.clear();
     result.expect(!links->provisionSigning(
                       interruptedTarget,
@@ -1895,6 +2470,16 @@ int RunSigningTransportRuntimeAudit()
                       && interruptedManagerSubmissions == 0
                       && interruptedExactSubmissions == 0,
                   QStringLiteral("synchronous link removal did not produce one unpublished, unconfirmed attempt"));
+    protocol->stopLogging();
+    QVector<LoggedFrame> interruptedFrames;
+    QString interruptedLogError;
+    result.expect(interruptedLogStarted
+                      && readLoggedFrames(interruptedTlog,
+                                          &interruptedFrames,
+                                          &interruptedLogError)
+                      && interruptedFrames.isEmpty(),
+                  QStringLiteral("secret/reentrant teardown frame entered TLOG: %1")
+                      .arg(interruptedLogError));
     result.expect(interruptedWire.size() == 1
                       && isSignedMavlink2(interruptedWire.value(0))
                       && nativeVerifierAccepts(interruptedWire,
@@ -1941,6 +2526,53 @@ int RunSigningTransportRuntimeAudit()
     links->removeLink(InterruptedProvisioningAuditLinkId);
     result.expect(restoredInterruptedLink.isNull(),
                   QStringLiteral("interrupted provisioning restore fixture was not removed"));
+
+    // Exercise the ordinary (non-secret) logging path when the transport
+    // callback synchronously deletes its own link. The wire callback ran, but
+    // LinkManager correctly reports the submission as unavailable after the
+    // epoch disappears and must neither dereference the link nor append it.
+    QPointer<ProvisioningAuditLink> loggingTeardownLink(
+        new ProvisioningAuditLink(LoggingTeardownAuditLinkId));
+    LinkManager::ConnectionProfile loggingTeardownProfile;
+    loggingTeardownProfile.id = LoggingTeardownProfileId;
+    LinkManagerFactory::connectLinkSignals(loggingTeardownLink.data(), links);
+    links->addLink(loggingTeardownLink.data(), loggingTeardownProfile);
+    result.expect(links->connectLink(LoggingTeardownAuditLinkId),
+                  QStringLiteral("logging teardown fixture did not connect"));
+    const QString loggingTeardownTlog = tlogDirectory.filePath(
+        QStringLiteral("ordinary-teardown.tlog"));
+    const bool loggingTeardownStarted = protocol->startLogging(
+        loggingTeardownTlog);
+    QByteArray loggingTeardownWire;
+    if (loggingTeardownLink) {
+        loggingTeardownLink->setWriteObserver(
+            [&](const QByteArray &frame) {
+                loggingTeardownWire = frame;
+                if (links->getLink(LoggingTeardownAuditLinkId)) {
+                    links->removeLink(LoggingTeardownAuditLinkId);
+                }
+            });
+    }
+    bool loggingTeardownWriterInvoked = false;
+    const auto loggingTeardownResult = transmitter->sendMessage(
+        LoggingTeardownAuditLinkId, localSystemId, localComponentId,
+        namedValueMessage(localSystemId, localComponentId, 12001),
+        &loggingTeardownWriterInvoked);
+    protocol->stopLogging();
+    QVector<LoggedFrame> loggingTeardownFrames;
+    QString loggingTeardownError;
+    result.expect(loggingTeardownStarted && loggingTeardownWriterInvoked
+                      && loggingTeardownResult
+                          == ExactLinkTransmitter::SendResult::TransportUnavailable
+                      && !loggingTeardownWire.isEmpty()
+                      && loggingTeardownLink.isNull()
+                      && links->getLink(LoggingTeardownAuditLinkId) == nullptr
+                      && readLoggedFrames(loggingTeardownTlog,
+                                          &loggingTeardownFrames,
+                                          &loggingTeardownError)
+                      && loggingTeardownFrames.isEmpty(),
+                  QStringLiteral("reentrant ordinary transport teardown logged a stale frame or retained the link: %1")
+                      .arg(loggingTeardownError));
 
     // A required hint is fail-closed when its separate secret-free policy is
     // missing or malformed. The diagnostic belongs to the connection profile;

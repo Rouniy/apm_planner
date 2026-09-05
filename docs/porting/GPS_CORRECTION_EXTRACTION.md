@@ -24,14 +24,16 @@ CRC-invalid records are skipped during reader resynchronization; skipped bytes,
 rejected frames and truncated tails are reported. This is extraction, not RTCM
 validation, delivery assurance or cryptographic authentication of a signed log.
 
-Current Qt logs contain received packets only (`MAVLinkProtocol.cc` receive
-logging). They omit this station's transmitted correction packets. MP10 records
-outbound packets in `MAVLinkInterface.generatePacket` through `SaveToTlog`, so
-its logs can contain those corrections. The UI names this producer limitation:
-zero extracted messages need not mean no corrections were sent. Outbound Qt
-logging is a separate transport parity gap and must preserve exact final frame
-bytes while excluding secret-bearing `SETUP_SIGNING`; it is not implemented by
-this file reader.
+Older Qt logs contain received packets only and may omit this station's
+transmitted correction packets. The current recorder also saves successfully
+submitted typed MAVLink packets while recording is enabled, preserving final
+wire bytes and excluding secret-bearing `SETUP_SIGNING`. The production
+transport audit round-trips outgoing GPS_INJECT_DATA and signed GPS_RTCM_DATA
+through this extractor. MP10 also records outgoing packets through SaveToTlog.
+Neither reader can recover packets missing from an existing log. Qt still
+starts recording through its heartbeat/enabled mechanism, not at physical
+connection time, so zero extracted messages do not prove no corrections were
+sent. See `TLOG_RECORDING.md` for session and transport limits.
 
 ## File ownership and intentional differences
 

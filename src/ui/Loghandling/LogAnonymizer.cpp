@@ -103,7 +103,9 @@ QString LogAnonymizer::privacyWarning()
     return QStringLiteral("Beta: inspect the output before sharing. This tool shifts recognized "
         "coordinate fields; it does NOT fully sanitize a log. Serial identifiers, parameters, "
         "messages, altitude, timestamps, relative tracks and unrecognized location fields may remain. "
-        "One known location can reveal the translation. Keep the "
+        "TLOG output drops opaque GPS correction/file/log payloads, signing-key messages and "
+        "commands without an audited coordinate interpretation. These removals are reported; "
+        "they do not guarantee anonymity. One known location can reveal the translation. Keep the "
         "offsets private. Modified signed MAVLink frames are exported unsigned, not re-signed.");
 }
 

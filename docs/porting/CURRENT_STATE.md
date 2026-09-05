@@ -24,7 +24,54 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Extract GPS Corrections**.
+Latest slice (2026-09-06): **Outbound TLOG recording and privacy filtering**.
+The shared production recorder now appends final typed outgoing MAVLink1/2
+bytes, including signatures, after successful transport submission. Accepted RX
+is captured before negotiation/presentation callbacks. File-session tokens
+prevent an old admitted send from entering a callback-selected replacement log.
+Open/write errors retire the failed recorder before notifying observers; logging
+failure does not turn a successful transport submission into send failure.
+SETUP_SIGNING remains absent from generic parser/observer/log paths; raw writes,
+rejected ingress and protected diagnostic-only unsigned radio are not logged.
+
+Anon Log now drops GPS_INJECT_DATA, GPS_RTCM_DATA, FILE_TRANSFER_PROTOCOL,
+LOG_DATA and SETUP_SIGNING from every sender, even with zero offsets, reporting
+aggregate counts without payloads. COMMAND_INT shifts explicitly understood
+global coordinates; ambiguous COMMAND_INT/LONG are dropped while audited
+non-coordinate commands remain. This is conservative partial filtering, not
+complete anonymity: other embedded data, operator coordinates, identifiers,
+free text and reference-unlisted fields still require inspection.
+
+Qt5/audio build, focused8/8 (13.17 seconds) and **240/240 tests pass (29.84
+seconds)**. The production signing runtime covers exact RX/TX bytes, signatures,
+secret absence, rejected traffic, file replacement in three callback locations,
+open failure, Linux /dev/full write failure/replacement and synchronous teardown.
+Outgoing GPS corrections round-trip through the real extractor. Initial checks
+found only harness issues: a local name collision and a test file not selected
+because heartbeat discovery had already opened the automatic recorder.
+
+Production transport and Developer Tools audits both pass on X11, exit0; the
+latter drives the real file pickers, verifies seven bytes and the updated log
+warning, then repeats all six exact fixture vehicle actions. No network SITL
+state was changed and no test fixture remains. Evidence:
+`/tmp/apm-tlog-tx.JioGvl/` (`build-3.log`, `focused-2.log`, `full.log`,
+`signing-x11.log`, `developer-x11.log`, `developer-x11.png`). Claude TCP c210/c179
+gave independent REVIEW-OK; three Codex streams implemented or reviewed disjoint
+parts. Root scheduled all builds/tests. See `TLOG_RECORDING.md` and
+`ANON_LOG_PORT.md` for exact boundaries.
+
+Remaining producer gap: logging retains its heartbeat/enabled start rather than
+starting at physical connect. Pre-start traffic and older RX-only logs cannot
+be recovered. Submission is not delivery, wall-clock timestamps need not be
+monotonic, and buffered QFile writes do not guarantee power-loss durability.
+Next candidate is the offline **Split DataFlash Log** workflow, pending final
+reference/safety design; continue genuine single-drone Developer/TOOLS actions
+and later Signing transitions. Developer12/32, Advanced14 complete+1 partial,
+fixedTools24 plus Signing extension, SETUP46/eight absent reference routes and
+CONFIG15/15 factories/Planner21/64 controls are unchanged. Settings follows
+Tools; Swarm remains last. Native platforms and reference visual parity remain.
+
+Previous slice (2026-09-06): **Extract GPS Corrections**.
 The existing Developer Tools action now works offline through the real TOOLS
 and SETUP shared page: select a .tlog, choose `<name>-corrections.dat`, extract
 on a worker, show progress/cancel and report exact byte/message counts. The
@@ -60,10 +107,10 @@ Both exit0 with no fixture left running. Evidence:
 `developer-gps-x11.png`). No network SITL was changed. Claude TCP c209/c174 and
 three Codex streams supplied implementation, independent review and diagnostics.
 
-Important newly verified producer gap: Qt currently logs RX only, whereas MP10
-also saves sent packets. Thus current Qt .tlogs omit this GCS's own transmitted
-GPS corrections. The UI explicitly names this; the extractor works on packets
-actually present, including MP10 logs. **Next: outbound TLOG logging**, using
+At that checkpoint the newly verified producer gap was RX-only Qt logging, whereas MP10
+also saves sent packets. Thus those older Qt .tlogs omit this GCS's own transmitted
+GPS corrections. The UI explicitly named this; the extractor works on packets
+actually present, including MP10 logs. The next slice above adds outbound logging using
 exact final wire bytes after successful submission, excluding SETUP_SIGNING
 entirely and auditing Anon Log's outbound-coordinate/opaque-RTCM drop policy.
 Then continue remaining single-vehicle Developer/Tools workflows and Signing

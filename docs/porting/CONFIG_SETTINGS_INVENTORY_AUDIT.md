@@ -65,8 +65,10 @@ The six vehicle actions require fresh disarmed exact-target consent and report
 matched ACK/parameter echoes or explicit uncertainty. The remaining20 file,
 transport and recovery actions stay disabled. This is not additional CONFIG
 route coverage; see `DEVELOPER_VEHICLE_TOOLS.md`, `GPS_CORRECTION_EXTRACTION.md`
-and the production route audit. The separate RX-only Qt log limitation remains:
-this station's transmitted corrections are not yet saved in its .tlog files.
+and the production route audit. Older RX-only Qt logs may omit this station's
+transmitted corrections. Current recording includes submitted typed MAVLink
+frames while enabled, with secret exclusion and unchanged heartbeat-triggered
+start; see `TLOG_RECORDING.md`. This does not change the action inventory.
 
 Signing now has a tested AES-GCM/PBKDF2 vault and a production key-domain manager
 binding exact/legacy TX and authenticated RX. Internal offline configuration

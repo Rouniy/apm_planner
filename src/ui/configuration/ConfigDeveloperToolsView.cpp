@@ -347,8 +347,8 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
     m_gpsExtractionButton->setEnabled(false);
     AppendLog(tr("GPS correction extraction started: %1").arg(input));
     AppendLog(tr("All senders and fragments are concatenated in log order; no RTCM reassembly or validation."));
-    AppendLog(tr("Only recorded packets can be extracted. Current Qt logs omit this station’s "
-                 "transmitted corrections; Mission Planner logs may contain them."));
+    AppendLog(tr("Only recorded packets can be extracted. Older Qt logs may omit this station’s "
+                 "transmitted corrections; current logs include submitted MAVLink packets while recording is enabled."));
     auto *progress = new QProgressDialog(tr("Extracting recorded GPS correction bytes…"),
         tr("Cancel"), 0, 1000, this);
     progress->setObjectName(QStringLiteral("DeveloperGpsProgressDialog"));

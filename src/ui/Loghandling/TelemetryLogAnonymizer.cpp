@@ -25,6 +25,23 @@ namespace
 
 constexpr qint64 kMaximumTextLineBytes = 4LL * 1024LL * 1024LL;
 
+QString opaquePrivacyDropReason(quint32 messageId)
+{
+    switch (messageId) {
+    case MAVLINK_MSG_ID_GPS_RTCM_DATA:
+    case MAVLINK_MSG_ID_GPS_INJECT_DATA:
+        return QStringLiteral("opaque GPS corrections can contain an unshifted base-station position");
+    case MAVLINK_MSG_ID_SETUP_SIGNING:
+        return QStringLiteral("message contains a MAVLink signing secret");
+    case MAVLINK_MSG_ID_FILE_TRANSFER_PROTOCOL:
+        return QStringLiteral("opaque transferred files can contain unshifted coordinates or other private data");
+    case MAVLINK_MSG_ID_LOG_DATA:
+        return QStringLiteral("opaque remote log data can contain unshifted coordinates or other private data");
+    default:
+        return {};
+    }
+}
+
 enum class CoordinateKind { None, Latitude, Longitude };
 
 struct TextSchema
@@ -152,9 +169,8 @@ bool isLocationCommand(quint16 command, float param1)
 {
     // MISSION_ITEM x/y are overloaded command parameters.  Keep this an
     // explicit allowlist so local offsets, identifiers and non-location NAV
-    // parameters can never be translated accidentally.  COMMAND_LONG has no
-    // coordinate-frame field and therefore remains under the UI's documented
-    // "unrecognized location fields may remain" warning.
+    // parameters can never be translated accidentally. COMMAND_LONG has no
+    // coordinate-frame field and is handled by the conservative drop policy.
     switch (command) {
     case MAV_CMD_NAV_WAYPOINT:
     case MAV_CMD_NAV_LOITER_UNLIM:
@@ -190,7 +206,7 @@ bool isLocationCommand(quint16 command, float param1)
     }
 }
 
-bool missionItemCarriesGlobalLocation(const mavlink_message_t &message)
+bool framedCommandCarriesGlobalLocation(const mavlink_message_t &message)
 {
     quint8 frame = 0;
     quint16 command = 0;
@@ -203,10 +219,74 @@ bool missionItemCarriesGlobalLocation(const mavlink_message_t &message)
         frame = mavlink_msg_mission_item_int_get_frame(&message);
         command = mavlink_msg_mission_item_int_get_command(&message);
         param1 = mavlink_msg_mission_item_int_get_param1(&message);
+    } else if (message.msgid == MAVLINK_MSG_ID_COMMAND_INT) {
+        frame = mavlink_msg_command_int_get_frame(&message);
+        command = mavlink_msg_command_int_get_command(&message);
+        param1 = mavlink_msg_command_int_get_param1(&message);
     } else {
         return false;
     }
     return isGlobalFrame(frame) && isLocationCommand(command, param1);
+}
+
+bool isKnownNonCoordinateCommand(const mavlink_message_t &message)
+{
+    const bool commandLong = message.msgid == MAVLINK_MSG_ID_COMMAND_LONG;
+    const quint16 command = commandLong
+        ? mavlink_msg_command_long_get_command(&message)
+        : mavlink_msg_command_int_get_command(&message);
+    // Audited against the bundled ardupilotmega.h MAV_CMD descriptions. Do
+    // not infer privacy from numerical ranges or NAV/DO command prefixes.
+    switch (command) {
+    case MAV_CMD_NAV_RETURN_TO_LAUNCH:
+    case MAV_CMD_DO_SET_MODE:
+    case MAV_CMD_DO_CHANGE_SPEED:
+    case MAV_CMD_DO_SET_RELAY:
+    case MAV_CMD_DO_REPEAT_RELAY:
+    case MAV_CMD_DO_SET_SERVO:
+    case MAV_CMD_DO_REPEAT_SERVO:
+    case MAV_CMD_PREFLIGHT_CALIBRATION:
+    case MAV_CMD_PREFLIGHT_STORAGE:
+    case MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN:
+    case MAV_CMD_COMPONENT_ARM_DISARM:
+    case MAV_CMD_GET_MESSAGE_INTERVAL:
+    case MAV_CMD_SET_MESSAGE_INTERVAL:
+    case MAV_CMD_REQUEST_PROTOCOL_VERSION:
+    case MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES:
+    case MAV_CMD_DO_START_MAG_CAL:
+    case MAV_CMD_DO_ACCEPT_MAG_CAL:
+    case MAV_CMD_DO_CANCEL_MAG_CAL:
+        return true;
+    case MAV_CMD_REQUEST_MESSAGE:
+        // Parameters 2–6 are defined by the requested message, not globally.
+        // Only the ordinary unparameterized request is audited here.
+        if (commandLong)
+            return mavlink_msg_command_long_get_param2(&message) == 0.0F
+                && mavlink_msg_command_long_get_param3(&message) == 0.0F
+                && mavlink_msg_command_long_get_param4(&message) == 0.0F
+                && mavlink_msg_command_long_get_param5(&message) == 0.0F
+                && mavlink_msg_command_long_get_param6(&message) == 0.0F;
+        return mavlink_msg_command_int_get_param2(&message) == 0.0F
+            && mavlink_msg_command_int_get_param3(&message) == 0.0F
+            && mavlink_msg_command_int_get_param4(&message) == 0.0F
+            && mavlink_msg_command_int_get_x(&message) == 0
+            && mavlink_msg_command_int_get_y(&message) == 0;
+    default:
+        return false;
+    }
+}
+
+QString privacyDropReason(const mavlink_message_t &message)
+{
+    const QString opaqueReason = opaquePrivacyDropReason(message.msgid);
+    if (!opaqueReason.isEmpty())
+        return opaqueReason;
+    if (message.msgid == MAVLINK_MSG_ID_COMMAND_LONG && !isKnownNonCoordinateCommand(message))
+        return QStringLiteral("coordinate-bearing or unaudited command parameters have no unambiguous global-coordinate transform");
+    if (message.msgid == MAVLINK_MSG_ID_COMMAND_INT
+        && !framedCommandCarriesGlobalLocation(message) && !isKnownNonCoordinateCommand(message))
+        return QStringLiteral("command coordinate semantics or frame are outside the audited transform coverage");
+    return {};
 }
 
 CoordinateKind messageCoordinateKind(const mavlink_message_t &message,
@@ -267,6 +347,7 @@ bool isReferenceBlockedMessage(quint32 messageId)
     case MAVLINK_MSG_ID_UAVIONIX_ADSB_OUT_DYNAMIC:
     case MAVLINK_MSG_ID_LOCAL_POSITION_NED:
     case MAVLINK_MSG_ID_COMMAND_LONG:
+    case MAVLINK_MSG_ID_COMMAND_INT:
     case MAVLINK_MSG_ID_MISSION_ITEM:
     case MAVLINK_MSG_ID_MISSION_ITEM_INT:
     case MAVLINK_MSG_ID_UAVIONIX_ADSB_OUT_CFG:
@@ -365,7 +446,7 @@ bool patchMessage(mavlink_message_t *message,
         }
         return true;
     }
-    const bool missionLocation = missionItemCarriesGlobalLocation(*message);
+    const bool missionLocation = framedCommandCarriesGlobalLocation(*message);
     for (unsigned int index = 0; index < info->num_fields; ++index) {
         const mavlink_field_info_t &field = info->fields[index];
         const CoordinateKind kind = messageCoordinateKind(
@@ -650,6 +731,8 @@ LogAnonymizeResult TelemetryLogAnonymizer::anonymizeTlog(
     reader.setCancelCheck(cancel);
     qint64 expectedOffset = 0;
     bool signatureWarningAdded = false;
+    QHash<quint32, qint64> privacyDropCounts;
+    QHash<quint32, int> privacyWarningIndices;
 
     for (;;) {
         TlogRecord record;
@@ -710,7 +793,42 @@ LogAnonymizeResult TelemetryLogAnonymizer::anonymizeTlog(
             return result;
         }
 
+        // Validate and materialize before inspecting overloaded command fields.
+        // MAVLink2 may omit zero high bytes; a CRC-valid v1 short payload is
+        // still malformed and must not bypass the original fail-closed policy.
+        const quint8 minimumLength = mavlink_min_message_length(&record.message);
+        const quint8 maximumLength = mavlink_max_message_length(&record.message);
+        if (maximumLength == 0 || minimumLength > maximumLength
+            || record.message.len > maximumLength
+            || (mavlink1 && record.message.len != minimumLength)) {
+            result.error = QStringLiteral(
+                "A MAVLink message has no valid payload length in the configured dialect.");
+            return result;
+        }
         mavlink_message_t patched = record.message;
+        if (patched.len < maximumLength)
+            std::memset(_MAV_PAYLOAD_NON_CONST(&patched) + patched.len, 0,
+                        maximumLength - patched.len);
+        const QString dropReason = privacyDropReason(patched);
+        if (!dropReason.isEmpty()) {
+            // Drop the complete timestamp/frame, never a partial payload. This
+            // applies to all senders and even zero-offset runs: signatures and
+            // CRC correctness do not make embedded coordinates/keys private.
+            const qint64 count = ++privacyDropCounts[record.message.msgid];
+            const QString warning = QStringLiteral(
+                "Dropped %1 %2 record(s) (MAVLink id %3): %4. Retained record counts exclude these drops; this is not a guarantee of complete anonymity.")
+                .arg(count).arg(QString::fromLatin1(info->name))
+                .arg(record.message.msgid).arg(dropReason);
+            if (!privacyWarningIndices.contains(record.message.msgid)) {
+                privacyWarningIndices.insert(record.message.msgid, result.warnings.size());
+                result.warnings.append(warning);
+            } else {
+                result.warnings[privacyWarningIndices.value(record.message.msgid)] = warning;
+            }
+            if (progress) progress(recordEnd, total);
+            continue;
+        }
+
         bool changed = false;
         if (!patchMessage(&patched, info, options, &result, &changed)) {
             return result;

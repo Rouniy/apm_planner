@@ -232,15 +232,21 @@ Production ingress verifies those bytes before version negotiation, discovery,
 packet signals, parameter/command consumers, normal TLOGs or mirror forwarding.
 Rejected traffic cannot trigger the non-MAVLink reset heuristic on protected
 links. Unsigned radio diagnostics reach only `RadioStatusMonitor`, never vehicle
-discovery or a v1 downgrade. Accepted logging/mirroring uses original bytes.
+discovery or a v1 downgrade; these diagnostic-only unsigned radio frames are
+also deliberately absent from TLOG. Accepted logging/mirroring uses original bytes.
 
 SETUP_SIGNING is excluded from TX/RX public observations and live logs/mirror;
 decoder and offline replay also suppress it. CSV/text export retains a redacted
 metadata row without raw/hex/decoded secret bytes. TCP/UDP debug traces expose
 endpoint/direction/length only. There is not yet a redacted Inspector event for
-provisioning. Existing binary logs are not rewritten, and coordinate-only Anon
-Log is not a secret sanitizer: historical SETUP_SIGNING records can remain in
-original/anonymized TLOG files. Offline replay never authenticates traffic or
+provisioning. Existing binary logs are not rewritten. New Anon Log TLOG output
+explicitly drops SETUP_SIGNING and reports the count, but this limited filter
+is not a general secret sanitizer; original logs can still contain historical
+keys. Current live TLOG recording includes final signed typed TX frames after
+successful submission, while the private SETUP_SIGNING path bypasses the
+logger entirely. Session replacement and logging failure do not leak that
+frame or change a successful transport result; see `TLOG_RECORDING.md`.
+Offline replay never authenticates traffic or
 mutates the live signing clock; explicit unverified-signature UI remains a gap.
 
 ## Required next integration gates

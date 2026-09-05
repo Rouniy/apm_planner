@@ -75,6 +75,7 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
     if (!link) {
         return;
     }
+    const QPointer<MAVLinkProtocol> guardedProtocol(this);
     QPointer<LinkInterface> guardedLink(link);
     const int linkId = link->getId();
     if (dataBytes.isEmpty()
@@ -89,12 +90,12 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
         m_linkReceiveStates.insert(linkId, linkState);
     }
     const auto receiveSessionIsCurrent =
-        [this, &guardedLink, linkId, &linkState]() {
-        return guardedLink
-            && (!m_connectionManager
-                || m_connectionManager->isCurrentPhysicalIngress(
+        [guardedProtocol, &guardedLink, linkId, &linkState]() {
+        return guardedProtocol && guardedLink
+            && (!guardedProtocol->m_connectionManager
+                || guardedProtocol->m_connectionManager->isCurrentPhysicalIngress(
                     guardedLink.data()))
-            && m_linkReceiveStates.value(linkId) == linkState;
+            && guardedProtocol->m_linkReceiveStates.value(linkId) == linkState;
     };
 
     mavlink_message_t message;
@@ -168,6 +169,7 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
                 const quint64 epoch = m_connectionManager->currentPhysicalLinkSession(linkId);
                 const auto authentication = m_connectionManager->verifyIncomingFrame(
                     linkId, epoch, linkState->parser.lastFrame());
+                if (!receiveSessionIsCurrent()) return;
                 if (!authentication.accepted()) continue;
                 if (authentication.verdict == MAVLinkSigningManager::VerifyVerdict::UnsignedRadio) {
                     m_connectionManager->radioStatusMonitor()->observe(
@@ -179,6 +181,12 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
             // Provisioning carries the secret key itself. Even a valid packet
             // from another system must never enter generic observer/log paths.
             if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING) continue;
+            const QByteArray acceptedFrame = linkState->parser.lastFrame();
+            // Capture the accepted frame before negotiation or presentation
+            // callbacks can start a new log or synchronously receive another
+            // packet. Authentication and secret exclusion always precede this.
+            appendLogFrame(acceptedFrame, loggingSessionId());
+            if (!receiveSessionIsCurrent()) return;
             mavlink_status_t *mavlinkStatus = &linkState->parser.status();
             if (!linkState->decodedFirstPacket)
             {
@@ -331,42 +339,17 @@ void MAVLinkProtocol::receiveBytes(LinkInterface* link, const QByteArray &dataBy
             emit packetReceived(guardedLink.data(), message);
             if (!receiveSessionIsCurrent()) return;
 
-            // The mirror and log preserve the exact received bytes, including
-            // signatures and extension tails, only after the authentication gate.
+            // The mirror preserves exact received bytes after authentication.
             const bool frameObserved = isSignalConnected(
                 QMetaMethod::fromSignal(&MAVLinkProtocol::frameReceived));
-            const bool logFrame = m_loggingEnabled
-                && !m_ScopedLogfilePtr.isNull();
             QByteArray receivedFrame;
-            if (frameObserved || logFrame)
+            if (frameObserved)
             {
-                receivedFrame = linkState->parser.lastFrame();
+                receivedFrame = acceptedFrame;
             }
 
             if (frameObserved) {
                 emit frameReceived(linkId, receivedFrame);
-            }
-
-            // Log data
-            if (logFrame)
-            {
-                quint64 time = QGC::groundTimeUsecs();
-
-                QDataStream outStream(m_ScopedLogfilePtr.data());
-                outStream.setByteOrder(QDataStream::BigEndian);
-                outStream << time; // write time stamp
-
-                const int bytesWritten = outStream.writeRawData(
-                    receivedFrame.constData(), receivedFrame.size());
-
-                if(bytesWritten != receivedFrame.size())
-                {
-                    emit protocolStatusMessage(tr("MAVLink Logging failed"),
-                                               tr("Could not write to file %1, disabling logging.")
-                                               .arg(m_ScopedLogfilePtr->fileName()));
-                    // Stop logging
-                    stopLogging();
-                }
             }
 
             if (m_isOnline)
@@ -528,8 +511,44 @@ void MAVLinkProtocol::handleMessage(LinkInterface *link, const mavlink_message_t
     }
 }
 
+void MAVLinkProtocol::appendLogFrame(const QByteArray &frame, quint64 expectedSession)
+{
+    if (!expectedSession || expectedSession != loggingSessionId()
+        || !m_ScopedLogfilePtr || !m_ScopedLogfilePtr->isOpen()) return;
+
+    // This is a private accepted-frame boundary, not a raw-byte logger.
+    // Refuse secrets by header before any parser or frame copy, even if a
+    // future caller forgets the separate RX/TX provisioning exclusions.
+    const bool v2 = frame.size() >= 12 && quint8(frame[0]) == MAVLINK_STX;
+    const bool v1 = frame.size() >= 8 && quint8(frame[0]) == MAVLINK_STX_MAVLINK1;
+    if (!v1 && !v2) return;
+    const quint32 id = v2 ? quint8(frame[7]) | (quint32(quint8(frame[8])) << 8)
+                           | (quint32(quint8(frame[9])) << 16)
+                         : quint8(frame[5]);
+    if (id == MAVLINK_MSG_ID_SETUP_SIGNING) return;
+    const int expectedBytes = (v2 ? 12 : 8) + quint8(frame[1])
+        + (v2 && (quint8(frame[2]) & MAVLINK_IFLAG_SIGNED) ? MAVLINK_SIGNATURE_BLOCK_LEN : 0);
+    if (frame.size() != expectedBytes) return;
+
+    QByteArray record;
+    record.reserve(8 + frame.size());
+    const quint64 timestamp = QGC::groundTimeUsecs();
+    for (int shift = 56; shift >= 0; shift -= 8) record.append(char((timestamp >> shift) & 0xffU));
+    record.append(frame);
+    // One timestamp+frame write prevents our RX and TX paths from interleaving
+    // their record halves. QFile buffering is not a power-loss durability claim.
+    if (m_ScopedLogfilePtr->write(record) != record.size()) {
+        const QString path = m_ScopedLogfilePtr->fileName();
+        stopLogging(); // retire before observers can start another log
+        emit protocolStatusMessage(tr("MAVLink Logging failed"),
+            tr("Could not write to file %1; logging stopped. The file may have an incomplete tail.").arg(path));
+    }
+}
+
 void MAVLinkProtocol::stopLogging()
 {
+    m_loggingEnabled = false;
+    m_loggingSession = 0;
     if (!m_ScopedLogfilePtr.isNull() && m_ScopedLogfilePtr->isOpen())
     {
         QLOG_DEBUG() << "Stop MAVLink logging" << m_ScopedLogfilePtr->fileName();
@@ -537,7 +556,6 @@ void MAVLinkProtocol::stopLogging()
         m_ScopedLogfilePtr->close();
         m_ScopedLogfilePtr.reset();
     }
-    m_loggingEnabled = false;
 }
 
 bool MAVLinkProtocol::startLogging(const QString& filename)
@@ -547,19 +565,26 @@ bool MAVLinkProtocol::startLogging(const QString& filename)
         return true;
     }
     stopLogging();
+    if (!m_nextLoggingSession) {
+        emit protocolStatusMessage(tr("MAVLink Logging failed"), tr("Logging session identifiers are exhausted."));
+        return false;
+    }
     QLOG_DEBUG() << "Start MAVLink logging" << filename;
 
     m_ScopedLogfilePtr.reset(new QFile(filename));
     if (m_ScopedLogfilePtr->open(QIODevice::WriteOnly | QIODevice::Append))
     {
          m_loggingEnabled = true;
+         m_loggingSession = m_nextLoggingSession++;
     }
     else
     {
-        emit protocolStatusMessage(tr("Started MAVLink logging"),
-                                   tr("FAILED: MAVLink cannot start logging to.").arg(m_ScopedLogfilePtr->fileName()));
-        m_loggingEnabled = false;
+        const QString error = tr("Cannot start MAVLink logging to %1: %2")
+            .arg(m_ScopedLogfilePtr->fileName(), m_ScopedLogfilePtr->errorString());
+        stopLogging();
         m_ScopedLogfilePtr.reset();
+        emit protocolStatusMessage(tr("MAVLink Logging failed"), error);
+        return false; // an observer may have started a different, valid file
     }
     return m_loggingEnabled; // reflects if logging started or not.
 }

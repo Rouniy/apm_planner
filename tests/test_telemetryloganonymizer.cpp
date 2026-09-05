@@ -254,6 +254,13 @@ private slots:
     void modifiedSignedFramesAreStrippedButUnchangedSignaturesRemain();
     void corruptTruncatedAndUnknownDialectInputsFailClosed();
     void rejectsInvalidDevicesAndNonFiniteOffsets();
+    void opaqueCorrectionsAndSigningSecretsAreDropped_data();
+    void opaqueCorrectionsAndSigningSecretsAreDropped();
+    void ambiguousOutgoingCommandsAreDropped_data();
+    void ambiguousOutgoingCommandsAreDropped();
+    void knownNonCoordinateOutgoingCommandsRemainByteIdentical();
+    void outgoingKnownGlobalCoordinatesAreShifted();
+    void droppedMessagesStillRequireValidFramingAndPayloadLength();
 };
 
 void TelemetryLogAnonymizerTest::textUsesFmtColumnsAndPreservesLineEndings()
@@ -580,6 +587,267 @@ void TelemetryLogAnonymizerTest::rejectsInvalidDevicesAndNonFiniteOffsets()
     QVERIFY(!result.success);
     QVERIFY(result.error.contains(QStringLiteral("different"),
                                   Qt::CaseInsensitive));
+}
+
+void TelemetryLogAnonymizerTest::opaqueCorrectionsAndSigningSecretsAreDropped_data()
+{
+    QTest::addColumn<bool>("zeroOffsets");
+    QTest::addColumn<int>("sender");
+    QTest::newRow("GCS with offset") << false << 255;
+    QTest::newRow("GCS zero offset") << true << 255;
+    QTest::newRow("remote sender zero offset") << true << 42;
+}
+
+void TelemetryLogAnonymizerTest::opaqueCorrectionsAndSigningSecretsAreDropped()
+{
+    QFETCH(bool, zeroOffsets);
+    QFETCH(int, sender);
+    const QByteArray marker = QByteArray::fromHex("d3001343555252454e5442415345454346");
+    mavlink_gps_rtcm_data_t corrections{};
+    corrections.len = static_cast<quint8>(marker.size());
+    std::memcpy(corrections.data, marker.constData(), marker.size());
+    corrections.flags = 7;
+    mavlink_message_t message{};
+    mavlink_msg_gps_rtcm_data_encode(sender, 190, &message, &corrections);
+    QByteArray source = recordBytes(1, framed(message, true, 1))
+        + recordBytes(2, framed(message, false, 2, true));
+    mavlink_gps_inject_data_t injected{};
+    injected.len = static_cast<quint8>(marker.size());
+    std::memcpy(injected.data, marker.constData(), marker.size());
+    mavlink_msg_gps_inject_data_encode(sender, 190, &message, &injected);
+    source += recordBytes(3, framed(message, false, 3));
+    mavlink_setup_signing_t signing{};
+    for (int index = 0; index < 32; ++index)
+        signing.secret_key[index] = quint8(0xa0 + index);
+    signing.target_system = 1;
+    signing.target_component = 1;
+    mavlink_msg_setup_signing_encode(sender, 190, &message, &signing);
+    source += recordBytes(4, framed(message, false, 4, true));
+    const QByteArray privateFile = QByteArrayLiteral("HOME_LAT=34.5,HOME_LON=-117.25");
+    mavlink_file_transfer_protocol_t transfer{};
+    transfer.target_system = 1;
+    transfer.target_component = 1;
+    std::memcpy(transfer.payload, privateFile.constData(), privateFile.size());
+    mavlink_msg_file_transfer_protocol_encode(sender, 190, &message, &transfer);
+    source += recordBytes(5, framed(message, false, 5));
+    mavlink_log_data_t remoteLog{};
+    remoteLog.id = 1;
+    remoteLog.count = quint8(privateFile.size());
+    std::memcpy(remoteLog.data, privateFile.constData(), privateFile.size());
+    mavlink_msg_log_data_encode(sender, 190, &message, &remoteLog);
+    source += recordBytes(6, framed(message, true, 6));
+    const QByteArray retained = recordBytes(7, heartbeat(7, true));
+    source += retained;
+    QByteArray output;
+    const auto result = anonymizeTlog(source, &output,
+        zeroOffsets ? LogAnonymizeOptions{} : LogAnonymizeOptions{1.0, -2.0});
+    QVERIFY2(result.success, qPrintable(result.error));
+    QCOMPARE(output, retained);
+    QVERIFY(!output.contains(marker));
+    QVERIFY(!output.contains(privateFile));
+    QVERIFY(!output.contains(QByteArray(reinterpret_cast<const char *>(signing.secret_key), 32)));
+    QCOMPARE(result.records, qint64(1));
+    QCOMPARE(result.strippedSignatures, qint64(0)); // Dropped signatures are not rewritten.
+    QCOMPARE(result.warnings.size(), 5); // Bounded aggregate, not one warning per packet.
+    const QString warnings = result.warnings.join(QLatin1Char('\n'));
+    QVERIFY(warnings.contains(QStringLiteral("Dropped 2 GPS_RTCM_DATA record(s)")));
+    QVERIFY(warnings.contains(QStringLiteral("Dropped 1 GPS_INJECT_DATA record(s)")));
+    QVERIFY(warnings.contains(QStringLiteral("Dropped 1 SETUP_SIGNING record(s)")));
+    QVERIFY(warnings.contains(QStringLiteral("Dropped 1 FILE_TRANSFER_PROTOCOL record(s)")));
+    QVERIFY(warnings.contains(QStringLiteral("Dropped 1 LOG_DATA record(s)")));
+    QVERIFY(warnings.contains(QStringLiteral("not a guarantee of complete anonymity")));
+    QVERIFY(!warnings.contains(QString::fromLatin1(marker)));
+    QVERIFY(!warnings.contains(QString::fromLatin1(privateFile)));
+}
+
+void TelemetryLogAnonymizerTest::ambiguousOutgoingCommandsAreDropped_data()
+{
+    QTest::addColumn<bool>("integerCommand");
+    QTest::addColumn<int>("command");
+    QTest::addColumn<int>("frame");
+    QTest::newRow("UAS set home COMMAND_LONG") << false << int(MAV_CMD_DO_SET_HOME) << int(MAV_FRAME_GLOBAL);
+    QTest::newRow("waypoint COMMAND_LONG") << false << int(MAV_CMD_NAV_WAYPOINT) << int(MAV_FRAME_GLOBAL);
+    QTest::newRow("unknown COMMAND_LONG") << false << 65534 << int(MAV_FRAME_GLOBAL);
+    QTest::newRow("parameterized REQUEST_MESSAGE") << false << int(MAV_CMD_REQUEST_MESSAGE) << int(MAV_FRAME_GLOBAL);
+    QTest::newRow("unknown COMMAND_INT") << true << 65534 << int(MAV_FRAME_GLOBAL_INT);
+    QTest::newRow("local COMMAND_INT") << true << int(MAV_CMD_NAV_WAYPOINT) << int(MAV_FRAME_LOCAL_NED);
+}
+
+void TelemetryLogAnonymizerTest::ambiguousOutgoingCommandsAreDropped()
+{
+    QFETCH(bool, integerCommand);
+    QFETCH(int, command);
+    QFETCH(int, frame);
+    mavlink_message_t message{};
+    if (integerCommand) {
+        mavlink_command_int_t payload{};
+        payload.command = quint16(command);
+        payload.frame = quint8(frame);
+        payload.x = 345000000;
+        payload.y = -1172500000;
+        mavlink_msg_command_int_encode(255, 190, &message, &payload);
+    } else {
+        mavlink_command_long_t payload{};
+        payload.command = quint16(command);
+        payload.param5 = 34.5F;
+        payload.param6 = -117.25F;
+        mavlink_msg_command_long_encode(255, 190, &message, &payload);
+    }
+    const QByteArray retained = recordBytes(2, heartbeat(2));
+    QByteArray output;
+    const auto result = anonymizeTlog(recordBytes(1, framed(message, false, 1)) + retained,
+                                      &output, {});
+    QVERIFY2(result.success, qPrintable(result.error));
+    QCOMPARE(output, retained);
+    QCOMPARE(result.records, qint64(1));
+    QCOMPARE(result.warnings.size(), 1);
+    QVERIFY(result.warnings.first().contains(integerCommand
+        ? QStringLiteral("Dropped 1 COMMAND_INT") : QStringLiteral("Dropped 1 COMMAND_LONG")));
+}
+
+void TelemetryLogAnonymizerTest::knownNonCoordinateOutgoingCommandsRemainByteIdentical()
+{
+    QByteArray source;
+    quint8 sequence = 0;
+    for (const quint16 command : {quint16(MAV_CMD_COMPONENT_ARM_DISARM),
+         quint16(MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN), quint16(MAV_CMD_PREFLIGHT_CALIBRATION),
+         quint16(MAV_CMD_DO_SET_SERVO), quint16(MAV_CMD_DO_CHANGE_SPEED),
+         quint16(MAV_CMD_SET_MESSAGE_INTERVAL), quint16(MAV_CMD_REQUEST_MESSAGE),
+         quint16(MAV_CMD_DO_START_MAG_CAL), quint16(MAV_CMD_NAV_RETURN_TO_LAUNCH)}) {
+        mavlink_command_long_t commandLong{};
+        commandLong.command = command;
+        commandLong.param1 = 1;
+        mavlink_message_t message{};
+        mavlink_msg_command_long_encode(255, 190, &message, &commandLong);
+        ++sequence;
+        source += recordBytes(sequence, framed(message, false, sequence, true));
+        mavlink_command_int_t commandInt{};
+        commandInt.command = command;
+        commandInt.param1 = 1;
+        commandInt.frame = MAV_FRAME_GLOBAL_INT;
+        mavlink_msg_command_int_encode(255, 190, &message, &commandInt);
+        ++sequence;
+        source += recordBytes(sequence, framed(message, true, sequence));
+    }
+    QByteArray output;
+    const auto result = anonymizeTlog(source, &output, {1.0, -2.0});
+    QVERIFY2(result.success, qPrintable(result.error));
+    QCOMPARE(output, source);
+    QCOMPARE(result.records, qint64(sequence));
+    QCOMPARE(result.strippedSignatures, qint64(0));
+    QVERIFY(result.warnings.isEmpty());
+}
+
+void TelemetryLogAnonymizerTest::outgoingKnownGlobalCoordinatesAreShifted()
+{
+    QList<mavlink_message_t> messages;
+    messages << missionItem(MAV_FRAME_GLOBAL_RELATIVE_ALT, MAV_CMD_NAV_WAYPOINT,
+                            34.5F, -117.25F, 1)
+             << missionItemInt(MAV_FRAME_GLOBAL_INT, MAV_CMD_NAV_WAYPOINT,
+                               345000000, -1172500000, 2);
+    mavlink_message_t message{};
+    mavlink_set_position_target_global_int_t target{};
+    target.coordinate_frame = MAV_FRAME_GLOBAL_INT;
+    target.lat_int = 345000000;
+    target.lon_int = -1172500000;
+    mavlink_msg_set_position_target_global_int_encode(255, 190, &message, &target);
+    messages << message;
+    mavlink_follow_target_t follow{};
+    follow.lat = 345000000;
+    follow.lon = -1172500000;
+    mavlink_msg_follow_target_encode(255, 190, &message, &follow);
+    messages << message;
+    mavlink_set_home_position_t home{};
+    home.latitude = 345000000;
+    home.longitude = -1172500000;
+    home.x = 12.5F;
+    home.y = -7.25F;
+    mavlink_msg_set_home_position_encode(255, 190, &message, &home);
+    messages << message;
+    mavlink_command_int_t command{};
+    command.command = MAV_CMD_DO_SET_HOME;
+    command.frame = MAV_FRAME_GLOBAL_INT;
+    command.x = 345000000;
+    command.y = -1172500000;
+    mavlink_msg_command_int_encode(255, 190, &message, &command);
+    messages << message;
+    QByteArray source;
+    for (int index = 0; index < messages.size(); ++index) {
+        messages[index].sysid = 255;
+        messages[index].compid = 190;
+        source += recordBytes(index + 1, framed(messages[index], false, quint8(index + 1), index == 0));
+    }
+    QByteArray output;
+    const auto result = anonymizeTlog(source, &output, {1.0, -2.0});
+    QVERIFY2(result.success, qPrintable(result.error));
+    QCOMPARE(result.records, qint64(6));
+    QCOMPARE(result.patchedValues, qint64(12));
+    QCOMPARE(result.strippedSignatures, qint64(1));
+    QBuffer buffer(&output);
+    QVERIFY(buffer.open(QIODevice::ReadOnly));
+    TlogReader reader(&buffer);
+    for (int index = 0; index < messages.size(); ++index) {
+        TlogRecord record;
+        QCOMPARE(reader.next(&record), TlogReader::Status::Ok); // Recomputed CRC is valid.
+        QCOMPARE(record.timestampUsec, qint64(index + 1));
+        QCOMPARE(record.message.sysid, quint8(255));
+        QCOMPARE(record.message.compid, quint8(190));
+        QCOMPARE(record.message.seq, quint8(index + 1));
+        switch (record.message.msgid) {
+        case MAVLINK_MSG_ID_MISSION_ITEM:
+            QCOMPARE(mavlink_msg_mission_item_get_x(&record.message), 35.5F);
+            QCOMPARE(mavlink_msg_mission_item_get_y(&record.message), -119.25F);
+            break;
+        case MAVLINK_MSG_ID_MISSION_ITEM_INT:
+            QCOMPARE(mavlink_msg_mission_item_int_get_x(&record.message), qint32(355000000));
+            QCOMPARE(mavlink_msg_mission_item_int_get_y(&record.message), qint32(-1192500000));
+            break;
+        case MAVLINK_MSG_ID_SET_POSITION_TARGET_GLOBAL_INT:
+            QCOMPARE(mavlink_msg_set_position_target_global_int_get_lat_int(&record.message), qint32(355000000));
+            QCOMPARE(mavlink_msg_set_position_target_global_int_get_lon_int(&record.message), qint32(-1192500000));
+            break;
+        case MAVLINK_MSG_ID_FOLLOW_TARGET:
+            QCOMPARE(mavlink_msg_follow_target_get_lat(&record.message), qint32(355000000));
+            QCOMPARE(mavlink_msg_follow_target_get_lon(&record.message), qint32(-1192500000));
+            break;
+        case MAVLINK_MSG_ID_SET_HOME_POSITION:
+            QCOMPARE(mavlink_msg_set_home_position_get_latitude(&record.message), qint32(355000000));
+            QCOMPARE(mavlink_msg_set_home_position_get_longitude(&record.message), qint32(-1192500000));
+            QCOMPARE(mavlink_msg_set_home_position_get_x(&record.message), 12.5F);
+            QCOMPARE(mavlink_msg_set_home_position_get_y(&record.message), -7.25F);
+            break;
+        case MAVLINK_MSG_ID_COMMAND_INT:
+            QCOMPARE(mavlink_msg_command_int_get_x(&record.message), qint32(355000000));
+            QCOMPARE(mavlink_msg_command_int_get_y(&record.message), qint32(-1192500000));
+            break;
+        default:
+            QFAIL("Unexpected outgoing message survived coordinate transform.");
+        }
+    }
+    TlogRecord end;
+    QCOMPARE(reader.next(&end), TlogReader::Status::End);
+}
+
+void TelemetryLogAnonymizerTest::droppedMessagesStillRequireValidFramingAndPayloadLength()
+{
+    mavlink_gps_rtcm_data_t payload{};
+    payload.len = 1;
+    payload.data[0] = 0xd3;
+    mavlink_message_t message{};
+    mavlink_msg_gps_rtcm_data_encode(255, 190, &message, &payload);
+    message = framed(message, true, 1);
+    --message.len;
+    checksum(&message, mavlink_get_crc_extra(&message));
+    QByteArray output;
+    auto result = anonymizeTlog(recordBytes(1, message), &output, {});
+    QVERIFY(!result.success);
+    QVERIFY(output.isEmpty());
+    QVERIFY(!result.error.isEmpty());
+    message = framed(message, true, 1);
+    message.checksum ^= 0x1234;
+    result = anonymizeTlog(recordBytes(1, message), &output, {});
+    QVERIFY(!result.success);
+    QVERIFY(output.isEmpty());
 }
 
 QTEST_MAIN(TelemetryLogAnonymizerTest)

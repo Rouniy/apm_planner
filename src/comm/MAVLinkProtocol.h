@@ -85,6 +85,12 @@ public slots:
     void receiveBytes(LinkInterface* link, const QByteArray &dataBytes);
 
 private:
+    friend class LinkManager;
+    // Capture before transport callbacks; a replacement file must never
+    // inherit an already admitted transmission from another logging session.
+    quint64 loggingSessionId() const { return m_loggingEnabled ? m_loggingSession : 0; }
+    void appendLogFrame(const QByteArray &frame, quint64 expectedSession);
+
     struct LinkReceiveState
     {
         MAVLinkFrameParser parser;
@@ -101,8 +107,10 @@ private:
     quint8 m_componentID = QGC::defaultComponentId;
 
     bool m_isOnline = true;
-    bool m_loggingEnabled = true;
+    bool m_loggingEnabled = false;
     QScopedPointer<QFile>m_ScopedLogfilePtr;
+    quint64 m_loggingSession = 0;
+    quint64 m_nextLoggingSession = 1;
 
     bool m_throwAwayGCSPackets = false;
     LinkManager *m_connectionManager = nullptr;

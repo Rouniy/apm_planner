@@ -1312,10 +1312,16 @@ bool LinkManager::writeSequencedFrame(int linkId, const QByteArray &frame)
     unsigned state = MAVLINK_FRAMING_INCOMPLETE;
     for (const char byte : output) state = parser.parseByte(quint8(byte), &message);
     if (state != MAVLINK_FRAMING_OK) return false;
+    const QPointer<MAVLinkProtocol> protocol(m_mavlinkProtocol.data());
+    const quint64 loggingSession = protocol ? protocol->loggingSessionId() : 0;
     const bool submitted = writeBytesToTransport(linkId, output);
     if (submitted && self && link && !m_shuttingDown
         && getLink(linkId) == link && currentPhysicalLinkSession(linkId) == epoch
         && message.msgid != MAVLINK_MSG_ID_SETUP_SIGNING) {
+        if (protocol) protocol->appendLogFrame(output, loggingSession);
+        // A logging error observer may retire this physical link or manager.
+        if (!self || !link || m_shuttingDown || getLink(linkId) != link
+            || currentPhysicalLinkSession(linkId) != epoch) return submitted;
         emit mavlinkMessageSubmitted(linkId, epoch, message);
     }
     return submitted;

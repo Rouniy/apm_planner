@@ -668,7 +668,8 @@ void ConfigDeveloperToolsViewTest::gpsExtractionCompletesOffline()
              ? QByteArray() : QByteArray::fromHex("d300210043"));
     QVERIFY(view.Log().contains(QStringLiteral("extraction completed")));
     QVERIFY(view.Log().contains(QStringLiteral("no RTCM reassembly or validation")));
-    QVERIFY(view.Log().contains(QStringLiteral("Current Qt logs omit")));
+    QVERIFY(view.Log().contains(QStringLiteral("Older Qt logs may omit")));
+    QVERIFY(view.Log().contains(QStringLiteral("while recording is enabled")));
     if (mode == QStringLiteral("empty"))
         QVERIFY(view.Log().contains(QStringLiteral("no GPS correction messages found")));
     if (mode == QStringLiteral("truncated")) {
