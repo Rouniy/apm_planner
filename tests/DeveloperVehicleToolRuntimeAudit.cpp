@@ -15,6 +15,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -23,6 +24,8 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
@@ -34,6 +37,7 @@
 #include <QTableWidget>
 #include <QTimer>
 #include <QtEndian>
+#include <algorithm>
 #include <functional>
 #include <cmath>
 #include <cstring>
@@ -42,6 +46,27 @@ namespace {
 constexpr int FixtureLinkId = 910110;
 constexpr quint8 FixtureSystem = 234;
 constexpr int DataFlashFmtLength = 89;
+
+QByteArray readFileBytes(const QString &path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+QByteArray apjZlibStream(const QByteArray &image)
+{
+    const QByteArray qtCompressed = qCompress(image, 9);
+    return qtCompressed.size() > 4 ? qtCompressed.mid(4) : QByteArray();
+}
+
+QByteArray inflateApjImage(const QByteArray &compressed, quint32 imageSize)
+{
+    QByteArray qtCompressed(4, '\0');
+    qToBigEndian<quint32>(
+        imageSize, reinterpret_cast<uchar *>(qtCompressed.data()));
+    qtCompressed.append(compressed);
+    return qUncompress(qtCompressed);
+}
 
 QByteArray fixedDataFlashField(const QByteArray &value, int length)
 {
@@ -463,7 +488,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 15 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 16 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
@@ -824,6 +849,289 @@ int RunDeveloperVehicleToolRuntimeAudit()
                "DashWare CSV header, sparse columns, time order, or trailing commas differ");
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         qInfo() << "Developer runtime DashWare export:" << dashWareOutput
+                << page->Log();
+    }
+
+    // Embed a real parameter-defaults payload through the production Tools
+    // page while no vehicle target exists. The fixture is an APJ JSON envelope
+    // around a standard zlib stream (Qt's four-byte qCompress prefix removed),
+    // with the same packed PARMDEF header used by ArduPilot firmware.
+    QTemporaryDir apjFiles;
+    expect(apjFiles.isValid(), "APJ fixture directory unavailable");
+    const QString apjFirmware = apjFiles.filePath(
+        QStringLiteral("runtime firmware.apj"));
+    const QString apjParameters = apjFiles.filePath(
+        QStringLiteral("defaults CRLF.param"));
+    const QString apjOutput = apjFirmware + QStringLiteral("new.apj");
+    constexpr int defaultsOffset = 48;
+    constexpr quint16 maximumDefaults = 96;
+    const QByteArray oldDefaults("OLD_DEFAULTS_REMAINDER,9999\n");
+    const QByteArray parameterBytes("FOO,1\r\nBAR,2\r\n");
+    const QByteArray embeddedDefaults("FOO,1\nBAR,2\n");
+    QByteArray apjImage(256, char(0x6d));
+    apjImage.replace(defaultsOffset, 8,
+                     QByteArray("PARMDEF\0", 8));
+    apjImage.replace(defaultsOffset + 8, 8,
+                     QByteArray::fromHex("5537f4a0385d485b"));
+    qToLittleEndian<quint16>(
+        maximumDefaults,
+        reinterpret_cast<uchar *>(apjImage.data() + defaultsOffset + 16));
+    qToLittleEndian<quint16>(
+        static_cast<quint16>(oldDefaults.size()),
+        reinterpret_cast<uchar *>(apjImage.data() + defaultsOffset + 18));
+    std::memset(apjImage.data() + defaultsOffset + 20, 0,
+                maximumDefaults);
+    std::memcpy(apjImage.data() + defaultsOffset + 20,
+                oldDefaults.constData(), size_t(oldDefaults.size()));
+    const QByteArray apjCompressed = apjZlibStream(apjImage);
+    expect(!apjCompressed.isEmpty(), "APJ fixture zlib stream is empty");
+    const QJsonObject unknownMetadata{
+        {QStringLiteral("keep"), QStringLiteral("unchanged")},
+        {QStringLiteral("answer"), 42}};
+    QJsonObject apjEnvelope{
+        {QStringLiteral("magic"), QStringLiteral("APJFWv1")},
+        {QStringLiteral("board_id"), 777},
+        {QStringLiteral("description"), QStringLiteral("runtime fixture")},
+        {QStringLiteral("image"),
+         QString::fromLatin1(apjCompressed.toBase64())},
+        {QStringLiteral("image_size"), apjImage.size()},
+        {QStringLiteral("flash_total"), 4096},
+        {QStringLiteral("flash_free"), 4096 - apjImage.size()},
+        {QStringLiteral("unknown_metadata"), unknownMetadata}};
+    const QByteArray apjFirmwareBytes =
+        QJsonDocument(apjEnvelope).toJson(QJsonDocument::Indented);
+    QFile apjSource(apjFirmware);
+    expect(apjSource.open(QIODevice::WriteOnly)
+               && apjSource.write(apjFirmwareBytes)
+                   == apjFirmwareBytes.size(),
+           "APJ firmware fixture could not be written");
+    apjSource.close();
+    QFile parameterSource(apjParameters);
+    expect(parameterSource.open(QIODevice::WriteOnly)
+               && parameterSource.write(parameterBytes)
+                   == parameterBytes.size(),
+           "APJ parameter fixture could not be written");
+    parameterSource.close();
+    const QByteArray firmwareHash = QCryptographicHash::hash(
+        apjFirmwareBytes, QCryptographicHash::Sha256);
+    const QByteArray parameterHash = QCryptographicHash::hash(
+        parameterBytes, QCryptographicHash::Sha256);
+    const quint64 apjTargetGeneration =
+        links->vehicleTargetManager()->targetGeneration();
+    expect(!links->vehicleTargetManager()->acquireTarget().isValid(),
+           "APJ offline audit unexpectedly has a vehicle target");
+
+    auto *embedApj = page->findChild<QPushButton *>(
+        QStringLiteral("EmbedDefaultsInApjButton"));
+    expect(embedApj && embedApj->isEnabled(),
+           "offline APJ defaults action disabled");
+    const auto visibleApjFileDialog = [&](const QString &objectName)
+        -> QFileDialog * {
+        if (!page) return nullptr;
+        const auto dialogs = page->findChildren<QFileDialog *>(objectName);
+        for (QFileDialog *dialog : dialogs) {
+            if (dialog && dialog->isVisible()) return dialog;
+        }
+        return nullptr;
+    };
+    const auto openApjFirmwarePicker = [&]() -> QFileDialog * {
+        if (!embedApj || !embedApj->isEnabled()) return nullptr;
+        embedApj->click();
+        QCoreApplication::processEvents();
+        auto *picker = visibleApjFileDialog(
+            QStringLiteral("DeveloperApjFirmwareDialog"));
+        expect(picker != nullptr, "APJ firmware picker missing");
+        if (picker) {
+            const QString filters = picker->nameFilters().join(
+                QLatin1Char(' '));
+            expect(filters.contains(QStringLiteral("*.apj")),
+                   "APJ firmware picker does not filter APJ files");
+        }
+        return picker;
+    };
+    const auto acceptApjFirmware = [&](QFileDialog *picker)
+        -> QFileDialog * {
+        if (!picker) return nullptr;
+        auto *filename = picker->findChild<QLineEdit *>(
+            QStringLiteral("fileNameEdit"));
+        expect(filename != nullptr, "APJ firmware filename editor missing");
+        if (filename) filename->setText(apjFirmware);
+        expect(picker->selectedFiles() == QStringList{apjFirmware},
+               "APJ firmware selection is not exact");
+        expect(QMetaObject::invokeMethod(picker, "accept",
+                                         Qt::DirectConnection),
+               "APJ firmware picker acceptance unavailable");
+        expect(waitFor([&] {
+            return visibleApjFileDialog(
+                QStringLiteral("DeveloperApjDefaultsDialog")) != nullptr;
+        }), "APJ defaults picker missing");
+        auto *defaults = visibleApjFileDialog(
+            QStringLiteral("DeveloperApjDefaultsDialog"));
+        if (defaults) {
+            const QString filters = defaults->nameFilters().join(
+                QLatin1Char(' '));
+            expect(filters.contains(QStringLiteral("*.param"))
+                       && filters.contains(QStringLiteral("*.parm")),
+                   "APJ defaults picker does not expose param/parm files");
+        }
+        return defaults;
+    };
+    const auto acceptApjDefaults = [&](QFileDialog *picker) {
+        if (!picker) return false;
+        auto *filename = picker->findChild<QLineEdit *>(
+            QStringLiteral("fileNameEdit"));
+        expect(filename != nullptr, "APJ defaults filename editor missing");
+        if (filename) filename->setText(apjParameters);
+        expect(picker->selectedFiles() == QStringList{apjParameters},
+               "APJ defaults selection is not exact");
+        return QMetaObject::invokeMethod(picker, "accept",
+                                         Qt::DirectConnection);
+    };
+
+    if (embedApj) {
+        // Cancel each picker boundary once; neither may publish an output.
+        QFileDialog *firmwarePicker = openApjFirmwarePicker();
+        if (firmwarePicker) firmwarePicker->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return embedApj->isEnabled(); })
+                   && !QFile::exists(apjOutput),
+               "cancelling APJ firmware selection published output");
+
+        firmwarePicker = openApjFirmwarePicker();
+        QFileDialog *defaultsPicker = acceptApjFirmware(firmwarePicker);
+        if (defaultsPicker) defaultsPicker->reject();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return embedApj->isEnabled(); })
+                   && !QFile::exists(apjOutput),
+               "cancelling APJ defaults selection published output");
+
+        // Complete the modeless workflow once with no overwrite involved.
+        firmwarePicker = openApjFirmwarePicker();
+        defaultsPicker = acceptApjFirmware(firmwarePicker);
+        expect(acceptApjDefaults(defaultsPicker),
+               "APJ defaults picker acceptance unavailable");
+        auto *apjProgress = page->findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperApjProgressDialog"));
+        expect(apjProgress != nullptr,
+               "APJ embedding progress dialog missing");
+        expect(waitFor([&] {
+            return embedApj->isEnabled() && QFile::exists(apjOutput);
+        }, 5000), "APJ embedding did not finish through Tools route");
+
+        const QByteArray outputBytes = readFileBytes(apjOutput);
+        const QJsonDocument outputDocument =
+            QJsonDocument::fromJson(outputBytes);
+        const QJsonObject outputEnvelope = outputDocument.object();
+        const quint32 outputImageSize = static_cast<quint32>(
+            outputEnvelope.value(QStringLiteral("image_size")).toInt());
+        const QByteArray outputCompressed = QByteArray::fromBase64(
+            outputEnvelope.value(QStringLiteral("image"))
+                .toString().toLatin1());
+        const QByteArray outputImage = inflateApjImage(
+            outputCompressed, outputImageSize);
+        expect(!outputDocument.isNull() && outputDocument.isObject()
+                   && outputImageSize == quint32(apjImage.size())
+                   && outputImage.size() == apjImage.size(),
+               "APJ output JSON/image_size/zlib stream is invalid");
+        expect(outputEnvelope.value(QStringLiteral("board_id")).toInt()
+                       == 777
+                   && outputEnvelope.value(
+                          QStringLiteral("unknown_metadata")).toObject()
+                       == unknownMetadata,
+               "APJ output did not preserve unknown metadata");
+        const bool outputBoundsValid = outputImage.size()
+            >= defaultsOffset + 20 + maximumDefaults;
+        expect(outputBoundsValid,
+               "APJ output no longer contains the defaults reservation");
+        if (outputBoundsValid) {
+            const quint16 storedMaximum = qFromLittleEndian<quint16>(
+                reinterpret_cast<const uchar *>(
+                    outputImage.constData() + defaultsOffset + 16));
+            const quint16 storedLength = qFromLittleEndian<quint16>(
+                reinterpret_cast<const uchar *>(
+                    outputImage.constData() + defaultsOffset + 18));
+            expect(storedMaximum == maximumDefaults
+                       && storedLength == embeddedDefaults.size()
+                       && outputImage.mid(defaultsOffset + 20, storedLength)
+                           == embeddedDefaults,
+                   "APJ embedded defaults length/data or CR removal differs");
+            expect(outputImage.left(defaultsOffset + 18)
+                           == apjImage.left(defaultsOffset + 18)
+                       && outputImage.mid(defaultsOffset + 20 + maximumDefaults)
+                           == apjImage.mid(defaultsOffset + 20
+                                          + maximumDefaults),
+                   "APJ embedding changed bytes outside the packed defaults fields");
+            // MP10 changes only the active prefix and its length. The unused
+            // reservation is intentionally byte-preserved for compatibility.
+            expect(outputImage.mid(defaultsOffset + 20
+                                       + embeddedDefaults.size(),
+                                   maximumDefaults
+                                       - embeddedDefaults.size())
+                           == apjImage.mid(defaultsOffset + 20
+                                              + embeddedDefaults.size(),
+                                          maximumDefaults
+                                              - embeddedDefaults.size()),
+                   "APJ embedding changed the inactive defaults reservation");
+        }
+        expect(outputImage != apjImage,
+               "APJ embedding did not change the firmware image");
+        expect(QCryptographicHash::hash(readFileBytes(apjFirmware),
+                                        QCryptographicHash::Sha256)
+                       == firmwareHash
+                   && QCryptographicHash::hash(
+                          readFileBytes(apjParameters),
+                          QCryptographicHash::Sha256) == parameterHash,
+               "APJ embedding modified a source file");
+        expect(!links->vehicleTargetManager()->acquireTarget().isValid()
+                   && links->vehicleTargetManager()->targetGeneration()
+                       == apjTargetGeneration,
+               "offline APJ workflow changed vehicle target state");
+        // Manual processEvents loops do not guarantee delivery of every
+        // deferred delete posted by accepted modeless dialogs. Remove the
+        // completed pickers/progress dialog before looking up the next
+        // same-named workflow so the audit cannot drive a hidden stale child.
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+
+        // A pre-existing output is protected by another explicit default-Cancel
+        // boundary, and rejecting it must preserve the published file exactly.
+        const QByteArray publishedHash = QCryptographicHash::hash(
+            outputBytes, QCryptographicHash::Sha256);
+        firmwarePicker = openApjFirmwarePicker();
+        defaultsPicker = acceptApjFirmware(firmwarePicker);
+        expect(acceptApjDefaults(defaultsPicker),
+               "second APJ defaults picker acceptance unavailable");
+        expect(waitFor([&] {
+            const auto dialogs = page->findChildren<QMessageBox *>(
+                QStringLiteral("DeveloperApjOverwriteConfirmDialog"));
+            return std::any_of(dialogs.cbegin(), dialogs.cend(),
+                               [](QMessageBox *dialog) {
+                return dialog && dialog->isVisible();
+            });
+        }), "APJ overwrite confirmation missing");
+        QMessageBox *overwrite = nullptr;
+        const auto overwriteDialogs = page->findChildren<QMessageBox *>(
+            QStringLiteral("DeveloperApjOverwriteConfirmDialog"));
+        for (QMessageBox *dialog : overwriteDialogs) {
+            if (dialog && dialog->isVisible()) {
+                overwrite = dialog;
+                break;
+            }
+        }
+        expect(overwrite
+                   && overwrite->defaultButton()
+                       == overwrite->button(QMessageBox::Cancel)
+                   && overwrite->escapeButton()
+                       == overwrite->button(QMessageBox::Cancel)
+                   && overwrite->text().contains(apjOutput),
+               "APJ overwrite confirmation is not named/path-specific/default-Cancel");
+        if (overwrite) overwrite->button(QMessageBox::Cancel)->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(waitFor([&] { return embedApj->isEnabled(); })
+                   && QCryptographicHash::hash(
+                          readFileBytes(apjOutput),
+                          QCryptographicHash::Sha256) == publishedHash,
+               "cancelling APJ overwrite changed the existing output");
+        qInfo() << "Developer runtime APJ defaults embedding:" << apjOutput
                 << page->Log();
     }
 

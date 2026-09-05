@@ -41,6 +41,8 @@ public slots:
     void ExtractGpsCorrections(const QString &input, const QString &output);
     void SplitDataFlashLog(const QString &input, int pieces);
     void ExportDashWareCsv(QString input, QString output, QStringList types);
+    void EmbedDefaultsInApj(QString firmware, QString parameters,
+                            bool overwriteExisting = false);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -73,12 +75,19 @@ private:
     void PickDashWareOutput(const QString &input, const QStringList &types,
                             quint64 revision);
     void CancelDashWareExport();
+    void PickApjFirmware();
+    void PickApjDefaults(const QString &firmware, quint64 revision);
+    void ConfirmApjOverwrite(const QString &firmware,
+                             const QString &parameters, quint64 revision);
+    void CancelApjEmbedding();
+    bool ApjEmbeddingBusy() const;
     void RefreshOfflineFileActions();
     void StartMavFtpDownload();
     bool MavFtpDownloadBusy() const;
     struct GpsExtractionState;
     struct SplitState;
     struct DashWareState;
+    struct ApjEmbeddingState;
 
     QPointer<QObject> m_actionSource;
     QPointer<DeveloperVehicleToolService> m_vehicleTools;
@@ -104,6 +113,11 @@ private:
     QPointer<QProgressDialog> m_dashWareProgress;
     std::shared_ptr<DashWareState> m_dashWareState;
     quint64 m_dashWarePromptRevision = 0;
+    QPushButton *m_apjButton = nullptr;
+    QPointer<QDialog> m_apjPrompt;
+    QPointer<QProgressDialog> m_apjProgress;
+    std::shared_ptr<ApjEmbeddingState> m_apjState;
+    quint64 m_apjPromptRevision = 0;
     QPointer<MavFtpServiceInterface> m_mavFtpService;
     QPointer<VehicleTargetManager> m_mavFtpTargets;
     QPointer<MavFtpFileDownload> m_mavFtpDownload;

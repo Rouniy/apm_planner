@@ -24,7 +24,42 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **MAVFTP browser target-bound consent and lifecycle**.
+Latest slice (2026-09-06): **Embed Defaults in APJ**. The existing Developer
+button now opens firmware/defaults file pickers, creates the exact MP10 output
+`firmwarePath + new.apj`, and requires path-specific default-Cancel consent to
+replace an existing output. A bounded cancellable worker validates JSON/zlib,
+the packed defaults region and original unsigned descriptor CRCs, patches the
+defaults and recalculates both CRCs. Signed images are refused. Unknown JSON
+tokens, unrelated firmware bytes and inactive defaults are preserved; the source
+files are never overwritten. No descriptor is also a supported case with an
+explicit boot-compatibility warning. No vehicle connection or firmware upload
+is involved. Shared admission and close/destruction cover all Developer flows.
+
+Qt5/audio configure/build, focused **7/7 (8.23s)**, full **244/244 (30.22s)** and
+production X11 exit0/zero audit failures pass. Real pickers exercise both Cancel
+boundaries, successful output and default-Cancel overwrite; prior GPS/Split/
+DashWare/MAVFTP/browser-target-consent/six vehicle-action checks remain green.
+The first runtime run exposed a harness-only hidden deferred-delete dialog lookup;
+the audit now drives visible dialogs and drains completed pickers before reuse.
+Independent Python validation checks a copied real CubeOrange image (1,525,504
+bytes, defaults capacity8192) and a synthetic unsigned descriptor, preserving
+all unrelated binary bytes and JSON values. Signed/cancel/missing-defaults cases
+publish nothing. Original reference hashes are unchanged; no network SITL or
+physical board was modified. Evidence: `/tmp/apm-apj-defaults.pwtEdH/`;
+implementation and explicit limits: `APJ_DEFAULTS_PORT.md`.
+
+Claude TCP c204/c205/c206 supplied independent format/bootloader/code reviews.
+Three Codex streams implemented backend/tests, UI/tests and production runtime;
+root integrated, reviewed and scheduled all verification. Developer is now
+**16/32 working,16 unavailable**. Other counts stay Advanced14 complete+1 partial
+Signing and disabled Support Proxy, fixedTools24 plus Signing extension,
+SETUP46/eight absent reference routes, CONFIG15/15 factories, Planner21/64.
+Next: remaining single-drone/offline Developer tools (including MagFit), then
+Settings/CONFIG; Swarm stays last. APJ semantic parameter validation, external-
+flash-only defaults, cryptographic provenance, physical bootability, native
+platforms and reference visual parity remain explicit gaps, not completion claims.
+
+Previous slice (2026-09-06): **MAVFTP browser target-bound consent and lifecycle**.
 The shared SETUP/CONFIG browser now captures its exact target, remote path,
 entry type and destination before page-owned asynchronous file/confirmation
 dialogs. Upload/Delete show the target and path with default Cancel. Every

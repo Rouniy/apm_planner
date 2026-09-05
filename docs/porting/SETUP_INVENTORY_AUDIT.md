@@ -1,6 +1,6 @@
 # SETUP inventory audit
 
-Updated: 2026-09-05.
+Updated: 2026-09-06.
 
 This audit compares the active Mission Planner 10
 `ViewModels/SetupViewModel.cs` navigation with the active Qt
@@ -30,6 +30,17 @@ included. Qt registers 49: 46 page factories plus the same three group
 headings. Every current Qt page registration has a concrete factory. Counts
 alone do not imply parity because several factories still wrap legacy APM
 Planner widgets rather than the corresponding MP10 implementation.
+
+## Developer actions are counted separately
+
+The APJ defaults slice brings the exact Developer action catalogue to16/32
+working actions, with16 explicitly unavailable. It fills the existing
+`EmbedDefaultsInApjButton`; it does not add a Setup page or top-level Tools item.
+Both actual file dialogs, default-Cancel overwrite, cancellable worker and
+independent output/CRC checks pass, alongside full244/244 and production X11.
+See `APJ_DEFAULTS_PORT.md`. The46 registered Setup pages, three groups and eight
+absent reference routes remain unchanged. Useful legacy routes remain present;
+navigation/factory counts are not claims of complete functional parity.
 
 ## Missing MP10 pages
 

@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,243/243 тестов; Developer15/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,244/244 тестов; Developer16/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -30,12 +30,16 @@ Upload/Delete показывают цель и путь, по умолчанию
 обе смены компонента во время подтверждения без destructive FTP requests,
 пересоздание страниц и явный Refresh. Сетевой SITL не изменялся.
 Начало записи только по heartbeat/enabled остаётся отдельным пробелом.
-Следующий пакет — Embed Defaults in APJ: точные file dialogs/marker/выходной файл,
-проверка и пересчёт unsigned descriptor CRC, отказ от изменения signed firmware;
-затем другие single-drone Developer Tools (включая MagFit).
+Embed Defaults in APJ реализован: два file dialogs, точный выходной файл
+firmware+new.apj, default-Cancel overwrite, bounded worker/cancel, проверка и
+пересчёт unsigned descriptor CRC, отказ от изменения signed firmware. Независимо
+проверены байты реального CubeOrange и synthetic unsigned CRC; исходники целы.
+Qt5/audio full244/244 (30.22s), focused7/7 и production X11 проходят.
+Следующие пакеты — другие single-drone Developer Tools (включая MagFit).
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
-`MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`.
+`MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
+`APJ_DEFAULTS_PORT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
@@ -333,7 +337,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после GPS extraction работают12/32; заменить оставшиеся20
+- Developer Tools: после APJ defaults работают16/32; заменить оставшиеся16
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.

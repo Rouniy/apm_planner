@@ -202,6 +202,7 @@ add_subdirectory(libs/opmapcontrol EXCLUDE_FROM_ALL)
 
 # External: quazip (can be via add_subdirectory or find_package if installed)
 add_subdirectory(libs/thirdParty/quazip EXCLUDE_FROM_ALL)
+find_package(ZLIB REQUIRED)
 
 option(APM_USE_QML_PFD
     "Use the legacy Qt Quick primary flight display instead of the QtWidgets display" OFF)
@@ -717,6 +718,8 @@ set(SOURCES
     src/ui/Loghandling/DataFlashModeNames.h
     src/ui/Loghandling/DataFlashDashWareCsvExporter.cpp
     src/ui/Loghandling/DataFlashDashWareCsvExporter.h
+    src/ui/tools/ApjDefaultsEmbedder.cpp
+    src/ui/tools/ApjDefaultsEmbedder.h
     src/comm/TlogReader.h
     src/comm/TlogExportService.cpp
     src/comm/TlogExportService.h
@@ -1556,6 +1559,7 @@ target_link_libraries(${APM_PLANNER_TARGET}
     Qt::Qml
     Qt::QuickWidgets
     ${APM_DATA_VISUALIZATION_LIBRARY}
+    ZLIB::ZLIB
     quazip
     alglib
     opmapcontrol
@@ -3915,6 +3919,20 @@ if(BUILD_TESTING)
     set_tests_properties(mavftpfiledownload_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 
+    add_library(apj_defaults_test_support STATIC
+        src/ui/tools/ApjDefaultsEmbedder.cpp
+        src/ui/tools/ApjDefaultsEmbedder.h)
+    target_include_directories(apj_defaults_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(apj_defaults_test_support PUBLIC Qt::Core ZLIB::ZLIB)
+    add_executable(apjdefaultsembedder_tests tests/test_apjdefaultsembedder.cpp)
+    target_link_libraries(apjdefaultsembedder_tests PRIVATE
+        apj_defaults_test_support Qt::Test)
+    add_test(NAME apjdefaultsembedder_tests COMMAND apjdefaultsembedder_tests)
+    set_tests_properties(apjdefaultsembedder_tests PROPERTIES TIMEOUT 60)
+    add_executable(apj_defaults_probe tests/ApjDefaultsEmbedderProbe.cpp)
+    target_link_libraries(apj_defaults_probe PRIVATE apj_defaults_test_support)
+
     add_executable(configdevelopertoolsview_tests
         tests/test_configdevelopertoolsview.cpp
         src/ui/configuration/ActionPageView.cpp
@@ -3935,6 +3953,7 @@ if(BUILD_TESTING)
         dataflash_splitter_test_support
         dataflash_dashware_test_support
         mavftp_download_ui_test_support
+        apj_defaults_test_support
         Qt::Concurrent
         Qt::Core
         Qt::Widgets

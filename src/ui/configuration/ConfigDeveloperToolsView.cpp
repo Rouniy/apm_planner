@@ -7,6 +7,7 @@
 #include "comm/GpsCorrectionExtractor.h"
 #include "ui/Loghandling/DataFlashDashWareCsvExporter.h"
 #include "ui/Loghandling/DataFlashLogSplitter.h"
+#include "ui/tools/ApjDefaultsEmbedder.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -42,6 +43,13 @@ struct ConfigDeveloperToolsView::SplitState
 };
 
 struct ConfigDeveloperToolsView::DashWareState
+{
+    std::atomic_bool cancelled{false};
+    std::atomic<qint64> processed{0};
+    std::atomic<qint64> total{0};
+};
+
+struct ConfigDeveloperToolsView::ApjEmbeddingState
 {
     std::atomic_bool cancelled{false};
     std::atomic<qint64> processed{0};
@@ -101,8 +109,13 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                          QStringLiteral("CancelFirmwareArchiveButton"), notPorted);
     AddUnavailableAction(tr("Probe MAVLink Camera"),
                          QStringLiteral("ProbeMavlinkCameraButton"), notPorted);
-    AddUnavailableAction(tr("Embed Defaults in APJ"),
-                         QStringLiteral("EmbedDefaultsInApjButton"), notPorted);
+    m_apjButton = AddAction(tr("Embed Defaults in APJ"),
+        QStringLiteral("EmbedDefaultsInApjButton"),
+        [this]() { PickApjFirmware(); });
+    m_apjButton->setToolTip(tr(
+        "Embed a parameter-defaults file in a local ArduPilot APJ image; "
+        "the result is written beside the source firmware and is not flashed."));
+    ++m_implementedActionCount;
     m_splitButton = AddAction(tr("Split DataFlash Log"),
         QStringLiteral("SplitDataFlashLogButton"),
         [this]() { PickSplitInput(); });
@@ -180,6 +193,11 @@ bool ConfigDeveloperToolsView::MavFtpDownloadBusy() const
     return m_mavFtpDownload && m_mavFtpDownload->busy();
 }
 
+bool ConfigDeveloperToolsView::ApjEmbeddingBusy() const
+{
+    return m_apjState || m_apjPrompt;
+}
+
 void ConfigDeveloperToolsView::setMavFtpDownloadServices(
     MavFtpServiceInterface *service, VehicleTargetManager *targets)
 {
@@ -222,7 +240,7 @@ void ConfigDeveloperToolsView::StartMavFtpDownload()
         return;
     if (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || ApjEmbeddingBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("MAVFTP download: finish or cancel the current Developer operation first."));
         return;
@@ -275,7 +293,8 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
             reason = tr("The guarded vehicle tool service is unavailable.");
         else if (m_gpsExtractionState || m_gpsExtractionPrompt
                  || m_splitState || m_splitPrompt
-                 || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy())
+                 || m_dashWareState || m_dashWarePrompt
+                 || ApjEmbeddingBusy() || MavFtpDownloadBusy())
             reason = tr("Finish or cancel the current offline file operation first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
@@ -331,6 +350,7 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
     CancelGpsExtraction();
     CancelSplit();
     CancelDashWareExport();
+    CancelApjEmbedding();
     if (m_mavFtpDownload)
         m_mavFtpDownload->cancel();
     ActionPageView::closeEvent(event);
@@ -352,6 +372,9 @@ ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
     ++m_dashWarePromptRevision;
     if (m_dashWareState)
         m_dashWareState->cancelled.store(true, std::memory_order_relaxed);
+    ++m_apjPromptRevision;
+    if (m_apjState)
+        m_apjState->cancelled.store(true, std::memory_order_relaxed);
     // The worker owns only copied paths and shared atomic state. Destruction
     // disconnects the watcher; it does not block the GUI waiting for file I/O.
 }
@@ -380,7 +403,8 @@ void ConfigDeveloperToolsView::PickGpsCorrectionInput()
 {
     if (m_fileToolsClosing || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
-        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_vehiclePrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy()))
         return;
     const quint64 revision = ++m_gpsPromptRevision;
@@ -441,11 +465,13 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
         return;
     const bool idle = !m_gpsExtractionState && !m_gpsExtractionPrompt
         && !m_splitState && !m_splitPrompt
-        && !m_dashWareState && !m_dashWarePrompt && !MavFtpDownloadBusy() && !m_vehiclePrompt
+        && !m_dashWareState && !m_dashWarePrompt && !ApjEmbeddingBusy()
+        && !MavFtpDownloadBusy() && !m_vehiclePrompt
         && (!m_vehicleTools || !m_vehicleTools->busy());
     m_gpsExtractionButton->setEnabled(idle);
     m_splitButton->setEnabled(idle);
     m_dashWareButton->setEnabled(idle);
+    m_apjButton->setEnabled(idle);
     const bool ftpAvailable = m_mavFtpService && m_mavFtpTargets;
     const bool ftpBusy = ftpAvailable && m_mavFtpService->isBusy();
     m_mavFtpButton->setEnabled(idle && ftpAvailable && !ftpBusy);
@@ -462,7 +488,8 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
         return;
     if (m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
-        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_vehiclePrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -578,7 +605,8 @@ void ConfigDeveloperToolsView::PickSplitInput()
 {
     if (m_fileToolsClosing || m_splitState || m_splitPrompt
         || m_gpsExtractionState || m_gpsExtractionPrompt
-        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_vehiclePrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -687,7 +715,7 @@ void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
         return;
     if (m_splitState || m_splitPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_dashWareState || m_dashWarePrompt
-        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || ApjEmbeddingBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DataFlash log split: another file selection, offline operation, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -820,7 +848,8 @@ void ConfigDeveloperToolsView::CancelDashWareExport()
 
 void ConfigDeveloperToolsView::PickDashWareInput()
 {
-    if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy()
+    if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt
+        || ApjEmbeddingBusy() || MavFtpDownloadBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -919,7 +948,8 @@ void ConfigDeveloperToolsView::ExportDashWareCsv(
 {
     if (m_fileToolsClosing)
         return;
-    if (m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy() || m_gpsExtractionState
+    if (m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || MavFtpDownloadBusy() || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DashWare CSV export: another file selection, offline operation, or vehicle operation is already active."));
@@ -1030,13 +1060,256 @@ void ConfigDeveloperToolsView::ExportDashWareCsv(
     RefreshVehicleActions();
 }
 
+void ConfigDeveloperToolsView::CancelApjEmbedding()
+{
+    ++m_apjPromptRevision;
+    if (m_apjState)
+        m_apjState->cancelled.store(true, std::memory_order_relaxed);
+    const QPointer<QDialog> prompt = m_apjPrompt;
+    m_apjPrompt.clear();
+    if (prompt)
+        prompt->reject();
+    if (m_apjProgress)
+        m_apjProgress->cancel();
+}
+
+void ConfigDeveloperToolsView::PickApjFirmware()
+{
+    if (m_fileToolsClosing || ApjEmbeddingBusy() || MavFtpDownloadBusy()
+        || m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    const quint64 revision = ++m_apjPromptRevision;
+    auto *dialog = new QFileDialog(this, tr("Select APJ firmware"));
+    dialog->setObjectName(QStringLiteral("DeveloperApjFirmwareDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setFileMode(QFileDialog::ExistingFile);
+    dialog->setNameFilters({tr("ArduPilot firmware (*.apj *.APJ)"),
+                            tr("All files (*)")});
+    m_apjPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, revision](int result) {
+        if (m_fileToolsClosing || revision != m_apjPromptRevision)
+            return;
+        m_apjPrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result == QDialog::Accepted && files.size() == 1)
+            PickApjDefaults(files.first(), revision);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::PickApjDefaults(
+    const QString &firmware, quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_apjPromptRevision)
+        return;
+    const QFileInfo source(firmware);
+    auto *dialog = new QFileDialog(
+        this, tr("Select parameter defaults"), source.absolutePath());
+    dialog->setObjectName(QStringLiteral("DeveloperApjDefaultsDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setFileMode(QFileDialog::ExistingFile);
+    dialog->setNameFilters({tr(
+        "Parameter defaults (*.param *.parm *.PARAM *.PARM)"),
+        tr("All files (*)")});
+    m_apjPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, firmware, revision](int result) {
+        if (m_fileToolsClosing || revision != m_apjPromptRevision)
+            return;
+        m_apjPrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result != QDialog::Accepted || files.size() != 1) {
+            RefreshVehicleActions();
+            return;
+        }
+        const QString parameters = files.first();
+        if (QFileInfo::exists(
+                ApjDefaultsEmbedder::SuggestedOutputPath(firmware))) {
+            ConfirmApjOverwrite(firmware, parameters, revision);
+        } else {
+            EmbedDefaultsInApj(firmware, parameters, false);
+        }
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ConfirmApjOverwrite(
+    const QString &firmware, const QString &parameters, quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_apjPromptRevision)
+        return;
+    const QString output = ApjDefaultsEmbedder::SuggestedOutputPath(firmware);
+    auto *dialog = new QMessageBox(
+        QMessageBox::Warning, tr("Replace embedded-defaults output"),
+        tr("The output already exists:\n\n%1\n\n"
+           "Replace this local APJ file with a newly generated image? "
+           "The source firmware is preserved. The generated file is not uploaded or flashed.")
+            .arg(output),
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(QStringLiteral("DeveloperApjOverwriteConfirmDialog"));
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_apjPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, firmware, parameters, revision](int result) {
+        if (m_fileToolsClosing || revision != m_apjPromptRevision)
+            return;
+        m_apjPrompt.clear();
+        if (result == QMessageBox::Yes)
+            EmbedDefaultsInApj(firmware, parameters, true);
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::EmbedDefaultsInApj(
+    QString firmware, QString parameters, bool overwriteExisting)
+{
+    if (m_fileToolsClosing)
+        return;
+    if (ApjEmbeddingBusy() || MavFtpDownloadBusy()
+        || m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        AppendLog(tr("APJ defaults embedding: another file selection, offline operation, or vehicle operation is already active."));
+        RefreshOfflineFileActions();
+        return;
+    }
+    if (firmware.trimmed().isEmpty() || parameters.trimmed().isEmpty()) {
+        AppendLog(tr("APJ defaults embedding: firmware and parameter-defaults paths are required."));
+        RefreshOfflineFileActions();
+        return;
+    }
+
+    const QString output = ApjDefaultsEmbedder::SuggestedOutputPath(firmware);
+    const auto state = std::make_shared<ApjEmbeddingState>();
+    m_apjState = state;
+    m_apjButton->setEnabled(false);
+    AppendLog(tr("APJ defaults embedding started: %1 + %2 -> %3.")
+                  .arg(firmware, parameters, output));
+    AppendLog(tr("This is a local file transformation only; the generated APJ is not uploaded or flashed."));
+
+    auto *progress = new QProgressDialog(
+        tr("Embedding parameter defaults in APJ firmware…"), tr("Cancel"),
+        0, 1000, this);
+    progress->setObjectName(QStringLiteral("DeveloperApjProgressDialog"));
+    progress->setWindowTitle(tr("Embed Defaults in APJ"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    m_apjProgress = progress;
+    connect(progress, &QProgressDialog::canceled, this, [state]() {
+        state->cancelled.store(true, std::memory_order_relaxed);
+    });
+
+    using Result = ApjDefaultsEmbedder::Result;
+    auto *watcher = new QFutureWatcher<Result>(this);
+    auto *timer = new QTimer(watcher);
+    timer->setInterval(100);
+    const QPointer<QProgressDialog> guardedProgress(progress);
+    connect(timer, &QTimer::timeout, this,
+            [this, state, guardedProgress]() {
+        if (m_fileToolsClosing || !guardedProgress
+            || m_apjState != state
+            || state->cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        const qint64 total = state->total.load(std::memory_order_relaxed);
+        const qint64 done = state->processed.load(std::memory_order_relaxed);
+        if (total > 0) {
+            guardedProgress->setValue(int(qBound(
+                0.0L, 1000.0L * done / total, 1000.0L)));
+        }
+    });
+    connect(watcher, &QFutureWatcher<Result>::finished, this,
+            [this, state, watcher, timer, guardedProgress, output]() {
+        timer->stop();
+        const Result result = watcher->result();
+        watcher->deleteLater();
+        if (m_apjState != state)
+            return;
+        m_apjState.reset();
+        m_apjProgress.clear();
+        if (guardedProgress)
+            guardedProgress->deleteLater();
+        if (m_fileToolsClosing)
+            return;
+
+        if (result.cancelled) {
+            AppendLog(tr("APJ defaults embedding cancelled; no new output was published."));
+        } else if (!result.success) {
+            AppendLog(tr("APJ defaults embedding failed: %1").arg(result.error));
+        } else {
+            AppendLog(tr("APJ defaults embedding completed: %1 parameter bytes embedded (capacity %2), %3 image bytes, %4 output bytes written to %5.")
+                          .arg(result.defaultsBytes)
+                          .arg(result.maximumDefaultsBytes)
+                          .arg(result.imageBytes)
+                          .arg(result.outputBytes)
+                          .arg(result.outputPath.isEmpty()
+                                   ? output : result.outputPath));
+            if (result.repairedDescriptors > 0) {
+                AppendLog(tr("APJ defaults embedding recalculated both CRC values in %1 unsigned firmware descriptor(s).")
+                              .arg(result.repairedDescriptors));
+            }
+        }
+        for (const QString &warning : result.warnings)
+            AppendLog(tr("APJ defaults embedding warning: %1").arg(warning));
+        RefreshVehicleActions();
+    });
+    timer->start();
+    const ApjDefaultsEmbedder::Options options{overwriteExisting};
+    watcher->setFuture(QtConcurrent::run(
+        [firmware, parameters, options, state]() {
+        try {
+            return ApjDefaultsEmbedder::Embed(
+                firmware, parameters, options,
+                [state](qint64 processed, qint64 total) {
+                    state->processed.store(processed,
+                                           std::memory_order_relaxed);
+                    state->total.store(total, std::memory_order_relaxed);
+                },
+                [state]() {
+                    return state->cancelled.load(std::memory_order_relaxed);
+                });
+        } catch (const std::exception &error) {
+            Result result;
+            result.error = QString::fromUtf8(error.what());
+            return result;
+        } catch (...) {
+            Result result;
+            result.error = QStringLiteral("Unexpected APJ defaults embedding error.");
+            return result;
+        }
+    }));
+    RefreshVehicleActions();
+}
+
 void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
 {
     const QPointer<ConfigDeveloperToolsView> guard(this);
     const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
     if (!service || m_vehiclePrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
-        || m_dashWareState || m_dashWarePrompt || MavFtpDownloadBusy())
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || MavFtpDownloadBusy())
         return;
     VehiclePlan plan;
     QString error;

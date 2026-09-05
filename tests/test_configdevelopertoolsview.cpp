@@ -14,6 +14,8 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QRunnable>
@@ -204,6 +206,50 @@ QByteArray dashWareAsciiLog(int dataRecords = 2)
     return log;
 }
 
+quint32 apjDescriptorCrc(const QByteArray &image, int begin, int end)
+{
+    quint32 value = 0;
+    for (int at = begin; at < end; ++at) {
+        value ^= quint8(image.at(at));
+        for (int bit = 0; bit < 8; ++bit)
+            value = (value >> 1)
+                ^ (0xedb88320U & (0U - (value & 1U)));
+    }
+    return value;
+}
+
+QByteArray embeddableApj(bool signedFirmware = false,
+                         bool withDescriptor = false)
+{
+    QByteArray image(withDescriptor ? 160 : 100, 'x');
+    image.replace(10, 16, QByteArray("PARMDEF\0", 8)
+        + QByteArray::fromHex("5537f4a0385d485b"));
+    qToLittleEndian<quint16>(32,
+        reinterpret_cast<uchar *>(image.data() + 26));
+    qToLittleEndian<quint16>(0,
+        reinterpret_cast<uchar *>(image.data() + 28));
+    if (withDescriptor) {
+        constexpr int descriptor = 80;
+        image.replace(descriptor, 8,
+                      QByteArray::fromHex("40a2e4f164689106"));
+        qToLittleEndian<quint32>(image.size(),
+            reinterpret_cast<uchar *>(image.data() + descriptor + 16));
+        qToLittleEndian<quint32>(apjDescriptorCrc(
+            image, 0, descriptor + 8),
+            reinterpret_cast<uchar *>(image.data() + descriptor + 8));
+        qToLittleEndian<quint32>(apjDescriptorCrc(
+            image, descriptor + 24, image.size()),
+            reinterpret_cast<uchar *>(image.data() + descriptor + 12));
+    }
+    QJsonObject root;
+    root.insert(QStringLiteral("magic"), QStringLiteral("APJFWv1"));
+    root.insert(QStringLiteral("image_size"), image.size());
+    root.insert(QStringLiteral("image"), QString::fromLatin1(
+        qCompress(image, 9).mid(4).toBase64()));
+    root.insert(QStringLiteral("signed_firmware"), signedFirmware);
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
 bool writeFixture(const QString &path, const QByteArray &bytes)
 {
     QFile file(path);
@@ -283,6 +329,9 @@ private slots:
     void dashWareAndOtherOperationsInterlock();
     void mavFtpInjectionAndSharedOperationGate();
     void mavFtpServiceRemovalDisablesAction();
+    void apjDialogsAreDefaultCancelAndPreserveExistingOutput();
+    void apjEmbeddingCompletesAndSignedImagesFailClosed();
+    void apjEmbeddingCancellationLifetimeAndInterlocks();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -291,8 +340,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
     QCOMPARE(view.objectName(), QStringLiteral("ConfigDeveloperToolsView"));
     QCOMPARE(view.Title(), QStringLiteral("Developer Tools"));
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 5);
-    QVERIFY(view.Log().contains(QStringLiteral("5 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 6);
+    QVERIFY(view.Log().contains(QStringLiteral("6 of 32")));
 
     const QList<QPushButton *> buttons = view.findChildren<QPushButton *>();
     QCOMPARE(buttons.size(), 32);
@@ -304,7 +353,7 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
             QVERIFY(!button->toolTip().isEmpty());
         }
     }
-    QCOMPARE(enabled, 5);
+    QCOMPARE(enabled, 6);
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeMavlinkPacketButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
@@ -313,6 +362,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
         QStringLiteral("SplitDataFlashLogButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("CreateDashWareCsvButton"))->isEnabled());
+    QVERIFY(view.findChild<QPushButton *>(
+        QStringLiteral("EmbedDefaultsInApjButton"))->isEnabled());
     QVERIFY(!view.findChild<QPushButton *>(
         QStringLiteral("RebootVehicleButton"))->isEnabled());
 }
@@ -339,8 +390,8 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 8);
-    QVERIFY(view.Log().contains(QStringLiteral("8 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 9);
+    QVERIFY(view.Log().contains(QStringLiteral("9 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
@@ -374,9 +425,14 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     VehicleFixture fixture;
     view.setVehicleToolService(&fixture.service);
-    QCOMPARE(view.ImplementedActionCount(), 14);
+    QCOMPARE(view.ImplementedActionCount(), 15);
+    DeveloperFtpStub ftp;
+    view.setMavFtpDownloadServices(&ftp, &fixture.targets);
+    QCOMPARE(view.ImplementedActionCount(), 16);
+    view.setMavFtpDownloadServices(nullptr, nullptr);
+    QCOMPARE(view.ImplementedActionCount(), 15);
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 8);
+    QCOMPARE(view.ImplementedActionCount(), 9);
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()
@@ -431,7 +487,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 11);
+    QCOMPARE(view.ImplementedActionCount(), 12);
     QVERIFY(tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     fixture.heartbeat(true);
@@ -442,7 +498,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     fixture.registry.endLinkSession(fixture.endpoint.linkId, fixture.session);
     QTRY_VERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 5);
+    QCOMPARE(view.ImplementedActionCount(), 6);
     QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(fixture.frames.isEmpty());
 }
@@ -473,6 +529,7 @@ void ConfigDeveloperToolsViewTest::everyVehicleWriteRequiresDefaultCancel()
     }
     auto *dialog = confirmation(view);
     QVERIFY(dialog);
+    QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
     QCOMPARE(dialog->textFormat(), Qt::PlainText);
     QCOMPARE(dialog->defaultButton(), dialog->button(QMessageBox::Cancel));
     QCOMPARE(dialog->escapeButton(), dialog->button(QMessageBox::Cancel));
@@ -831,6 +888,7 @@ void ConfigDeveloperToolsViewTest::gpsAndVehicleOperationsInterlock()
         PausedGlobalPool paused;
         QVERIFY(paused.ready);
         view.ExtractGpsCorrections(input, output);
+        QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
         QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
         QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
         tool(view, "RebootVehicleButton")->click();
@@ -1059,6 +1117,7 @@ void ConfigDeveloperToolsViewTest::splitAndOtherOperationsInterlock()
         QVERIFY(paused.ready);
         view.SplitDataFlashLog(input, 2);
         QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+        QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
         QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
         view.ExtractGpsCorrections(correctionInput, correctionOutput);
         QVERIFY(!view.findChild<QProgressDialog *>(
@@ -1292,6 +1351,7 @@ void ConfigDeveloperToolsViewTest::dashWareAndOtherOperationsInterlock()
         view.ExportDashWareCsv(input, output, {QStringLiteral("GPS")});
         QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
         QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
+        QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
         QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
         view.ExtractGpsCorrections(corrections, correctionOutput);
         view.SplitDataFlashLog(input, 2);
@@ -1328,7 +1388,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
     view.show();
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 12); // Five offline + six vehicle + FTP.
+    QCOMPARE(view.ImplementedActionCount(), 13); // Six offline + six vehicle + FTP.
     auto *button = tool(view, "DownloadMavftpFileButton");
     QVERIFY(button->isEnabled());
     button->click();
@@ -1339,6 +1399,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
     QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
     QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
     QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.ExportDashWareCsv(input, output, {"GPS"});
     view.SplitDataFlashLog(input, 2);
@@ -1369,7 +1430,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     QVERIFY(!button->isEnabled());
     QVERIFY(tool(view, "CreateDashWareCsvButton")->isEnabled());
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 11);
+    QCOMPARE(view.ImplementedActionCount(), 12);
     QVERIFY(!button->isEnabled());
     QCOMPARE(ftp.cancelCalls, 0); // Never cancels the browser's shared work.
 }
@@ -1380,15 +1441,200 @@ void ConfigDeveloperToolsViewTest::mavFtpServiceRemovalDisablesAction()
     ConfigDeveloperToolsView view;
     auto *ftp = new DeveloperFtpStub;
     view.setMavFtpDownloadServices(ftp, &targets);
-    QCOMPARE(view.ImplementedActionCount(), 6);
+    QCOMPARE(view.ImplementedActionCount(), 7);
     auto *button = tool(view, "DownloadMavftpFileButton");
     QVERIFY(button->isEnabled());
     button->click(); // A disconnected tool reports the missing target, no prompt.
     QVERIFY(!view.findChild<QInputDialog *>("DeveloperMavFtpPathDialog"));
     delete ftp;
-    QCOMPARE(view.ImplementedActionCount(), 5);
+    QCOMPARE(view.ImplementedActionCount(), 6);
     QVERIFY(!button->isEnabled());
     QVERIFY(!button->toolTip().isEmpty());
+}
+
+void ConfigDeveloperToolsViewTest::apjDialogsAreDefaultCancelAndPreserveExistingOutput()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString firmware = dir.filePath(QStringLiteral("test firmware.apj"));
+    const QString parameters = dir.filePath(QStringLiteral("defaults.param"));
+    const QString output = firmware + QStringLiteral("new.apj");
+    QVERIFY(writeFixture(firmware, embeddableApj(false, true)));
+    QVERIFY(writeFixture(parameters, QByteArrayLiteral("A=1\r\n")));
+    QVERIFY(writeFixture(output, QByteArrayLiteral("keep old output")));
+
+    ConfigDeveloperToolsView view;
+    view.show();
+    auto *button = tool(view, "EmbedDefaultsInApjButton");
+    QVERIFY(button->isEnabled());
+    button->click();
+    auto *firmwareDialog = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperApjFirmwareDialog"));
+    QVERIFY(firmwareDialog);
+    QVERIFY(firmwareDialog->nameFilters().join(QLatin1Char(';'))
+                .contains(QStringLiteral("*.apj")));
+    firmwareDialog->selectFile(firmware);
+    QVERIFY(QMetaObject::invokeMethod(
+        firmwareDialog, "accept", Qt::DirectConnection));
+
+    auto *defaultsDialog = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperApjDefaultsDialog"));
+    QVERIFY(defaultsDialog);
+    const QString defaultsFilters =
+        defaultsDialog->nameFilters().join(QLatin1Char(';'));
+    QVERIFY(defaultsFilters.contains(QStringLiteral("*.param")));
+    QVERIFY(defaultsFilters.contains(QStringLiteral("*.parm")));
+    defaultsDialog->selectFile(parameters);
+    QVERIFY(QMetaObject::invokeMethod(
+        defaultsDialog, "accept", Qt::DirectConnection));
+
+    auto *confirm = view.findChild<QMessageBox *>(
+        QStringLiteral("DeveloperApjOverwriteConfirmDialog"));
+    QVERIFY(confirm);
+    QCOMPARE(static_cast<QAbstractButton *>(confirm->defaultButton()),
+             confirm->button(QMessageBox::Cancel));
+    QVERIFY(confirm->text().contains(output));
+    QVERIFY(confirm->text().contains(QStringLiteral("not uploaded or flashed")));
+    confirm->button(QMessageBox::Cancel)->click();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QCOMPARE(readFixture(output), QByteArrayLiteral("keep old output"));
+    QVERIFY(button->isEnabled());
+
+    button->click();
+    firmwareDialog = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperApjFirmwareDialog"));
+    QVERIFY(firmwareDialog);
+    firmwareDialog->selectFile(firmware);
+    QVERIFY(QMetaObject::invokeMethod(
+        firmwareDialog, "accept", Qt::DirectConnection));
+    defaultsDialog = view.findChild<QFileDialog *>(
+        QStringLiteral("DeveloperApjDefaultsDialog"));
+    QVERIFY(defaultsDialog);
+    defaultsDialog->selectFile(parameters);
+    QVERIFY(QMetaObject::invokeMethod(
+        defaultsDialog, "accept", Qt::DirectConnection));
+    confirm = view.findChild<QMessageBox *>(
+        QStringLiteral("DeveloperApjOverwriteConfirmDialog"));
+    QVERIFY(confirm);
+    confirm->button(QMessageBox::Yes)->click();
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 5000);
+    QVERIFY(readFixture(output) != QByteArrayLiteral("keep old output"));
+    QVERIFY(view.Log().contains(QStringLiteral("APJ defaults embedding completed")));
+    QVERIFY(view.Log().contains(QStringLiteral("not uploaded or flashed")));
+}
+
+void ConfigDeveloperToolsViewTest::apjEmbeddingCompletesAndSignedImagesFailClosed()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString firmware = dir.filePath(QStringLiteral("board.apj"));
+    const QString parameters = dir.filePath(QStringLiteral("defaults.parm"));
+    const QString output = firmware + QStringLiteral("new.apj");
+    QVERIFY(writeFixture(firmware, embeddableApj(false, true)));
+    QVERIFY(writeFixture(parameters, QByteArrayLiteral("A=1\r\nB=2\n")));
+
+    ConfigDeveloperToolsView view;
+    view.EmbedDefaultsInApj(firmware, parameters);
+    QTRY_VERIFY_WITH_TIMEOUT(tool(view, "EmbedDefaultsInApjButton")->isEnabled(),
+                             5000);
+    QVERIFY(QFile::exists(output));
+    const QJsonDocument document = QJsonDocument::fromJson(readFixture(output));
+    QVERIFY(document.isObject());
+    const QJsonObject object = document.object();
+    QByteArray compressed = QByteArray::fromBase64(
+        object.value(QStringLiteral("image")).toString().toLatin1());
+    const quint32 imageSize = quint32(
+        object.value(QStringLiteral("image_size")).toInt());
+    QByteArray wrapped(4, '\0');
+    qToBigEndian<quint32>(imageSize,
+        reinterpret_cast<uchar *>(wrapped.data()));
+    wrapped.append(compressed);
+    const QByteArray image = qUncompress(wrapped);
+    QCOMPARE(image.size(), int(imageSize));
+    QCOMPARE(qFromLittleEndian<quint16>(
+                 reinterpret_cast<const uchar *>(image.constData() + 28)),
+             quint16(8));
+    QCOMPARE(image.mid(30, 8), QByteArrayLiteral("A=1\nB=2\n"));
+    QVERIFY(view.Log().contains(QStringLiteral("capacity 32")));
+    QVERIFY(view.Log().contains(QStringLiteral("both CRC values in 1 unsigned firmware descriptor")));
+    QVERIFY(view.Log().contains(QStringLiteral("APJ defaults embedding warning")));
+
+    const QString signedFirmware = dir.filePath(QStringLiteral("signed.apj"));
+    QVERIFY(writeFixture(signedFirmware, embeddableApj(true)));
+    view.EmbedDefaultsInApj(signedFirmware, parameters);
+    QTRY_VERIFY_WITH_TIMEOUT(tool(view, "EmbedDefaultsInApjButton")->isEnabled(),
+                             5000);
+    QVERIFY(!QFile::exists(signedFirmware + QStringLiteral("new.apj")));
+    QVERIFY(view.Log().contains(
+        QStringLiteral("Signed or ambiguously marked firmware")));
+}
+
+void ConfigDeveloperToolsViewTest::apjEmbeddingCancellationLifetimeAndInterlocks()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString firmware = dir.filePath(QStringLiteral("cancel.apj"));
+    const QString parameters = dir.filePath(QStringLiteral("cancel.param"));
+    const QString output = firmware + QStringLiteral("new.apj");
+    QVERIFY(writeFixture(firmware, embeddableApj()));
+    QVERIFY(writeFixture(parameters, QByteArrayLiteral("A=1\n")));
+    VehicleFixture fixture;
+    DeveloperFtpStub ftp;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.setMavFtpDownloadServices(&ftp, &fixture.targets);
+    view.show();
+
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view.EmbedDefaultsInApj(firmware, parameters);
+        auto *progress = view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperApjProgressDialog"));
+        QVERIFY(progress);
+        QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+        QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
+        QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
+        QVERIFY(!tool(view, "DownloadMavftpFileButton")->isEnabled());
+        QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+        view.close();
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!QFile::exists(output), 5000);
+    view.show();
+    QTRY_VERIFY_WITH_TIMEOUT(tool(view, "EmbedDefaultsInApjButton")->isEnabled(),
+                             5000);
+
+    const QString csv = dir.filePath(QStringLiteral("busy.csv"));
+    const QString log = dir.filePath(QStringLiteral("busy.log"));
+    QVERIFY(writeFixture(log, dashWareAsciiLog(20)));
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view.ExportDashWareCsv(log, csv, {QStringLiteral("GPS")});
+        QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
+        view.EmbedDefaultsInApj(firmware, parameters);
+        QVERIFY(!view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperApjProgressDialog")));
+        auto *progress = view.findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperDashWareProgressDialog"));
+        QVERIFY(progress);
+        progress->cancel();
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(tool(view, "EmbedDefaultsInApjButton")->isEnabled(),
+                             5000);
+
+    auto *heapView = new ConfigDeveloperToolsView;
+    QPointer<ConfigDeveloperToolsView> heapGuard(heapView);
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        heapView->EmbedDefaultsInApj(firmware, parameters);
+        QVERIFY(heapView->findChild<QProgressDialog *>(
+            QStringLiteral("DeveloperApjProgressDialog")));
+        delete heapView;
+        QVERIFY(heapGuard.isNull());
+    }
+    QVERIFY(!QFile::exists(output));
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)
