@@ -61,6 +61,10 @@ private:
     void StartVehicleAction(VehicleAction action);
     void ConfirmVehicleAction(const VehiclePlan &plan, double value,
                               quint64 promptRevision);
+    void ConfirmUpgradeBootloaderSource(const VehiclePlan &plan,
+                                        quint64 promptRevision);
+    void ConfirmUpgradeBootloaderFlash(const VehiclePlan &plan,
+                                       quint64 promptRevision);
     void CancelVehiclePrompt();
     QPushButton *AddToolAction(const QString &label,
                                const QString &buttonObjectName,

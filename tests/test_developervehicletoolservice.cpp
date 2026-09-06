@@ -238,6 +238,9 @@ private slots:
     void fallbackRequiresInternalWriteCapability();
     void pressureRequiresReal32();
     void commandsUseMissionPlannerPayloadsAndTerminalReports();
+    void bootloaderRejectsWrongEvidenceAndTimesOutUncertain();
+    void bootloaderWriteGateRejectsArmedAndSelectionAba();
+    void deletionAtFinalCommandValidationIsSafe();
     void retryRejectsChangedPressureSnapshot();
     void commandWriteGateRejectsArmedTransition();
     void reentrantPlanAndReleaseCallbacksCannotOverlap();
@@ -406,17 +409,21 @@ commandsUseMissionPlannerPayloadsAndTerminalReports()
     {
         DeveloperVehicleToolService::Action action;
         MAV_CMD command;
-        std::array<float, 4> prefix;
+        std::array<float, 7> params;
     };
     const QList<CommandCase> cases{
         {DeveloperVehicleToolService::Action::ForceAccelCalibrated,
-         MAV_CMD_PREFLIGHT_CALIBRATION, {0, 0, 0, 0}},
+         MAV_CMD_PREFLIGHT_CALIBRATION, {0, 0, 0, 0, 76, 0, 0}},
         {DeveloperVehicleToolService::Action::ForceCompassCalibrated,
-         MAV_CMD_PREFLIGHT_CALIBRATION, {0, 76, 0, 0}},
+         MAV_CMD_PREFLIGHT_CALIBRATION, {0, 76, 0, 0, 0, 0, 0}},
         {DeveloperVehicleToolService::Action::RebootVehicle,
-         MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, {1, 0, 0, 0}},
+         MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, {1, 0, 0, 0, 0, 0, 0}},
         {DeveloperVehicleToolService::Action::RebootToDfu,
-         MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, {42, 24, 71, 99}}
+         MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN, {42, 24, 71, 99, 0, 0, 0}},
+        {DeveloperVehicleToolService::Action::UpgradeBootloader,
+         static_cast<MAV_CMD>(MAV_CMD_FLASH_BOOTLOADER),
+         {0, 0, 0, 0,
+          DeveloperVehicleToolService::BootloaderMagic, 0, 0}}
     };
 
     QSignalSpy finished(
@@ -435,14 +442,17 @@ commandsUseMissionPlannerPayloadsAndTerminalReports()
         const mavlink_command_long_t payload =
             commandPayload(fixture.frames.constFirst());
         QCOMPARE(payload.command, quint16(candidate.command));
-        QCOMPARE(payload.param1, candidate.prefix[0]);
-        QCOMPARE(payload.param2, candidate.prefix[1]);
-        QCOMPARE(payload.param3, candidate.prefix[2]);
-        QCOMPARE(payload.param4, candidate.prefix[3]);
-        if (candidate.action
-            == DeveloperVehicleToolService::Action::ForceAccelCalibrated) {
-            QCOMPARE(payload.param5, 76.0F);
-        }
+        QCOMPARE(payload.param1, candidate.params[0]);
+        QCOMPARE(payload.param2, candidate.params[1]);
+        QCOMPARE(payload.param3, candidate.params[2]);
+        QCOMPARE(payload.param4, candidate.params[3]);
+        QCOMPARE(payload.param5, candidate.params[4]);
+        QCOMPARE(payload.param6, candidate.params[5]);
+        QCOMPARE(payload.param7, candidate.params[6]);
+        QCOMPARE(payload.confirmation, quint8(0));
+        QCOMPARE(payload.target_system, quint8(Fixture::systemId));
+        QCOMPARE(payload.target_component,
+                 quint8(MAV_COMP_ID_AUTOPILOT1));
 
         if (candidate.action
             == DeveloperVehicleToolService::Action::RebootToDfu) {
@@ -458,10 +468,227 @@ commandsUseMissionPlannerPayloadsAndTerminalReports()
                            candidate.command, MAV_RESULT_ACCEPTED));
             QCOMPARE(fixture.tools.lastReport().outcome,
                      DeveloperVehicleToolService::Outcome::Succeeded);
+            if (candidate.action
+                == DeveloperVehicleToolService::Action::UpgradeBootloader) {
+                QVERIFY(fixture.tools.lastReport().description.contains(
+                    QStringLiteral("flashed or was already current")));
+            }
         }
         QVERIFY(!fixture.tools.busy());
         QCOMPARE(finished.count(), index + 1);
     }
+}
+
+void DeveloperVehicleToolServiceTest::
+bootloaderRejectsWrongEvidenceAndTimesOutUncertain()
+{
+    QCOMPARE(DeveloperVehicleToolService::BootloaderAcknowledgementTimeoutMs,
+             5 * 60 * 1000);
+    QCOMPARE(DeveloperVehicleToolService::BootloaderMaximumLifetimeMs,
+             5 * 60 * 1000);
+    QCOMPARE(quint16(MAV_CMD_FLASH_BOOTLOADER), quint16(42650));
+
+    {
+        Fixture fixture;
+        // The bootloader's explicit timeout must override the short generic
+        // command default, not accidentally inherit the normal ACK window.
+        fixture.commands.setExactCommandTimeoutForTesting(5);
+        DeveloperVehicleToolService::Plan plan;
+        QString error;
+        QVERIFY(fixture.tools.canPrepare(
+            DeveloperVehicleToolService::Action::UpgradeBootloader,
+            &error));
+        QVERIFY(fixture.tools.prepare(
+            DeveloperVehicleToolService::Action::UpgradeBootloader,
+            &plan, &error));
+        QCOMPARE(fixture.tools.execute(plan, 123.0, &error),
+                 DeveloperVehicleToolService::SubmitResult::Started);
+        QCOMPARE(fixture.frames.size(), 1);
+        QTest::qWait(30);
+        QVERIFY(fixture.tools.busy());
+        QCOMPARE(fixture.frames.size(), 1);
+
+        fixture.commands.observeMessage(
+            Fixture::linkId,
+            commandAck(fixture.vehicleEndpoint,
+                       MAV_CMD_PREFLIGHT_CALIBRATION,
+                       MAV_RESULT_ACCEPTED));
+        QVERIFY(fixture.tools.busy());
+        QCOMPARE(fixture.frames.size(), 1);
+
+        VehicleEndpoint wrongSource = fixture.vehicleEndpoint;
+        wrongSource.systemId += 1;
+        fixture.commands.observeMessage(
+            Fixture::linkId,
+            commandAck(wrongSource,
+                       static_cast<MAV_CMD>(MAV_CMD_FLASH_BOOTLOADER),
+                       MAV_RESULT_ACCEPTED));
+        QVERIFY(fixture.tools.busy());
+        QCOMPARE(fixture.frames.size(), 1);
+
+        fixture.commands.observeMessage(
+            Fixture::linkId,
+            commandAck(fixture.vehicleEndpoint,
+                       static_cast<MAV_CMD>(MAV_CMD_FLASH_BOOTLOADER),
+                       MAV_RESULT_DENIED));
+        QVERIFY(!fixture.tools.busy());
+        QCOMPARE(fixture.tools.lastReport().outcome,
+                 DeveloperVehicleToolService::Outcome::Rejected);
+        QVERIFY(fixture.tools.lastReport().description.contains(
+            QStringLiteral("may not support bootloader flashing")));
+        QVERIFY(fixture.tools.lastReport().description.contains(
+            QStringLiteral("Keep power connected")));
+        QCOMPARE(fixture.frames.size(), 1);
+    }
+
+    {
+        Fixture fixture;
+        fixture.tools.setBootloaderTimeoutForTesting(20);
+        DeveloperVehicleToolService::Plan plan;
+        QString error;
+        QVERIFY(fixture.tools.prepare(
+            DeveloperVehicleToolService::Action::UpgradeBootloader,
+            &plan, &error));
+        QCOMPARE(fixture.tools.execute(plan, 0.0, &error),
+                 DeveloperVehicleToolService::SubmitResult::Started);
+        QCOMPARE(fixture.frames.size(), 1);
+        QTest::qWait(5);
+        QVERIFY(fixture.tools.busy());
+        QTRY_VERIFY_WITH_TIMEOUT(!fixture.tools.busy(), 250);
+        QCOMPARE(fixture.frames.size(), 1);
+        QCOMPARE(fixture.tools.lastReport().outcome,
+                 DeveloperVehicleToolService::Outcome::OutcomeUncertain);
+        QVERIFY(fixture.tools.lastReport().description.contains(
+            QStringLiteral("Keep power connected")));
+        QVERIFY(fixture.tools.lastReport().description.contains(
+            QStringLiteral("do not retry or power-cycle automatically")));
+    }
+
+    {
+        Fixture fixture;
+        DeveloperVehicleToolService::Plan plan;
+        QString error;
+        QVERIFY(fixture.tools.prepare(
+            DeveloperVehicleToolService::Action::UpgradeBootloader,
+            &plan, &error));
+        QCOMPARE(fixture.tools.execute(plan, 0.0, &error),
+                 DeveloperVehicleToolService::SubmitResult::Started);
+        QCOMPARE(fixture.frames.size(), 1);
+        fixture.commands.retireExactVehicle(plan.vehicle);
+        QVERIFY(!fixture.tools.busy());
+        QCOMPARE(fixture.frames.size(), 1);
+        QCOMPARE(fixture.tools.lastReport().outcome,
+                 DeveloperVehicleToolService::Outcome::OutcomeUncertain);
+        QVERIFY(fixture.tools.lastReport().description.contains(
+            QStringLiteral("Keep power connected")));
+    }
+}
+
+void DeveloperVehicleToolServiceTest::
+bootloaderWriteGateRejectsArmedAndSelectionAba()
+{
+    {
+        Fixture fixture;
+        int busyRouteValidations = 0;
+        fixture.routeHook = [&fixture, &busyRouteValidations]() {
+            if (fixture.tools.busy()
+                && ++busyRouteValidations == 2) {
+                fixture.setArmed(true);
+            }
+        };
+        DeveloperVehicleToolService::Plan plan;
+        QString error;
+        QVERIFY(fixture.tools.prepare(
+            DeveloperVehicleToolService::Action::UpgradeBootloader,
+            &plan, &error));
+        QCOMPARE(fixture.tools.execute(plan, 0.0, &error),
+                 DeveloperVehicleToolService::SubmitResult::Unavailable);
+        QVERIFY(fixture.frames.isEmpty());
+        QVERIFY(!fixture.tools.busy());
+        QCOMPARE(fixture.tools.lastReport().outcome,
+                 DeveloperVehicleToolService::Outcome::Rejected);
+    }
+
+    {
+        Fixture fixture;
+        int busyRouteValidations = 0;
+        fixture.routeHook = [&fixture, &busyRouteValidations]() {
+            if (!fixture.tools.busy()
+                || ++busyRouteValidations != 2) {
+                return;
+            }
+            VehicleEndpoint alternate;
+            alternate.linkId = Fixture::linkId + 1;
+            alternate.systemId = Fixture::systemId + 1;
+            alternate.componentId = MAV_COMP_ID_AUTOPILOT1;
+            QVERIFY(fixture.targets.observeEndpoint(alternate));
+            QVERIFY(fixture.targets.selectTarget(
+                alternate.linkId, alternate.systemId,
+                alternate.componentId));
+            QVERIFY(fixture.targets.selectTarget(
+                fixture.vehicleEndpoint.linkId,
+                fixture.vehicleEndpoint.systemId,
+                fixture.vehicleEndpoint.componentId));
+            fixture.targets.observeHeartbeat(
+                fixture.vehicleEndpoint, false,
+                MAV_AUTOPILOT_ARDUPILOTMEGA,
+                MAV_TYPE_QUADROTOR);
+        };
+        DeveloperVehicleToolService::Plan plan;
+        QString error;
+        QVERIFY(fixture.tools.prepare(
+            DeveloperVehicleToolService::Action::UpgradeBootloader,
+            &plan, &error));
+        QCOMPARE(fixture.tools.execute(plan, 0.0, &error),
+                 DeveloperVehicleToolService::SubmitResult::Unavailable);
+        QVERIFY(fixture.frames.isEmpty());
+        QVERIFY(!fixture.tools.busy());
+        QCOMPARE(fixture.tools.lastReport().outcome,
+                 DeveloperVehicleToolService::Outcome::Rejected);
+    }
+}
+
+void DeveloperVehicleToolServiceTest::
+deletionAtFinalCommandValidationIsSafe()
+{
+    Fixture fixture;
+    QPointer<DeveloperVehicleToolService> tools;
+    int busyValidations = 0;
+    tools = new DeveloperVehicleToolService(
+        &fixture.targets, &fixture.registry,
+        &fixture.parameters, &fixture.commands,
+        [&fixture, &tools, &busyValidations](
+            const SwarmVehicleInstanceLease &lease, QString *) {
+            if (tools && tools->busy() && ++busyValidations == 1) {
+                delete tools.data();
+                return false;
+            }
+            return fixture.registry.validateLease(
+                lease,
+                DeveloperVehicleToolService::MaximumHeartbeatAgeMs);
+        });
+
+    DeveloperVehicleToolService::Plan plan;
+    QString error;
+    QVERIFY(tools->prepare(
+        DeveloperVehicleToolService::Action::UpgradeBootloader,
+        &plan, &error));
+    DeveloperVehicleToolService *rawTools = tools.data();
+    QCOMPARE(rawTools->execute(plan, 0.0, &error),
+             DeveloperVehicleToolService::SubmitResult::Unavailable);
+    QVERIFY(tools.isNull());
+    QVERIFY(fixture.frames.isEmpty());
+
+    // Destruction released the reservation made immediately before the
+    // callback; the exact command lane remains usable by another owner.
+    QObject owner;
+    VehicleCommandService::ExactReservationToken reservation;
+    QCOMPARE(fixture.commands.reserveSingleVehicleEndpoint(
+                 &owner, fixture.targets.acquireTarget(), fixture.lease(),
+                 &reservation, &error),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    QVERIFY(reservation.isValid());
+    fixture.commands.releaseExactReservation(reservation);
 }
 
 void DeveloperVehicleToolServiceTest::retryRejectsChangedPressureSnapshot()

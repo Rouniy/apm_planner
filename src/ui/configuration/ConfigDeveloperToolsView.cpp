@@ -188,8 +188,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
     AddVehicleAction(tr("Force Compass Calibrated"),
                      QStringLiteral("ForceCompassCalibratedButton"), VehicleAction::ForceCompassCalibrated);
     AddVehicleAction(tr("Reboot Vehicle"), QStringLiteral("RebootVehicleButton"), VehicleAction::RebootVehicle);
-    AddUnavailableAction(tr("Upgrade Bootloader"),
-                         QStringLiteral("UpgradeBootloaderButton"), notPorted);
+    AddVehicleAction(tr("Upgrade Bootloader"),
+                     QStringLiteral("UpgradeBootloaderButton"),
+                     VehicleAction::UpgradeBootloader);
     AddVehicleAction(tr("Reboot to DFU"), QStringLiteral("RebootToDfuButton"), VehicleAction::RebootToDfu);
     AddUnavailableAction(tr("Start Remote DataFlash Log"),
                          QStringLiteral("StartRemoteDataFlashLogButton"), notPorted);
@@ -1763,23 +1764,28 @@ void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
 {
     const QPointer<ConfigDeveloperToolsView> guard(this);
     const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
-    if (!service || m_vehiclePrompt || m_gpsExtractionState
+    if (m_fileToolsClosing || !service || m_vehiclePrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
         || LogOrganizerBusy()
         || MavFtpDownloadBusy())
         return;
+    const quint64 revision = ++m_promptRevision;
     VehiclePlan plan;
     QString error;
     const bool prepared = service->prepare(action, &plan, &error);
-    if (!guard || !service || m_vehicleTools != service)
+    if (!guard || !service || m_fileToolsClosing
+        || m_vehicleTools != service || revision != m_promptRevision)
         return;
     if (!prepared) {
         AppendLog(tr("Cannot prepare vehicle operation: %1").arg(error));
         RefreshVehicleActions();
         return;
     }
-    const quint64 revision = ++m_promptRevision;
+    if (action == VehicleAction::UpgradeBootloader) {
+        ConfirmUpgradeBootloaderSource(plan, revision);
+        return;
+    }
     if (action != VehicleAction::SetQnh && action != VehicleAction::AdjustBarometerAltitude) {
         ConfirmVehicleAction(plan, 0.0, revision);
         return;
@@ -1815,6 +1821,138 @@ void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
             RefreshVehicleActions();
     });
     input->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ConfirmUpgradeBootloaderSource(
+    const VehiclePlan &plan, quint64 revision)
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
+    if (m_fileToolsClosing || !service || revision != m_promptRevision
+        || m_vehiclePrompt)
+        return;
+    QString error;
+    const bool valid = service->validate(plan, &error);
+    if (!guard || !service || m_fileToolsClosing || m_vehicleTools != service
+        || revision != m_promptRevision || m_vehiclePrompt) {
+        return;
+    }
+    if (!valid) {
+        AppendLog(tr("Bootloader upgrade cancelled: %1").arg(error));
+        RefreshVehicleActions();
+        return;
+    }
+
+    const QString warning =
+        tr("Upgrade Bootloader\n"
+           "Target: link %1, system %2, component %3 (%4).\n\n"
+           "This operation asks the selected ArduPilot vehicle to flash the board-specific bootloader embedded in its currently installed firmware. It does not select or download a bootloader file. Unsupported boards or firmware builds may reject the request.\n\n"
+           "Continue to the final flash-safety confirmation?")
+            .arg(plan.target.endpoint.linkId)
+            .arg(plan.target.endpoint.systemId)
+            .arg(plan.target.endpoint.componentId)
+            .arg(plan.target.endpoint.linkName);
+    auto *dialog = new QMessageBox(
+        QMessageBox::Warning, tr("Confirm Embedded Bootloader Source"), warning,
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(
+        QStringLiteral("DeveloperUpgradeBootloaderSourceConfirmation"));
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_vehiclePrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, guard, service, plan, revision](int result) {
+        if (!guard || m_fileToolsClosing || revision != m_promptRevision
+            || m_vehicleTools != service) {
+            return;
+        }
+        m_vehiclePrompt.clear();
+        if (result != QMessageBox::Yes || !service) {
+            RefreshVehicleActions();
+            return;
+        }
+        ConfirmUpgradeBootloaderFlash(plan, revision);
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ConfirmUpgradeBootloaderFlash(
+    const VehiclePlan &plan, quint64 revision)
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<DeveloperVehicleToolService> service(m_vehicleTools);
+    if (m_fileToolsClosing || !service || revision != m_promptRevision
+        || m_vehiclePrompt)
+        return;
+    QString error;
+    const bool valid = service->validate(plan, &error);
+    if (!guard || !service || m_fileToolsClosing || m_vehicleTools != service
+        || revision != m_promptRevision || m_vehiclePrompt) {
+        return;
+    }
+    if (!valid) {
+        AppendLog(tr("Bootloader upgrade cancelled: %1").arg(error));
+        RefreshVehicleActions();
+        return;
+    }
+
+    const QString warning =
+        tr("FINAL BOOTLOADER FLASH WARNING\n"
+           "Target: link %1, system %2, component %3 (%4).\n\n"
+           "This permanently writes the vehicle's bootloader flash. Power loss or interruption can brick the flight controller. Keep stable power and the data connection connected for at least five minutes. This tool never retries the flash command automatically.\n\n"
+           "Heartbeats and telemetry may pause for several seconds during flashing, and the application may show a lost-link indication. Keep power and the data link connected.\n\n"
+           "An accepted response can mean the bootloader was updated or was already current. A missing acknowledgement leaves the outcome uncertain; do not automatically retry or power-cycle the vehicle. Execute this one bootloader flash request now?")
+            .arg(plan.target.endpoint.linkId)
+            .arg(plan.target.endpoint.systemId)
+            .arg(plan.target.endpoint.componentId)
+            .arg(plan.target.endpoint.linkName);
+    auto *dialog = new QMessageBox(
+        QMessageBox::Critical, tr("Final Bootloader Flash Confirmation"),
+        warning, QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(
+        QStringLiteral("DeveloperUpgradeBootloaderFlashConfirmation"));
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_vehiclePrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, guard, service, plan, revision](int result) {
+        if (!guard || m_fileToolsClosing || revision != m_promptRevision
+            || m_vehicleTools != service) {
+            return;
+        }
+        m_vehiclePrompt.clear();
+        if (result != QMessageBox::Yes || !service) {
+            RefreshVehicleActions();
+            return;
+        }
+        QString error;
+        const bool valid = service->validate(plan, &error);
+        if (!guard || !service || m_fileToolsClosing
+            || m_vehicleTools != service
+            || revision != m_promptRevision || m_vehiclePrompt) {
+            return;
+        }
+        if (!valid) {
+            AppendLog(tr("Bootloader upgrade cancelled: %1").arg(error));
+            RefreshVehicleActions();
+            return;
+        }
+        const auto submitResult = service->execute(plan, 0.0, &error);
+        if (!guard || !service || m_vehicleTools != service
+            || revision != m_promptRevision) {
+            return;
+        }
+        if (submitResult != DeveloperVehicleToolService::SubmitResult::Started)
+            AppendLog(tr("Bootloader upgrade was not started: %1").arg(error));
+        RefreshVehicleActions();
+    });
+    dialog->open();
     RefreshVehicleActions();
 }
 
@@ -1873,6 +2011,11 @@ void ConfigDeveloperToolsView::ConfirmVehicleAction(
     case VehicleAction::RebootVehicle:
         warning += tr("Reboot this vehicle now? Telemetry will be interrupted.");
         break;
+    case VehicleAction::UpgradeBootloader:
+        // Preserve the two-stage contract even if a future caller reaches the
+        // generic helper directly.
+        ConfirmUpgradeBootloaderSource(plan, revision);
+        return;
     case VehicleAction::RebootToDfu:
         warning += tr("Reboot this vehicle into DFU firmware recovery mode? "
                       "Telemetry may stop before an acknowledgement. Connection loss does not "

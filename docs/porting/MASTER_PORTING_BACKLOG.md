@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,246/246 тестов; Developer17/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,246/246 тестов; Developer18/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -41,13 +41,17 @@ default-Cancel Execute: TLOG/RLOG/BIN/LOG, SMALL/BAD/SITL/type/SYSID/serial,
 ошибки классификации и serial-path оригинала. Независимая проверка семи
 перемещений и удаления пустого файла сохраняет все непустые SHA-256; повторный
 анализ — no-op. Full246/246 (30.12s), X11 и просмотр финального плана проходят.
-Следующий пакет — Upgrade Bootloader: два подтверждения, один exact command,
-честный неопределённый результат при потере ACK, без тестов на реальном борту.
-Затем другие single-drone инструменты, включая Parameter Recovery и MagFit.
+Upgrade Bootloader перенесён: два target-bound default-Cancel подтверждения,
+один exact command42650/p5=290876, без автоповторов, bounded5min ACK/absolute
+deadline и честный неопределённый результат при потере ACK. Исправлены callback
+lifetime-дефекты общих сервисов и закрытия страницы во время prepare. Полный
+набор246/246 (30.41s), production X11 и просмотр финального диалога проходят;
+сетевой SITL и реальные платы не изменялись. Следующие single-drone инструменты —
+Parameter Recovery и MagFit.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
-`APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`.
+`APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
@@ -345,7 +349,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Log Organizer работают17/32; заменить оставшиеся15
+- Developer Tools: после Upgrade Bootloader работают18/32; заменить оставшиеся14
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.

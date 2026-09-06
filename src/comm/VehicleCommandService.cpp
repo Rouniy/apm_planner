@@ -773,6 +773,7 @@ bool VehicleCommandService::isExactCommandQuarantined(
 void VehicleCommandService::retireExactVehicle(
     const SwarmVehicleInstanceLease &lease)
 {
+    const QPointer<VehicleCommandService> serviceGuard(this);
     if (!lease.isValid()) {
         return;
     }
@@ -802,10 +803,16 @@ void VehicleCommandService::retireExactVehicle(
                 QStringLiteral(
                     "The exact vehicle instance retired while awaiting acknowledgement."),
                 true);
+            if (serviceGuard.isNull()) {
+                return;
+            }
         }
     }
     for (quint64 reservationId : affectedReservations) {
         maybeReleaseClosingReservation(reservationId);
+        if (serviceGuard.isNull()) {
+            return;
+        }
     }
 }
 
@@ -902,6 +909,7 @@ VehicleCommandService::SendResult VehicleCommandService::sendCommandInt(
 
 void VehicleCommandService::forgetLink(int linkId)
 {
+    const QPointer<VehicleCommandService> serviceGuard(this);
     for (auto generation = m_pendingCommands.begin();
          generation != m_pendingCommands.end();) {
         QHash<quint16, SenderIdentity> &commands = generation.value();
@@ -949,10 +957,16 @@ void VehicleCommandService::forgetLink(int linkId)
                 QStringLiteral(
                     "The physical link ended while awaiting acknowledgement."),
                 true);
+            if (serviceGuard.isNull()) {
+                return;
+            }
         }
     }
     for (quint64 reservationId : affectedReservations) {
         maybeReleaseClosingReservation(reservationId);
+        if (serviceGuard.isNull()) {
+            return;
+        }
     }
 }
 
@@ -1382,6 +1396,7 @@ void VehicleCommandService::scheduleQuarantineExpiry()
 
 void VehicleCommandService::handleExactDeadline()
 {
+    const QPointer<VehicleCommandService> serviceGuard(this);
     const qint64 now = m_exactClock.elapsed();
     QList<quint64> expired;
     for (auto pending = m_pendingExactCommands.constBegin();
@@ -1407,6 +1422,9 @@ void VehicleCommandService::handleExactDeadline()
                     : QStringLiteral(
                         "The acknowledgement deadline expired; command outcome is uncertain."),
                 true);
+            if (serviceGuard.isNull()) {
+                return;
+            }
         }
     }
     scheduleExactDeadline();

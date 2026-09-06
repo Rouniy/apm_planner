@@ -444,7 +444,8 @@ public:
                 mavlink_msg_command_long_decode(&message, &command);
                 if (command.target_system != FixtureSystem || command.target_component != 1) continue;
                 if (command.command == MAV_CMD_PREFLIGHT_CALIBRATION
-                    || command.command == MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN)
+                    || command.command == MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN
+                    || command.command == MAV_CMD_FLASH_BOOTLOADER)
                     commands.append(command);
                 mavlink_command_ack_t ack{};
                 ack.command = command.command;
@@ -491,11 +492,15 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 17 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 18 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
     expect(reboot && !reboot->isEnabled(), "offline reboot was enabled");
+    auto *bootloader = page->findChild<QPushButton *>(
+        QStringLiteral("UpgradeBootloaderButton"));
+    expect(bootloader && !bootloader->isEnabled(),
+           "offline bootloader upgrade was enabled");
     auto *mavFtpDownload = page->findChild<QPushButton *>(
         QStringLiteral("DownloadMavftpFileButton"));
     expect(mavFtpDownload && mavFtpDownload->isEnabled(),
@@ -1697,6 +1702,97 @@ int RunDeveloperVehicleToolRuntimeAudit()
             expect(dfu.param1 == 42 && dfu.param2 == 24 && dfu.param3 == 71 && dfu.param4 == 99,
                    "DFU was confused with hold-in-bootloader");
         }
+    }
+    // Bootloader flashing is only simulated by this in-process fixture.  Both
+    // actual consent boundaries must be crossed before its single wire frame.
+    if (page && fixture) {
+        auto *button = page->findChild<QPushButton *>(
+            QStringLiteral("UpgradeBootloaderButton"));
+        expect(waitFor([&] { return button && button->isEnabled(); }),
+               "connected bootloader action disabled");
+        const int before = fixture->commands.size();
+        const auto visibleConsent = [&](const QString &name) -> QMessageBox * {
+            for (auto *dialog : page->findChildren<QMessageBox *>(name)) {
+                if (dialog->isVisible()) return dialog;
+            }
+            return nullptr;
+        };
+        const auto openSourceConsent = [&]() -> QMessageBox * {
+            if (!button || !button->isEnabled()) return nullptr;
+            button->click();
+            QCoreApplication::processEvents();
+            return visibleConsent(QStringLiteral(
+                "DeveloperUpgradeBootloaderSourceConfirmation"));
+        };
+        const auto checkConsent = [&](QMessageBox *dialog) {
+            expect(dialog && dialog->defaultButton()
+                       == dialog->button(QMessageBox::Cancel)
+                       && dialog->escapeButton()
+                       == dialog->button(QMessageBox::Cancel),
+                   "bootloader consent is missing or not default/Escape Cancel");
+            expect(dialog && dialog->text().contains(
+                       QString::number(FixtureLinkId))
+                       && dialog->text().contains(QString::number(FixtureSystem))
+                       && dialog->text().contains(QStringLiteral("component 1")),
+                   "bootloader consent did not display the exact target");
+        };
+        auto *source = openSourceConsent();
+        checkConsent(source);
+        if (source) source->button(QMessageBox::Cancel)->click();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        expect(fixture->commands.size() == before,
+               "bootloader first Cancel transmitted a command");
+        for (bool execute : {false, true}) {
+            source = openSourceConsent();
+            checkConsent(source);
+            if (!source) continue;
+            source->button(QMessageBox::Yes)->click();
+            QCoreApplication::processEvents();
+            auto *flash = visibleConsent(QStringLiteral(
+                "DeveloperUpgradeBootloaderFlashConfirmation"));
+            checkConsent(flash);
+            expect(fixture->commands.size() == before,
+                   "bootloader first Yes transmitted before final consent");
+            if (!flash) continue;
+            const QString screenshot = qEnvironmentVariable(
+                "APM_BOOTLOADER_AUDIT_SCREENSHOT");
+            if (execute && !screenshot.isEmpty()) {
+                expect(flash->grab().save(screenshot),
+                       "could not capture bootloader final consent");
+            }
+            const auto prior = service->lastReport().operationId;
+            flash->button(execute ? QMessageBox::Yes : QMessageBox::Cancel)->click();
+            if (execute) {
+                expect(waitFor([&] {
+                    return !service->busy()
+                        && service->lastReport().operationId != prior;
+                }), "bootloader exact terminal report missing");
+                expect(service->lastReport().outcome
+                           == DeveloperVehicleToolService::Outcome::Succeeded
+                           && service->lastReport().description.contains(
+                               QStringLiteral("already"), Qt::CaseInsensitive),
+                       "bootloader ACK must mean updated or already current");
+                expect(fixture->commands.size() == before + 1,
+                       "bootloader did not send exactly one command");
+                if (fixture->commands.size() == before + 1) {
+                    const auto command = fixture->commands.last();
+                    expect(command.command == MAV_CMD_FLASH_BOOTLOADER
+                               && command.target_system == FixtureSystem
+                               && command.target_component == 1
+                               && command.confirmation == 0
+                               && command.param1 == 0 && command.param2 == 0
+                               && command.param3 == 0 && command.param4 == 0
+                               && command.param5 == 290876
+                               && command.param6 == 0 && command.param7 == 0,
+                           "bootloader exact target or wire parameters mismatch");
+                }
+            } else {
+                expect(fixture->commands.size() == before,
+                       "bootloader second Cancel transmitted a command");
+            }
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        }
+        qInfo() << "Developer runtime bootloader two-consent audit passed";
     }
     heartbeat.stop();
     links->removeLink(FixtureLinkId);

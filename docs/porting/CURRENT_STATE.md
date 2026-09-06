@@ -24,7 +24,46 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Organize Log Directory**. The existing Developer
+Latest slice (2026-09-06): **Upgrade Bootloader**. The existing Developer action
+now uses two named asynchronous default/Escape-Cancel confirmations, both showing
+the exact selected target. One immutable plan is revalidated between prompts and
+immediately before one COMMAND_LONG42650, confirmation0, parameters
+`[0,0,0,0,290876,0,0]`. There is no automatic retry, downloaded bootloader or
+implicit reboot. Both ACK inactivity and absolute lifetime are five minutes.
+ACCEPTED means flashed or already current; lost ACK/link/target remains uncertain.
+Warnings cover bricking, stable power/data for at least five minutes, expected
+telemetry pauses and no automatic retry/power-cycle. Unsupported firmware can
+reject; a failure after erasure is not a promise that flash was untouched.
+
+The application-owned service retains admitted work and in-memory history after
+page closure. Review also fixed post-callback service deletion in command
+retirement/link-forget/deadline and both Developer post-reservation validation
+branches, plus consent reopening after close-during-prepare. Tests cover those
+lifetime paths, both cancellations, first-Yes zero TX, exact one-frame payload,
+wrong ACKs, rejection/timeout, armed transitions and target ABA even after fresh
+telemetry. An initial widget fixture omitted that fresh generation heartbeat;
+the fixture was corrected without weakening production admission.
+
+Qt5/audio configure and final build pass; final **246/246 (30.41s)** and production
+X11 exit0/zero audit failures pass. The actual Tools route exercises both new
+consents and all prior offline/MAVFTP/six vehicle flows using in-process sys234.
+Root inspected `/tmp/apm-bootloader.zYAKC5/bootloader-final-consent.png`: complete
+target/warnings and both buttons are readable. Logs are in the same directory.
+No network SITL or real board was flashed or sent a mutation. Claude TCP
+c218–c221 independently audited reference semantics and code; the full10170-byte
+report hash was verified. Three Codex streams handled service, UI and lifecycle
+review/fixes; root integrated, reviewed and ran all verification.
+
+Developer is now **18/32 working,14 unavailable**. SETUP46/eight absent reference
+routes, Advanced14 complete+1 partial Signing/disabled Support Proxy, fixedTools24
+plus Signing extension and CONFIG15/15 factories/Planner21/64 are unchanged.
+See `UPGRADE_BOOTLOADER_PORT.md`: physical flash/native/reference-pixel evidence,
+durable job history, arbitrary-late-ACK ambiguity and conservative ACK rejection
+after a long heartbeat stall remain explicit limits. Next: remaining single-drone
+Developer tools, starting with Parameter Recovery and MagFit, then Settings;
+Swarm remains last. This is not full-port completion.
+
+Previous slice (2026-09-06): **Organize Log Directory**. The existing Developer
 action now opens an asynchronous folder picker, performs read-only analysis,
 shows every proposed move/empty-file deletion in a modeless default-Cancel plan,
 then runs only the explicitly confirmed immutable plan. TLOG, raw RLOG and

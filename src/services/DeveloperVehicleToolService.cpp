@@ -148,6 +148,15 @@ DeveloperVehicleToolService::~DeveloperVehicleToolService()
     shutdown();
 }
 
+void DeveloperVehicleToolService::setBootloaderTimeoutForTesting(
+    int timeoutMs)
+{
+    const int bounded = qBound(
+        1, timeoutMs, BootloaderMaximumLifetimeMs);
+    m_bootloaderAcknowledgementTimeoutMs = bounded;
+    m_bootloaderMaximumLifetimeMs = bounded;
+}
+
 void DeveloperVehicleToolService::shutdown()
 {
     if (m_shuttingDown) {
@@ -541,6 +550,7 @@ bool DeveloperVehicleToolService::canPrepare(Action action,
     case Action::ForceCompassCalibrated:
     case Action::RebootVehicle:
     case Action::RebootToDfu:
+    case Action::UpgradeBootloader:
         return true;
     case Action::SetQnh:
     case Action::AdjustBarometerAltitude:
@@ -602,6 +612,7 @@ bool DeveloperVehicleToolService::prepare(Action action,
         case Action::ForceCompassCalibrated:
         case Action::RebootVehicle:
         case Action::RebootToDfu:
+        case Action::UpgradeBootloader:
             break;
         default:
             assignError(error, QStringLiteral("The developer action is invalid."));
@@ -817,8 +828,12 @@ DeveloperVehicleToolService::execute(const Plan &plan,
         }
         m_parameterReservation = reservation;
 
-        if (!validateVehicle(plan.target, plan.vehicle, &submitError)
-            || !serviceGuard
+        const bool vehicleStillValid =
+            validateVehicle(plan.target, plan.vehicle, &submitError);
+        if (!serviceGuard) {
+            return SubmitResult::Unavailable;
+        }
+        if (!vehicleStillValid
             || !parameterStillMatches(plan, &submitError)) {
             assignError(error, submitError);
             finish(Outcome::Rejected, submitError);
@@ -899,8 +914,12 @@ DeveloperVehicleToolService::execute(const Plan &plan,
         }
         m_commandReservation = reservation;
 
-        if (!validateVehicle(plan.target, plan.vehicle, &submitError)
-            || !serviceGuard) {
+        const bool vehicleStillValid =
+            validateVehicle(plan.target, plan.vehicle, &submitError);
+        if (!serviceGuard) {
+            return SubmitResult::Unavailable;
+        }
+        if (!vehicleStillValid) {
             assignError(error, submitError);
             finish(Outcome::Rejected, submitError);
             return SubmitResult::Unavailable;
@@ -922,6 +941,14 @@ DeveloperVehicleToolService::execute(const Plan &plan,
             request.params[1] = 24.0F;
             request.params[2] = 71.0F;
             request.params[3] = 99.0F;
+        } else if (plan.action == Action::UpgradeBootloader) {
+            request.command = static_cast<MAV_CMD>(
+                MAV_CMD_FLASH_BOOTLOADER);
+            request.params[4] = BootloaderMagic;
+            request.acknowledgementTimeoutMs =
+                m_bootloaderAcknowledgementTimeoutMs;
+            request.maximumLifetimeMs =
+                m_bootloaderMaximumLifetimeMs;
         } else {
             finish(Outcome::Rejected,
                    QStringLiteral("The developer command is invalid."));
@@ -1049,6 +1076,18 @@ void DeveloperVehicleToolService::handleCommandFinished(
         description += QStringLiteral(
             " DFU may reboot before acknowledgement. Connection loss does not confirm DFU entry.");
     }
+    if (m_activePlan.action == Action::UpgradeBootloader) {
+        if (outcome == Outcome::Succeeded) {
+            description += QStringLiteral(
+                " The vehicle accepted the request: the embedded bootloader was flashed or was already current.");
+        } else if (outcome == Outcome::OutcomeUncertain) {
+            description += QStringLiteral(
+                " Bootloader update outcome is unknown. Keep power connected and do not retry or power-cycle automatically.");
+        } else {
+            description += QStringLiteral(
+                " The firmware may not support bootloader flashing, its embedded bootloader may be invalid, or flashing failed after work began. Keep power connected and do not retry or power-cycle automatically.");
+        }
+    }
     finish(outcome, description);
 }
 
@@ -1131,6 +1170,8 @@ QString DeveloperVehicleToolService::actionName(Action action)
         return QStringLiteral("Reboot Vehicle");
     case Action::RebootToDfu:
         return QStringLiteral("Reboot to DFU");
+    case Action::UpgradeBootloader:
+        return QStringLiteral("Upgrade Bootloader");
     }
     return QStringLiteral("Developer action");
 }

@@ -39,7 +39,8 @@ public:
         ForceAccelCalibrated,
         ForceCompassCalibrated,
         RebootVehicle,
-        RebootToDfu
+        RebootToDfu,
+        UpgradeBootloader
     };
     Q_ENUM(Action)
 
@@ -106,6 +107,11 @@ public:
     static constexpr double MaximumPressurePa = 120000.0;
     static constexpr double MaximumAltitudeAdjustmentMetres = 100.0;
     static constexpr double PressurePerMetrePa = 11.1;
+    static constexpr float BootloaderMagic = 290876.0F;
+    static constexpr int BootloaderAcknowledgementTimeoutMs =
+        5 * 60 * 1000;
+    static constexpr int BootloaderMaximumLifetimeMs =
+        5 * 60 * 1000;
 
     explicit DeveloperVehicleToolService(
         VehicleTargetManager *targetManager,
@@ -121,6 +127,9 @@ public:
     QStringList history() const { return m_history; }
     Report lastReport() const { return m_lastReport; }
     quint64 currentOperationId() const noexcept { return m_operationId; }
+
+    /** Reduces only the bootloader command deadline in focused tests. */
+    void setBootloaderTimeoutForTesting(int timeoutMs);
 
     /** Detaches/retires reservations before transport services are torn down. */
     void shutdown();
@@ -189,6 +198,9 @@ private:
     bool m_apiInFlight = false;
     bool m_finishing = false;
     bool m_shuttingDown = false;
+    int m_bootloaderAcknowledgementTimeoutMs =
+        BootloaderAcknowledgementTimeoutMs;
+    int m_bootloaderMaximumLifetimeMs = BootloaderMaximumLifetimeMs;
     QString m_status;
     QStringList m_history;
     Report m_lastReport;

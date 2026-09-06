@@ -323,6 +323,8 @@ private slots:
     void pressureWritesWaitForEcho();
     void commandsSendExactPayloadOnlyAfterConsent_data();
     void commandsSendExactPayloadOnlyAfterConsent();
+    void upgradeBootloaderRequiresTwoConfirmations();
+    void upgradeBootloaderRejectsStaleSecondConsent();
     void closeCancelsConsentButKeepsAdmittedOperation();
     void routeCallbackMayDeletePage();
     void gpsPickerCancellationIsOfflineAndNonDestructive();
@@ -446,12 +448,12 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     VehicleFixture fixture;
     view.setVehicleToolService(&fixture.service);
-    QCOMPARE(view.ImplementedActionCount(), 16);
+    QCOMPARE(view.ImplementedActionCount(), 17);
     DeveloperFtpStub ftp;
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
-    QCOMPARE(view.ImplementedActionCount(), 17);
+    QCOMPARE(view.ImplementedActionCount(), 18);
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 16);
+    QCOMPARE(view.ImplementedActionCount(), 17);
     view.setVehicleToolService(nullptr);
     QCOMPARE(view.ImplementedActionCount(), 10);
 }
@@ -508,11 +510,13 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 13);
+    QCOMPARE(view.ImplementedActionCount(), 14);
     QVERIFY(tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(tool(view, "RebootVehicleButton")->isEnabled());
+    QVERIFY(tool(view, "UpgradeBootloaderButton")->isEnabled());
     fixture.heartbeat(true);
     QTRY_VERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+    QVERIFY(!tool(view, "UpgradeBootloaderButton")->isEnabled());
     QVERIFY(!tool(view, "RebootVehicleButton")->toolTip().isEmpty());
     fixture.heartbeat(false);
     QTRY_VERIFY(tool(view, "RebootVehicleButton")->isEnabled());
@@ -695,6 +699,191 @@ void ConfigDeveloperToolsViewTest::commandsSendExactPayloadOnlyAfterConsent()
     fixture.acknowledge(static_cast<quint16>(command));
     QVERIFY(!fixture.service.busy());
     QVERIFY(view.Log().contains(fixture.service.lastReport().description));
+}
+
+void ConfigDeveloperToolsViewTest::upgradeBootloaderRequiresTwoConfirmations()
+{
+    VehicleFixture fixture;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.show();
+    auto *button = tool(view, "UpgradeBootloaderButton");
+    QVERIFY(button->isEnabled());
+
+    button->click();
+    auto *sourceConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation");
+    QVERIFY(sourceConfirm);
+    QCOMPARE(sourceConfirm->defaultButton(),
+             sourceConfirm->button(QMessageBox::Cancel));
+    QCOMPARE(sourceConfirm->escapeButton(),
+             sourceConfirm->button(QMessageBox::Cancel));
+    QVERIFY(sourceConfirm->text().contains(
+        QStringLiteral("link 7, system 42, component 1")));
+    QVERIFY(sourceConfirm->text().contains(QStringLiteral("Bench vehicle")));
+    QVERIFY(sourceConfirm->text().contains(
+        QStringLiteral("does not select or download")));
+    sourceConfirm->button(QMessageBox::Cancel)->click();
+    QVERIFY(fixture.frames.isEmpty());
+    QVERIFY(!fixture.service.busy());
+
+    button->click();
+    sourceConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation");
+    QVERIFY(sourceConfirm);
+    sourceConfirm->button(QMessageBox::Yes)->click();
+    QVERIFY(fixture.frames.isEmpty()); // First consent never transmits.
+    auto *flashConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderFlashConfirmation");
+    QVERIFY(flashConfirm);
+    QCOMPARE(flashConfirm->defaultButton(),
+             flashConfirm->button(QMessageBox::Cancel));
+    QCOMPARE(flashConfirm->escapeButton(),
+             flashConfirm->button(QMessageBox::Cancel));
+    QVERIFY(flashConfirm->text().contains(
+        QStringLiteral("link 7, system 42, component 1")));
+    QVERIFY(flashConfirm->text().contains(QStringLiteral("Bench vehicle")));
+    QVERIFY(flashConfirm->text().contains(
+        QStringLiteral("Power loss or interruption can brick")));
+    QVERIFY(flashConfirm->text().contains(
+        QStringLiteral("at least five minutes")));
+    QVERIFY(flashConfirm->text().contains(
+        QStringLiteral("Heartbeats and telemetry may pause")));
+    QVERIFY(flashConfirm->text().contains(
+        QStringLiteral("never retries")));
+    QVERIFY(flashConfirm->text().contains(
+        QStringLiteral("do not automatically retry or power-cycle")));
+    flashConfirm->button(QMessageBox::Cancel)->click();
+    QVERIFY(fixture.frames.isEmpty());
+    QVERIFY(!fixture.service.busy());
+
+    button->click();
+    sourceConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation");
+    QVERIFY(sourceConfirm);
+    sourceConfirm->button(QMessageBox::Yes)->click();
+    flashConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderFlashConfirmation");
+    QVERIFY(flashConfirm);
+    flashConfirm->button(QMessageBox::Yes)->click();
+    QCOMPARE(fixture.frames.size(), 1);
+    QVERIFY(fixture.service.busy());
+    const mavlink_message_t message = fixture.lastMessage();
+    QCOMPARE(message.msgid,
+             static_cast<quint32>(MAVLINK_MSG_ID_COMMAND_LONG));
+    mavlink_command_long_t sent{};
+    mavlink_msg_command_long_decode(&message, &sent);
+    QCOMPARE(sent.command, quint16(MAV_CMD_FLASH_BOOTLOADER));
+    QCOMPARE(sent.target_system, quint8(42));
+    QCOMPARE(sent.target_component, quint8(1));
+    QCOMPARE(sent.param1, 0.0f);
+    QCOMPARE(sent.param2, 0.0f);
+    QCOMPARE(sent.param3, 0.0f);
+    QCOMPARE(sent.param4, 0.0f);
+    QCOMPARE(sent.param5, 290876.0f);
+    QCOMPARE(sent.param6, 0.0f);
+    QCOMPARE(sent.param7, 0.0f);
+    view.close();
+    QVERIFY(fixture.service.busy());
+    fixture.acknowledge(MAV_CMD_FLASH_BOOTLOADER);
+    QVERIFY(!fixture.service.busy());
+    view.show();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.Log().contains(fixture.service.lastReport().description), 2000);
+}
+
+void ConfigDeveloperToolsViewTest::upgradeBootloaderRejectsStaleSecondConsent()
+{
+    VehicleFixture fixture;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.show();
+    auto *button = tool(view, "UpgradeBootloaderButton");
+
+    // Becoming armed while the first warning is open prevents advancement to
+    // the flash warning and cannot transmit.
+    button->click();
+    auto *sourceConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation");
+    QVERIFY(sourceConfirm);
+    fixture.heartbeat(true);
+    sourceConfirm->button(QMessageBox::Yes)->click();
+    QVERIFY(!visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderFlashConfirmation"));
+    QVERIFY(fixture.frames.isEmpty());
+    fixture.heartbeat(false);
+    QTRY_VERIFY(button->isEnabled());
+
+    // Switching away and back changes the immutable target generation. The
+    // old second-stage consent must not retarget to the visually same drone.
+    button->click();
+    sourceConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation");
+    QVERIFY(sourceConfirm);
+    sourceConfirm->button(QMessageBox::Yes)->click();
+    auto *flashConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderFlashConfirmation");
+    QVERIFY(flashConfirm);
+    VehicleEndpoint other = fixture.endpoint;
+    other.linkId = 8;
+    QVERIFY(fixture.targets.observeEndpoint(other));
+    QVERIFY(fixture.targets.selectTarget(8, 42, 1));
+    QVERIFY(fixture.targets.selectTarget(7, 42, 1));
+    // Real telemetry re-establishes freshness for the new target generation.
+    // The old consent must still fail despite a fresh disarmed heartbeat.
+    fixture.heartbeat(false);
+    flashConfirm->button(QMessageBox::Yes)->click();
+    QVERIFY(fixture.frames.isEmpty());
+    QVERIFY(view.Log().contains(QStringLiteral("cancelled")));
+
+    // Closing either stage invalidates its revision. Delayed acceptance is
+    // ignored and cannot send after the page is reopened.
+    QTRY_VERIFY(button->isEnabled());
+    button->click();
+    QPointer<QMessageBox> closingSource = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation");
+    QVERIFY(closingSource);
+    view.close();
+    if (closingSource)
+        closingSource->done(QMessageBox::Yes);
+    QVERIFY(fixture.frames.isEmpty());
+    view.show();
+    QTRY_VERIFY(button->isEnabled());
+    button->click();
+    sourceConfirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation");
+    QVERIFY(sourceConfirm);
+    sourceConfirm->button(QMessageBox::Yes)->click();
+    QPointer<QMessageBox> closingFlash = visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderFlashConfirmation");
+    QVERIFY(closingFlash);
+    view.close();
+    if (closingFlash)
+        closingFlash->done(QMessageBox::Yes);
+    QVERIFY(fixture.frames.isEmpty());
+
+    // prepare() itself emits stateChanged. Closing from that callback must
+    // invalidate the pre-prepare prompt revision instead of opening a warning
+    // on the now-hidden page.
+    view.show();
+    QTRY_VERIFY(button->isEnabled());
+    bool closeDuringPrepare = true;
+    const auto connection = connect(
+        &fixture.service, &DeveloperVehicleToolService::stateChanged,
+        &view, [&view, &closeDuringPrepare]() {
+        if (closeDuringPrepare) {
+            closeDuringPrepare = false;
+            view.close();
+        }
+    });
+    button->click();
+    disconnect(connection);
+    QVERIFY(!closeDuringPrepare);
+    QVERIFY(!visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderSourceConfirmation"));
+    QVERIFY(!visibleNamed<QMessageBox>(
+        &view, "DeveloperUpgradeBootloaderFlashConfirmation"));
+    QVERIFY(fixture.frames.isEmpty());
 }
 
 void ConfigDeveloperToolsViewTest::closeCancelsConsentButKeepsAdmittedOperation()
@@ -1413,7 +1602,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
     view.show();
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 14); // Seven offline + six vehicle + FTP.
+    QCOMPARE(view.ImplementedActionCount(), 15); // Seven offline + seven vehicle + FTP.
     auto *button = tool(view, "DownloadMavftpFileButton");
     QVERIFY(button->isEnabled());
     button->click();
@@ -1456,7 +1645,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     QVERIFY(!button->isEnabled());
     QVERIFY(tool(view, "CreateDashWareCsvButton")->isEnabled());
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 13);
+    QCOMPARE(view.ImplementedActionCount(), 14);
     QVERIFY(!button->isEnabled());
     QCOMPARE(ftp.cancelCalls, 0); // Never cancels the browser's shared work.
 }

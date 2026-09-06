@@ -128,6 +128,10 @@ private slots:
     void singleVehicleSelectionAbaAndSwarmIsolation();
     void singleVehicleCallbacksFailClosedBeforeWriter();
     void singleVehicleOwnerDetachAndTargetRetirementDrainSafely();
+    void terminalCallbacksMayDeleteCommandService_data();
+    void terminalCallbacksMayDeleteCommandService();
+    void idleReservationReleaseMayDeleteCommandService_data();
+    void idleReservationReleaseMayDeleteCommandService();
 };
 
 void VehicleCommandServiceTest::commandLongUsesOnlyTheExactSelectedEndpoint()
@@ -1542,6 +1546,137 @@ singleVehicleOwnerDetachAndTargetRetirementDrainSafely()
     QCOMPARE(released.count(), 2);
     QVERIFY(service.isExactCommandQuarantined(
         lease, MAV_CMD_PREFLIGHT_CALIBRATION));
+}
+
+void VehicleCommandServiceTest::terminalCallbacksMayDeleteCommandService_data()
+{
+    QTest::addColumn<int>("trigger");
+    QTest::addColumn<bool>("deleteOnRelease");
+    for (int trigger = 0; trigger < 3; ++trigger) {
+        const QByteArray name = trigger == 0 ? "retire"
+            : trigger == 1 ? "forget-link" : "timeout";
+        QTest::newRow((name + "-finished").constData()) << trigger << false;
+        QTest::newRow((name + "-released").constData()) << trigger << true;
+    }
+}
+
+void VehicleCommandServiceTest::terminalCallbacksMayDeleteCommandService()
+{
+    QFETCH(int, trigger);
+    QFETCH(bool, deleteOnRelease);
+    VehicleTargetManager targets;
+    int writes = 0;
+    ExactLinkTransmitter transmitter(
+        [&writes](int, const QByteArray &) { ++writes; return true; });
+    QPointer<VehicleCommandService> service =
+        new VehicleCommandService(&targets, &transmitter, &targets);
+    const QList<SwarmVehicleInstanceLease> active{
+        swarmLease(53, 81), swarmLease(53, 82)};
+    QVERIFY(service->configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &lease) {
+            return containsLease(active, lease);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; }));
+    QObject owner;
+    VehicleCommandService::ExactReservationToken reservation;
+    QCOMPARE(service->reserveExactEndpoints(&owner, active, &reservation),
+             VehicleCommandService::ExactReservationResult::Reserved);
+    const int timeoutMs = trigger == 2 ? 1 : 1000;
+    for (const auto &lease : active) {
+        QCOMPARE(service->submitExactCommandLong(
+                     reservation, lease,
+                     exactRequest(MAV_CMD_FLASH_BOOTLOADER, timeoutMs, timeoutMs)),
+                 VehicleCommandService::ExactSubmitResult::Started);
+    }
+    // Closing reservations must drain their pending commands, then notify.
+    QVERIFY(service->releaseExactReservation(reservation));
+    QList<VehicleCommandService::ExactCommandReport> reports;
+    int releases = 0;
+    int destructions = 0;
+    connect(service.data(), &QObject::destroyed, this,
+            [&destructions]() { ++destructions; });
+    connect(service.data(), &VehicleCommandService::exactCommandFinished,
+            this, [&](const VehicleCommandService::ExactCommandReport &report) {
+        reports.append(report);
+        if (!deleteOnRelease) delete service.data();
+    });
+    connect(service.data(), &VehicleCommandService::exactReservationReleased,
+            this, [&](qulonglong id) {
+        QCOMPARE(id, qulonglong(reservation.reservationId));
+        ++releases;
+        if (deleteOnRelease) delete service.data();
+    });
+
+    if (trigger == 0) {
+        service->retireExactVehicle(active.at(0));
+        if (service) service->retireExactVehicle(active.at(1));
+    } else if (trigger == 1) {
+        service->forgetLink(53);
+    } else {
+        QTRY_VERIFY_WITH_TIMEOUT(service.isNull(), 1000);
+    }
+    QVERIFY(service.isNull());
+    QCOMPARE(destructions, 1);
+    QCOMPARE(writes, 2);
+    QCOMPARE(reports.size(), deleteOnRelease ? 2 : 1);
+    QCOMPARE(releases, deleteOnRelease ? 1 : 0);
+    for (const auto &report : reports) {
+        QVERIFY(report.frameAttempted);
+        QVERIFY(report.token.isValid());
+        QCOMPARE(report.token.command, MAV_CMD_FLASH_BOOTLOADER);
+        const auto expected = trigger == 0
+            ? VehicleCommandService::ExactTerminalResult::LeaseRetiredOutcomeUncertain
+            : trigger == 1
+                ? VehicleCommandService::ExactTerminalResult::LinkForgottenOutcomeUncertain
+                : VehicleCommandService::ExactTerminalResult::TimedOutOutcomeUncertain;
+        QCOMPARE(report.terminalResult, expected);
+    }
+    // Destruction must suppress the remaining waiter, timer and release paths.
+    QCoreApplication::processEvents();
+    QCOMPARE(reports.size(), deleteOnRelease ? 2 : 1);
+    QCOMPARE(releases, deleteOnRelease ? 1 : 0);
+}
+
+void VehicleCommandServiceTest::idleReservationReleaseMayDeleteCommandService_data()
+{
+    QTest::addColumn<bool>("forgetLink");
+    QTest::newRow("retire") << false;
+    QTest::newRow("forget-link") << true;
+}
+
+void VehicleCommandServiceTest::idleReservationReleaseMayDeleteCommandService()
+{
+    QFETCH(bool, forgetLink);
+    VehicleTargetManager targets;
+    ExactLinkTransmitter transmitter(
+        [](int, const QByteArray &) { return true; });
+    QPointer<VehicleCommandService> service =
+        new VehicleCommandService(&targets, &transmitter, &targets);
+    const QList<SwarmVehicleInstanceLease> active{
+        swarmLease(54, 83), swarmLease(54, 84)};
+    QVERIFY(service->configureExactTransactions(
+        [&active](const SwarmVehicleInstanceLease &lease) {
+            return containsLease(active, lease);
+        },
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; }));
+    QObject owner;
+    for (const auto &lease : active) {
+        VehicleCommandService::ExactReservationToken reservation;
+        QCOMPARE(service->reserveExactEndpoints(&owner, {lease}, &reservation),
+                 VehicleCommandService::ExactReservationResult::Reserved);
+    }
+    int releases = 0;
+    connect(service.data(), &VehicleCommandService::exactReservationReleased,
+            this, [&](qulonglong) {
+        ++releases;
+        delete service.data();
+    });
+    if (forgetLink) service->forgetLink(54);
+    else service->retireExactVehicle(active.constFirst());
+    QVERIFY(service.isNull());
+    QCOMPARE(releases, 1);
+    QCoreApplication::processEvents();
+    QCOMPARE(releases, 1);
 }
 
 QTEST_GUILESS_MAIN(VehicleCommandServiceTest)
