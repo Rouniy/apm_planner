@@ -90,6 +90,7 @@ This file is part of the QGROUNDCONTROL project
 #include "FlightDataView.h"
 #include "flightdata/FlightDataViewModel.h"
 #include "flightdata/MovingBaseMapController.h"
+#include "GuidedNavigationController.h"
 #include "flightdata/HudControl.h"
 #include "flightdata/ProximityWindow.h"
 #include "map/MapCacheView.h"
@@ -1755,6 +1756,30 @@ void MainWindow::buildCommonWidgets()
     }
     auto *pilotMap = new QGCMapTool(this);
     pilotMap->setFlightDataViewModel(flightDataViewModel);
+    GuidedNavigationController::Dependencies guidedDependencies;
+    guidedDependencies.altitudes = linkManager->guidedAltitudeStore();
+    guidedDependencies.navigation = linkManager->guidedNavigationService();
+    guidedDependencies.telemetry = linkManager->swarmTelemetryRegistry();
+    const QPointer<SwarmTelemetryRegistry> guidedTelemetry(guidedDependencies.telemetry);
+    guidedDependencies.isGuided = [guidedTelemetry](const GuidedAltitudeStore::Context &context) {
+        SwarmTelemetrySnapshot snapshot;
+        return guidedTelemetry && guidedTelemetry->snapshotForLease(context.vehicle, &snapshot)
+            && SpeechTelemetrySource::modeText(snapshot.autopilot, snapshot.vehicleType,
+                snapshot.customMode, snapshot.baseMode).compare(QStringLiteral("Guided"),
+                    Qt::CaseInsensitive) == 0;
+    };
+    // Every live map uses the same command/ACK lane. In particular the retained
+    // Simulation map must not remain a second legacy guided writer.
+    const QList<QGCMapTool *> guidedMaps{
+        pilotMap, plannerMapTool,
+        simView ? qobject_cast<QGCMapTool *>(simView->centralWidget()) : nullptr};
+    for (QGCMapTool *guidedMap : guidedMaps) {
+        if (!guidedMap) continue;
+        auto *guidedNavigation = new GuidedNavigationController(guidedDependencies, guidedMap);
+        guidedNavigation->attachMap(guidedMap->mapWidget());
+        connect(guidedNavigation, &GuidedNavigationController::statusChanged,
+                this, [this](const QString &text) { statusBar()->showMessage(text, 15000); });
+    }
     auto *movingBaseMapController = new MovingBaseMapController(
         linkManager->movingBasePositionStore(),
         linkManager->vehicleTargetManager(), pilotMap);

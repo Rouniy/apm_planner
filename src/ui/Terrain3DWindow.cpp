@@ -43,6 +43,8 @@ bool sameSnapshot(const Terrain3DCore::Snapshot &left,
         && left.velocityVerticalMps == right.velocityVerticalMps
         && left.linkId == right.linkId
         && left.targetGeneration == right.targetGeneration
+        && left.linkSessionEpoch == right.linkSessionEpoch
+        && left.vehicleInstanceEpoch == right.vehicleInstanceEpoch
         && left.capturedMonotonicMs == right.capturedMonotonicMs
         && left.mode == right.mode
         && left.armed == right.armed
@@ -52,7 +54,12 @@ bool sameSnapshot(const Terrain3DCore::Snapshot &left,
 
 bool validTargetEpoch(const Terrain3DCore::Snapshot &snapshot)
 {
-    return snapshot.linkId >= 0 && snapshot.systemId > 0;
+    return snapshot.linkId >= 0
+        && snapshot.systemId > 0
+        && snapshot.componentId > 0
+        && snapshot.targetGeneration > 0
+        && snapshot.linkSessionEpoch > 0
+        && snapshot.vehicleInstanceEpoch > 0;
 }
 
 bool sameTargetEpoch(const Terrain3DCore::Snapshot &left,
@@ -61,7 +68,9 @@ bool sameTargetEpoch(const Terrain3DCore::Snapshot &left,
     return left.linkId == right.linkId
         && left.systemId == right.systemId
         && left.componentId == right.componentId
-        && left.targetGeneration == right.targetGeneration;
+        && left.targetGeneration == right.targetGeneration
+        && left.linkSessionEpoch == right.linkSessionEpoch
+        && left.vehicleInstanceEpoch == right.vehicleInstanceEpoch;
 }
 
 bool focusIsEditor(QWidget *focus)
@@ -265,18 +274,63 @@ void Terrain3DWindow::buildUi(QWidget *owner)
     m_details->setTextFormat(Qt::PlainText);
     m_details->setWordWrap(true);
     footerLayout->addWidget(m_details, 1, 0, 1, 2);
+    m_guidedStatus = new QLabel(footer);
+    m_guidedStatus->setObjectName(QStringLiteral("TerrainGuidedStatus"));
+    m_guidedStatus->setTextFormat(Qt::PlainText);
+    m_guidedStatus->setWordWrap(true);
+    m_guidedStatus->setText(
+        m_dependencies.guidedTargetRequested
+            || m_dependencies.guidedAltitudeEditRequested
+        ? tr("Guided navigation is idle.")
+        : tr("Guided navigation controls are unavailable."));
+    footerLayout->addWidget(m_guidedStatus, 2, 0);
+    m_guidedAltitudeButton = new QPushButton(
+        tr("Guided altitude…"), footer);
+    m_guidedAltitudeButton->setObjectName(
+        QStringLiteral("TerrainGuidedAltitudeButton"));
+    m_guidedAltitudeButton->setEnabled(
+        bool(m_dependencies.guidedAltitudeEditRequested));
+    m_guidedAltitudeButton->setToolTip(
+        m_dependencies.guidedAltitudeEditRequested
+            ? tr("Edit the application-owned guided altitude and frame.")
+            : tr("The guided-altitude controller is unavailable."));
+    footerLayout->addWidget(m_guidedAltitudeButton, 2, 1, Qt::AlignRight);
     m_limitations = new QLabel(
-        tr("Elevation shading only. Terrain clicks inspect coordinates; "
-           "guided commands are disabled."), footer);
+        m_dependencies.guidedTargetRequested
+        ? tr("Elevation shading only. A terrain click requests frame 3 "
+             "(Relative) using the shared numeric guided altitude and does "
+             "not change flight mode. If the saved frame differs, the "
+             "confirmation warns before sending.")
+        : tr("Elevation shading only. Terrain clicks inspect coordinates; "
+             "guided commands are disabled."), footer);
     m_limitations->setObjectName(QStringLiteral("TerrainLimitations"));
     m_limitations->setTextFormat(Qt::PlainText);
     m_limitations->setWordWrap(true);
-    footerLayout->addWidget(m_limitations, 2, 0, 1, 2);
+    footerLayout->addWidget(m_limitations, 3, 0, 1, 2);
     footerLayout->setColumnStretch(0, 1);
     root->addWidget(footer);
 
     connect(m_reloadButton, &QPushButton::clicked,
             this, &Terrain3DWindow::ReloadTerrain);
+    connect(m_guidedAltitudeButton, &QPushButton::clicked,
+            this, [this]() {
+        const std::function<void()> callback =
+            m_dependencies.guidedAltitudeEditRequested;
+        if (!callback) {
+            setGuidedStatus(tr("Guided altitude editor is unavailable."));
+            return;
+        }
+        setGuidedStatus(tr("Opening the guided altitude editor…"));
+        QPointer<Terrain3DWindow> guard(this);
+        try {
+            callback();
+        } catch (...) {
+            if (guard) {
+                setGuidedStatus(
+                    tr("Could not open the guided altitude editor."));
+            }
+        }
+    });
     connect(m_rangeM, QOverload<int>::of(&QSpinBox::valueChanged),
             this, [this]() { markReloadRequired(); });
     connect(m_gridSize, QOverload<int>::of(&QSpinBox::valueChanged),
@@ -300,6 +354,18 @@ void Terrain3DWindow::buildUi(QWidget *owner)
 QString Terrain3DWindow::statusText() const
 {
     return m_status ? m_status->text() : QString();
+}
+
+QString Terrain3DWindow::guidedStatusText() const
+{
+    return m_guidedStatus ? m_guidedStatus->text() : QString();
+}
+
+void Terrain3DWindow::setGuidedStatus(const QString &status)
+{
+    if (m_guidedStatus) {
+        m_guidedStatus->setText(status);
+    }
 }
 
 QString Terrain3DWindow::detailsText() const
@@ -363,6 +429,8 @@ void Terrain3DWindow::refreshSnapshot()
         m_haveSnapshot = false;
         m_mesh = {};
         m_frame = {};
+        m_renderedSnapshot = {};
+        m_haveRenderedSnapshot = false;
         m_image->clear();
         m_haveFreeCamera = false;
         m_status->setText(tr("Waiting for a valid vehicle GPS position."));
@@ -378,6 +446,8 @@ void Terrain3DWindow::refreshSnapshot()
     if (targetChanged) {
         m_mesh = {};
         m_frame = {};
+        m_renderedSnapshot = {};
+        m_haveRenderedSnapshot = false;
         m_image->clear();
         m_haveFreeCamera = false;
         m_status->setText(tr("Vehicle target changed; refreshing terrain."));
@@ -557,6 +627,8 @@ void Terrain3DWindow::finishWorker(
     if (!currentValid || !sameTargetEpoch(result.snapshot, current)) {
         m_mesh = {};
         m_frame = {};
+        m_renderedSnapshot = {};
+        m_haveRenderedSnapshot = false;
         m_image->clear();
         m_haveFreeCamera = false;
         m_pendingReload = false;
@@ -613,8 +685,9 @@ void Terrain3DWindow::presentFrame(
     const Terrain3DCore::Snapshot &snapshot,
     const Terrain3DCore::Camera &camera)
 {
-    Q_UNUSED(snapshot)
-    Q_UNUSED(camera)
+    m_renderedSnapshot = snapshot;
+    m_renderedCamera = camera;
+    m_haveRenderedSnapshot = true;
     m_frame = rendered.image;
     m_image->setPixmap(QPixmap::fromImage(m_frame));
     m_details->setText(
@@ -652,11 +725,18 @@ void Terrain3DWindow::requestRender()
 void Terrain3DWindow::inspectPoint(const QPointF &position, bool clicked)
 {
     if (!m_mesh.isValid() || m_frame.isNull()
+        || !m_haveRenderedSnapshot
         || m_image->width() <= 0 || m_image->height() <= 0) {
         m_pointerStatus->setText(tr("No terrain intersection."));
         if (clicked) {
-            m_status->setText(tr(
-                "Guided target not sent: terrain inspection is read-only."));
+            if (m_dependencies.guidedTargetRequested) {
+                setGuidedStatus(tr(
+                    "No guided target requested: there is no rendered "
+                    "terrain intersection."));
+            } else {
+                m_status->setText(tr(
+                    "Guided target not sent: terrain inspection is read-only."));
+            }
         }
         return;
     }
@@ -664,10 +744,12 @@ void Terrain3DWindow::inspectPoint(const QPointF &position, bool clicked)
     const double y = position.y() * m_frame.height() / m_image->height();
     Terrain3DCore::Vector3 ray;
     Terrain3DCore::GeoPoint point;
-    if (!Terrain3DCore::screenRay(m_lastCamera, x, y,
-                                  m_frame.width(), m_frame.height(), &ray)
-        || !Terrain3DCore::intersectTerrain(
-            m_mesh, m_lastCamera, ray, &point)) {
+    const bool hit = Terrain3DCore::screenRay(
+            m_renderedCamera, x, y,
+            m_frame.width(), m_frame.height(), &ray)
+        && Terrain3DCore::intersectTerrain(
+            m_mesh, m_renderedCamera, ray, &point);
+    if (!hit) {
         m_pointerStatus->setText(tr("No terrain intersection."));
     } else {
         m_pointerStatus->setText(
@@ -677,9 +759,33 @@ void Terrain3DWindow::inspectPoint(const QPointF &position, bool clicked)
                 .arg(point.altitudeM, 0, 'f', 1));
     }
     if (clicked) {
-        m_status->setText(tr(
-            "Read-only terrain inspection: guided target commands are disabled "
-            "until exact-target acknowledgement support is available."));
+        const auto callback = m_dependencies.guidedTargetRequested;
+        if (hit && callback) {
+            const Terrain3DCore::Snapshot renderedSnapshot =
+                m_renderedSnapshot;
+            setGuidedStatus(
+                tr("Terrain target selected at %1, %2; awaiting "
+                   "confirmation.")
+                    .arg(point.latitude, 0, 'f', 6)
+                    .arg(point.longitude, 0, 'f', 6));
+            QPointer<Terrain3DWindow> guard(this);
+            try {
+                callback(point, renderedSnapshot);
+            } catch (...) {
+                if (guard) {
+                    setGuidedStatus(tr(
+                        "Could not hand the terrain target to guided "
+                        "navigation."));
+                }
+            }
+        } else if (callback) {
+            setGuidedStatus(tr(
+                "No guided target requested: click the rendered terrain."));
+        } else {
+            m_status->setText(tr(
+                "Read-only terrain inspection: guided target commands are disabled "
+                "until exact-target acknowledgement support is available."));
+        }
     }
 }
 
@@ -696,11 +802,15 @@ bool Terrain3DWindow::eventFilter(QObject *watched, QEvent *event)
         } else if (event->type() == QEvent::MouseButtonPress) {
             auto *mouse = static_cast<QMouseEvent *>(event);
             if (mouse->button() == Qt::LeftButton) {
+                QPointer<Terrain3DWindow> guard(this);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
                 inspectPoint(mouse->position(), true);
 #else
                 inspectPoint(mouse->localPos(), true);
 #endif
+                if (!guard) {
+                    return true;
+                }
                 setFocus(Qt::MouseFocusReason);
                 return true;
             }

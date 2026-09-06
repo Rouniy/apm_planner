@@ -70,6 +70,7 @@ public:
     void SetPropagationStatus(const QString &legend,
                               const QString &status) override;
     void SetMissionPlanningEnabled(bool enabled) override;
+    void SetGuidedNavigationEnabled(bool enabled) override;
     void SetPlannerRows(
         const QVector<WpRowData> &rows,
         FlightPlannerMissionModel::MissionStore store) override;

@@ -42,6 +42,12 @@ public:
         MonotonicClock monotonicClock;
         /** Called on the terrain worker thread and therefore must be thread-safe. */
         Terrain3DCore::ElevationProvider elevation;
+        /** GUI-thread handoff of an actual rendered terrain intersection. */
+        std::function<void(const Terrain3DCore::GeoPoint &,
+                           const Terrain3DCore::Snapshot &)>
+            guidedTargetRequested;
+        /** Opens the application-owned shared guided-altitude editor. */
+        std::function<void()> guidedAltitudeEditRequested;
     };
 
     static constexpr int WindowWidth = 1100;
@@ -60,14 +66,20 @@ public:
     static Terrain3DWindow *OpenWindow(QWidget *owner = nullptr);
 
     QString statusText() const;
+    QString guidedStatusText() const;
     QString detailsText() const;
     QString pointerText() const;
     bool isBusy() const { return m_busy; }
     const QImage &frame() const { return m_frame; }
     Terrain3DCore::Camera currentCamera() const { return m_lastCamera; }
+    Terrain3DCore::Snapshot renderedSnapshot() const
+    {
+        return m_renderedSnapshot;
+    }
 
 public slots:
     void ReloadTerrain();
+    void setGuidedStatus(const QString &status);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -107,10 +119,13 @@ private:
     bool m_haveSnapshot = false;
     bool m_haveFreeCamera = false;
     Terrain3DCore::Snapshot m_latestSnapshot;
+    Terrain3DCore::Snapshot m_renderedSnapshot;
     Terrain3DCore::Mesh m_mesh;
     Terrain3DCore::Camera m_lastCamera;
+    Terrain3DCore::Camera m_renderedCamera;
     Terrain3DCore::Camera m_freeCamera;
     QImage m_frame;
+    bool m_haveRenderedSnapshot = false;
     std::shared_ptr<std::atomic_bool> m_cancelFlag;
     QPointer<QThread> m_thread;
 
@@ -123,9 +138,11 @@ private:
     QSpinBox *m_textureMaxZoom = nullptr;
     QDoubleSpinBox *m_verticalExaggeration = nullptr;
     QPushButton *m_reloadButton = nullptr;
+    QPushButton *m_guidedAltitudeButton = nullptr;
     QLabel *m_image = nullptr;
     QLabel *m_pointerStatus = nullptr;
     QLabel *m_status = nullptr;
+    QLabel *m_guidedStatus = nullptr;
     QLabel *m_details = nullptr;
     QLabel *m_limitations = nullptr;
 };

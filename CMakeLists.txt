@@ -305,6 +305,14 @@ set(SOURCES
     src/comm/ExactMissionSnapshotService.h
     src/comm/GuidedTargetService.cpp
     src/comm/GuidedTargetService.h
+    src/services/GuidedAltitudeStore.cpp
+    src/services/GuidedAltitudeStore.h
+    src/services/GuidedNavigationService.cpp
+    src/services/GuidedNavigationService.h
+    src/ui/GuidedAltitudeDialog.cpp
+    src/ui/GuidedAltitudeDialog.h
+    src/ui/GuidedNavigationController.cpp
+    src/ui/GuidedNavigationController.h
     src/comm/FollowMeGpsInput.cpp
     src/comm/FollowMeGpsInput.h
     src/comm/MovingBaseInputTransport.cpp
@@ -1838,6 +1846,8 @@ if(BUILD_TESTING)
         tests/SftpLogDownloadRuntimeAudit.h
         tests/TlogMatlabRuntimeAudit.cpp
         tests/TlogMatlabRuntimeAudit.h
+        tests/GuidedNavigationRuntimeAudit.cpp
+        tests/GuidedNavigationRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1887,6 +1897,11 @@ if(BUILD_TESTING)
     add_test(NAME tlog_matlab_runtime_tests
         COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --tlog-matlab-audit)
     set_tests_properties(tlog_matlab_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 60)
+    add_test(NAME guided_navigation_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --guided-navigation-audit)
+    set_tests_properties(guided_navigation_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 60)
     foreach(resx_suite resxtranslationservice translationeditormodel translationeditorwindow)
@@ -4046,6 +4061,27 @@ if(BUILD_TESTING)
         src/comm/MavlinkComponentRegistry.cpp src/comm/MavlinkComponentRegistry.h
         src/comm/Px4FlowFrameAssembler.cpp src/comm/Px4FlowFrameAssembler.h
         src/ui/configuration/CameraProbeController.cpp src/ui/configuration/CameraProbeController.h)
+    add_library(guided_navigation_test_support STATIC
+        src/comm/GuidedTargetService.cpp src/comm/GuidedTargetService.h
+        src/services/GuidedAltitudeStore.cpp src/services/GuidedAltitudeStore.h
+        src/services/GuidedNavigationService.cpp src/services/GuidedNavigationService.h
+        src/ui/GuidedAltitudeDialog.cpp src/ui/GuidedAltitudeDialog.h
+        src/ui/GuidedNavigationController.cpp src/ui/GuidedNavigationController.h
+        src/ui/map/AbstractMapWidget.h
+        src/ui/terrain/Terrain3DCore.cpp src/ui/terrain/Terrain3DCore.h)
+    target_include_directories(guided_navigation_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/libs/opmapcontrol/src/core)
+    target_link_libraries(guided_navigation_test_support PUBLIC
+        developer_vehicle_tool_test_support Qt::Widgets)
+    foreach(guided_suite exactcommandint guidedaltitudestore guidedaltitudedialog
+                         guidednavigationservice guidednavigationcontroller guidednavigation_admission)
+        add_executable(${guided_suite}_tests tests/test_${guided_suite}.cpp)
+        target_link_libraries(${guided_suite}_tests PRIVATE guided_navigation_test_support Qt::Test)
+        add_test(NAME ${guided_suite}_tests COMMAND ${guided_suite}_tests)
+        set_tests_properties(${guided_suite}_tests PROPERTIES TIMEOUT 60
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
     target_include_directories(camera_probe_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(camera_probe_test_support PUBLIC developer_vehicle_tool_test_support Qt::Widgets)
     foreach(camera_suite cameraprobeservice cameraprobecontroller)

@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,293/293 теста; Developer32/32 маршрута,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,300/300 тестов; Developer32/32 маршрута,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -19,8 +19,14 @@ Tlog Convert теперь имеет рабочий MATLAB Level5 export: нас
 с actual MP10 .NET;24 scalar extensions добавлены только в offline schema.
 Full293/293 (52.13s),10 повторов4 suites и просмотренный production X11 проходят.
 Это не закрывает74 отсутствующих MAVLink message types, отдельный BIN/LOG
-ProcessLog и отсутствующие DATA log tabs. Далее Terrain3D/Signing/прочие Tools,
-затем Settings; Swarm последний. См. `MATLAB_TLOG_EXPORT_PORT.md`.
+ProcessLog и отсутствующие DATA log tabs. Общий guided-altitude editor теперь
+подключён к DATA/PLAN/Simulation и Terrain3D: реальные диалоги, frozen exact
+instance/point, default-Cancel и общий COMMAND_INT ACK/retry/quarantine.
+Terrain сохраняет frame3/p2=0 без смены режима; исходный 100m UAS sender удалён.
+Full300/300 (51.93s), десять повторов шести suites и production X11 DATA/Terrain
+проходят. См. `GUIDED_NAVIGATION_PORT.md`; imagery и native/reference gaps
+остаются. Далее DATA log tools/Signing/прочие Tools, затем Settings; Swarm
+последний. См. также `MATLAB_TLOG_EXPORT_PORT.md`.
 Split DataFlash Log теперь работает с BIN/LOG, целыми записями, метаданными,
 отменой и честным описанием публикации нескольких файлов без перезаписи.
 Create DashWare CSV работает offline через реальные диалоги: исходный порядок
@@ -139,9 +145,9 @@ SFTP теперь перенесён: real SSH listing/download/delete/cancel, p
 pinning, BIN→LOG/KML, safe publication и полноценное modeless окно. Full290/290
 (50.93s), localhost SSH, production X11 и побайтовый oracle реального BIN проходят.
 См. SFTP_LOG_DOWNLOAD_PORT.md. Число32/32 относится только к Developer: внутри
-Tools остаются disabled MATLAB export, Terrain3D guided click и Signing rekey/
-recovery; вне меню — отсутствующие DATA log-tool routes и другие диалоги.
-Следующий пакет — MATLAB export. TOOLS_REAUDIT_2026_09_06.md уточняет полный
+Tools остаются Signing rekey/recovery; вне меню — отсутствующие DATA log-tool
+routes, BIN/LOG MATLAB и другие диалоги. TLOG MATLAB и guided Terrain уже имеют
+отдельные проверенные срезы. TOOLS_REAUDIT_2026_09_06.md уточняет полный
 аудит, включая15 MP10 DATA tabs против6 mapped+Quick Legacy. Далее Settings;
 Swarm остаётся в конце.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
@@ -452,8 +458,8 @@ Rally; после cancel/target switch нет поздних изменений;
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
 - Developer Tools: после SFTP все32 маршрута имеют реализацию; это не полная
-  функциональная готовность всех диалогов Tools. Следующий MATLAB export,
-  Terrain3D guided click и Signing transitions остаются отдельными пакетами.
+  функциональная готовность всех диалогов Tools. TLOG MATLAB и Terrain guided
+  реализованы; DATA log-tool routes/BIN-LOG MATLAB и Signing transitions остаются.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.
 - SETUP OSD: live 24-write full/partial path и profile gate.
@@ -554,9 +560,10 @@ dirty state никогда не переносится на новый target.
 - Log Browse: graphs/messages/params/map/report/export;
 - DataFlash Spectrogram: основной modeless/direct+batch/cancellation срез
   сделан; остаются reference screenshot и native-platform evidence;
-- Terrain 3D: основной modeless/exact-target/software-rendered DEM/camera/
-  hover/cancellation срез сделан; остаются imagery через единый tile cache,
-  guided click через существующий shared service с current-altitude/confirmation,
+- Terrain 3D: modeless/exact-target/software-rendered DEM/camera/hover/cancel
+  и guided click с общим explicit-altitude editor, frozen rendered instance/point,
+  default-Cancel и central COMMAND_INT ACK/retry/quarantine реализованы;
+  остаются imagery через единый tile cache, legacy compatibility,
   reference screenshot и native-platform evidence;
 - External Guided: основной modeless/bounded-file/exact-target/ACK-gated срез
   сделан; остаются legacy Plane/current=2 и position-target fallback с честной

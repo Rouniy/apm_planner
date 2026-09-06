@@ -38,6 +38,8 @@ This file is part of the APM_PLANNER project
 #include "services/SwarmSequenceExecutor.h"
 #include "services/DeveloperVehicleToolService.h"
 #include "services/CameraProbeService.h"
+#include "services/GuidedAltitudeStore.h"
+#include "services/GuidedNavigationService.h"
 #include "services/ParameterRecoveryService.h"
 #include "services/OfflineMagFitApplyService.h"
 #include "RemoteDataFlashLogService.h"
@@ -317,6 +319,10 @@ LinkManager::LinkManager(QObject *parent) :
         m_vehicleTargetManager, m_vehicleCommandService, this);
     m_guidedTargetService->setLocalIdentity(
         QGC::MavlinkID(), QGC::ComponentID());
+    m_guidedAltitudeStore = new GuidedAltitudeStore(
+        m_vehicleTargetManager, m_swarmTelemetryRegistry, this);
+    m_guidedNavigationService = new GuidedNavigationService(
+        m_guidedAltitudeStore, m_guidedTargetService, m_vehicleCommandService, this);
     m_movingBasePositionStore = new MovingBasePositionStore(
         m_vehicleTargetManager, this);
     m_movingBaseService = new MovingBaseService(
@@ -782,6 +788,7 @@ void LinkManager::shutdown()
     // application shutdown.
     m_developerVehicleToolService->shutdown();
     if (m_cameraProbeService) m_cameraProbeService->shutdown();
+    if (m_guidedNavigationService) m_guidedNavigationService->shutdown();
     m_parameterRecoveryService->shutdown();
     m_offlineMagFitApplyService->shutdown();
     m_remoteDataFlashLogService->shutdown();
@@ -1202,6 +1209,16 @@ VehicleCommandService *LinkManager::vehicleCommandService() const
 GuidedTargetService *LinkManager::guidedTargetService() const
 {
     return m_guidedTargetService;
+}
+
+GuidedAltitudeStore *LinkManager::guidedAltitudeStore() const
+{
+    return m_guidedAltitudeStore;
+}
+
+GuidedNavigationService *LinkManager::guidedNavigationService() const
+{
+    return m_guidedNavigationService;
 }
 
 MovingBasePositionStore *LinkManager::movingBasePositionStore() const

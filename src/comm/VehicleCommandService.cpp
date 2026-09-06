@@ -56,6 +56,7 @@ VehicleCommandService::VehicleCommandService(
     Q_ASSERT(m_transmitter);
     qRegisterMetaType<ExactReservationToken>();
     qRegisterMetaType<ExactCommandRequest>();
+    qRegisterMetaType<ExactCommandIntRequest>();
     qRegisterMetaType<ExactCommandToken>();
     qRegisterMetaType<ExactReservationResult>();
     qRegisterMetaType<ExactSubmitResult>();
@@ -409,22 +410,48 @@ VehicleCommandService::submitExactCommandLong(
     ExactCommandToken *commandOut,
     QString *error)
 {
-    return submitCommand(reservation, exactInstance(lease), request, commandOut, error);
+    return submitCommand(reservation, exactInstance(lease), request, nullptr,
+                         commandOut, error);
+}
+
+VehicleCommandService::ExactSubmitResult
+VehicleCommandService::submitExactCommandInt(
+    const ExactReservationToken &reservation,
+    const SwarmVehicleInstanceLease &lease,
+    const ExactCommandIntRequest &request,
+    ExactCommandToken *commandOut,
+    QString *error)
+{
+    const ExactCommandIntRequest pinnedRequest = request;
+    ExactCommandRequest policy;
+    policy.command = pinnedRequest.command;
+    policy.acknowledgementTimeoutMs = pinnedRequest.acknowledgementTimeoutMs;
+    policy.maximumLifetimeMs = pinnedRequest.maximumLifetimeMs;
+    policy.validateBeforeWrite = pinnedRequest.validateBeforeWrite;
+    policy.maximumRetries = pinnedRequest.maximumRetries;
+    return submitCommand(reservation, exactInstance(lease), policy,
+                         &pinnedRequest, commandOut, error);
 }
 
 VehicleCommandService::ExactSubmitResult VehicleCommandService::submitComponentCommandLong(
     const ExactReservationToken &reservation, const MavlinkComponentInstanceLease &lease,
     const ExactCommandRequest &request, ExactCommandToken *out, QString *error)
 {
-    return submitCommand(reservation, exactInstance(lease), request, out, error);
+    return submitCommand(reservation, exactInstance(lease), request, nullptr,
+                         out, error);
 }
 
 VehicleCommandService::ExactSubmitResult VehicleCommandService::submitCommand(
     const ExactReservationToken &requestedReservation, const ExactInstanceLease &requestedLease,
-    const ExactCommandRequest &request, ExactCommandToken *commandOut, QString *error)
+    const ExactCommandRequest &request, const ExactCommandIntRequest *intRequest,
+    ExactCommandToken *commandOut, QString *error)
 {
     const auto reservation = requestedReservation;
     const auto lease = requestedLease;
+    const ExactCommandRequest commandRequest = request;
+    const bool commandInt = intRequest != nullptr;
+    const ExactCommandIntRequest commandIntRequest = intRequest
+        ? *intRequest : ExactCommandIntRequest{};
     if (commandOut) {
         *commandOut = ExactCommandToken();
     }
@@ -445,7 +472,6 @@ VehicleCommandService::ExactSubmitResult VehicleCommandService::submitCommand(
             serviceGuard->m_exactApiInFlight = false;
         }
     });
-    const ExactCommandRequest commandRequest = request;
     if (lease.domain == ExactLeaseDomain::Component ? !m_componentLeaseValidator : !m_exactLeaseValidator) {
         if (error) {
             *error = QStringLiteral(
@@ -545,6 +571,15 @@ VehicleCommandService::ExactSubmitResult VehicleCommandService::submitCommand(
         || commandValue > std::numeric_limits<quint16>::max()) {
         if (error) {
             *error = QStringLiteral("The command must fit the MAVLink wire range and retries must be between 0 and 3.");
+        }
+        return ExactSubmitResult::InvalidCommand;
+    }
+    const int frameValue = static_cast<int>(commandIntRequest.frame);
+    if (commandInt && (frameValue < 0
+                       || frameValue > std::numeric_limits<quint8>::max())) {
+        if (error) {
+            *error = QStringLiteral(
+                "The COMMAND_INT coordinate frame must fit the MAVLink wire range.");
         }
         return ExactSubmitResult::InvalidCommand;
     }
@@ -721,6 +756,8 @@ VehicleCommandService::ExactSubmitResult VehicleCommandService::submitCommand(
     PendingExactCommand pending;
     pending.token = token;
     pending.request = commandRequest;
+    pending.commandInt = commandInt;
+    pending.commandIntRequest = commandIntRequest;
     pending.remainingRetries = commandRequest.maximumRetries;
     pending.localSystemId = m_localSystemId;
     pending.localComponentId = m_localComponentId;
@@ -750,26 +787,63 @@ VehicleCommandService::ExactSubmitResult VehicleCommandService::transmitExactCom
     const PendingExactCommand pending = *active;
     const auto token = pending.token;
     const auto lease = exactInstance(token);
-    mavlink_command_long_t payload{};
-    payload.target_system = quint8(lease.endpoint.systemId);
-    payload.target_component = quint8(lease.endpoint.componentId);
-    payload.command = quint16(token.command);
-    payload.confirmation = quint8(qMin(255, int(pending.request.confirmation) + pending.attemptIndex));
-    payload.param1 = pending.request.params[0]; payload.param2 = pending.request.params[1];
-    payload.param3 = pending.request.params[2]; payload.param4 = pending.request.params[3];
-    payload.param5 = pending.request.params[4]; payload.param6 = pending.request.params[5];
-    payload.param7 = pending.request.params[6];
     mavlink_message_t message{};
-    mavlink_msg_command_long_encode(pending.localSystemId, pending.localComponentId, &message, &payload);
+    if (pending.commandInt) {
+        mavlink_command_int_t payload{};
+        payload.target_system = quint8(lease.endpoint.systemId);
+        payload.target_component = quint8(lease.endpoint.componentId);
+        payload.command = quint16(token.command);
+        payload.frame = quint8(pending.commandIntRequest.frame);
+        payload.current = pending.commandIntRequest.current;
+        payload.autocontinue = pending.commandIntRequest.autocontinue;
+        payload.param1 = pending.commandIntRequest.params[0];
+        payload.param2 = pending.commandIntRequest.params[1];
+        payload.param3 = pending.commandIntRequest.params[2];
+        payload.param4 = pending.commandIntRequest.params[3];
+        payload.x = pending.commandIntRequest.x;
+        payload.y = pending.commandIntRequest.y;
+        payload.z = pending.commandIntRequest.z;
+        mavlink_msg_command_int_encode(
+            pending.localSystemId, pending.localComponentId, &message,
+            &payload);
+    } else {
+        mavlink_command_long_t payload{};
+        payload.target_system = quint8(lease.endpoint.systemId);
+        payload.target_component = quint8(lease.endpoint.componentId);
+        payload.command = quint16(token.command);
+        payload.confirmation = quint8(qMin(
+            255, int(pending.request.confirmation) + pending.attemptIndex));
+        payload.param1 = pending.request.params[0];
+        payload.param2 = pending.request.params[1];
+        payload.param3 = pending.request.params[2];
+        payload.param4 = pending.request.params[3];
+        payload.param5 = pending.request.params[4];
+        payload.param6 = pending.request.params[5];
+        payload.param7 = pending.request.params[6];
+        mavlink_msg_command_long_encode(
+            pending.localSystemId, pending.localComponentId, &message,
+            &payload);
+    }
     QPointer<VehicleCommandService> serviceGuard(this);
     QString guardError;
     const ExactLinkTransmitter::SendResult transmitted =
-        m_transmitter->sendGuardedCommandLong(
-            lease.endpoint.linkId, pending.localSystemId, pending.localComponentId,
-            message, [serviceGuard, transactionId, attempted, &guardError] {
-                return serviceGuard && serviceGuard->validateCommandBeforeWriter(
-                    transactionId, attempted, &guardError);
-            }, attempted.get());
+        pending.commandInt
+        ? m_transmitter->sendGuardedCommandInt(
+              lease.endpoint.linkId, pending.localSystemId,
+              pending.localComponentId, message,
+              [serviceGuard, transactionId, attempted, &guardError] {
+                  return serviceGuard
+                      && serviceGuard->validateCommandBeforeWriter(
+                          transactionId, attempted, &guardError);
+              }, attempted.get())
+        : m_transmitter->sendGuardedCommandLong(
+              lease.endpoint.linkId, pending.localSystemId,
+              pending.localComponentId, message,
+              [serviceGuard, transactionId, attempted, &guardError] {
+                  return serviceGuard
+                      && serviceGuard->validateCommandBeforeWriter(
+                          transactionId, attempted, &guardError);
+              }, attempted.get());
     if (serviceGuard.isNull()) {
         return !pending.wasFrameAttempted()
             ? ExactSubmitResult::ContextUnavailable
@@ -878,6 +952,12 @@ bool VehicleCommandService::isExactCommandQuarantined(
         && matchesQuarantine(
             lease.endpoint, static_cast<quint16>(command),
             0, 0);
+}
+
+bool VehicleCommandService::isExactEndpointBusy(
+    const VehicleEndpoint &endpoint, MAV_CMD command)
+{
+    return exactEndpointBlocksLegacy(endpoint, static_cast<quint16>(command));
 }
 
 void VehicleCommandService::retireExactVehicle(
@@ -1487,12 +1567,13 @@ bool VehicleCommandService::observeExactAcknowledgement(
 
     // A quarantined ACK belongs to an earlier transaction.  Consume it here
     // so it cannot impersonate either a new exact transaction or the legacy
-    // selected-target signal.  A terminal ACK drains the ambiguity early;
+    // selected-target signal. A terminal ACK can drain a single transmission
+    // early, but not retries: additional indistinguishable ACKs may follow.
     // IN_PROGRESS extends the bounded quarantine.
     if (acknowledgement.result == MAV_RESULT_IN_PROGRESS) {
         m_exactQuarantines[quarantineIndex].expiresAtMs =
             m_exactClock.elapsed() + m_exactQuarantineMs;
-    } else {
+    } else if (!m_exactQuarantines[quarantineIndex].multipleTransmissions) {
         m_exactQuarantines.removeAt(quarantineIndex);
     }
     scheduleQuarantineExpiry();
@@ -1538,6 +1619,8 @@ void VehicleCommandService::addQuarantine(
             && quarantine.localComponentId == pending.localComponentId) {
             quarantine.expiresAtMs =
                 m_exactClock.elapsed() + m_exactQuarantineMs;
+            quarantine.multipleTransmissions = quarantine.multipleTransmissions
+                || pending.attemptedTransmissions() > 1;
             scheduleQuarantineExpiry();
             return;
         }
@@ -1546,6 +1629,7 @@ void VehicleCommandService::addQuarantine(
     quarantine.endpoint = endpoint;
     quarantine.domain = lease.domain;
     quarantine.linkSessionEpoch = lease.linkSessionEpoch;
+    quarantine.multipleTransmissions = pending.attemptedTransmissions() > 1;
     quarantine.command = command;
     quarantine.localSystemId = pending.localSystemId;
     quarantine.localComponentId = pending.localComponentId;
@@ -1747,6 +1831,14 @@ void VehicleCommandService::finishExactCommand(
         return;
     }
     const PendingExactCommand pending = pendingIterator.value();
+    // COMMAND_ACK has no transaction nonce. Even a definite ACK after retry
+    // can be followed by an ACK for an earlier identical transmission. Keep
+    // that ambiguity in the one shared LONG/INT/legacy quarantine domain.
+    if (pending.attemptedTransmissions() > 1
+        && (result == ExactTerminalResult::AcknowledgedAccepted
+            || result == ExactTerminalResult::AcknowledgedRejected)) {
+        quarantine = true;
+    }
     const bool normalizedBeforeTransmission = !pending.wasFrameAttempted()
         && result != ExactTerminalResult::RejectedBeforeTransmission
         && result != ExactTerminalResult::AcknowledgedAccepted

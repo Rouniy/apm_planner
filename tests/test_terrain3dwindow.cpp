@@ -28,6 +28,8 @@ private slots:
     void changedMeshSettingsRequireReloadAndKeyboardUnlocksCamera();
     void invalidGpsIsExplicitAndDoesNotStartDemWork();
     void staleTargetEpochResultIsNotPublished();
+    void physicalEpochChangesClearRenderedFrame();
+    void guidedClickUsesRenderedSnapshotAndMeshIntersection();
     void cooperativeWorkerIsCancelledOnClose();
     void uncooperativeWorkerDoesNotBlockClose();
 };
@@ -43,6 +45,8 @@ Terrain3DCore::Snapshot validSnapshot()
     snapshot.yawDeg = 0.0;
     snapshot.linkId = 7;
     snapshot.targetGeneration = 3;
+    snapshot.linkSessionEpoch = 11;
+    snapshot.vehicleInstanceEpoch = 13;
     snapshot.capturedMonotonicMs = 1000;
     snapshot.mode = QStringLiteral("LOITER");
     snapshot.systemId = 1;
@@ -128,6 +132,10 @@ void Terrain3DWindowTest::uiInventoryAndDefaultsMatchMp10()
     QCOMPARE(vertical->value(), 1.0);
 
     QVERIFY(window.findChild<QPushButton *>(QStringLiteral("ReloadTerrain")));
+    auto *guidedAltitude = window.findChild<QPushButton *>(
+        QStringLiteral("TerrainGuidedAltitudeButton"));
+    QVERIFY(guidedAltitude);
+    QVERIFY(!guidedAltitude->isEnabled());
     QVERIFY(window.findChild<QLabel *>(QStringLiteral("TerrainImage")));
     QVERIFY(window.findChild<QLabel *>(QStringLiteral("TerrainStatus")));
     QVERIFY(window.findChild<QLabel *>(
@@ -138,10 +146,130 @@ void Terrain3DWindowTest::uiInventoryAndDefaultsMatchMp10()
     QVERIFY(limitations->text().contains(QStringLiteral("guided commands")));
 }
 
+void Terrain3DWindowTest::physicalEpochChangesClearRenderedFrame()
+{
+    auto snapshot =
+        std::make_shared<Terrain3DCore::Snapshot>(validSnapshot());
+    const auto block = std::make_shared<std::atomic_bool>(false);
+    const auto entered = std::make_shared<std::atomic_bool>(false);
+    const auto release = std::make_shared<std::atomic_bool>(false);
+    struct ReleaseGuard {
+        std::shared_ptr<std::atomic_bool> flag;
+        ~ReleaseGuard() { flag->store(true); }
+    } releaseGuard{release};
+
+    Terrain3DWindow::Dependencies dependencies =
+        successfulDependencies(snapshot);
+    dependencies.elevation = [block, entered, release](double, double) {
+        if (block->load()) {
+            entered->store(true);
+            while (!release->load()) {
+                QThread::msleep(1);
+            }
+        }
+        return 100.0;
+    };
+
+    Terrain3DWindow window(dependencies);
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy() && !window.frame().isNull(),
+                             5000);
+    QCOMPARE(window.renderedSnapshot().vehicleInstanceEpoch, quint64(13));
+    QCOMPARE(window.renderedSnapshot().linkSessionEpoch, quint64(11));
+    for (int epoch = 0; epoch < 2; ++epoch) {
+        entered->store(false);
+        release->store(false);
+        block->store(true);
+        if (epoch == 0) {
+            ++snapshot->vehicleInstanceEpoch;
+        } else {
+            ++snapshot->linkSessionEpoch;
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(entered->load(), 3000);
+        QVERIFY(window.frame().isNull());
+        release->store(true);
+        QTRY_VERIFY_WITH_TIMEOUT(
+            !window.isBusy() && !window.frame().isNull(), 5000);
+        QCOMPARE(window.renderedSnapshot().vehicleInstanceEpoch,
+                 snapshot->vehicleInstanceEpoch);
+        QCOMPARE(window.renderedSnapshot().linkSessionEpoch,
+                 snapshot->linkSessionEpoch);
+    }
+}
+
+void Terrain3DWindowTest::guidedClickUsesRenderedSnapshotAndMeshIntersection()
+{
+    auto snapshot =
+        std::make_shared<Terrain3DCore::Snapshot>(validSnapshot());
+    int targetRequests = 0;
+    int altitudeRequests = 0;
+    Terrain3DCore::GeoPoint requestedPoint;
+    Terrain3DCore::Snapshot requestedSnapshot;
+    Terrain3DWindow::Dependencies dependencies =
+        successfulDependencies(snapshot);
+    dependencies.guidedTargetRequested =
+        [&targetRequests, &requestedPoint, &requestedSnapshot](
+            const Terrain3DCore::GeoPoint &point,
+            const Terrain3DCore::Snapshot &rendered) {
+        ++targetRequests;
+        requestedPoint = point;
+        requestedSnapshot = rendered;
+    };
+    dependencies.guidedAltitudeEditRequested = [&altitudeRequests]() {
+        ++altitudeRequests;
+    };
+
+    Terrain3DWindow window(dependencies);
+    window.show();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy() && !window.frame().isNull(),
+                             5000);
+    const Terrain3DCore::Snapshot rendered = window.renderedSnapshot();
+    snapshot->vehicle.latitude += 0.0002;
+    snapshot->capturedMonotonicMs += 50;
+
+    auto *image = window.findChild<QLabel *>(QStringLiteral("TerrainImage"));
+    auto *altitude = window.findChild<QPushButton *>(
+        QStringLiteral("TerrainGuidedAltitudeButton"));
+    auto *limitations = window.findChild<QLabel *>(
+        QStringLiteral("TerrainLimitations"));
+    QVERIFY(image);
+    QVERIFY(altitude && altitude->isEnabled());
+    QVERIFY(limitations);
+    QVERIFY(limitations->text().contains(QStringLiteral("frame 3")));
+    QVERIFY(limitations->text().contains(
+        QStringLiteral("does not change flight mode")));
+
+    QTest::mouseClick(image, Qt::LeftButton, Qt::NoModifier,
+                      image->rect().center());
+    QCOMPARE(targetRequests, 1);
+    QVERIFY(requestedPoint.isValid());
+    QCOMPARE(requestedSnapshot.vehicle.latitude,
+             rendered.vehicle.latitude);
+    QCOMPARE(requestedSnapshot.linkSessionEpoch,
+             rendered.linkSessionEpoch);
+    QCOMPARE(requestedSnapshot.vehicleInstanceEpoch,
+             rendered.vehicleInstanceEpoch);
+    QVERIFY(window.guidedStatusText().contains(
+        QStringLiteral("awaiting confirmation")));
+
+    altitude->click();
+    QCOMPARE(altitudeRequests, 1);
+    window.setGuidedStatus(QStringLiteral("Command acknowledgement pending."));
+    auto *fog = window.findChild<QCheckBox *>(QStringLiteral("FogEnabled"));
+    QVERIFY(fog);
+    fog->setChecked(!fog->isChecked());
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy(), 5000);
+    QCOMPARE(window.guidedStatusText(),
+             QStringLiteral("Command acknowledgement pending."));
+}
+
 void Terrain3DWindowTest::syntheticDemRendersAndPointerIsInspectable()
 {
     Terrain3DWindow window(successfulDependencies());
     window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    window.raise();
+    window.activateWindow();
     QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy() && !window.frame().isNull(),
                              5000);
     QVERIFY(imageHasVariation(window.frame()));
@@ -152,10 +280,16 @@ void Terrain3DWindowTest::syntheticDemRendersAndPointerIsInspectable()
 
     QLabel *image = window.findChild<QLabel *>(QStringLiteral("TerrainImage"));
     QVERIFY(image);
-    QTest::mouseMove(image, image->rect().center());
+    const QString initialPointerText = window.pointerText();
+    // QTest's native X11 path does not emit a move when the system pointer is
+    // already at the requested position, and successive native moves may be
+    // coalesced. Enter at a distinct edge point, wait until that event reaches
+    // the image's event filter, then move to the known mesh hit at the centre.
+    QTest::mouseMove(image, QPoint(2, 2), 20);
+    QTRY_VERIFY_WITH_TIMEOUT(window.pointerText() != initialPointerText, 1000);
+    QTest::mouseMove(image, image->rect().center(), 20);
     QTRY_VERIFY_WITH_TIMEOUT(
-        window.pointerText().contains(QStringLiteral("terrain")), 1000);
-    QVERIFY(window.pointerText().contains(QStringLiteral("AMSL")));
+        window.pointerText().contains(QStringLiteral("AMSL")), 1000);
 
     QTest::mouseClick(image, Qt::LeftButton, Qt::NoModifier,
                       image->rect().center());

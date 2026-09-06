@@ -18,6 +18,7 @@ class QContextMenuEvent;
 class MovingBaseMapMarkerItem;
 class QGraphicsItemGroup;
 class QGraphicsPixmapItem;
+class QAction;
 typedef mapcontrol::WayPointItem WayPointItem;
 
 /**
@@ -68,9 +69,13 @@ signals:
                                      const QPoint &globalPosition,
                                      int waypointSequence);
     void plannerWaypointMoved(int seq, double latitude, double longitude);
+    void guidedAltitudeEditRequested();
+    void guidedTargetRequested(double latitude, double longitude);
+    void guidedCoordinatesRequested();
 
 public slots:
     void setMissionPlanningEnabled(bool enabled);
+    void setGuidedNavigationEnabled(bool enabled);
     void setPlannerRows(const QVector<WpRowData> &rows,
                         FlightPlannerMissionModel::MissionStore store);
     void setPlannerAltitudePresentation(double multiplier,
@@ -88,6 +93,7 @@ public slots:
     void guidedActionTriggered();
     /** @brief Action triggered when guided action is selected from the context menu, allows for altitude selection */
     void guidedAltActionTriggered();
+    void guidedCoordinatesActionTriggered();
     /** @brief Add system to map view */
     void addUAS(UASInterface* uas);
     /** @brief Update the global position of a system */
@@ -179,7 +185,6 @@ protected slots:
     void handleMapWaypointEdit(WayPointItem* waypoint);
 
 private:
-    void sendGuidedAction(Waypoint *wp, double alt);
     bool isValidGpsLocation(UASInterface* system) const;
     void configureTrail(mapcontrol::UAVItem *uav);
     void rebuildPlannerGraphics();
@@ -234,9 +239,6 @@ protected:
     bool mapInitialized;                ///< Map initialized?
     float homeAltitude;                 ///< Home altitude
     QPoint mousePressPos;               ///< Mouse position when the button is released.
-    double defaultGuidedRelativeAlt;            ///< Default relative altitude for guided mode
-    int defaultGuidedFrame;             ///< Default guided frame
-    bool defaultGuidedAltFirstTimeSet;   ///< manages the first time set of guided alt
     QPointer<UASInterface> uas;         ///< Currently selected UAS.
     // Atlantic Ocean near Africa, coordinate origin
     double m_lastZoom;
@@ -244,7 +246,11 @@ protected:
     double m_lastLon;
 
     bool m_missionPlanningEnabled = false;
+    bool m_guidedNavigationEnabled = false;
     bool m_liveVehicleEnabled = true;
+    QAction *m_guidedAction = nullptr;
+    QAction *m_guidedAltitudeAction = nullptr;
+    QAction *m_guidedCoordinatesAction = nullptr;
     bool m_plannerGraphicsUpdate = false;
     bool m_plannerHomeValid = false;
     double m_plannerHomeLatitude = 0.0;

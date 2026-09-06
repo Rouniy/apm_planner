@@ -75,6 +75,8 @@ struct Snapshot
     /** Exact physical-target epoch used to reject stale worker results. */
     int linkId{-1};
     quint64 targetGeneration{0};
+    quint64 linkSessionEpoch{0};
+    quint64 vehicleInstanceEpoch{0};
     /** Monotonic observation time, in the same epoch as the window clock. */
     qint64 capturedMonotonicMs{0};
     QString mode;

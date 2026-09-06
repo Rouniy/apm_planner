@@ -30,6 +30,7 @@ private:
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
     friend int RunSigningTransportRuntimeAudit();
     friend int RunDeveloperVehicleToolRuntimeAudit();
+    friend int RunGuidedNavigationRuntimeAudit();
 #endif
     static void connectLinkSignals(LinkInterface *link, LinkManager *lmgr);
 };

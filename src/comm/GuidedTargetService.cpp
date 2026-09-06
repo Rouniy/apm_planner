@@ -328,7 +328,7 @@ QString GuidedTargetService::resultDescription(RequestResult result)
     case RequestResult::Stopped:
         return tr("Guided session stopped.");
     case RequestResult::Busy:
-        return tr("Another window owns the guided command session.");
+        return tr("The guided session or this vehicle's exact command channel is busy.");
     case RequestResult::InvalidOwner:
         return tr("A live owner on the service thread is required.");
     case RequestResult::InvalidSession:
@@ -589,6 +589,13 @@ GuidedTargetService::validateReadyTarget(
     }
     if (!m_commandService) {
         return RequestResult::TransportUnavailable;
+    }
+    // A selected-target change can retire our Reserved lane while an app-owned
+    // exact command still drains for the old endpoint. Reject at admission on
+    // an A→B→A return, before a Follow Me/External sender opens its input or
+    // misreports a definitely blocked write as a transport uncertainty.
+    if (m_commandService->isExactEndpointBusy(target.endpoint, MAV_CMD_DO_REPOSITION)) {
+        return RequestResult::Busy;
     }
     return RequestResult::Sent;
 }

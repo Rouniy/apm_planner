@@ -93,6 +93,33 @@ public:
         int maximumRetries = 0;
     };
 
+    /**
+     * Immutable COMMAND_INT payload and transaction policy. Coordinates are
+     * already in the integer units required by frame; the service never
+     * converts or rounds them. Retries reproduce this payload byte-for-byte
+     * (apart from the MAVLink transport sequence/signature).
+     */
+    struct ExactCommandIntRequest
+    {
+        MAV_CMD command = static_cast<MAV_CMD>(0);
+        MAV_FRAME frame = MAV_FRAME_GLOBAL;
+        std::array<float, 4> params{};
+        qint32 x = 0;
+        qint32 y = 0;
+        float z = 0.0F;
+        quint8 current = 0;
+        quint8 autocontinue = 0;
+        // Values <= 0 select DefaultExactCommandTimeoutMs.
+        int acknowledgementTimeoutMs = 0;
+        // Values <= 0 select DefaultExactCommandMaximumLifetimeMs.
+        int maximumLifetimeMs = 0;
+        // Same final, repeatable safety contract as ExactCommandRequest.
+        std::function<bool(QString *)> validateBeforeWrite;
+        // Optional inactivity retries, 0..3. COMMAND_INT has no confirmation
+        // counter, so every retry carries an identical command payload.
+        int maximumRetries = 0;
+    };
+
     struct ExactCommandToken
     {
         quint64 transactionId = 0;
@@ -227,8 +254,22 @@ public:
         const ExactCommandRequest &request,
         ExactCommandToken *commandOut = nullptr,
         QString *error = nullptr);
+    /**
+     * Starts one ACK-gated COMMAND_INT on the same endpoint reservation,
+     * waiter and quarantine domain as COMMAND_LONG.
+     */
+    ExactSubmitResult submitExactCommandInt(
+        const ExactReservationToken &reservation,
+        const SwarmVehicleInstanceLease &lease,
+        const ExactCommandIntRequest &request,
+        ExactCommandToken *commandOut = nullptr,
+        QString *error = nullptr);
     bool isExactCommandQuarantined(
         const SwarmVehicleInstanceLease &lease, MAV_CMD command);
+    /** Admission-only query; physical writer validation remains authoritative. */
+    bool isExactEndpointBusy(const VehicleEndpoint &endpoint, MAV_CMD command);
+    /** Whether selected-target legacy commands still await an ACK. No writes. */
+    bool legacyCommandPendingFor(const VehicleEndpoint &endpoint) const;
 
     /** Called by LinkManager for SwarmTelemetryRegistry::endpointRetired(). */
     void retireExactVehicle(const SwarmVehicleInstanceLease &lease);
@@ -318,6 +359,8 @@ private:
         std::shared_ptr<bool> inFlightAttempt;
         int transmissionAttempts = 0, remainingRetries = 0, attemptIndex = 0;
         ExactCommandRequest request;
+        bool commandInt = false;
+        ExactCommandIntRequest commandIntRequest;
         bool wasFrameAttempted() const noexcept { return frameAttempted || (inFlightAttempt && *inFlightAttempt); }
         int attemptedTransmissions() const noexcept { return transmissionAttempts + (inFlightAttempt && *inFlightAttempt ? 1 : 0); }
     };
@@ -331,6 +374,7 @@ private:
         qint64 expiresAtMs = 0;
         ExactLeaseDomain domain = ExactLeaseDomain::Swarm;
         quint64 linkSessionEpoch = 0;
+        bool multipleTransmissions = false;
     };
 
     bool targetIsCurrent(const VehicleTargetLease &target) const;
@@ -355,12 +399,11 @@ private:
         const ExactReservationRecord &reservation,
         const ExactInstanceLease &lease) const;
     ExactSubmitResult submitCommand(const ExactReservationToken &, const ExactInstanceLease &,
-        const ExactCommandRequest &, ExactCommandToken *, QString *);
+        const ExactCommandRequest &, const ExactCommandIntRequest *, ExactCommandToken *, QString *);
     ExactSubmitResult transmitExactCommand(quint64 transactionId);
     bool validateCommandBeforeWriter(quint64 transactionId,
         const std::shared_ptr<bool> &attempt, QString *error);
     void retryExactCommand(quint64 transactionId);
-    bool legacyCommandPendingFor(const VehicleEndpoint &endpoint) const;
     bool exactEndpointBlocksLegacy(const VehicleEndpoint &endpoint,
                                    quint16 command);
     bool acknowledgementTargets(
@@ -427,6 +470,7 @@ private:
 
 Q_DECLARE_METATYPE(VehicleCommandService::ExactReservationToken)
 Q_DECLARE_METATYPE(VehicleCommandService::ExactCommandRequest)
+Q_DECLARE_METATYPE(VehicleCommandService::ExactCommandIntRequest)
 Q_DECLARE_METATYPE(VehicleCommandService::ExactCommandToken)
 Q_DECLARE_METATYPE(VehicleCommandService::ExactReservationResult)
 Q_DECLARE_METATYPE(VehicleCommandService::ExactSubmitResult)

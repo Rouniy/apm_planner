@@ -34,6 +34,12 @@ OPMapBackendWidget::OPMapBackendWidget(
             this, &AbstractMapWidget::PlannerContextMenuRequested);
     connect(m_map, &QGCMapWidget::plannerWaypointMoved,
             this, &AbstractMapWidget::PlannerWaypointMoved);
+    connect(m_map, &QGCMapWidget::guidedAltitudeEditRequested,
+            this, &AbstractMapWidget::GuidedAltitudeEditRequested);
+    connect(m_map, &QGCMapWidget::guidedTargetRequested,
+            this, &AbstractMapWidget::GuidedTargetRequested);
+    connect(m_map, &QGCMapWidget::guidedCoordinatesRequested,
+            this, &AbstractMapWidget::GuidedCoordinatesRequested);
 }
 
 OPMapBackendWidget::~OPMapBackendWidget()
@@ -186,6 +192,7 @@ void OPMapBackendWidget::SetPropagationStatus(
     }
 }
 void OPMapBackendWidget::SetMissionPlanningEnabled(bool enabled) { if (m_map) m_map->setMissionPlanningEnabled(enabled); }
+void OPMapBackendWidget::SetGuidedNavigationEnabled(bool enabled) { if (m_map) m_map->setGuidedNavigationEnabled(enabled); }
 void OPMapBackendWidget::SetPlannerRows(const QVector<WpRowData> &rows, FlightPlannerMissionModel::MissionStore store) { if (m_map) m_map->setPlannerRows(rows, store); }
 void OPMapBackendWidget::SetPlannerAltitudePresentation(double multiplier, const QString &unit) { if (m_map) m_map->setPlannerAltitudePresentation(multiplier, unit); }
 void OPMapBackendWidget::SetPlannerNavigationParameters(const FlightPlannerNavigationParameters &parameters) { if (m_map) m_map->setPlannerNavigationParameters(parameters); }

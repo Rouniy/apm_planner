@@ -24,6 +24,45 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
+Latest slice (2026-09-06): **Shared guided-altitude dialogs and Terrain navigation**.
+DATA, PLAN and Simulation maps now share Fly To Here, Alt… and Fly To Coords;
+the old direct-UAS sender/private100m prompt is removed. The standalone Terrain
+window uses the same explicit altitude editor and offers a frozen rendered-point,
+default-Cancel confirmation. Terrain preserves MP10's frame3/no-mode-change
+numeric height policy, with an explicit warning for Absolute/Terrain preferences.
+No current vehicle altitude is silently used as an operator instruction.
+
+App-owned exact-instance intent and one-shot navigation share the central
+COMMAND_INT/COMMAND_LONG ACK, reservation and quarantine domain. Four total
+attempts match the actual reference loop; IN_PROGRESS stops retries. Cancel/close
+stops future attempts but cannot undo flight commands. Retry ACK quarantine now
+retains its full interval despite duplicate terminal ACKs. An A→B→A admission
+hole and synchronous-writer cancellation/drain race were fixed with regressions.
+
+Qt5/audio configure/build pass; full **300/300 (51.93s)**. Six new unit suites
+each pass ten repeats. Actual production X11 DATA and Terrain windows verify
+exact COMMAND_INT payloads, ACKs and Cancel with zero transmissions; root
+inspected the editor, both confirmations and Terrain window screenshots.
+Native X11 dialog7/7, controller30/30 and Terrain11/11 plus three repeats pass;
+the old hover test now proves distinct native mouse-event delivery.
+Only isolated in-process telemetry fixtures were used; no network SITL or
+physical vehicle was modified. Evidence: `/tmp/apm-guided-navigation.S8Mmwd/`.
+See `GUIDED_NAVIGATION_PORT.md` for native-window checks and remaining gates.
+Three Codex streams and Claude TCP c313–c316 reviews contributed; report hashes
+were verified. Imagery draping, legacy fallback and native/reference visuals
+remain explicit differences; this is not complete Tools parity.
+
+Next: missing DATA DataFlash/Telemetry log-tool dialogs and routes, including
+BIN/LOG MATLAB, KML+GPX, Auto Analysis and GeoRef; Signing transitions/recovery
+remain a separate high-risk Tools slice. Then Settings/CONFIG; Swarm last.
+Developer32/32 routed does not imply complete dialogs. SETUP46/eight absent
+reference routes, Advanced14 working+partial Signing+unported Support Proxy,
+CONFIG15 factories/Planner21of64 and DATA seven tabs/nine absent reference tabs
+are unchanged. Inventory129 stays77 in-progress/36 partial/16 not-started,
+none strict-complete; deviations148. The complete port remains unfinished.
+
+### Previous checkpoint: Tlog MATLAB export
+
 Latest slice (2026-09-06): **Tlog Convert MATLAB export**. All seven formats now
 have working buttons in the real independent460x340 modeless Tools window.
 MATLAB writes actual Level5 numeric Nx2 matrices, not renamed CSV. Frozen input,

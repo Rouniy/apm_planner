@@ -144,6 +144,10 @@ public:
     }
 
     virtual void SetMissionPlanningEnabled(bool enabled) = 0;
+    virtual void SetGuidedNavigationEnabled(bool enabled)
+    {
+        Q_UNUSED(enabled)
+    }
     virtual void SetPlannerRows(
         const QVector<WpRowData> &rows,
         FlightPlannerMissionModel::MissionStore store) = 0;
@@ -183,6 +187,9 @@ signals:
                                      int waypointSequence);
     void PlannerWaypointMoved(int sequence, double latitude,
                               double longitude);
+    void GuidedAltitudeEditRequested();
+    void GuidedTargetRequested(double latitude, double longitude);
+    void GuidedCoordinatesRequested();
 };
 
 #endif // ABSTRACTMAPWIDGET_H

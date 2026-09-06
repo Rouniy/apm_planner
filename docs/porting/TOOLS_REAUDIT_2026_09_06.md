@@ -22,17 +22,16 @@ Highest-priority concrete gaps in existing Tools windows:
    variables bit-exact. See `MATLAB_TLOG_EXPORT_PORT.md` for remaining dialect,
    filesystem and visual limits. The separate BIN/LOG `MatLab.ProcessLog` and
    its DATA routes remain missing; enabling this button does not cover them.
-2. `Terrain3DWindow`: guided map clicks are explicitly read-only. MP10
-   `Terrain3DViewModel.SendGuidedTargetAsync` sends a target using GuidedMode.z,
-   not current vehicle altitude. Add an authoritative guided-altitude source,
-   immutable target/point consent and shared exact GuidedTargetService before
-   enabling commands. Imagery draping remains a separate gap.
-   Follow-up source audit confirms frame3, DO_REPOSITION p2=0 (no mode change)
-   and a one-shot request. Current GuidedTargetService changes mode on its first
-   send and remains Active; add an explicit default-preserving one-shot policy,
-   physical instance/route checks and a real exact-instance guided-altitude
-   setting producer before connecting Terrain clicks. Existing scaled-image
-   raycast already matches; freeze its hit point before default-Cancel consent.
+2. `Terrain3DWindow`: guided clicks and the missing shared altitude producer are
+   now implemented. DATA/PLAN/Simulation share the actual altitude/coordinate
+   dialogs, while Terrain freezes rendered camera, point and physical instance
+   before default-Cancel consent. The one-shot service shares the guided lane
+   and central exact COMMAND_INT ACK/retry/quarantine, without changing Follow
+   Me's payload/retry policy. Terrain uses explicit intent, never vehicle altitude,
+   and preserves frame3/p2=0 (no mode change), including a numeric-frame warning.
+   Full300/300, repeated new suites and inspected production X11 DATA/Terrain
+   pass. Imagery draping and native/reference compatibility remain separate gaps;
+   see `GUIDED_NAVIGATION_PORT.md`.
 3. `MavlinkSigningWindow`: rekey/disable/recovery are unavailable. This requires
    persisted transitions, verified new-key traffic and explicit uncertain outcomes;
    SETUP_SIGNING has no ACK. Do not copy MP10's optimistic success message or
@@ -67,7 +66,7 @@ does not itself implement a terminal. Do not delete retained modules for counts.
 
 ## Queue discipline
 
-SFTP and TLOG MATLAB are implemented; continue the other concrete single-vehicle
+SFTP, TLOG MATLAB and guided Terrain dialogs are implemented; continue other single-vehicle
 Tools gaps. Restore missing log-tool routes as complete UI/service
 slices, then resume Settings/CONFIG (15 route factories is not full functionality;
 Planner still21/64 controls). Swarm remains last. SETUP46 pages/eight absent

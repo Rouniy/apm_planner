@@ -65,6 +65,8 @@ class SwarmSequenceExecutor;
 class SwarmWaypointLeaderExecutor;
 class VehicleCommandService;
 class GuidedTargetService;
+class GuidedAltitudeStore;
+class GuidedNavigationService;
 class MovingBasePositionStore;
 class MovingBaseService;
 class CompassCalibrationService;
@@ -124,6 +126,8 @@ public:
     VehicleCommandService *vehicleCommandService() const;
     CameraProbeService *cameraProbeService() const;
     GuidedTargetService *guidedTargetService() const;
+    GuidedAltitudeStore *guidedAltitudeStore() const;
+    GuidedNavigationService *guidedNavigationService() const;
     MovingBasePositionStore *movingBasePositionStore() const;
     MovingBaseService *movingBaseService() const;
     CompassCalibrationService *compassCalibrationService() const;
@@ -290,6 +294,8 @@ private:
     VehicleCommandService *m_vehicleCommandService = nullptr;
     CameraProbeService *m_cameraProbeService = nullptr;
     GuidedTargetService *m_guidedTargetService = nullptr;
+    GuidedAltitudeStore *m_guidedAltitudeStore = nullptr;
+    GuidedNavigationService *m_guidedNavigationService = nullptr;
     MovingBasePositionStore *m_movingBasePositionStore = nullptr;
     MovingBaseService *m_movingBaseService = nullptr;
     CompassCalibrationService *m_compassCalibrationService = nullptr;

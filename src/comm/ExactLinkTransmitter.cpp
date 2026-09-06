@@ -152,6 +152,18 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendGuardedCommandLong(
                            frameWriterInvoked, std::move(finalGuard));
 }
 
+ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendGuardedCommandInt(
+    int linkId, quint8 localSystemId, quint8 localComponentId,
+    const mavlink_message_t &message, std::function<bool()> finalGuard,
+    bool *frameWriterInvoked)
+{
+    if (frameWriterInvoked) *frameWriterInvoked = false;
+    if (message.msgid != MAVLINK_MSG_ID_COMMAND_INT || !finalGuard)
+        return SendResult::InvalidMessage;
+    return sendMessageImpl(linkId, localSystemId, localComponentId, message,
+                           frameWriterInvoked, std::move(finalGuard));
+}
+
 ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessageImpl(
     int linkId, quint8 localSystemId, quint8 localComponentId,
     mavlink_message_t message, bool *frameWriterInvoked,

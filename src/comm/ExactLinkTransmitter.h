@@ -74,6 +74,9 @@ private:
     SendResult sendGuardedCommandLong(int linkId, quint8 localSystemId,
         quint8 localComponentId, const mavlink_message_t &message,
         std::function<bool()> finalGuard, bool *frameWriterInvoked);
+    SendResult sendGuardedCommandInt(int linkId, quint8 localSystemId,
+        quint8 localComponentId, const mavlink_message_t &message,
+        std::function<bool()> finalGuard, bool *frameWriterInvoked);
     // SERIAL_CONTROL has no destination fields. Only the dedicated-route
     // session owner may submit UART requests, data or its bounded release.
     SendResult sendSerialControl(int linkId, quint64 expectedEpoch,

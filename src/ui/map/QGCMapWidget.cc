@@ -11,6 +11,7 @@
 #include "UASWaypointManager.h"
 #include "ArduPilotMegaMAV.h"
 #include "WaypointNavigation.h"
+#include <QAction>
 #include <QContextMenuEvent>
 #include <QGraphicsPathItem>
 #include <QGraphicsPixmapItem>
@@ -81,8 +82,6 @@ QGCMapWidget::QGCMapWidget(const QString &settingsGroup,
             this, &QGCMapWidget::redrawPropagationStatus);
     offlineMode = true;
     // Widget is inactive until shown
-    defaultGuidedRelativeAlt = 100.0; // Default set to 100m
-    defaultGuidedAltFirstTimeSet = false;
     connect(MapTileSourceFactory::instance(),
             &MapTileSourceFactory::MapTypeChanged,
             this, &QGCMapWidget::setGlobalMapType);
@@ -97,18 +96,28 @@ QGCMapWidget::QGCMapWidget(const QString &settingsGroup,
     this->setContextMenuPolicy(Qt::ActionsContextMenu);
 
     if (m_liveVehicleEnabled) {
-        QAction *guidedaction = new QAction(this);
-        guidedaction->setText("Go To Here (Guided Mode)");
-        connect(guidedaction,SIGNAL(triggered()),this,SLOT(guidedActionTriggered()));
-        this->addAction(guidedaction);
-        guidedaction = new QAction(this);
-        guidedaction->setText("Go To Here Alt (Guided Mode)");
-        connect(guidedaction,SIGNAL(triggered()),this,SLOT(guidedAltActionTriggered()));
-        this->addAction(guidedaction);
+        m_guidedAction = new QAction(this);
+        m_guidedAction->setObjectName(QStringLiteral("FlyToHereAction"));
+        connect(m_guidedAction, &QAction::triggered,
+                this, &QGCMapWidget::guidedActionTriggered);
+        addAction(m_guidedAction);
+        m_guidedAltitudeAction = new QAction(this);
+        m_guidedAltitudeAction->setObjectName(
+            QStringLiteral("FlyToHereAltitudeAction"));
+        connect(m_guidedAltitudeAction, &QAction::triggered,
+                this, &QGCMapWidget::guidedAltActionTriggered);
+        addAction(m_guidedAltitudeAction);
+        m_guidedCoordinatesAction = new QAction(this);
+        m_guidedCoordinatesAction->setObjectName(
+            QStringLiteral("FlyToCoordinatesAction"));
+        connect(m_guidedCoordinatesAction, &QAction::triggered,
+                this, &QGCMapWidget::guidedCoordinatesActionTriggered);
+        addAction(m_guidedCoordinatesAction);
         QAction *cameraaction = new QAction(this);
         cameraaction->setText("Point Camera Here");
         connect(cameraaction,SIGNAL(triggered()),this,SLOT(cameraActionTriggered()));
         this->addAction(cameraaction);
+        setGuidedNavigationEnabled(false);
     }
 }
 
@@ -161,114 +170,21 @@ internals::RectLatLng QGCMapWidget::VisibleTileExtent() const
 
 void QGCMapWidget::guidedActionTriggered()
 {
-    if (!uas)
-    {
-        QMessageBox::information(0,"Error","Please connect first");
-        return;
-    }
-    if (!currWPManager)
-        return;
-    Waypoint wp;
-    double tmpAlt;
-    // check the frame has not been changed from the last time we executed
-    bool aslAglChanged = defaultGuidedFrame != currWPManager->getFrameRecommendation();
-
-    if ( aslAglChanged || !defaultGuidedAltFirstTimeSet)
-    {
-        defaultGuidedAltFirstTimeSet = true; // so we don't prompt again.
-        QString altFrame;
-        defaultGuidedFrame = currWPManager->getFrameRecommendation();
-
-        if (defaultGuidedFrame == MAV_FRAME_GLOBAL_RELATIVE_ALT){
-            altFrame = "Relative Alt (AGL)";
-            tmpAlt = defaultGuidedRelativeAlt;
-        } else {
-            altFrame = "Abs Alt (ASL)";
-            // Waypoint 0 is always home on APM
-            tmpAlt = currWPManager->getWaypoint(0)->getAltitude() + defaultGuidedRelativeAlt;
-        }
-
-        bool ok = false;
-        tmpAlt = QInputDialog::getDouble(this,altFrame,"Enter " + altFrame + " (in meters) of destination point for guided mode",
-                                          tmpAlt,0,30000.0,2,&ok);
-        if (!ok)
-        {
-            //Use has chosen cancel. Do not send the waypoint
-            return;
-        }
-
-        if (defaultGuidedFrame == MAV_FRAME_GLOBAL_RELATIVE_ALT){
-            defaultGuidedRelativeAlt = tmpAlt;
-        } else {
-            defaultGuidedRelativeAlt = tmpAlt - currWPManager->getWaypoint(0)->getAltitude();
-        }
-    } else if (defaultGuidedFrame == MAV_FRAME_GLOBAL_RELATIVE_ALT){
-        tmpAlt = defaultGuidedRelativeAlt;
-    } else {
-        tmpAlt = currWPManager->getWaypoint(0)->getAltitude() + defaultGuidedRelativeAlt;
-    }
-    wp.setFrame(static_cast<MAV_FRAME>(defaultGuidedFrame));
-    sendGuidedAction(&wp, tmpAlt);
+    if (!m_guidedNavigationEnabled || !map) return;
+    const internals::PointLatLng position = map->FromLocalToLatLng(
+        mousePressPos.x(), mousePressPos.y());
+    if (isPlannerCoordinateValid(position.Lat(), position.Lng()))
+        emit guidedTargetRequested(position.Lat(), position.Lng());
 }
 
 void QGCMapWidget::guidedAltActionTriggered()
 {
-    if (!uas)
-    {
-        QMessageBox::information(0,"Error","Please connect first");
-        return;
-    }
-    if (!currWPManager)
-        return;
-
-    Waypoint wp;
-    double tmpAlt;
-    if(  defaultGuidedFrame != currWPManager->getFrameRecommendation()){
-
-        defaultGuidedFrame = currWPManager->getFrameRecommendation();
-        QLOG_DEBUG() << "Changing from Frame type to:"
-                     << (defaultGuidedFrame == MAV_FRAME_GLOBAL_RELATIVE_ALT? "AGL": "ASL");
-    }
-
-    wp.setFrame(static_cast<MAV_FRAME>(defaultGuidedFrame));
-    QString altFrame;
-
-    if (wp.getFrame() == MAV_FRAME_GLOBAL_RELATIVE_ALT){
-        altFrame = "Relative Alt (AGL)";
-        tmpAlt = defaultGuidedRelativeAlt;
-    } else {
-        altFrame = "Abs Alt (ASL)";
-        // Waypoint 0 is always home on APM
-        tmpAlt = currWPManager->getWaypoint(0)->getAltitude() + defaultGuidedRelativeAlt;
-    }
-
-    bool ok = false;
-    tmpAlt = QInputDialog::getDouble(this,altFrame,"Enter " + altFrame + " (in meters) of destination point for guided mode",
-                                      tmpAlt,0,30000.0,2,&ok);
-    if (!ok)
-    {
-        //Use has chosen cancel. Do not send the waypoint
-        return;
-    }
-    if (defaultGuidedFrame == MAV_FRAME_GLOBAL_RELATIVE_ALT){
-        defaultGuidedRelativeAlt = tmpAlt;
-    } else {
-        defaultGuidedRelativeAlt = tmpAlt - currWPManager->getWaypoint(0)->getAltitude();
-    }
-    sendGuidedAction(&wp, tmpAlt);
+    if (m_guidedNavigationEnabled) emit guidedAltitudeEditRequested();
 }
 
-void QGCMapWidget::sendGuidedAction(Waypoint* wp, double alt)
+void QGCMapWidget::guidedCoordinatesActionTriggered()
 {
-    // Create new waypoint and send it to the WPManager to send out.
-    internals::PointLatLng pos = map->FromLocalToLatLng(mousePressPos.x(), mousePressPos.y());
-    QLOG_DEBUG() << "Guided action requested. Lat:" << pos.Lat() << "Lon:" << pos.Lng()
-                 << "Alt:" << alt << "MAV_FRAME:"
-                 << (defaultGuidedFrame == MAV_FRAME_GLOBAL_RELATIVE_ALT? "AGL": "ASL");
-    wp->setLongitude(pos.Lng());
-    wp->setLatitude(pos.Lat());
-    wp->setAltitude(alt);
-    currWPManager->goToWaypoint(wp);
+    if (m_guidedNavigationEnabled) emit guidedCoordinatesRequested();
 }
 
 void QGCMapWidget::cameraActionTriggered()
@@ -508,6 +424,31 @@ void QGCMapWidget::setMissionPlanningEnabled(bool enabled)
     if (enabled) {
         redrawPlannerLines();
         redrawPlannerMeasurement();
+    }
+}
+
+void QGCMapWidget::setGuidedNavigationEnabled(bool enabled)
+{
+    m_guidedNavigationEnabled = enabled;
+    if (!m_guidedAction || !m_guidedAltitudeAction
+        || !m_guidedCoordinatesAction) {
+        return;
+    }
+
+    QPointer<QGCMapWidget> guard(this);
+    const QList<QPair<QPointer<QAction>, QString>> actions{
+        {m_guidedAction, tr("Fly To Here")},
+        {m_guidedAltitudeAction, tr("Fly To Here Alt\xE2\x80\xA6")},
+        {m_guidedCoordinatesAction, tr("Fly To Coords")}};
+    for (const auto &entry : actions) {
+        const QPointer<QAction> action = entry.first;
+        if (!guard || !action) return;
+        action->setVisible(enabled);
+        if (!guard || !action) return;
+        action->setEnabled(enabled);
+        if (!guard || !action) return;
+        action->setText(entry.second);
+        if (!guard) return;
     }
 }
 
