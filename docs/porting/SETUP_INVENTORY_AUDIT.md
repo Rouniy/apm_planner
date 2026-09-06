@@ -33,12 +33,13 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-The APJ defaults slice brings the exact Developer action catalogue to16/32
-working actions, with16 explicitly unavailable. It fills the existing
-`EmbedDefaultsInApjButton`; it does not add a Setup page or top-level Tools item.
-Both actual file dialogs, default-Cancel overwrite, cancellable worker and
-independent output/CRC checks pass, alongside full244/244 and production X11.
-See `APJ_DEFAULTS_PORT.md`. The46 registered Setup pages, three groups and eight
+The Log Organizer slice brings the exact Developer action catalogue to17/32
+working actions, with15 explicitly unavailable. It fills the existing
+`OrganizeLogDirectoryButton`; it does not add a Setup page or top-level Tools item.
+Actual directory/plan dialogs, default-Cancel consent, cancellable workers and
+independent file/hash checks pass, alongside full246/246 and production X11.
+See `LOG_DIRECTORY_ORGANIZER.md` and the preceding `APJ_DEFAULTS_PORT.md`.
+The46 registered Setup pages, three groups and eight
 absent reference routes remain unchanged. Useful legacy routes remain present;
 navigation/factory counts are not claims of complete functional parity.
 

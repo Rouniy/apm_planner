@@ -11,17 +11,22 @@
 #include <QAction>
 #include <QObject>
 #include <QDoubleSpinBox>
+#include <QDir>
+#include <QHeaderView>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QRunnable>
 #include <QSemaphore>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <QTreeWidget>
 #include <QtEndian>
 #include <QPushButton>
 #include <QScrollArea>
@@ -135,6 +140,17 @@ struct VehicleFixture
 QPushButton *tool(ConfigDeveloperToolsView &view, const char *name)
 {
     return view.findChild<QPushButton *>(QString::fromLatin1(name));
+}
+
+template<typename T>
+T *visibleNamed(QWidget *parent, const char *name)
+{
+    const auto objects = parent->findChildren<T *>(QString::fromLatin1(name));
+    for (T *object : objects) {
+        if (object->isVisible())
+            return object;
+    }
+    return nullptr;
 }
 
 QMessageBox *confirmation(ConfigDeveloperToolsView &view)
@@ -332,6 +348,9 @@ private slots:
     void apjDialogsAreDefaultCancelAndPreserveExistingOutput();
     void apjEmbeddingCompletesAndSignedImagesFailClosed();
     void apjEmbeddingCancellationLifetimeAndInterlocks();
+    void logOrganizerDialogsAreDefaultCancelAndReadOnly();
+    void logOrganizerExecutesExactPlanAndNeverClobbers();
+    void logOrganizerCancellationLifetimeAndInterlocks();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -340,8 +359,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
     QCOMPARE(view.objectName(), QStringLiteral("ConfigDeveloperToolsView"));
     QCOMPARE(view.Title(), QStringLiteral("Developer Tools"));
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 6);
-    QVERIFY(view.Log().contains(QStringLiteral("6 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 7);
+    QVERIFY(view.Log().contains(QStringLiteral("7 of 32")));
 
     const QList<QPushButton *> buttons = view.findChildren<QPushButton *>();
     QCOMPARE(buttons.size(), 32);
@@ -353,7 +372,7 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
             QVERIFY(!button->toolTip().isEmpty());
         }
     }
-    QCOMPARE(enabled, 6);
+    QCOMPARE(enabled, 7);
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeMavlinkPacketButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
@@ -364,6 +383,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
         QStringLiteral("CreateDashWareCsvButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("EmbedDefaultsInApjButton"))->isEnabled());
+    QVERIFY(view.findChild<QPushButton *>(
+        QStringLiteral("OrganizeLogDirectoryButton"))->isEnabled());
     QVERIFY(!view.findChild<QPushButton *>(
         QStringLiteral("RebootVehicleButton"))->isEnabled());
 }
@@ -390,8 +411,8 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 9);
-    QVERIFY(view.Log().contains(QStringLiteral("9 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 10);
+    QVERIFY(view.Log().contains(QStringLiteral("10 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
@@ -425,14 +446,14 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     VehicleFixture fixture;
     view.setVehicleToolService(&fixture.service);
-    QCOMPARE(view.ImplementedActionCount(), 15);
+    QCOMPARE(view.ImplementedActionCount(), 16);
     DeveloperFtpStub ftp;
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
-    QCOMPARE(view.ImplementedActionCount(), 16);
+    QCOMPARE(view.ImplementedActionCount(), 17);
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 15);
+    QCOMPARE(view.ImplementedActionCount(), 16);
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 9);
+    QCOMPARE(view.ImplementedActionCount(), 10);
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()
@@ -487,7 +508,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 12);
+    QCOMPARE(view.ImplementedActionCount(), 13);
     QVERIFY(tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     fixture.heartbeat(true);
@@ -498,7 +519,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     fixture.registry.endLinkSession(fixture.endpoint.linkId, fixture.session);
     QTRY_VERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 6);
+    QCOMPARE(view.ImplementedActionCount(), 7);
     QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(fixture.frames.isEmpty());
 }
@@ -530,6 +551,7 @@ void ConfigDeveloperToolsViewTest::everyVehicleWriteRequiresDefaultCancel()
     auto *dialog = confirmation(view);
     QVERIFY(dialog);
     QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
+    QVERIFY(!tool(view, "OrganizeLogDirectoryButton")->isEnabled());
     QCOMPARE(dialog->textFormat(), Qt::PlainText);
     QCOMPARE(dialog->defaultButton(), dialog->button(QMessageBox::Cancel));
     QCOMPARE(dialog->escapeButton(), dialog->button(QMessageBox::Cancel));
@@ -889,6 +911,7 @@ void ConfigDeveloperToolsViewTest::gpsAndVehicleOperationsInterlock()
         QVERIFY(paused.ready);
         view.ExtractGpsCorrections(input, output);
         QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
+        QVERIFY(!tool(view, "OrganizeLogDirectoryButton")->isEnabled());
         QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
         QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
         tool(view, "RebootVehicleButton")->click();
@@ -1118,6 +1141,7 @@ void ConfigDeveloperToolsViewTest::splitAndOtherOperationsInterlock()
         view.SplitDataFlashLog(input, 2);
         QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
         QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
+        QVERIFY(!tool(view, "OrganizeLogDirectoryButton")->isEnabled());
         QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
         view.ExtractGpsCorrections(correctionInput, correctionOutput);
         QVERIFY(!view.findChild<QProgressDialog *>(
@@ -1352,6 +1376,7 @@ void ConfigDeveloperToolsViewTest::dashWareAndOtherOperationsInterlock()
         QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
         QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
         QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
+        QVERIFY(!tool(view, "OrganizeLogDirectoryButton")->isEnabled());
         QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
         view.ExtractGpsCorrections(corrections, correctionOutput);
         view.SplitDataFlashLog(input, 2);
@@ -1388,7 +1413,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
     view.show();
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 13); // Six offline + six vehicle + FTP.
+    QCOMPARE(view.ImplementedActionCount(), 14); // Seven offline + six vehicle + FTP.
     auto *button = tool(view, "DownloadMavftpFileButton");
     QVERIFY(button->isEnabled());
     button->click();
@@ -1400,6 +1425,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
     QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
     QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
+    QVERIFY(!tool(view, "OrganizeLogDirectoryButton")->isEnabled());
     QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.ExportDashWareCsv(input, output, {"GPS"});
     view.SplitDataFlashLog(input, 2);
@@ -1430,7 +1456,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     QVERIFY(!button->isEnabled());
     QVERIFY(tool(view, "CreateDashWareCsvButton")->isEnabled());
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 12);
+    QCOMPARE(view.ImplementedActionCount(), 13);
     QVERIFY(!button->isEnabled());
     QCOMPARE(ftp.cancelCalls, 0); // Never cancels the browser's shared work.
 }
@@ -1441,13 +1467,13 @@ void ConfigDeveloperToolsViewTest::mavFtpServiceRemovalDisablesAction()
     ConfigDeveloperToolsView view;
     auto *ftp = new DeveloperFtpStub;
     view.setMavFtpDownloadServices(ftp, &targets);
-    QCOMPARE(view.ImplementedActionCount(), 7);
+    QCOMPARE(view.ImplementedActionCount(), 8);
     auto *button = tool(view, "DownloadMavftpFileButton");
     QVERIFY(button->isEnabled());
     button->click(); // A disconnected tool reports the missing target, no prompt.
     QVERIFY(!view.findChild<QInputDialog *>("DeveloperMavFtpPathDialog"));
     delete ftp;
-    QCOMPARE(view.ImplementedActionCount(), 6);
+    QCOMPARE(view.ImplementedActionCount(), 7);
     QVERIFY(!button->isEnabled());
     QVERIFY(!button->toolTip().isEmpty());
 }
@@ -1595,6 +1621,7 @@ void ConfigDeveloperToolsViewTest::apjEmbeddingCancellationLifetimeAndInterlocks
         QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
         QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
         QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
+        QVERIFY(!tool(view, "OrganizeLogDirectoryButton")->isEnabled());
         QVERIFY(!tool(view, "DownloadMavftpFileButton")->isEnabled());
         QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
         view.close();
@@ -1635,6 +1662,266 @@ void ConfigDeveloperToolsViewTest::apjEmbeddingCancellationLifetimeAndInterlocks
         QVERIFY(heapGuard.isNull());
     }
     QVERIFY(!QFile::exists(output));
+}
+
+void ConfigDeveloperToolsViewTest::logOrganizerDialogsAreDefaultCancelAndReadOnly()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = dir.filePath(QStringLiteral("logs"));
+    const QString incoming = QDir(root).filePath(QStringLiteral("new"));
+    QVERIFY(QDir().mkpath(incoming));
+    const QString source = QDir(incoming).filePath(QStringLiteral("small.log"));
+    const QString companion = source + QStringLiteral(".param");
+    const QString empty = QDir(incoming).filePath(QStringLiteral("empty.bin"));
+    QVERIFY(writeFixture(source, QByteArrayLiteral("recorded bytes")));
+    QVERIFY(writeFixture(companion, QByteArrayLiteral("A=1\n")));
+    QVERIFY(writeFixture(empty, QByteArray()));
+
+    ConfigDeveloperToolsView view;
+    view.show();
+    auto *button = tool(view, "OrganizeLogDirectoryButton");
+    QVERIFY(button->isEnabled());
+
+    // Cancelling the directory picker never begins analysis.
+    button->click();
+    auto *picker = visibleNamed<QFileDialog>(
+        &view, "DeveloperLogOrganizerDirectoryDialog");
+    QVERIFY(picker);
+    QCOMPARE(picker->fileMode(), QFileDialog::Directory);
+    QVERIFY(picker->testOption(QFileDialog::ShowDirsOnly));
+    picker->reject();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(button->isEnabled());
+    QVERIFY(QFile::exists(source));
+    QVERIFY(QFile::exists(empty));
+
+    button->click();
+    picker = visibleNamed<QFileDialog>(
+        &view, "DeveloperLogOrganizerDirectoryDialog");
+    QVERIFY(picker);
+    picker->selectFile(root);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection));
+
+    QDialog *planDialog = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (planDialog = visibleNamed<QDialog>(
+             &view, "DeveloperLogOrganizerPlanDialog")),
+        5000);
+    QCOMPARE(planDialog->windowModality(), Qt::NonModal);
+    auto *tree = planDialog->findChild<QTreeWidget *>(
+        QStringLiteral("DeveloperLogOrganizerPlanTree"));
+    QVERIFY(tree);
+    QCOMPARE(tree->topLevelItemCount(), 3);
+    const QString destination = QDir(root).filePath(
+        QStringLiteral("SMALL/small.log"));
+    const QString companionDestination = destination + QStringLiteral(".param");
+    bool sawMove = false;
+    bool sawCompanion = false;
+    bool sawDelete = false;
+    for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+        const QTreeWidgetItem *item = tree->topLevelItem(row);
+        if (item->data(1, Qt::UserRole).toString() == source
+            && item->data(2, Qt::UserRole).toString() == destination
+            && item->text(3) == QString::number(QFileInfo(source).size())) {
+            sawMove = true;
+        }
+        if (item->data(1, Qt::UserRole).toString() == companion
+            && item->data(2, Qt::UserRole).toString() == companionDestination) {
+            sawCompanion = true;
+        }
+        if (item->data(1, Qt::UserRole).toString() == empty
+            && item->text(2).contains("deleted")
+            && item->text(3) == QStringLiteral("0")) {
+            sawDelete = true;
+        }
+    }
+    QVERIFY(sawMove);
+    QVERIFY(sawCompanion);
+    QVERIFY(sawDelete);
+    QVERIFY(!tree->header()->stretchLastSection());
+    for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+        const auto *item = tree->topLevelItem(row);
+        QCOMPARE(QDir(root).filePath(item->text(1)),
+                 item->data(1, Qt::UserRole).toString());
+        QCOMPARE(item->toolTip(1), item->data(1, Qt::UserRole).toString());
+    }
+    auto *execute = planDialog->findChild<QPushButton *>(
+        QStringLiteral("DeveloperLogOrganizerExecuteButton"));
+    auto *cancel = planDialog->findChild<QPushButton *>(
+        QStringLiteral("DeveloperLogOrganizerCancelButton"));
+    QVERIFY(execute && execute->isEnabled());
+    QVERIFY(cancel && cancel->isDefault());
+    auto *summary = planDialog->findChild<QLabel *>(
+        QStringLiteral("DeveloperLogOrganizerPlanSummary"));
+    QVERIFY(summary);
+    QVERIFY(summary->text().contains(root));
+    QVERIFY(summary->text().contains(QStringLiteral("Candidates examined: 2")));
+    QVERIFY(summary->text().contains(
+        QStringLiteral("permanent"), Qt::CaseInsensitive));
+
+    QTest::keyClick(planDialog, Qt::Key_Escape);
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 2000);
+    QVERIFY(QFile::exists(source));
+    QVERIFY(QFile::exists(companion));
+    QVERIFY(QFile::exists(empty));
+    QVERIFY(!QFile::exists(destination));
+    QVERIFY(view.Log().contains(
+        QStringLiteral("no planned changes were executed")));
+
+    const QString emptyRoot = dir.filePath(QStringLiteral("no-candidates"));
+    QVERIFY(QDir().mkpath(emptyRoot));
+    view.AnalyzeLogDirectory(emptyRoot);
+    QTRY_VERIFY_WITH_TIMEOUT(button->isEnabled(), 5000);
+    QVERIFY(!visibleNamed<QDialog>(
+        &view, "DeveloperLogOrganizerPlanDialog"));
+    QVERIFY(view.Log().contains(
+        QStringLiteral("No changes were planned")));
+}
+
+void ConfigDeveloperToolsViewTest::logOrganizerExecutesExactPlanAndNeverClobbers()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    ConfigDeveloperToolsView view;
+    view.show();
+    auto *organize = tool(view, "OrganizeLogDirectoryButton");
+
+    const QString root = dir.filePath(QStringLiteral("execute"));
+    const QString incoming = QDir(root).filePath(QStringLiteral("new"));
+    QVERIFY(QDir().mkpath(incoming));
+    const QString source = QDir(incoming).filePath(QStringLiteral("small.log"));
+    const QString empty = QDir(incoming).filePath(QStringLiteral("empty.bin"));
+    const QByteArray sourceBytes("one complete small log");
+    QVERIFY(writeFixture(source, sourceBytes));
+    QVERIFY(writeFixture(empty, QByteArray()));
+    const QString destination = QDir(root).filePath(
+        QStringLiteral("SMALL/small.log"));
+
+    view.AnalyzeLogDirectory(root);
+    QDialog *planDialog = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (planDialog = visibleNamed<QDialog>(
+             &view, "DeveloperLogOrganizerPlanDialog")),
+        5000);
+    planDialog->findChild<QPushButton *>(
+        QStringLiteral("DeveloperLogOrganizerExecuteButton"))->click();
+    QTRY_VERIFY_WITH_TIMEOUT(organize->isEnabled(), 5000);
+    QVERIFY(!QFile::exists(source));
+    QVERIFY(!QFile::exists(empty));
+    QCOMPARE(readFixture(destination), sourceBytes);
+    QVERIFY(view.Log().contains(QStringLiteral("Permanently deleted planned")));
+    QVERIFY(view.Log().contains(QStringLiteral("Log organization completed")));
+
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    const QString blockedRoot = dir.filePath(QStringLiteral("no-clobber"));
+    const QString blockedIncoming = QDir(blockedRoot).filePath(
+        QStringLiteral("new"));
+    QVERIFY(QDir().mkpath(blockedIncoming));
+    const QString blockedSource = QDir(blockedIncoming).filePath(
+        QStringLiteral("blocked.log"));
+    const QByteArray blockedBytes("source remains intact");
+    QVERIFY(writeFixture(blockedSource, blockedBytes));
+    const QString blockedDestination = QDir(blockedRoot).filePath(
+        QStringLiteral("SMALL/blocked.log"));
+
+    view.AnalyzeLogDirectory(blockedRoot);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (planDialog = visibleNamed<QDialog>(
+             &view, "DeveloperLogOrganizerPlanDialog")),
+        5000);
+    QVERIFY(QDir().mkpath(QFileInfo(blockedDestination).absolutePath()));
+    const QByteArray existingBytes("do not replace");
+    QVERIFY(writeFixture(blockedDestination, existingBytes));
+    planDialog->findChild<QPushButton *>(
+        QStringLiteral("DeveloperLogOrganizerExecuteButton"))->click();
+    QTRY_VERIFY_WITH_TIMEOUT(organize->isEnabled(), 5000);
+    QCOMPARE(readFixture(blockedSource), blockedBytes);
+    QCOMPARE(readFixture(blockedDestination), existingBytes);
+    QVERIFY(view.Log().contains(
+        QStringLiteral("Destination appeared after analysis")));
+    QVERIFY(view.Log().contains(QStringLiteral("0 completed changes")));
+}
+
+void ConfigDeveloperToolsViewTest::logOrganizerCancellationLifetimeAndInterlocks()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = dir.filePath(QStringLiteral("cancel"));
+    const QString incoming = QDir(root).filePath(QStringLiteral("new"));
+    QVERIFY(QDir().mkpath(incoming));
+    const QString source = QDir(incoming).filePath(QStringLiteral("small.log"));
+    const QString destination = QDir(root).filePath(
+        QStringLiteral("SMALL/small.log"));
+    QVERIFY(writeFixture(source, QByteArrayLiteral("small")));
+
+    VehicleFixture fixture;
+    DeveloperFtpStub ftp;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.setMavFtpDownloadServices(&ftp, &fixture.targets);
+    view.show();
+
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        view.AnalyzeLogDirectory(root);
+        QVERIFY(visibleNamed<QProgressDialog>(
+            &view, "DeveloperLogOrganizerProgressDialog"));
+        QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+        QVERIFY(!tool(view, "SplitDataFlashLogButton")->isEnabled());
+        QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
+        QVERIFY(!tool(view, "EmbedDefaultsInApjButton")->isEnabled());
+        QVERIFY(!tool(view, "DownloadMavftpFileButton")->isEnabled());
+        QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+        view.close();
+    }
+    QVERIFY(QFile::exists(source));
+    QVERIFY(!QFile::exists(destination));
+    view.show();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        tool(view, "OrganizeLogDirectoryButton")->isEnabled(), 5000);
+
+    // Cancellation from the execution progress page happens before the queued
+    // immutable plan can make its first filesystem change.
+    view.AnalyzeLogDirectory(root);
+    QDialog *planDialog = nullptr;
+    QTRY_VERIFY_WITH_TIMEOUT(
+        (planDialog = visibleNamed<QDialog>(
+             &view, "DeveloperLogOrganizerPlanDialog")),
+        5000);
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        planDialog->findChild<QPushButton *>(
+            QStringLiteral("DeveloperLogOrganizerExecuteButton"))->click();
+        auto *progress = visibleNamed<QProgressDialog>(
+            &view, "DeveloperLogOrganizerProgressDialog");
+        QVERIFY(progress);
+        auto *cancel = progress->findChild<QPushButton *>();
+        QVERIFY(cancel);
+        cancel->click();
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(
+        tool(view, "OrganizeLogDirectoryButton")->isEnabled(), 5000);
+    QVERIFY(QFile::exists(source));
+    QVERIFY(!QFile::exists(destination));
+    QVERIFY(view.Log().contains(
+        QStringLiteral("Log organization cancelled")));
+
+    auto *heapView = new ConfigDeveloperToolsView;
+    QPointer<ConfigDeveloperToolsView> heapGuard(heapView);
+    {
+        PausedGlobalPool paused;
+        QVERIFY(paused.ready);
+        heapView->AnalyzeLogDirectory(root);
+        QVERIFY(visibleNamed<QProgressDialog>(
+            heapView, "DeveloperLogOrganizerProgressDialog"));
+        delete heapView;
+        QVERIFY(heapGuard.isNull());
+    }
+    QVERIFY(QFile::exists(source));
+    QVERIFY(!QFile::exists(destination));
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)

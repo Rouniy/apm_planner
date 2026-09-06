@@ -7,21 +7,31 @@
 #include "comm/GpsCorrectionExtractor.h"
 #include "ui/Loghandling/DataFlashDashWareCsvExporter.h"
 #include "ui/Loghandling/DataFlashLogSplitter.h"
+#include "ui/Loghandling/FlightLogOrganizer.h"
 #include "ui/tools/ApjDefaultsEmbedder.h"
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QHeaderView>
 #include <QInputDialog>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QProgressDialog>
 #include <QShowEvent>
+#include <QSignalBlocker>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <atomic>
@@ -51,6 +61,17 @@ struct ConfigDeveloperToolsView::DashWareState
 
 struct ConfigDeveloperToolsView::ApjEmbeddingState
 {
+    std::atomic_bool cancelled{false};
+    std::atomic<qint64> processed{0};
+    std::atomic<qint64> total{0};
+};
+
+struct ConfigDeveloperToolsView::LogOrganizerState
+{
+    // Execution can leave truthful partial filesystem results. Its terminal
+    // callback is therefore retained across a page close; analysis is safely
+    // invalidated because it never mutates the directory.
+    bool executing = false;
     std::atomic_bool cancelled{false};
     std::atomic<qint64> processed{0};
     std::atomic<qint64> total{0};
@@ -142,8 +163,13 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                          QStringLiteral("OfflineMagFitButton"), notPorted);
     AddUnavailableAction(tr("Flight Log Index"),
                          QStringLiteral("FlightLogIndexButton"), notPorted);
-    AddUnavailableAction(tr("Organize Log Directory"),
-                         QStringLiteral("OrganizeLogDirectoryButton"), notPorted);
+    m_logOrganizerButton = AddAction(
+        tr("Organize Log Directory"),
+        QStringLiteral("OrganizeLogDirectoryButton"),
+        [this]() { PickLogOrganizerDirectory(); });
+    m_logOrganizerButton->setToolTip(tr(
+        "Analyze a local log directory, review every proposed move and empty-log deletion, then explicitly execute the immutable plan."));
+    ++m_implementedActionCount;
     AddUnavailableAction(tr("Download DataFlash Logs over SFTP"),
                          QStringLiteral("DownloadDataFlashSftpButton"), notPorted);
     m_mavFtpButton = AddAction(tr("Download MAVFTP File"),
@@ -198,6 +224,11 @@ bool ConfigDeveloperToolsView::ApjEmbeddingBusy() const
     return m_apjState || m_apjPrompt;
 }
 
+bool ConfigDeveloperToolsView::LogOrganizerBusy() const
+{
+    return m_logOrganizerState || m_logOrganizerPrompt;
+}
+
 void ConfigDeveloperToolsView::setMavFtpDownloadServices(
     MavFtpServiceInterface *service, VehicleTargetManager *targets)
 {
@@ -240,7 +271,8 @@ void ConfigDeveloperToolsView::StartMavFtpDownload()
         return;
     if (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || ApjEmbeddingBusy() || LogOrganizerBusy()
+        || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("MAVFTP download: finish or cancel the current Developer operation first."));
         return;
@@ -294,7 +326,8 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
         else if (m_gpsExtractionState || m_gpsExtractionPrompt
                  || m_splitState || m_splitPrompt
                  || m_dashWareState || m_dashWarePrompt
-                 || ApjEmbeddingBusy() || MavFtpDownloadBusy())
+                 || ApjEmbeddingBusy() || LogOrganizerBusy()
+                 || MavFtpDownloadBusy())
             reason = tr("Finish or cancel the current offline file operation first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
@@ -351,6 +384,7 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
     CancelSplit();
     CancelDashWareExport();
     CancelApjEmbedding();
+    CancelLogOrganizer();
     if (m_mavFtpDownload)
         m_mavFtpDownload->cancel();
     ActionPageView::closeEvent(event);
@@ -375,6 +409,9 @@ ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
     ++m_apjPromptRevision;
     if (m_apjState)
         m_apjState->cancelled.store(true, std::memory_order_relaxed);
+    ++m_logOrganizerRevision;
+    if (m_logOrganizerState)
+        m_logOrganizerState->cancelled.store(true, std::memory_order_relaxed);
     // The worker owns only copied paths and shared atomic state. Destruction
     // disconnects the watcher; it does not block the GUI waiting for file I/O.
 }
@@ -404,6 +441,7 @@ void ConfigDeveloperToolsView::PickGpsCorrectionInput()
     if (m_fileToolsClosing || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy()
         || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy()))
         return;
@@ -466,12 +504,14 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
     const bool idle = !m_gpsExtractionState && !m_gpsExtractionPrompt
         && !m_splitState && !m_splitPrompt
         && !m_dashWareState && !m_dashWarePrompt && !ApjEmbeddingBusy()
+        && !LogOrganizerBusy()
         && !MavFtpDownloadBusy() && !m_vehiclePrompt
         && (!m_vehicleTools || !m_vehicleTools->busy());
     m_gpsExtractionButton->setEnabled(idle);
     m_splitButton->setEnabled(idle);
     m_dashWareButton->setEnabled(idle);
     m_apjButton->setEnabled(idle);
+    m_logOrganizerButton->setEnabled(idle);
     const bool ftpAvailable = m_mavFtpService && m_mavFtpTargets;
     const bool ftpBusy = ftpAvailable && m_mavFtpService->isBusy();
     m_mavFtpButton->setEnabled(idle && ftpAvailable && !ftpBusy);
@@ -489,6 +529,7 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
     if (m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy()
         || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
@@ -606,6 +647,7 @@ void ConfigDeveloperToolsView::PickSplitInput()
     if (m_fileToolsClosing || m_splitState || m_splitPrompt
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy()
         || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
@@ -715,7 +757,8 @@ void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
         return;
     if (m_splitState || m_splitPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || ApjEmbeddingBusy() || LogOrganizerBusy()
+        || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DataFlash log split: another file selection, offline operation, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -849,7 +892,8 @@ void ConfigDeveloperToolsView::CancelDashWareExport()
 void ConfigDeveloperToolsView::PickDashWareInput()
 {
     if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || MavFtpDownloadBusy()
+        || ApjEmbeddingBusy() || LogOrganizerBusy()
+        || MavFtpDownloadBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -949,6 +993,7 @@ void ConfigDeveloperToolsView::ExportDashWareCsv(
     if (m_fileToolsClosing)
         return;
     if (m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy()
         || MavFtpDownloadBusy() || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -1075,7 +1120,8 @@ void ConfigDeveloperToolsView::CancelApjEmbedding()
 
 void ConfigDeveloperToolsView::PickApjFirmware()
 {
-    if (m_fileToolsClosing || ApjEmbeddingBusy() || MavFtpDownloadBusy()
+    if (m_fileToolsClosing || ApjEmbeddingBusy() || LogOrganizerBusy()
+        || MavFtpDownloadBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
@@ -1182,7 +1228,8 @@ void ConfigDeveloperToolsView::EmbedDefaultsInApj(
 {
     if (m_fileToolsClosing)
         return;
-    if (ApjEmbeddingBusy() || MavFtpDownloadBusy()
+    if (ApjEmbeddingBusy() || LogOrganizerBusy()
+        || MavFtpDownloadBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
@@ -1302,6 +1349,416 @@ void ConfigDeveloperToolsView::EmbedDefaultsInApj(
     RefreshVehicleActions();
 }
 
+void ConfigDeveloperToolsView::CancelLogOrganizer()
+{
+    const bool retainExecutionReport =
+        m_logOrganizerState && m_logOrganizerState->executing;
+    if (!retainExecutionReport)
+        ++m_logOrganizerRevision;
+    if (m_logOrganizerState)
+        m_logOrganizerState->cancelled.store(true, std::memory_order_relaxed);
+    const QPointer<QDialog> prompt = m_logOrganizerPrompt;
+    const QPointer<QProgressDialog> progress = m_logOrganizerProgress;
+    m_logOrganizerPrompt.clear();
+    if (prompt) {
+        const QSignalBlocker blocker(prompt);
+        prompt->reject();
+    }
+    if (progress) {
+        const QSignalBlocker blocker(progress);
+        progress->cancel();
+    }
+}
+
+void ConfigDeveloperToolsView::PickLogOrganizerDirectory()
+{
+    if (m_fileToolsClosing || LogOrganizerBusy() || ApjEmbeddingBusy()
+        || MavFtpDownloadBusy() || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    const quint64 revision = ++m_logOrganizerRevision;
+    auto *dialog = new QFileDialog(this, tr("Select log directory"));
+    dialog->setObjectName(
+        QStringLiteral("DeveloperLogOrganizerDirectoryDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setFileMode(QFileDialog::Directory);
+    // Qt 5 resets ShowDirsOnly while changing fileMode.
+    dialog->setOption(QFileDialog::ShowDirsOnly);
+    m_logOrganizerPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, revision](int result) {
+        if (m_fileToolsClosing || revision != m_logOrganizerRevision)
+            return;
+        m_logOrganizerPrompt.clear();
+        const QStringList directories = dialog->selectedFiles();
+        if (result == QDialog::Accepted && directories.size() == 1)
+            AnalyzeLogDirectory(directories.first());
+        else
+            RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::AnalyzeLogDirectory(QString root)
+{
+    if (m_fileToolsClosing)
+        return;
+    if (LogOrganizerBusy() || ApjEmbeddingBusy() || MavFtpDownloadBusy()
+        || m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        AppendLog(tr("Log directory organizer: another file selection, offline operation, or vehicle operation is already active."));
+        RefreshOfflineFileActions();
+        return;
+    }
+    if (root.trimmed().isEmpty()) {
+        AppendLog(tr("Log directory organizer: select a directory to analyze."));
+        RefreshOfflineFileActions();
+        return;
+    }
+
+    const quint64 revision = ++m_logOrganizerRevision;
+    const auto state = std::make_shared<LogOrganizerState>();
+    m_logOrganizerState = state;
+    AppendLog(tr("Log directory analysis started: %1").arg(root));
+    AppendLog(tr("Analysis is read-only. No files are moved or deleted before the exact plan is reviewed and explicitly executed."));
+
+    auto *progress = new QProgressDialog(
+        tr("Analyzing the log directory…"), tr("Cancel"), 0, 1000, this);
+    progress->setObjectName(
+        QStringLiteral("DeveloperLogOrganizerProgressDialog"));
+    progress->setWindowTitle(tr("Organize Log Directory"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    m_logOrganizerProgress = progress;
+    connect(progress, &QProgressDialog::canceled, this, [state]() {
+        state->cancelled.store(true, std::memory_order_relaxed);
+    });
+    progress->show();
+
+    using Analysis = FlightLogOrganizer::Analysis;
+    auto *watcher = new QFutureWatcher<Analysis>(this);
+    auto *timer = new QTimer(watcher);
+    timer->setInterval(100);
+    const QPointer<QProgressDialog> guardedProgress(progress);
+    connect(timer, &QTimer::timeout, this,
+            [this, state, guardedProgress]() {
+        if (m_fileToolsClosing || !guardedProgress
+            || m_logOrganizerState != state
+            || state->cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        const qint64 total = state->total.load(std::memory_order_relaxed);
+        const qint64 done = state->processed.load(std::memory_order_relaxed);
+        if (total > 0) {
+            guardedProgress->setValue(int(qBound(
+                0.0L, 1000.0L * done / total, 1000.0L)));
+        }
+    });
+    connect(watcher, &QFutureWatcher<Analysis>::finished, this,
+            [this, state, watcher, timer, guardedProgress, revision]() {
+        timer->stop();
+        const Analysis analysis = watcher->result();
+        watcher->deleteLater();
+        if (m_logOrganizerState != state)
+            return;
+        m_logOrganizerState.reset();
+        m_logOrganizerProgress.clear();
+        if (guardedProgress)
+            guardedProgress->deleteLater();
+        if (m_fileToolsClosing || revision != m_logOrganizerRevision)
+            return;
+
+        if (analysis.cancelled) {
+            AppendLog(tr("Log directory analysis cancelled; no files were changed."));
+            RefreshVehicleActions();
+            return;
+        }
+        if (!analysis.success || !analysis.plan.isValid()) {
+            AppendLog(tr("Log directory analysis failed: %1")
+                          .arg(analysis.error.isEmpty()
+                                   ? tr("the organizer returned an invalid plan")
+                                   : analysis.error));
+            RefreshVehicleActions();
+            return;
+        }
+        AppendLog(tr("Log directory analysis completed: %1 candidate files, %2 planned filesystem changes under %3.")
+                      .arg(analysis.plan.candidateCount())
+                      .arg(analysis.plan.entries().size())
+                      .arg(analysis.plan.root()));
+        for (const QString &warning : analysis.plan.warnings())
+            AppendLog(tr("Log directory analysis warning: %1").arg(warning));
+        if (analysis.plan.entries().isEmpty()) {
+            AppendLog(tr("No changes were planned; the directory was left unchanged. Review any analysis warnings above."));
+            RefreshVehicleActions();
+            return;
+        }
+        ShowLogOrganizerPlan(analysis.plan, revision);
+    });
+    timer->start();
+    watcher->setFuture(QtConcurrent::run([root, state]() {
+        try {
+            return FlightLogOrganizer::Analyze(
+                root,
+                [state]() {
+                    return state->cancelled.load(std::memory_order_relaxed);
+                },
+                [state](qint64 processed, qint64 total) {
+                    state->processed.store(processed,
+                                           std::memory_order_relaxed);
+                    state->total.store(total, std::memory_order_relaxed);
+                });
+        } catch (const std::exception &error) {
+            Analysis analysis;
+            analysis.error = QString::fromUtf8(error.what());
+            return analysis;
+        } catch (...) {
+            Analysis analysis;
+            analysis.error = QStringLiteral(
+                "Unexpected log directory analysis error.");
+            return analysis;
+        }
+    }));
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ShowLogOrganizerPlan(
+    FlightLogOrganizer::Plan plan, quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_logOrganizerRevision
+        || LogOrganizerBusy() || !plan.isValid()) {
+        if (!m_fileToolsClosing)
+            RefreshVehicleActions();
+        return;
+    }
+
+    auto *dialog = new QDialog(this);
+    dialog->setObjectName(QStringLiteral("DeveloperLogOrganizerPlanDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Review Log Organization Plan"));
+    dialog->setWindowModality(Qt::NonModal);
+    dialog->resize(940, 540);
+    auto *layout = new QVBoxLayout(dialog);
+    auto *summary = new QLabel(
+        tr("Root: %1\nCandidates examined: %2\nPlanned changes: %3\n\n"
+           "Review every exact path below. Stop recording and close all log writers before executing: active writers are not detected or locked. "
+           "Empty log deletion is permanent, and moves never overwrite an existing destination. "
+           "Corrected content classification can relocate logs that an older Mission Planner organization pass had already sorted.")
+            .arg(plan.root())
+            .arg(plan.candidateCount())
+            .arg(plan.entries().size()),
+        dialog);
+    summary->setObjectName(
+        QStringLiteral("DeveloperLogOrganizerPlanSummary"));
+    summary->setTextFormat(Qt::PlainText);
+    summary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+
+    auto *tree = new QTreeWidget(dialog);
+    tree->setObjectName(QStringLiteral("DeveloperLogOrganizerPlanTree"));
+    tree->setColumnCount(4);
+    tree->setHeaderLabels({tr("Operation"), tr("Source (relative to root)"),
+                           tr("Destination (relative to root)"), tr("Bytes")});
+    tree->setRootIsDecorated(false);
+    tree->setUniformRowHeights(true);
+    for (const FlightLogOrganizer::Entry &entry : plan.entries()) {
+        const bool deletion =
+            entry.operation == FlightLogOrganizer::Operation::DeleteEmpty;
+        auto *item = new QTreeWidgetItem(tree);
+        item->setText(0, deletion ? tr("Permanently delete empty log")
+                                  : tr("Move"));
+        item->setText(1, QDir(plan.root()).relativeFilePath(entry.source));
+        item->setText(2, deletion ? tr("(deleted)")
+            : QDir(plan.root()).relativeFilePath(entry.destination));
+        item->setData(1, Qt::UserRole, entry.source);
+        item->setData(2, Qt::UserRole, entry.destination);
+        item->setText(3, QString::number(entry.bytes));
+        item->setToolTip(1, entry.source);
+        item->setToolTip(2, deletion ? tr("This zero-byte log will be deleted permanently.")
+                                     : entry.destination);
+    }
+    tree->header()->setStretchLastSection(false);
+    tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    tree->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    tree->header()->setSectionResizeMode(2, QHeaderView::Stretch);
+    tree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    layout->addWidget(tree, 1);
+
+    if (!plan.warnings().isEmpty()) {
+        auto *warnings = new QPlainTextEdit(dialog);
+        warnings->setObjectName(
+            QStringLiteral("DeveloperLogOrganizerPlanWarnings"));
+        warnings->setReadOnly(true);
+        warnings->setMaximumHeight(120);
+        warnings->setPlainText(
+            tr("Warnings:\n%1").arg(plan.warnings().join(QLatin1Char('\n'))));
+        layout->addWidget(warnings);
+    }
+
+    auto *buttons = new QDialogButtonBox(dialog);
+    auto *execute = buttons->addButton(tr("Execute Plan"),
+                                       QDialogButtonBox::AcceptRole);
+    auto *cancel = buttons->addButton(QDialogButtonBox::Cancel);
+    execute->setObjectName(
+        QStringLiteral("DeveloperLogOrganizerExecuteButton"));
+    cancel->setObjectName(
+        QStringLiteral("DeveloperLogOrganizerCancelButton"));
+    execute->setEnabled(plan.isValid() && !plan.entries().isEmpty());
+    execute->setDefault(false);
+    execute->setAutoDefault(false);
+    cancel->setDefault(true);
+    cancel->setAutoDefault(true);
+    connect(execute, &QPushButton::clicked, dialog, &QDialog::accept);
+    connect(cancel, &QPushButton::clicked, dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    m_logOrganizerPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, plan, revision](int result) {
+        if (m_fileToolsClosing || revision != m_logOrganizerRevision)
+            return;
+        m_logOrganizerPrompt.clear();
+        if (result == QDialog::Accepted)
+            ExecuteLogOrganizerPlan(plan, revision);
+        else {
+            AppendLog(tr("Log organization plan cancelled; no planned changes were executed."));
+            RefreshVehicleActions();
+        }
+    });
+    dialog->show();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ExecuteLogOrganizerPlan(
+    FlightLogOrganizer::Plan plan, quint64 revision)
+{
+    if (m_fileToolsClosing || revision != m_logOrganizerRevision
+        || LogOrganizerBusy() || !plan.isValid()
+        || plan.entries().isEmpty()) {
+        RefreshVehicleActions();
+        return;
+    }
+
+    const auto state = std::make_shared<LogOrganizerState>();
+    state->executing = true;
+    m_logOrganizerState = state;
+    AppendLog(tr("Executing %1 explicitly confirmed log organization changes under %2. Empty-log deletions are permanent; completed changes are not rolled back on a later failure or cancellation.")
+                  .arg(plan.entries().size()).arg(plan.root()));
+    auto *progress = new QProgressDialog(
+        tr("Executing the confirmed log organization plan…"), tr("Cancel"),
+        0, 1000, this);
+    progress->setObjectName(
+        QStringLiteral("DeveloperLogOrganizerProgressDialog"));
+    progress->setWindowTitle(tr("Organize Log Directory"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    m_logOrganizerProgress = progress;
+    connect(progress, &QProgressDialog::canceled, this, [state]() {
+        state->cancelled.store(true, std::memory_order_relaxed);
+    });
+    progress->show();
+
+    using Result = FlightLogOrganizer::Result;
+    auto *watcher = new QFutureWatcher<Result>(this);
+    auto *timer = new QTimer(watcher);
+    timer->setInterval(100);
+    const QPointer<QProgressDialog> guardedProgress(progress);
+    connect(timer, &QTimer::timeout, this,
+            [this, state, guardedProgress]() {
+        if (m_fileToolsClosing || !guardedProgress
+            || m_logOrganizerState != state
+            || state->cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        const qint64 total = state->total.load(std::memory_order_relaxed);
+        const qint64 done = state->processed.load(std::memory_order_relaxed);
+        if (total > 0) {
+            guardedProgress->setValue(int(qBound(
+                0.0L, 1000.0L * done / total, 1000.0L)));
+        }
+    });
+    connect(watcher, &QFutureWatcher<Result>::finished, this,
+            [this, state, watcher, timer, guardedProgress, revision]() {
+        timer->stop();
+        const Result result = watcher->result();
+        watcher->deleteLater();
+        if (m_logOrganizerState != state)
+            return;
+        m_logOrganizerState.reset();
+        m_logOrganizerProgress.clear();
+        if (guardedProgress)
+            guardedProgress->deleteLater();
+        if (revision != m_logOrganizerRevision)
+            return;
+
+        for (const FlightLogOrganizer::Entry &entry : result.completed) {
+            if (entry.operation == FlightLogOrganizer::Operation::DeleteEmpty) {
+                AppendLog(tr("Permanently deleted planned zero-byte log: %1")
+                              .arg(entry.source));
+            } else {
+                AppendLog(tr("Moved planned log file: %1 -> %2 (%3 bytes)")
+                              .arg(entry.source, entry.destination)
+                              .arg(entry.bytes));
+            }
+        }
+        for (const QString &warning : result.warnings)
+            AppendLog(tr("Log organizer warning: %1").arg(warning));
+        if (result.cancelled) {
+            AppendLog(tr("Log organization cancelled after %1 completed changes; %2 planned changes remain. Completed moves or deletions were not rolled back.")
+                          .arg(result.completed.size()).arg(result.remaining));
+        } else if (!result.success) {
+            AppendLog(tr("Log organization failed after %1 completed changes; %2 planned changes remain: %3. Completed moves or deletions were not rolled back.")
+                          .arg(result.completed.size()).arg(result.remaining)
+                          .arg(result.error));
+        } else {
+            AppendLog(tr("Log organization completed: %1 changes applied; %2 remain.")
+                          .arg(result.completed.size()).arg(result.remaining));
+        }
+        if (!m_fileToolsClosing)
+            RefreshVehicleActions();
+    });
+    timer->start();
+    watcher->setFuture(QtConcurrent::run([plan, state]() {
+        try {
+            return FlightLogOrganizer::Execute(
+                plan,
+                [state]() {
+                    return state->cancelled.load(std::memory_order_relaxed);
+                },
+                [state](qint64 processed, qint64 total) {
+                    state->processed.store(processed,
+                                           std::memory_order_relaxed);
+                    state->total.store(total, std::memory_order_relaxed);
+                });
+        } catch (const std::exception &error) {
+            Result result;
+            result.error = QString::fromUtf8(error.what());
+            result.remaining = plan.entries().size();
+            return result;
+        } catch (...) {
+            Result result;
+            result.error = QStringLiteral(
+                "Unexpected log organization execution error.");
+            result.remaining = plan.entries().size();
+            return result;
+        }
+    }));
+    RefreshVehicleActions();
+}
+
 void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
 {
     const QPointer<ConfigDeveloperToolsView> guard(this);
@@ -1309,6 +1766,7 @@ void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
     if (!service || m_vehiclePrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy()
         || MavFtpDownloadBusy())
         return;
     VehiclePlan plan;

@@ -720,6 +720,10 @@ set(SOURCES
     src/ui/Loghandling/DataFlashDashWareCsvExporter.h
     src/ui/tools/ApjDefaultsEmbedder.cpp
     src/ui/tools/ApjDefaultsEmbedder.h
+    src/ui/Loghandling/FlightLogClassifier.cpp
+    src/ui/Loghandling/FlightLogClassifier.h
+    src/ui/Loghandling/FlightLogOrganizer.cpp
+    src/ui/Loghandling/FlightLogOrganizer.h
     src/comm/TlogReader.h
     src/comm/TlogExportService.cpp
     src/comm/TlogExportService.h
@@ -3933,6 +3937,27 @@ if(BUILD_TESTING)
     add_executable(apj_defaults_probe tests/ApjDefaultsEmbedderProbe.cpp)
     target_link_libraries(apj_defaults_probe PRIVATE apj_defaults_test_support)
 
+    add_library(flight_log_organizer_test_support STATIC
+        src/ui/Loghandling/FlightLogClassifier.cpp
+        src/ui/Loghandling/FlightLogClassifier.h
+        src/ui/Loghandling/FlightLogOrganizer.cpp
+        src/ui/Loghandling/FlightLogOrganizer.h)
+    target_link_libraries(flight_log_organizer_test_support PUBLIC
+        gps_correction_test_support Qt::Core)
+    add_executable(flightlogclassifier_tests tests/test_flightlogclassifier.cpp)
+    target_link_libraries(flightlogclassifier_tests PRIVATE
+        flight_log_organizer_test_support Qt::Test)
+    add_test(NAME flightlogclassifier_tests COMMAND flightlogclassifier_tests)
+    set_tests_properties(flightlogclassifier_tests PROPERTIES TIMEOUT 60)
+    add_executable(flightlogorganizer_tests tests/test_flightlogorganizer.cpp)
+    target_link_libraries(flightlogorganizer_tests PRIVATE
+        flight_log_organizer_test_support Qt::Test)
+    add_test(NAME flightlogorganizer_tests COMMAND flightlogorganizer_tests)
+    set_tests_properties(flightlogorganizer_tests PROPERTIES TIMEOUT 60)
+    add_executable(flight_log_organizer_probe tests/FlightLogOrganizerProbe.cpp)
+    target_link_libraries(flight_log_organizer_probe PRIVATE
+        flight_log_organizer_test_support)
+
     add_executable(configdevelopertoolsview_tests
         tests/test_configdevelopertoolsview.cpp
         src/ui/configuration/ActionPageView.cpp
@@ -3954,6 +3979,7 @@ if(BUILD_TESTING)
         dataflash_dashware_test_support
         mavftp_download_ui_test_support
         apj_defaults_test_support
+        flight_log_organizer_test_support
         Qt::Concurrent
         Qt::Core
         Qt::Widgets

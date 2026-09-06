@@ -17,6 +17,7 @@
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QDebug>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QFile>
@@ -29,6 +30,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPixmap>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSet>
@@ -36,6 +38,7 @@
 #include <QTemporaryDir>
 #include <QTableWidget>
 #include <QTimer>
+#include <QTreeWidget>
 #include <QtEndian>
 #include <algorithm>
 #include <functional>
@@ -488,7 +491,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 16 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 17 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
@@ -1133,6 +1136,141 @@ int RunDeveloperVehicleToolRuntimeAudit()
                "cancelling APJ overwrite changed the existing output");
         qInfo() << "Developer runtime APJ defaults embedding:" << apjOutput
                 << page->Log();
+    }
+
+    // Exercise the real directory picker and immutable plan consent entirely
+    // offline. Only this temporary fixture may be moved or have empty logs
+    // deleted; the network SITL and user log directories are never selected.
+    QTemporaryDir organizerFiles;
+    expect(organizerFiles.isValid(), "organizer fixture directory unavailable");
+    const QString organizerRoot = organizerFiles.path();
+    expect(QDir(organizerRoot).mkdir(QStringLiteral("incoming")),
+           "organizer input directory could not be created");
+    const QString smallLog = organizerFiles.filePath("incoming/small.log");
+    const QString companion = organizerFiles.filePath("incoming/small.log.param");
+    const QString emptyLog = organizerFiles.filePath("incoming/empty.bin");
+    const QString untouched = organizerFiles.filePath("incoming/unrelated.txt");
+    const QByteArray smallBytes("offline small log\n");
+    const QByteArray companionBytes("preserve companion bytes\n");
+    const QByteArray untouchedBytes("not a log or matching companion\n");
+    const auto writeOrganizerFixture = [&](const QString &path, const QByteArray &bytes) {
+        QFile file(path);
+        expect(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(),
+               "organizer fixture file could not be written");
+    };
+    writeOrganizerFixture(smallLog, smallBytes);
+    writeOrganizerFixture(companion, companionBytes);
+    writeOrganizerFixture(emptyLog, {});
+    writeOrganizerFixture(untouched, untouchedBytes);
+    const QString movedLog = organizerFiles.filePath("SMALL/small.log");
+    const QString movedCompanion = organizerFiles.filePath("SMALL/small.log.param");
+    const quint64 organizerGeneration = links->vehicleTargetManager()->targetGeneration();
+    auto *organize = page->findChild<QPushButton *>("OrganizeLogDirectoryButton");
+    expect(organize && organize->isEnabled(), "offline log organizer action disabled");
+    const auto organizerSourcesIntact = [&] {
+        return readFileBytes(smallLog) == smallBytes
+            && readFileBytes(companion) == companionBytes
+            && QFile::exists(emptyLog) && QFileInfo(emptyLog).size() == 0
+            && readFileBytes(untouched) == untouchedBytes
+            && !QFile::exists(movedLog) && !QFile::exists(movedCompanion);
+    };
+    const auto visibleOrganizerDialog = [&](const QString &name) -> QDialog * {
+        if (!page) return nullptr;
+        const auto dialogs = page->findChildren<QDialog *>(name);
+        for (auto *dialog : dialogs)
+            if (dialog->isVisible()) return dialog;
+        return nullptr;
+    };
+    const auto openOrganizerPicker = [&]() -> QFileDialog * {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        if (!organize || !organize->isEnabled()) return nullptr;
+        organize->click();
+        QCoreApplication::processEvents();
+        auto *picker = qobject_cast<QFileDialog *>(visibleOrganizerDialog(
+            QStringLiteral("DeveloperLogOrganizerDirectoryDialog")));
+        expect(picker && picker->fileMode() == QFileDialog::Directory,
+               "organizer actual directory picker missing");
+        return picker;
+    };
+    const auto acceptOrganizerDirectory = [&](QFileDialog *picker) -> QDialog * {
+        if (!picker) return nullptr;
+        auto *filename = picker->findChild<QLineEdit *>("fileNameEdit");
+        expect(filename != nullptr, "organizer directory editor missing");
+        if (filename) filename->setText(organizerRoot);
+        expect(picker->selectedFiles() == QStringList{organizerRoot},
+               "organizer selection did not name the exact fixture root");
+        expect(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection),
+               "organizer directory picker cannot be accepted");
+        expect(waitFor([&] {
+            return visibleOrganizerDialog("DeveloperLogOrganizerPlanDialog") != nullptr;
+        }, 5000), "organizer analysis did not produce a visible plan");
+        return visibleOrganizerDialog("DeveloperLogOrganizerPlanDialog");
+    };
+    if (organize) {
+        QFileDialog *picker = openOrganizerPicker();
+        if (picker) picker->reject();
+        expect(waitFor([&] { return organize->isEnabled(); }) && organizerSourcesIntact(),
+               "organizer directory cancellation changed source files");
+        QDialog *plan = acceptOrganizerDirectory(openOrganizerPicker());
+        if (plan) {
+            auto *cancel = plan->findChild<QPushButton *>("DeveloperLogOrganizerCancelButton");
+            auto *execute = plan->findChild<QPushButton *>("DeveloperLogOrganizerExecuteButton");
+            auto *tree = plan->findChild<QTreeWidget *>("DeveloperLogOrganizerPlanTree");
+            expect(cancel && cancel->isDefault() && execute && execute->isEnabled()
+                       && tree && tree->topLevelItemCount() == 3,
+                   "organizer plan does not show all files/default Cancel");
+            QString renderedPlan;
+            QSet<QString> plannedSources;
+            QSet<QString> plannedDestinations;
+            if (tree) {
+                for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+                    const auto *item = tree->topLevelItem(row);
+                    plannedSources.insert(item->data(1, Qt::UserRole).toString());
+                    const QString destination = item->data(2, Qt::UserRole).toString();
+                    if (!destination.isEmpty()) plannedDestinations.insert(destination);
+                    for (int column = 0; column < tree->columnCount(); ++column)
+                        renderedPlan += item->text(column) + '\n';
+                }
+            }
+            expect(plannedSources == QSet<QString>{smallLog, companion, emptyLog}
+                       && plannedDestinations == QSet<QString>{movedLog, movedCompanion},
+                   "organizer plan does not retain exact absolute operation paths");
+            expect(renderedPlan.contains("incoming/small.log")
+                       && renderedPlan.contains("incoming/small.log.param")
+                       && renderedPlan.contains("incoming/empty.bin")
+                       && renderedPlan.contains("SMALL/small.log")
+                       && renderedPlan.contains("SMALL/small.log.param"),
+                   "organizer consent omits an exact source or destination");
+            const QString screenshot = qEnvironmentVariable(
+                "APM_ORGANIZER_AUDIT_SCREENSHOT");
+            if (!screenshot.isEmpty()) {
+                expect(plan->grab().save(screenshot),
+                       "organizer plan screenshot could not be saved");
+            }
+            expect(organizerSourcesIntact(), "read-only organizer plan mutated files");
+            plan->reject(); // Same QDialog rejection boundary as Escape.
+        }
+        expect(waitFor([&] { return organize->isEnabled(); }) && organizerSourcesIntact(),
+               "organizer plan cancellation changed files or retained the busy gate");
+        plan = acceptOrganizerDirectory(openOrganizerPicker());
+        if (plan) {
+            auto *execute = plan->findChild<QPushButton *>("DeveloperLogOrganizerExecuteButton");
+            expect(execute && execute->isEnabled(), "organizer Execute button missing");
+            if (execute) execute->click();
+        }
+        expect(waitFor([&] {
+            return organize->isEnabled() && QFile::exists(movedLog);
+        }, 5000), "organizer execution did not finish through actual Tools route");
+        expect(!QFile::exists(smallLog) && !QFile::exists(companion)
+                   && !QFile::exists(emptyLog) && readFileBytes(movedLog) == smallBytes
+                   && readFileBytes(movedCompanion) == companionBytes
+                   && readFileBytes(untouched) == untouchedBytes,
+               "organizer move/delete output differs or unrelated bytes changed");
+        expect(!links->vehicleTargetManager()->acquireTarget().isValid()
+                   && links->vehicleTargetManager()->targetGeneration() == organizerGeneration,
+               "offline organizer changed the vehicle target");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        qInfo() << "Developer runtime log organizer passed:" << organizerRoot << page->Log();
     }
 
     QPointer<DeveloperAuditLink> fixture(new DeveloperAuditLink);

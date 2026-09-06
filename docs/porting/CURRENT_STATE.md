@@ -24,7 +24,50 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Embed Defaults in APJ**. The existing Developer
+Latest slice (2026-09-06): **Organize Log Directory**. The existing Developer
+action now opens an asynchronous folder picker, performs read-only analysis,
+shows every proposed move/empty-file deletion in a modeless default-Cancel plan,
+then runs only the explicitly confirmed immutable plan. TLOG, raw RLOG and
+binary/text DataFlash use shared bounded readers. The MP10 SMALL/BAD/SITL/type/
+SYSID/serial layout and literal basename-prefix companions are preserved;
+the original boolean-count type bug, serial-path integer addition and NUL-padded
+serial decoding are corrected. Same-stem formats have an explicit stable primary;
+mixed empty/nonempty and overlapping-prefix groups stay untouched with warnings.
+
+Full-content snapshots, path/volume checks and no-overwrite admission protect
+planned files. Execution pins its plan across callbacks, checks cancellation and
+fresh source metadata before mutations, and reports completed/remaining operations
+without claiming group atomicity. A test first reproduced deletion of newly
+written contents from a final callback, then passed after the fresh empty-file
+check; the symmetric Move regression passes too. Close retains a cached partial
+report, but durable history after page destruction/app exit remains open.
+
+Qt5/audio configure/build, focused9/9 (8.66s before the final Move guard), final
+**246/246 (30.12s)** including both callback regressions, and final production
+X11 exit0/zero audit failures pass. The actual route exercises folder Cancel,
+plan Cancel and three exact operations, then all prior APJ/GPS/Split/DashWare/
+MAVFTP/browser-consent/six vehicle checks. Root inspected the plan screenshot and
+fixed hidden filenames/oversized Bytes: rows now show relative paths under the
+visible root, with absolute paths retained in item data/tooltips. Final image:
+`/tmp/apm-log-organizer.MLu9xS/organizer-plan-final.png`.
+Independent pymavlink/Python evidence validates a copied real5,275,648-byte BIN,
+raw/timestamped Plane telemetry, SMALL/BAD, companions and empty deletion: seven
+moves plus one deletion, every nonempty SHA-256 preserved, repeat analysis no-op.
+No user log directory, network SITL or physical board was modified.
+
+Developer is now **17/32 working,15 unavailable**. Other counts are unchanged:
+Advanced14 complete+1 partial Signing and disabled Support Proxy, fixedTools24
+plus Signing extension, SETUP46/eight absent reference routes, CONFIG15/15
+factories and Planner21/64. Claude TCP c208–c217 reviewed reference semantics,
+filesystem policy and fixes; three Codex streams implemented classifier,
+planner/executor and UI/tests, with root-owned integration and verification.
+See `LOG_DIRECTORY_ORGANIZER.md` for evidence and explicit limits (20k bounds,
+multiple full hash passes, unlocked active writers, durable journal, native/GUI).
+Next: **Upgrade Bootloader** as a guarded single-command/two-confirmation slice,
+then other single-drone tools including parameter recovery and MagFit. Settings
+follows Tools; Swarm remains last. No full-port completion claim is made.
+
+Previous slice (2026-09-06): **Embed Defaults in APJ**. The existing Developer
 button now opens firmware/defaults file pickers, creates the exact MP10 output
 `firmwarePath + new.apj`, and requires path-specific default-Cancel consent to
 replace an existing output. A bounded cancellable worker validates JSON/zlib,
