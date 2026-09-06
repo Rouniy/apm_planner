@@ -7,6 +7,7 @@
 #include "ui/configuration/ConfigCompassView.h"
 
 #include <QBuffer>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -178,6 +179,7 @@ class ConfigCompassViewTest final : public QObject {
   Q_OBJECT
 
 private slots:
+  void offlineMagFitUsesSharedAction();
   void surfaceIsCompleteBeforeSnapshot();
   void snapshotHydratesWithoutWrites();
   void exactCalibrationContextEnablesSafeSurface();
@@ -191,6 +193,37 @@ private slots:
   void rebootDefaultsToCancel();
   void destructionDoesNotEmitWrite();
 };
+
+void ConfigCompassViewTest::offlineMagFitUsesSharedAction() {
+  ConfigCompassView view;
+  auto *button = view.findChild<QPushButton *>(QStringLiteral("compassCalFromLog"));
+  QVERIFY(button);
+  QVERIFY(!button->isEnabled());
+  auto *first = new QAction(&view);
+  QSignalSpy firstTriggered(first, &QAction::triggered);
+  view.setOfflineMagFitAction(first);
+  // Offline analysis remains usable without a parameter/calibration context.
+  QVERIFY(button->isEnabled());
+  button->click();
+  QCOMPARE(firstTriggered.count(), 1);
+  first->setEnabled(false);
+  QVERIFY(!button->isEnabled());
+  first->setEnabled(true);
+  QVERIFY(button->isEnabled());
+  QAction replacement(&view);
+  QSignalSpy replacementTriggered(&replacement, &QAction::triggered);
+  view.setOfflineMagFitAction(&replacement);
+  delete first;
+  QVERIFY(button->isEnabled());
+  button->click();
+  QCOMPARE(replacementTriggered.count(), 1);
+  view.setOfflineMagFitAction(nullptr);
+  QVERIFY(!button->isEnabled());
+  auto *last = new QAction(&view);
+  view.setOfflineMagFitAction(last);
+  delete last;
+  QVERIFY(!button->isEnabled());
+}
 
 void ConfigCompassViewTest::surfaceIsCompleteBeforeSnapshot() {
   ConfigCompassView view;
@@ -255,7 +288,7 @@ void ConfigCompassViewTest::surfaceIsCompleteBeforeSnapshot() {
   QPushButton *const fromLog =
       view.findChild<QPushButton *>(QStringLiteral("compassCalFromLog"));
   QVERIFY(fromLog && !fromLog->isEnabled());
-  QVERIFY(fromLog->toolTip().contains(QStringLiteral("offline mag-fit")));
+  QVERIFY(fromLog->toolTip().contains(QStringLiteral("Offline MagFit window is unavailable")));
   QVERIFY(view.findChild<QLabel *>(
       QStringLiteral("compassCalTargetStatus")));
   QPlainTextEdit *const result =
@@ -344,7 +377,7 @@ void ConfigCompassViewTest::exactCalibrationContextEnablesSafeSurface() {
   QVERIFY(accept && !accept->isEnabled());
   QVERIFY(cancel && !cancel->isEnabled());
   QVERIFY(fromLog && !fromLog->isEnabled());
-  QVERIFY(fromLog->toolTip().contains(QStringLiteral("offline mag-fit")));
+  QVERIFY(fromLog->toolTip().contains(QStringLiteral("Offline MagFit window is unavailable")));
   QVERIFY(!start->toolTip().contains(QStringLiteral("unavailable")));
   QVERIFY(!large->toolTip().contains(QStringLiteral("unavailable")));
 

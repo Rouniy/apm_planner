@@ -160,8 +160,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
     AddToolAction(tr("OSD Video — Telemetry Overlay"),
                   QStringLiteral("OsdVideoTelemetryOverlayButton"),
                   QStringLiteral("actionOsdVideoOverlay"));
-    AddUnavailableAction(tr("Offline Magnetometer Calibration (MagFit)"),
-                         QStringLiteral("OfflineMagFitButton"), notPorted);
+    AddToolAction(tr("Offline Magnetometer Calibration (MagFit)"),
+                  QStringLiteral("OfflineMagFitButton"),
+                  QStringLiteral("actionOfflineMagFit"));
     AddUnavailableAction(tr("Flight Log Index"),
                          QStringLiteral("FlightLogIndexButton"), notPorted);
     m_logOrganizerButton = AddAction(

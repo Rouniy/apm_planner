@@ -114,6 +114,7 @@ This file is part of the QGROUNDCONTROL project
 #include "AP2DataPlot2D.h"
 #include "LogDownloadWindow.h"
 #include "ConfigFFTWindow.h"
+#include "OfflineMagFitWindow.h"
 #include "AppPaths.h"
 #include "configuration/ParameterMetaDataRegenerationWindow.h"
 #include "AnonLogWindow.h"
@@ -633,6 +634,7 @@ MainWindow::~MainWindow()
     // synchronously and no destroyed-lambda needs to touch a raw logPlayer.
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
+    closeOfflineMagFit();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
@@ -734,6 +736,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
     auto *fftAction = new QAction(tr("FFT"), this);
     fftAction->setObjectName(QStringLiteral("actionFftAnalysis"));
     connect(fftAction, &QAction::triggered, this, &MainWindow::showFftAnalysis);
+    // Shared by Developer Tools and Compass; not an extra fixed TOOLS item.
+    auto *magFitAction = new QAction(tr("Offline Magnetometer Calibration (MagFit)"), this);
+    magFitAction->setObjectName(QStringLiteral("actionOfflineMagFit"));
+    connect(magFitAction, &QAction::triggered, this, &MainWindow::showOfflineMagFit);
     auto *paramGenAction = new QAction(tr("Param gen"), this);
     paramGenAction->setObjectName(QStringLiteral("actionParameterMetaDataRegeneration"));
     connect(paramGenAction, &QAction::triggered, this,
@@ -2246,6 +2252,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     aboutToCloseFlag = true;
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
+    closeOfflineMagFit();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
@@ -3160,6 +3167,27 @@ void MainWindow::closeFftAnalysisWindows()
 {
     const auto windows = findChildren<ConfigFFTWindow *>();
     for (auto *window : windows) delete window;
+}
+
+void MainWindow::showOfflineMagFit()
+{
+    if (aboutToCloseFlag) return;
+    if (!m_offlineMagFitWindow) {
+        m_offlineMagFitWindow = new OfflineMagFitWindow(this);
+        m_offlineMagFitWindow->setApplyService(
+            LinkManager::instance()->offlineMagFitApplyService());
+    }
+    m_offlineMagFitWindow->show();
+    m_offlineMagFitWindow->raise();
+    m_offlineMagFitWindow->activateWindow();
+}
+
+void MainWindow::closeOfflineMagFit()
+{
+    if (m_offlineMagFitWindow) {
+        delete m_offlineMagFitWindow.data();
+        m_offlineMagFitWindow.clear();
+    }
 }
 
 void MainWindow::showParameterMetaDataRegeneration()

@@ -6,17 +6,22 @@
 #include "comm/MavFtpServiceInterface.h"
 #include "comm/TCPLink.h"
 #include "comm/VehicleTargetManager.h"
+#include "core/parameters/ParameterStore.h"
 #include "services/DeveloperVehicleToolService.h"
 #include "services/ParameterRecoveryService.h"
+#include "services/OfflineMagFitApplyService.h"
+#include "ui/OfflineMagFitWindow.h"
 #include "ui/BackstageView.h"
 #include "ui/MainWindow.h"
 #include "ui/configuration/ConfigDeveloperToolsView.h"
+#include "ui/configuration/ConfigCompassView.h"
 #include "ui/configuration/MavFTPUIView.h"
 #include "ui/configuration/SetupView.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QCryptographicHash>
+#include <QCheckBox>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -50,6 +55,57 @@ namespace {
 constexpr int FixtureLinkId = 910110;
 constexpr quint8 FixtureSystem = 234;
 constexpr int DataFlashFmtLength = 89;
+
+QMap<QString, float> magFitParameters()
+{
+    return {{QStringLiteral("COMPASS_DEV_ID"), 202.0f},
+            {QStringLiteral("COMPASS_PRIO1_ID"), 202.0f},
+            {QStringLiteral("COMPASS_LEARN"), 1.0f},
+            {QStringLiteral("COMPASS_OFS_X"), -50.0f},
+            {QStringLiteral("COMPASS_OFS_Y"), 30.0f},
+            {QStringLiteral("COMPASS_OFS_Z"), -20.0f},
+            {QStringLiteral("COMPASS_DIA_X"), 1.0f},
+            {QStringLiteral("COMPASS_DIA_Y"), 1.0f},
+            {QStringLiteral("COMPASS_DIA_Z"), 1.0f},
+            {QStringLiteral("COMPASS_ODI_X"), 0.0f},
+            {QStringLiteral("COMPASS_ODI_Y"), 0.0f},
+            {QStringLiteral("COMPASS_ODI_Z"), 0.0f},
+            {QStringLiteral("COMPASS_SCALE"), 0.0f},
+            {QStringLiteral("COMPASS_ORIENT"), 0.0f},
+            {QStringLiteral("COMPASS_EXTERNAL"), 1.0f},
+            {QStringLiteral("AHRS_ORIENTATION"), 0.0f},
+            {QStringLiteral("COMPASS_CAL_FIT"), 16.0f},
+            {QStringLiteral("COMPASS_OFFS_MAX"), 1800.0f}};
+}
+
+QByteArray magFitLogFixture()
+{
+    QByteArray bytes("FMT,150,31,PARM,QNf,TimeUS,Name,Value\n"
+                     "FMT,151,49,MAG,QBfffffffffB,TimeUS,I,MagX,MagY,MagZ,OfsX,OfsY,OfsZ,MOX,MOY,MOZ,Health\n");
+    const auto parameters = magFitParameters();
+    for (auto it = parameters.cbegin(); it != parameters.cend(); ++it) {
+        bytes += "PARM,1," + it.key().toLatin1() + ","
+            + QByteArray::number(it.value(), 'g', 9) + '\n';
+    }
+    // MAG is corrected. Removing logged (-50,30,-20) offsets recovers a
+    // radius450 sphere requiring additive new offsets (20,-10,5).
+    constexpr int count = 192;
+    const double goldenAngle = std::acos(-1.0) * (3.0 - std::sqrt(5.0));
+    for (int index = 0; index < count; ++index) {
+        const double z = 1.0 - 2.0 * (index + 0.5) / count;
+        const double radial = std::sqrt(1.0 - z * z);
+        const double angle = index * goldenAngle;
+        const double x = 450.0 * radial * std::cos(angle) - 20.0 - 50.0;
+        const double y = 450.0 * radial * std::sin(angle) + 10.0 + 30.0;
+        const double fieldZ = 450.0 * z - 5.0 - 20.0;
+        bytes += "MAG," + QByteArray::number(1000 + index) + ",0,"
+            + QByteArray::number(x, 'g', 17) + ','
+            + QByteArray::number(y, 'g', 17) + ','
+            + QByteArray::number(fieldZ, 'g', 17)
+            + ",-50,30,-20,0,0,0,1\n";
+    }
+    return bytes;
+}
 
 QByteArray readFileBytes(const QString &path)
 {
@@ -275,6 +331,26 @@ public:
         mavlink_msg_param_value_encode(FixtureSystem, 1, &message, &value);
         inject(message);
     }
+    void magFitReply(const QString &name, quint16 index = UINT16_MAX)
+    {
+        if (!magFitValues.contains(name)) return;
+        mavlink_param_value_t value{};
+        const QByteArray bytes = name.toLatin1();
+        std::memcpy(value.param_id, bytes.constData(), size_t(qMin(16, bytes.size())));
+        value.param_value = magFitValues.value(name); // ArduPilot C-style encoding.
+        value.param_type = name.endsWith(QStringLiteral("_ID"))
+            ? MAV_PARAM_TYPE_UINT32
+            : (name == QStringLiteral("COMPASS_LEARN")
+               || name == QStringLiteral("COMPASS_ORIENT")
+               || name == QStringLiteral("COMPASS_EXTERNAL")
+               || name == QStringLiteral("AHRS_ORIENTATION"))
+                ? MAV_PARAM_TYPE_INT8 : MAV_PARAM_TYPE_REAL32;
+        value.param_count = static_cast<quint16>(magFitValues.size());
+        value.param_index = index;
+        mavlink_message_t message{};
+        mavlink_msg_param_value_encode(FixtureSystem, 1, &message, &value);
+        inject(message);
+    }
     void recoveryReply(const QString &name) {
         if (!recoveryValues.contains(name)
             || (name == QStringLiteral("RECOVERY_GAIN")
@@ -447,7 +523,13 @@ public:
                 handleFtpRequest(message);
                 continue;
             }
-            if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST) pressureReply();
+            if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST) {
+                if (magFitMode) {
+                    int index = 0;
+                    for (const auto &name : magFitValues.keys())
+                        magFitReply(name, static_cast<quint16>(index++));
+                } else pressureReply();
+            }
             if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) {
                 mavlink_param_request_read_t request{};
                 mavlink_msg_param_request_read_decode(&message, &request);
@@ -456,6 +538,10 @@ public:
                 const QByteArray raw(request.param_id, 16);
                 const QString name = QString::fromLatin1(
                     raw.constData(), raw.indexOf('\0') < 0 ? 16 : raw.indexOf('\0'));
+                if (magFitMode) {
+                    magFitReply(name);
+                    continue;
+                }
                 if (name == QStringLiteral("GND_ABS_PRESS")) pressureReply();
                 else {
                     ++recoveryReads;
@@ -469,6 +555,14 @@ public:
                 const QByteArray raw(value.param_id, 16);
                 const QString name = QString::fromLatin1(
                     raw.constData(), raw.indexOf('\0') < 0 ? 16 : raw.indexOf('\0'));
+                if (magFitMode) {
+                    if (magFitValues.contains(name)) {
+                        magFitWrites.append(qMakePair(name, value.param_value));
+                        magFitValues[name] = value.param_value;
+                        magFitReply(name);
+                    }
+                    continue;
+                }
                 if (recoveryValues.contains(name)) {
                     recoveryWrites.append(qMakePair(name, value.param_value));
                     recoveryValues[name] = value.param_value;
@@ -512,6 +606,9 @@ public:
     QVector<QPair<QString, float>> recoveryWrites;
     int recoveryReads = 0;
     bool suppressRecoveryWriteEcho = false;
+    bool magFitMode = false;
+    QMap<QString, float> magFitValues = magFitParameters();
+    QVector<QPair<QString, float>> magFitWrites;
     std::function<void()> recoveryWriteHook;
     QByteArray ftpFileData;
     QString ftpRemotePath;
@@ -544,9 +641,20 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 20 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 21 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
+    auto *offlineMagFit = page->findChild<QPushButton *>(QStringLiteral("OfflineMagFitButton"));
+    expect(offlineMagFit && offlineMagFit->isEnabled(), "offline MagFit route is unavailable");
+    if (offlineMagFit) {
+        offlineMagFit->click();
+        QCoreApplication::processEvents();
+        const QPointer<OfflineMagFitWindow> magFit(
+            window->findChild<OfflineMagFitWindow *>());
+        expect(magFit && magFit->isVisible() && magFit->isWindow(),
+               "Developer MagFit did not display a real modeless window offline");
+        if (magFit) magFit->close();
+    }
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
     expect(reboot && !reboot->isEnabled(), "offline reboot was enabled");
     auto *bootloader = page->findChild<QPushButton *>(
@@ -1972,6 +2080,184 @@ int RunDeveloperVehicleToolRuntimeAudit()
             expect(readFileBytes(path) == contents,
                    "parameter recovery changed the source file");
             qInfo() << "Developer runtime parameter recovery audit passed";
+        }
+    }
+    // Open the same real window from Compass and exercise analysis + confirmed
+    // application exclusively against the in-process exact endpoint.
+    {
+        auto *applyService = links->offlineMagFitApplyService();
+        fixture->magFitMode = true;
+        // Recovery deliberately ended with an uncertain transmitted write.
+        // Respect its real late-echo quarantine instead of clearing service
+        // state or treating a Busy refresh as an accepted list request.
+        auto listAdmission = ParameterService::SendResult::Busy;
+        expect(waitFor([&] {
+            listAdmission = static_cast<ParameterService::SendResult>(
+                links->parameterService()->requestCurrentParameterList());
+            return listAdmission != ParameterService::SendResult::Busy;
+        }, ParameterService::DefaultExactWriteQuarantineMs + 2500),
+               "MagFit parameter refresh remained quarantined");
+        expect(listAdmission == ParameterService::SendResult::Sent,
+               "MagFit parameter list request was not admitted");
+        expect(waitFor([&] {
+            const auto snapshot = links->parameterService()->store()->snapshot(
+                links->vehicleTargetManager()->acquireTarget().endpoint);
+            return snapshot.isComplete()
+                && snapshot.contains(1, QStringLiteral("COMPASS_OFS_X"))
+                && snapshot.contains(1, QStringLiteral("COMPASS_OFFS_MAX"));
+        }), "MagFit exact parameter fixture did not complete");
+        QElapsedTimer sinceParameterList;
+        sinceParameterList.start();
+        expect(backstage && backstage->setCurrentPage(QStringLiteral("ConfigCompassView")),
+               "Compass route did not open for MagFit");
+        const QPointer<ConfigCompassView> compass = backstage
+            ? qobject_cast<ConfigCompassView *>(backstage->page(QStringLiteral("ConfigCompassView")))
+            : nullptr;
+        const QPointer<QPushButton> fromLog = compass
+            ? compass->findChild<QPushButton *>(QStringLiteral("compassCalFromLog")) : nullptr;
+        expect(fromLog && fromLog->isEnabled(), "Compass Calibrate from Log is unavailable");
+        if (fromLog) fromLog->click();
+        QPointer<OfflineMagFitWindow> magFit(window->findChild<OfflineMagFitWindow *>());
+        expect(magFit && magFit->isVisible() && magFit->isWindow(),
+               "Compass did not display the shared MagFit window");
+        expect(window->findChildren<OfflineMagFitWindow *>().size() == 1,
+               "Developer and Compass created duplicate MagFit windows");
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("known compass sphere.log"));
+        const QByteArray source = magFitLogFixture();
+        expect(files.isValid() && writeOrganizerFixture(path, source),
+               "MagFit source fixture could not be written");
+        if (magFit && applyService) {
+            const QPointer<QPushButton> browse = magFit->findChild<QPushButton *>(
+                QStringLiteral("OfflineMagFitBrowseButton"));
+            const QPointer<QPushButton> analyze = magFit->findChild<QPushButton *>(
+                QStringLiteral("OfflineMagFitAnalyzeButton"));
+            const QPointer<QPushButton> apply = magFit->findChild<QPushButton *>(
+                QStringLiteral("OfflineMagFitApplyButton"));
+            const QPointer<QCheckBox> ellipsoid = magFit->findChild<QCheckBox *>(
+                QStringLiteral("OfflineMagFitEllipsoidCheckBox"));
+            const auto picker = [&]() -> QFileDialog * {
+                if (!magFit) return nullptr;
+                for (auto *dialog : magFit->findChildren<QFileDialog *>(
+                         QStringLiteral("OfflineMagFitSourceDialog"))) {
+                    if (dialog->isVisible()) return dialog;
+                }
+                return nullptr;
+            };
+            const auto confirmation = [&]() -> QMessageBox * {
+                if (!magFit) return nullptr;
+                for (auto *dialog : magFit->findChildren<QMessageBox *>(
+                         QStringLiteral("OfflineMagFitApplyConfirmation"))) {
+                    if (dialog->isVisible()) return dialog;
+                }
+                return nullptr;
+            };
+            expect(browse && analyze && apply && ellipsoid && ellipsoid->isChecked(),
+                   "MagFit required controls/default ellipsoid are missing");
+            if (browse && analyze && apply && ellipsoid) {
+                browse->click();
+                expect(waitFor([&] { return picker() != nullptr; }), "MagFit source dialog did not open");
+                if (auto *dialog = picker()) dialog->reject();
+                expect(fixture->magFitWrites.isEmpty() && !magFit->analysisBusy(),
+                       "MagFit file Cancel caused work or writes");
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+                browse->click();
+                expect(waitFor([&] { return picker() != nullptr; }), "MagFit source dialog did not reopen");
+                if (auto *dialog = picker()) {
+                    auto *filename = dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+                    expect(filename != nullptr, "MagFit filename editor is missing");
+                    if (filename) filename->setText(path);
+                    expect(dialog->selectedFiles() == QStringList{path},
+                           "MagFit file picker selected a different file");
+                    expect(QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection),
+                           "MagFit source selection was not accepted");
+                }
+                expect(waitFor([&] {
+                    const auto *sourcePath = magFit
+                        ? magFit->findChild<QLineEdit *>(QStringLiteral("OfflineMagFitSourcePath"))
+                        : nullptr;
+                    return sourcePath && sourcePath->text() == path && !picker();
+                }), "MagFit picker did not publish the selected source path");
+                ellipsoid->setChecked(false);
+                analyze->click();
+                expect(waitFor([&] { return magFit && !magFit->analysisBusy(); }, 10000),
+                       "MagFit analysis did not finish");
+                if (magFit) {
+                    const auto report = magFit->report();
+                    qInfo() << "MagFit runtime analysis:" << report.error
+                            << report.applyUnavailableReason << magFit->statusText();
+                    expect(report.success && report.applyEligible && report.results.size() == 1,
+                           "MagFit known-context log did not produce an eligible result");
+                    if (report.results.size() == 1) {
+                        const auto fit = report.results.first();
+                        expect(fit.coverageOctants == 8 && fit.usedSamples == 192
+                                   && std::abs(fit.offsets.x - 20.0) < 0.05
+                                   && std::abs(fit.offsets.y + 10.0) < 0.05
+                                   && std::abs(fit.offsets.z - 5.0) < 0.05
+                                   && fit.rmsError < 0.05,
+                               "MagFit sphere sign/coverage/RMS differs from the known fixture");
+                    }
+                    expect(waitFor([&] { return apply && apply->isEnabled(); }),
+                           "MagFit positive-result Apply was disabled");
+                    apply->click();
+                    qInfo() << "MagFit runtime prepare:" << magFit->statusText();
+                    expect(waitFor([&] { return confirmation() != nullptr; }),
+                           "MagFit apply consent did not open");
+                    if (auto *dialog = confirmation()) {
+                        expect(dialog->defaultButton() == dialog->button(QMessageBox::Cancel)
+                                   && dialog->escapeButton() == dialog->button(QMessageBox::Cancel)
+                                   && dialog->text().contains(path)
+                                   && dialog->text().contains(QString::number(FixtureLinkId))
+                                   && dialog->text().contains(QString::number(FixtureSystem)),
+                               "MagFit consent is not exact-source/target/default-Cancel");
+                        dialog->button(QMessageBox::Cancel)->click();
+                    }
+                    expect(fixture->magFitWrites.isEmpty(), "MagFit consent Cancel wrote parameters");
+                    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+                    apply->click();
+                    expect(waitFor([&] { return confirmation() != nullptr; }),
+                           "MagFit apply consent did not reopen");
+                    if (auto *dialog = confirmation()) {
+                        // The real parameter protocol also fences late list
+                        // replies before an exact write reservation. Simulate
+                        // reading the consent while heartbeats/events continue;
+                        // do not bypass that fence or auto-retry an apply.
+                        expect(waitFor([&] {
+                            return sinceParameterList.elapsed()
+                                >= ParameterService::DefaultExactWriteQuarantineMs + 250;
+                        }, ParameterService::DefaultExactWriteQuarantineMs + 2500),
+                               "MagFit parameter-list isolation did not settle");
+                        const QString screenshot = qEnvironmentVariable("APM_MAGFIT_AUDIT_SCREENSHOT");
+                        if (!screenshot.isEmpty()) {
+                            expect(dialog->grab().save(screenshot), "MagFit consent screenshot failed");
+                            expect(magFit->grab().save(screenshot + QStringLiteral(".window.png")),
+                                   "MagFit result window screenshot failed");
+                        }
+                        dialog->button(QMessageBox::Yes)->click();
+                        expect(waitFor([&] {
+                            return !applyService->busy() && applyService->lastReport().isValid();
+                        }, 8000), "MagFit exact application did not finish");
+                        const auto applied = applyService->lastReport();
+                        qInfo() << "MagFit runtime apply:" << applied.description;
+                        expect(applied.outcome == OfflineMagFitApplyService::Outcome::Completed
+                                   && applied.totalWrites == 4 && applied.confirmedWrites == 4
+                                   && applied.remainingWrites == 0 && applied.receipts.size() == 4
+                                   && fixture->magFitWrites.size() == 4,
+                               "MagFit application did not acknowledge exactly four writes");
+                        if (fixture->magFitWrites.size() == 4) {
+                            const auto writes = fixture->magFitWrites;
+                            expect(writes[0].first == QStringLiteral("COMPASS_LEARN") && writes[0].second == 0
+                                       && writes[1].first == QStringLiteral("COMPASS_OFS_X") && std::abs(writes[1].second - 20.0f) < 0.05f
+                                       && writes[2].first == QStringLiteral("COMPASS_OFS_Y") && std::abs(writes[2].second + 10.0f) < 0.05f
+                                       && writes[3].first == QStringLiteral("COMPASS_OFS_Z") && std::abs(writes[3].second - 5.0f) < 0.05f,
+                                   "MagFit emitted a different parameter order/value");
+                        }
+                    }
+                    expect(readFileBytes(path) == source, "MagFit changed the source log");
+                    magFit->close();
+                    qInfo() << "Developer runtime Offline MagFit audit passed";
+                }
+            }
         }
     }
     heartbeat.stop();

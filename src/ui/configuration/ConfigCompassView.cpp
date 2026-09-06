@@ -3,8 +3,10 @@
 #include "comm/CompassCalibrationService.h"
 
 #include <QAbstractItemView>
+#include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -114,6 +116,25 @@ void ConfigCompassView::setConnected(bool connected) {
 }
 
 void ConfigCompassView::setArmed(bool armed) { m_viewModel->setArmed(armed); }
+
+void ConfigCompassView::setOfflineMagFitAction(QAction *action) {
+  if (m_offlineMagFitAction)
+    disconnect(m_offlineMagFitAction, nullptr, this, nullptr);
+  m_offlineMagFitAction = action;
+  const auto refresh = [this]() {
+    if (QCoreApplication::closingDown()) return;
+    m_calFromLog->setEnabled(m_offlineMagFitAction &&
+                            m_offlineMagFitAction->isEnabled());
+    m_calFromLog->setToolTip(m_offlineMagFitAction
+        ? tr("Analyze a recorded flight log offline. Applying calibration is a separate confirmed action.")
+        : tr("The shared Offline MagFit window is unavailable."));
+  };
+  if (action) {
+    connect(action, &QAction::changed, this, refresh);
+    connect(action, &QObject::destroyed, this, refresh);
+  }
+  refresh();
+}
 
 void ConfigCompassView::setCalibrationContext(
     CompassCalibrationService *service, const VehicleTargetLease &target) {
@@ -331,9 +352,11 @@ void ConfigCompassView::buildUi() {
   m_calFromLog = new QPushButton(tr("Calibrate from Log…"), calibration);
   m_calFromLog->setObjectName(QStringLiteral("compassCalFromLog"));
   m_calFromLog->setEnabled(false);
-  m_calFromLog->setToolTip(tr(
-      "Calibrate from Log is a separate offline mag-fit workflow and is "
-      "not available from exact-target onboard calibration."));
+  m_calFromLog->setToolTip(tr("The shared Offline MagFit window is unavailable."));
+  connect(m_calFromLog, &QPushButton::clicked, this, [this]() {
+    const QPointer<QAction> action = m_offlineMagFitAction;
+    if (action && action->isEnabled()) action->trigger();
+  });
   calibrationActions->addWidget(m_calFromLog);
   calibrationActions->addStretch(1);
   calibrationLayout->addLayout(calibrationActions);

@@ -24,7 +24,69 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Restore Parameters (Recovery)** and its owned
+Latest slice (2026-09-06): **Offline MagFit**. Developer Tools and Compass
+Calibrate from Log open the same real modeless window, including while offline.
+BIN/LOG/TLOG analysis, MP10 sphere/diagonal/full-ellipsoid math, single-sender
+telemetry filtering, nine-column results, quality warnings and cancellation
+are implemented. The old inventory incorrectly promised parameter export:
+MP10 has no export action; this port includes its separately confirmed Apply.
+
+TLOG is deliberately analysis-only: logged SENSOR_OFFSETS cannot undo modern
+scale/matrix/motor corrections. DataFlash apply needs stable explicit prior
+device IDs, identity/disabled compensation and supported frame parameters,
+plus complete OFS, zero motor corrections and Health1 for every accepted sample.
+Missing or conflicting evidence retains analysis with a reason, never guessed
+defaults. Apply freezes the exact live target/schema, matches device/frame
+metadata, validates firmware limits and actual parameter encoding, and holds
+command+parameter reservations. Sequential typed writes recheck fresh disarmed
+state and the immutable plan before every attempt. Confirmed receipts survive
+cancel/uncertainty; no rollback, automatic reboot or whole-operation retry is
+claimed. The window cancels only its own operation; app-owned history survives
+reopening. The overall apply deadline is ten minutes, monotonic-clock checked.
+
+Qt5/audio configure and final build pass, focused11/11 pass, final **252/252
+(45.44s)** and actual production X11 exit0/zero audit failures pass. The real
+Developer/Compass routes reuse one window; both cancellations send nothing;
+a192-sample golden sphere fits OFS(20,-10,5),8/8 coverage and near-zero RMS;
+four exact ACKed writes are LEARN0 then OFS_X20/OFS_Y-10/OFS_Z5. Root inspected
+the readable result table and complete default/Escape-Cancel consent at
+`/tmp/apm-magfit.KUILP5/magfit-consent.png` and `.window.png`.
+
+Read-only analysis of ArduPilot `logs/00000002.BIN` yields three compasses with
+2299 samples each. Independent Claude pure-Python sphere offsets differ by
+at most0.00003136mGauss; radius580.74282 and RMS0.27385235 agree. Its weak4/8
+ellipsoid produces similarly small RMS but different coefficients; it is not
+a unique numerical golden or a safety/provenance oracle. The source SHA256
+remains `16726aaea629c615e4828b72217c08240552061bba7d0eeff2ac879149cf6d5a`.
+No network SITL or physical vehicle was modified.
+
+Evidence logs/probes are in `/tmp/apm-magfit.KUILP5`: final
+`build-qt-dialog.log`, `full-qt-dialog.log`, `x11-qt-dialog.log` and the real-BIN
+JSON reports. Initial failures were a missing test include, two obsolete
+Compass tooltip expectations, runtime fixtures ignoring the existing6s
+uncertain-write/post-list fences, and a native-file-dialog automation mismatch.
+The fixture now waits for real isolation instead of clearing it; the file picker
+uses the same themed asynchronous Qt dialog as the other Developer tools.
+Three Codex streams implemented core/apply/UI; Claude TCP c228–c233 reviewed
+reference math, raw-frame safety and exact apply, and supplied the independently
+hashed numeric oracle. See `OFFLINE_MAGFIT_PORT.md` for accepted differences.
+
+Developer is now **21/32 working,11 unavailable**. SETUP46/eight missing
+reference routes, Advanced14 complete+partial Signing/disabled Support Proxy,
+fixedTools24 plus Signing extension, CONFIG15/15 factories and Planner21/64
+remain unchanged. Next candidate: **Start/Stop Remote DataFlash Log**, subject
+to exact session/transport and partial-file design review; then remaining
+single-drone tools and Settings. Swarm stays last; the full port is incomplete.
+Claude c232's next-tools report has a stale12-action total and an empty row:
+actual source has11 unavailable, so a completed remote-log pair would yield23/32.
+Its ACK-once and page-close suggestions also require correction: duplicate
+blocks need re-ACK after a lost reply, and existing Recovery owns cancellation.
+The master status table was also stale relative to the authoritative TSV;
+direct recount is72 in-progress/36 partial/21 not-started across129 surfaces.
+That correction is not a claim that MagFit added multiple screens or completed
+the older SETUP/CONFIG workflows.
+
+Previous slice (2026-09-06): **Restore Parameters (Recovery)** and its owned
 **Cancel Parameter Restore** action. Actual asynchronous file selection and
 default/Escape-Cancel consent show the exact file, target and entry count.
 The application-owned service freezes parsed source order and vehicle lifetime,

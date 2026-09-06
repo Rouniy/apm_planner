@@ -858,6 +858,10 @@ void SetupView::applicationToolActionsReady()
         return;
     }
     const QString selectedPage = m_backstage->currentPageId();
+    if (m_compassPage) {
+        m_compassPage->setOfflineMagFitAction(
+            window()->findChild<QAction *>(QStringLiteral("actionOfflineMagFit")));
+    }
     m_backstage->resetPage(kAdvancedTools);
     m_backstage->resetPage(kDeveloperTools);
     m_backstage->resetPage(kJoystick);
@@ -3338,6 +3342,8 @@ QWidget *SetupView::createCompassPage(QWidget *parent)
 
     auto *page = new ConfigCompassView(parent);
     m_compassPage = page;
+    page->setOfflineMagFitAction(
+        window()->findChild<QAction *>(QStringLiteral("actionOfflineMagFit")));
     page->setCalibrationContext(compassCalibration, expectedTarget);
     page->setCatalog(catalog, enforceMetadataRanges);
     page->setParameterSnapshot(

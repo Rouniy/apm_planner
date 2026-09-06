@@ -10,6 +10,7 @@
 #include <QWidget>
 
 class QCheckBox;
+class QAction;
 class QDoubleSpinBox;
 class QLabel;
 class QPlainTextEdit;
@@ -36,6 +37,7 @@ public:
                        int preferredComponent, bool completeSnapshot);
   void setConnected(bool connected);
   void setArmed(bool armed);
+  void setOfflineMagFitAction(QAction *action);
   void setCalibrationContext(CompassCalibrationService *service,
                              const VehicleTargetLease &target);
 
@@ -102,6 +104,7 @@ private:
   QPushButton *m_calAccept = nullptr;
   QPushButton *m_calCancel = nullptr;
   QPushButton *m_calFromLog = nullptr;
+  QPointer<QAction> m_offlineMagFitAction;
   QPushButton *m_largeVehicleCal = nullptr;
   QProgressBar *m_calProgress[3] = {nullptr, nullptr, nullptr};
   QLabel *m_calibrationTargetStatus = nullptr;

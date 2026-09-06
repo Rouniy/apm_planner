@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,249/249 тестов; Developer20/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,252/252 теста (45.44s); Developer21/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -53,14 +53,21 @@ ENABLE-first и весь файл в исходном порядке, typed read
 Исправлены reentrant transmission-attempt accounting, вытеснение собственного
 ответа чужими terminal reports и GUI callback после завершения QApplication.
 Full249/249 (33.24s), production X11 и просмотр диалога проходят; реальные борта
-и сетевой SITL не изменялись. Следующий single-drone инструмент — Offline MagFit:
-анализ sphere/ellipsoid плюс отдельно подтверждённое exact-target применение.
-Экспорта файла в MP10 окне нет; анализ/экспорт без Apply был бы частичным переносом.
+и сетевой SITL не изменялись. Offline MagFit теперь открывает общее modeless-окно
+из Developer Tools и Compass: BIN/LOG/TLOG, sphere/ellipsoid, таблица качества,
+отмена и отдельно подтверждённое exact-target применение. TLOG остаётся
+analysis-only; DataFlash требует явного стабильного контекста компенсации,
+device ID и ориентации. Последовательные typed writes сохраняют подтверждённые
+receipts и не обещают rollback. Реальный BIN:3x2299 образцов, независимый sphere
+oracle отличается менее чем на0.00004мГс по OFS; слабое покрытие4/8 предупреждается.
+Экспорта файла в MP10 окне нет; ошибочное ожидание export в реестре исправлено.
+Следующий кандидат — Start/Stop Remote DataFlash Log: сначала отдельная проверка
+владения сессией, STOP от чужого GCS, ACK повторных блоков и partial-файлов.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
 `APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`,
-`PARAMETER_RECOVERY_PORT.md`.
+`PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
@@ -75,19 +82,22 @@ Settings после Tools, Swarm в конце. Подробности: `TLOG_RE
 - DATA/PLAN используют фиксированные `QWidget`/`QSplitter`, а не плавающие
   `QDockWidget` или KDDockWidgets.
 
-Это не означает готовность продукта. В реестре 129 поверхностей:
+Это не означает готовность продукта. В реестре 129 поверхностей. Таблица ниже
+пересчитана непосредственно из TSV после MagFit: предыдущая сводка отставала
+от уже внесённых SETUP/CONFIG/TOOLS статусов, поэтому это не число новых
+экранов в текущем коммите.
 
 | Область | in-progress | partial | not-started | Всего |
 |---|---:|---:|---:|---:|
 | SHELL | 1 | 3 | 0 | 4 |
 | DATA | 2 | 3 | 0 | 5 |
 | PLAN | 5 | 2 | 4 | 11 |
-| SETUP | 29 | 16 | 11 | 56 |
-| CONFIG | 9 | 9 | 2 | 20 |
-| TOOLS | 20 | 2 | 9 | 31 |
+| SETUP | 31 | 16 | 9 | 56 |
+| CONFIG | 11 | 9 | 0 | 20 |
+| TOOLS | 22 | 1 | 8 | 31 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **66** | **37** | **26** | **129** |
+| **Итого** | **72** | **36** | **21** | **129** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -358,14 +368,15 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Parameter Recovery работают20/32; заменить оставшиеся12
+- Developer Tools: после Offline MagFit работают21/32; заменить оставшиеся11
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.
 - SETUP OSD: live 24-write full/partial path и profile gate.
 - Current Compass: parameter/priority, onboard multi-compass, Large Vehicle
   fixed-yaw и отдельный Compass/Motor slices сделаны; остаются
-  physical-hardware evidence и OfflineMagFit.
+  physical-hardware evidence. OfflineMagFit теперь имеет общее окно и guarded
+  apply; широкая совместимость компенсированных логов остаётся отдельным gate.
 
 #### 5B. Исправить partial legacy pages
 

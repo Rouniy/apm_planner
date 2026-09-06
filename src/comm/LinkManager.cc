@@ -38,6 +38,7 @@ This file is part of the APM_PLANNER project
 #include "services/SwarmSequenceExecutor.h"
 #include "services/DeveloperVehicleToolService.h"
 #include "services/ParameterRecoveryService.h"
+#include "services/OfflineMagFitApplyService.h"
 #include "services/SwarmWaypointLeaderExecutor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
@@ -325,6 +326,18 @@ LinkManager::LinkManager(QObject *parent) :
             return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
         }, this);
     m_parameterRecoveryService = new ParameterRecoveryService(
+        m_vehicleTargetManager, m_swarmTelemetryRegistry, m_parameterService,
+        m_vehicleCommandService,
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            if (m_compassCalibrationService->blocksDeveloperTools(
+                    m_vehicleTargetManager->acquireTarget())) {
+                if (error) *error = tr("Compass calibration is active or its outcome is uncertain. Resolve it in the calibration page first.");
+                return false;
+            }
+            return singleEndpointRouteIsEligible(
+                lease.endpoint, lease.linkSessionEpoch, error);
+        }, this);
+    m_offlineMagFitApplyService = new OfflineMagFitApplyService(
         m_vehicleTargetManager, m_swarmTelemetryRegistry, m_parameterService,
         m_vehicleCommandService,
         [this](const SwarmVehicleInstanceLease &lease, QString *error) {
@@ -683,6 +696,7 @@ void LinkManager::shutdown()
     // application shutdown.
     m_developerVehicleToolService->shutdown();
     m_parameterRecoveryService->shutdown();
+    m_offlineMagFitApplyService->shutdown();
     m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
     m_exactLogTransferService->shutdown();
@@ -1124,6 +1138,11 @@ DeveloperVehicleToolService *LinkManager::developerVehicleToolService() const
 ParameterRecoveryService *LinkManager::parameterRecoveryService() const
 {
     return m_parameterRecoveryService;
+}
+
+OfflineMagFitApplyService *LinkManager::offlineMagFitApplyService() const
+{
+    return m_offlineMagFitApplyService;
 }
 
 ParameterService *LinkManager::parameterService() const

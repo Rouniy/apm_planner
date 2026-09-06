@@ -440,6 +440,9 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
     terrain.setObjectName(QStringLiteral("actionTerrain3D"));
     QAction osdVideo(&actionSource);
     osdVideo.setObjectName(QStringLiteral("actionOsdVideoOverlay"));
+    QAction magFit(&actionSource);
+    magFit.setObjectName(QStringLiteral("actionOfflineMagFit"));
+    QSignalSpy magFitTriggered(&magFit, &QAction::triggered);
     bool deviceTriggered = false;
     bool terrainTriggered = false;
     bool osdVideoTriggered = false;
@@ -452,8 +455,8 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 10);
-    QVERIFY(view.Log().contains(QStringLiteral("10 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 11);
+    QVERIFY(view.Log().contains(QStringLiteral("11 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
@@ -472,6 +475,15 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
     QVERIFY(deviceTriggered);
     QVERIFY(terrainTriggered);
     QVERIFY(osdVideoTriggered);
+    auto *magFitButton = tool(view, "OfflineMagFitButton");
+    QVERIFY(magFitButton);
+    QVERIFY(magFitButton->isEnabled());
+    magFitButton->click();
+    QCOMPARE(magFitTriggered.count(), 1);
+    magFit.setEnabled(false);
+    QVERIFY(!magFitButton->isEnabled());
+    magFit.setEnabled(true);
+    QVERIFY(magFitButton->isEnabled());
     QVERIFY(view.Log().contains(
         QStringLiteral("Opened MAVLink Device Operations.")));
     QVERIFY(view.Log().contains(QStringLiteral("Opened 3D Terrain View.")));
@@ -487,22 +499,22 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     VehicleFixture fixture;
     view.setVehicleToolService(&fixture.service);
-    QCOMPARE(view.ImplementedActionCount(), 17);
+    QCOMPARE(view.ImplementedActionCount(), 18);
     DeveloperFtpStub ftp;
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
-    QCOMPARE(view.ImplementedActionCount(), 18);
+    QCOMPARE(view.ImplementedActionCount(), 19);
     ParameterRecoveryService recovery(
         &fixture.targets, &fixture.registry, &fixture.parameters,
         &fixture.commands,
         [](const SwarmVehicleInstanceLease &, QString *) { return true; });
     view.setParameterRecoveryService(&recovery);
-    QCOMPARE(view.ImplementedActionCount(), 20);
+    QCOMPARE(view.ImplementedActionCount(), 21);
     view.setParameterRecoveryService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 18);
+    QCOMPARE(view.ImplementedActionCount(), 19);
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 17);
+    QCOMPARE(view.ImplementedActionCount(), 18);
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 10);
+    QCOMPARE(view.ImplementedActionCount(), 11);
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()

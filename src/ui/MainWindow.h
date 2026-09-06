@@ -80,6 +80,7 @@ class MAVLinkInspectorWindow;
 class HelpView;
 class SetupView;
 class ParameterMetaDataRegenerationService;
+class OfflineMagFitWindow;
 class LogAnonymizeService;
 class WarningEngine;
 class WarningTelemetrySource;
@@ -211,6 +212,7 @@ public slots:
     /** @brief Open MAVLink DataFlash log download as a modeless tool. */
     void showLogDownload();
     void showFftAnalysis();
+    void showOfflineMagFit();
     /** @brief Apply Mission Planner altitude display units to PLAN live. */
     void setPlannerAltitudeUnits(const QString &units);
     /** @brief Apply Mission Planner distance display units to PLAN live. */
@@ -572,6 +574,7 @@ private:
     void closeMavlinkInspectorWindows();
     void closeLogDownloadWindows();
     void closeFftAnalysisWindows();
+    void closeOfflineMagFit();
     void showParameterMetaDataRegeneration();
     void closeParameterMetaDataRegeneration();
     void showAnonLog();
@@ -585,6 +588,7 @@ private:
     QString m_warningLoadError;
     QPointer<LogAnonymizeService> m_logAnonymizeService;
     QPointer<ParameterMetaDataRegenerationService> m_parameterMetaDataRegeneration;
+    QPointer<OfflineMagFitWindow> m_offlineMagFitWindow;
     void pruneMavlinkInspectorWindows();
 
     bool m_heartbeatEnabled;

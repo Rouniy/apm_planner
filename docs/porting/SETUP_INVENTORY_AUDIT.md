@@ -33,8 +33,15 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-The Parameter Recovery slice brings the exact Developer action catalogue to20/32
-working actions, with12 explicitly unavailable. It fills the existing
+The Offline MagFit slice brings the exact Developer action catalogue to21/32
+working actions, with11 explicitly unavailable. Its existing button and Compass
+Calibrate from Log now open the same modeless offline analysis window, with
+separately confirmed exact-target apply only for proven DataFlash context.
+TLOG and unknown compensation/frame metadata remain analysis-only. This adds
+no Setup page or fixed Tools item. See `OFFLINE_MAGFIT_PORT.md` for verification
+and explicit limits.
+
+The preceding Parameter Recovery slice filled the existing
 `RestoreParametersButton` and `CancelParameterRestoreButton`; it does not add a
 Setup page or top-level Tools item. Actual file/target consent, ENABLE-first
 source-order recovery, typed `_ID` reset, owned cancellation and partial receipts
@@ -107,8 +114,9 @@ the current parameter/discovery/priority workflow with exact-target writes plus
 an application-owned pinned-target onboard and Large Vehicle calibration
 service. Start/Accept/Cancel/fixed-yaw are ACK-gated, multi-compass completion
 waits for the stable reported mask, and ambiguous command outcomes cannot be
-retried on the same generation. `Calibrate from Log` alone stays explicitly
-disabled until the separate OfflineMagFit workflow is ported. The dedicated
+retried on the same generation. `Calibrate from Log` now opens the shared
+Offline MagFit window even when disconnected; only its separate Apply needs
+an eligible exact live target and proven log context. The dedicated
 `Compass/Motor Calib` route now replaces the disabled legacy dialog with an
 application-owned exact-target state machine. It matches the MP10 start and
 two-frame Finish wire protocol, keeps Finish reachable while firmware has the

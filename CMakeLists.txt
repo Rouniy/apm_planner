@@ -622,6 +622,12 @@ set(SOURCES
     src/services/DeveloperVehicleToolService.h
     src/services/ParameterRecoveryService.cpp
     src/services/ParameterRecoveryService.h
+    src/services/OfflineMagFitService.cpp
+    src/services/OfflineMagFitService.h
+    src/services/OfflineMagFitApplyService.cpp
+    src/services/OfflineMagFitApplyService.h
+    src/ui/OfflineMagFitWindow.cpp
+    src/ui/OfflineMagFitWindow.h
     src/services/WarningTelemetrySource.cpp
     src/ui/WarningManagerWindow.cpp
     src/ui/MavlinkSigningWindow.cpp
@@ -3885,6 +3891,45 @@ if(BUILD_TESTING)
     target_link_libraries(parameterfilecodec_tests PRIVATE apm_parameter_core Qt::Test)
     add_test(NAME parameterfilecodec_tests COMMAND parameterfilecodec_tests)
     set_tests_properties(parameterfilecodec_tests PROPERTIES TIMEOUT 60)
+
+    add_library(offlinemagfit_analysis_test_support STATIC
+        src/services/OfflineMagFitService.cpp
+        src/services/OfflineMagFitService.h
+        src/comm/TlogReader.cpp
+        src/comm/MAVLinkFrameParser.cpp)
+    target_include_directories(offlinemagfit_analysis_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(offlinemagfit_analysis_test_support PUBLIC
+        Qt::Core alglib)
+    add_library(offlinemagfit_apply_test_support STATIC
+        src/services/OfflineMagFitApplyService.cpp
+        src/services/OfflineMagFitApplyService.h)
+    target_link_libraries(offlinemagfit_apply_test_support PUBLIC
+        developer_vehicle_tool_test_support)
+    add_library(offlinemagfit_window_test_support STATIC
+        src/ui/OfflineMagFitWindow.cpp
+        src/ui/OfflineMagFitWindow.h)
+    target_link_libraries(offlinemagfit_window_test_support PUBLIC
+        offlinemagfit_analysis_test_support offlinemagfit_apply_test_support
+        Qt::Widgets Qt::Concurrent)
+    add_executable(offlinemagfitservice_tests tests/test_offlinemagfitservice.cpp)
+    target_link_libraries(offlinemagfitservice_tests PRIVATE
+        offlinemagfit_analysis_test_support Qt::Test)
+    add_executable(offline_magfit_probe tests/OfflineMagFitProbe.cpp)
+    target_link_libraries(offline_magfit_probe PRIVATE offlinemagfit_analysis_test_support)
+    add_executable(offlinemagfitapplyservice_tests tests/test_offlinemagfitapplyservice.cpp)
+    target_link_libraries(offlinemagfitapplyservice_tests PRIVATE
+        offlinemagfit_apply_test_support Qt::Test)
+    add_executable(offlinemagfitwindow_tests tests/test_offlinemagfitwindow.cpp)
+    target_link_libraries(offlinemagfitwindow_tests PRIVATE
+        offlinemagfit_window_test_support Qt::Test)
+    foreach(magfit_test IN ITEMS offlinemagfitservice_tests
+            offlinemagfitapplyservice_tests offlinemagfitwindow_tests)
+        add_test(NAME ${magfit_test} COMMAND ${magfit_test})
+        set_tests_properties(${magfit_test} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    endforeach()
 
     add_library(gps_correction_test_support STATIC
         src/comm/GpsCorrectionExtractor.cpp
