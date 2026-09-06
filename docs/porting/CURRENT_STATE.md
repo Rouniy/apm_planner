@@ -24,7 +24,52 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Translation / RESX Editor**. Its existing Developer
+Latest slice (2026-09-06): **SFTP DataFlash Logs**. The Developer action now opens
+one real modeless companion-computer SSH window, offline or online: listing,
+selected/all download, BIN→LOG, GPS naming, optional KML, selected/all confirmed
+delete and cancellation. Static hash-pinned libssh2 uses QTcpSocket on one owned
+worker thread. Host keys must be explicitly pinned before password authentication;
+passwords are not persisted and internal erasure also clears Undo history.
+Remote consent freezes listed paths/metadata, local publication never replaces
+files, completed outputs survive later failure/cancellation, and uncertain remote
+delete outcomes remain explicit. Close waits for owned cancellation.
+
+Actual tests found and fixed invisible table rows caused by blocked model
+notifications, deferred-close starvation behind the service finishing fence,
+QLineEdit callback deletion, immediate inode reuse during partial cleanup and
+Single midpoint rounding. Qt5/audio configure/build5 pass; full **290/290 (50.93s)**,
+focused5/5, all four new suites pass ten repeats (6.00s), window suite X11 is11/11.
+The first concurrent X11/repeat run exposed shared test settings; each test
+process now has its own temporary INI root. Real localhost SSH probe proves pre-auth pinning, wrong password,
+200014-byte binary roundtrip and stale/confirmed delete. Production X11 passes
+with visible rows, default-Cancel host/folder/delete/close and actual BIN/LOG/KML;
+root inspected screenshots. No network SITL or physical vehicle was changed.
+
+Five synthetic LOG outputs match the actual MP10 .NET postprocessor. A real5.1MiB
+BIN yields129602 LOG records **byte-identical**, SHA256
+`e44819bbdea81319f57ab182e3d966b4a8843f883b9327f95e556a2ef94b0d71`.
+The oracle must resolve MP10 bundled mode metadata, not FSI's install directory.
+Actual reference confirms legacy GPS naming's time-of-week delta error and bogus
+year0001 output without an anchor; Qt deliberately fixes both. Evidence:
+`/tmp/apm-sftp-port.Fxdbp0/`, `/tmp/apm-sftp-oracle.NecQdU/`.
+See `SFTP_LOG_DOWNLOAD_PORT.md` for dependency/offline builds, bounds, native
+filesystem/SSH teardown and visual/compatibility gaps. Three Codex streams and
+Claude TCP c298/c300/c302 reviews contributed; full reports/hashes checked.
+
+Developer **32/32 routed workflows is NOT all Tools parity**. Advanced remains
+14 working+partial Signing+Support Proxy (also unported in MP10). The cross-audit
+now explicitly prioritizes disabled MATLAB export, Terrain3D guided click and
+Signing rekey/recovery; DATA's missing log-tool routes and other dialogs remain.
+See `TOOLS_REAUDIT_2026_09_06.md`. MP10 DATA has15 tabs, Qt six mapped plus useful
+Quick Legacy (seven total), not the initially reported14-versus6. SETUP46/eight
+absent reference routes, CONFIG15 factories and Planner21/64 are unchanged.
+Inventory129 is77 in-progress/36 partial/16 not-started, none strict-complete;
+deviations146. Next: **MATLAB export as a working offline Tools slice**, then the
+remaining single-vehicle tools and Settings. Swarm remains last; port incomplete.
+
+### Previous checkpoint: Translation / RESX Editor
+
+Previous slice (2026-09-06): **Translation / RESX Editor**. Its existing Developer
 action opens one real modeless offline window with source/culture load, editable
 five-column table, filters, revert, all-row CSV, resume HTML import and confirmed
 sparse RESX/HTML export. Every existing target is backed up before replacement;

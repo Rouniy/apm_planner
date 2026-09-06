@@ -1,0 +1,40 @@
+# SFTP uses the maintained SSH implementation, never a home-grown protocol or
+# password-bearing subprocess. The default is a hash-pinned static dependency.
+option(APM_USE_SYSTEM_LIBSSH2 "Use a packaged libssh2 >=1.11.1 instead of the pinned source" OFF)
+if(APM_USE_SYSTEM_LIBSSH2)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(APM_LIBSSH2 REQUIRED IMPORTED_TARGET libssh2>=1.11.1)
+    add_library(apm_ssh_dependency INTERFACE)
+    target_link_libraries(apm_ssh_dependency INTERFACE PkgConfig::APM_LIBSSH2)
+else()
+    enable_language(C)
+    include(FetchContent)
+    FetchContent_Declare(apm_libssh2
+        URL https://libssh2.org/download/libssh2-1.11.1.tar.xz
+        URL_HASH SHA256=9954cb54c4f548198a7cbebad248bdc87dd64bd26185708a294b2b50771e3769)
+    # Keep dependency options local: do not disable APM tests or change the
+    # shared/static policy of another library in this large application.
+    function(apm_add_libssh2)
+        set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+        set(BUILD_SHARED_LIBS OFF)
+        set(BUILD_STATIC_LIBS ON)
+        set(BUILD_TESTING OFF)
+        set(BUILD_EXAMPLES OFF)
+        set(ENABLE_DEBUG_LOGGING OFF)
+        set(CRYPTO_BACKEND OpenSSL)
+        set(CMAKE_AUTOMOC OFF)
+        set(CMAKE_AUTORCC OFF)
+        set(CMAKE_AUTOUIC OFF)
+        set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+        FetchContent_GetProperties(apm_libssh2)
+        if(NOT apm_libssh2_POPULATED)
+            FetchContent_Populate(apm_libssh2)
+        endif()
+        add_subdirectory("${apm_libssh2_SOURCE_DIR}" "${apm_libssh2_BINARY_DIR}" EXCLUDE_FROM_ALL)
+        install(FILES "${apm_libssh2_SOURCE_DIR}/COPYING"
+            DESTINATION "${APM_INSTALL_RESOURCE_SUBDIR}/licenses" RENAME libssh2-COPYING)
+    endfunction()
+    apm_add_libssh2()
+    add_library(apm_ssh_dependency INTERFACE)
+    target_link_libraries(apm_ssh_dependency INTERFACE libssh2_static)
+endif()

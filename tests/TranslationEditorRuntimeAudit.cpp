@@ -77,7 +77,7 @@ int RunTranslationEditorRuntimeAudit()
     route->trigger(); QApplication::processEvents();
     auto *page = main->findChild<ConfigDeveloperToolsView *>();
     auto *button = control<QPushButton>(page, "TranslationResxEditorButton");
-    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 31
+    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 32
                && button && button->isEnabled(), "Developer action unavailable offline");
     if (!button) return 1;
     button->click(); QApplication::processEvents();

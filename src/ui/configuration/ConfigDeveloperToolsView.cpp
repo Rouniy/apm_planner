@@ -108,8 +108,6 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
 {
     setObjectName(QStringLiteral("ConfigDeveloperToolsView"));
 
-    const QString notPorted = tr("This Mission Planner developer workflow has "
-                                 "not yet been ported to Qt.");
     AddAction(tr("Decode MAVLink Packet"),
               QStringLiteral("DecodeMavlinkPacketButton"),
               [this]() { DecodePacket(); });
@@ -210,8 +208,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
     m_logOrganizerButton->setToolTip(tr(
         "Analyze a local log directory, review every proposed move and empty-log deletion, then explicitly execute the immutable plan."));
     ++m_implementedActionCount;
-    AddUnavailableAction(tr("Download DataFlash Logs over SFTP"),
-                         QStringLiteral("DownloadDataFlashSftpButton"), notPorted);
+    AddToolAction(tr("Download DataFlash Logs over SFTP"),
+                  QStringLiteral("DownloadDataFlashSftpButton"),
+                  QStringLiteral("actionSftpLogDownload"));
     m_mavFtpButton = AddAction(tr("Download MAVFTP File"),
         QStringLiteral("DownloadMavftpFileButton"),
         [this]() { StartMavFtpDownload(); }, false,

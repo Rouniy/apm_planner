@@ -175,6 +175,7 @@ target_link_libraries(apm_mission_command_catalog PUBLIC Qt::Core)
 # Qt has hashes but no authenticated encryption API. Signing-key encryption
 # uses OpenSSL on all supported platforms; never fall back to plaintext storage.
 find_package(OpenSSL 1.1.1 REQUIRED COMPONENTS Crypto)
+include(cmake/Libssh2.cmake)
 add_library(apm_mavlink_signing STATIC
     src/comm/MAVLinkSigningManager.cpp
     src/comm/MAVLinkSigningManager.h
@@ -648,6 +649,7 @@ set(SOURCES
     src/ui/LogIndexWindow.h
     src/ui/LogIndexWindowIntegration.cpp
     src/ui/TranslationEditorWindowIntegration.cpp
+    src/ui/SftpLogDownloadWindowIntegration.cpp
     src/ui/Loghandling/LogIndexTypes.h
     src/ui/Loghandling/LogIndexService.cpp
     src/ui/Loghandling/LogIndexService.h
@@ -1594,6 +1596,17 @@ target_include_directories(${APM_PLANNER_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/output
 )
 
+add_library(apm_sftp_core STATIC
+    src/services/SftpLogSession.h src/services/SftpLogSession.cpp
+    src/services/SftpLogDownloadSupport.h src/services/SftpLogDownloadSupport.cpp
+    src/ui/Loghandling/DataFlashBinToLogConverter.h src/ui/Loghandling/DataFlashBinToLogConverter.cpp)
+target_include_directories(apm_sftp_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(apm_sftp_core PUBLIC Qt::Core Qt::Network PRIVATE apm_ssh_dependency)
+add_library(apm_sftp_ui STATIC
+    src/services/SftpLogDownloadService.h src/services/SftpLogDownloadService.cpp
+    src/ui/SftpLogDownloadWindow.h src/ui/SftpLogDownloadWindow.cpp)
+target_link_libraries(apm_sftp_ui PUBLIC apm_sftp_core Qt::Widgets)
+
 add_library(apm_resx_core STATIC
     src/services/ResxTranslationService.h src/services/ResxTranslationService.cpp
     files/resx/resx-cultures.qrc)
@@ -1630,6 +1643,7 @@ target_link_libraries(apm_firmware_archive_ui PUBLIC apm_firmware_archive Qt::Wi
 
 # Link Qt and additional libs
 target_link_libraries(${APM_PLANNER_TARGET}
+    apm_sftp_ui
     apm_resx_editor
     apm_firmware_archive_ui
     apm_shapefile_poly_ui
@@ -1812,6 +1826,8 @@ if(BUILD_TESTING)
         tests/MicrodroneDownlinkRuntimeAudit.h
         tests/TranslationEditorRuntimeAudit.cpp
         tests/TranslationEditorRuntimeAudit.h
+        tests/SftpLogDownloadRuntimeAudit.cpp
+        tests/SftpLogDownloadRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1849,6 +1865,13 @@ if(BUILD_TESTING)
     add_test(NAME translation_editor_runtime_tests
         COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --translation-editor-audit)
     set_tests_properties(translation_editor_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 45)
+    target_compile_definitions(${APM_PLANNER_TARGET} PRIVATE
+        APM_SFTP_SERVER_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/tests/SftpHermeticServer.py")
+    add_test(NAME sftp_log_download_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --sftp-log-download-audit)
+    set_tests_properties(sftp_log_download_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 45)
     foreach(resx_suite resxtranslationservice translationeditormodel translationeditorwindow)
@@ -3612,6 +3635,16 @@ if(BUILD_TESTING)
         tests/test_exactlogtransferservice.cpp ${LOG_DOWNLOAD_CORE_SOURCES})
     add_executable(dataflashkmlexporter_tests
         tests/test_dataflashkmlexporter.cpp ${DATAFLASH_KML_SOURCES})
+    foreach(sftp_suite sftplogsession sftplogdownloadsupport sftplogdownloadwindow dataflashbintologconverter)
+        add_executable(${sftp_suite}_tests tests/test_${sftp_suite}.cpp ${DATAFLASH_KML_SOURCES})
+        target_include_directories(${sftp_suite}_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Loghandling
+            ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+        target_link_libraries(${sftp_suite}_tests PRIVATE apm_sftp_ui Qt::Test)
+        add_test(NAME ${sftp_suite}_tests COMMAND ${sftp_suite}_tests)
+        set_tests_properties(${sftp_suite}_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    endforeach()
+    add_executable(sftp_real_probe tests/SftpRealProbe.cpp)
+    target_link_libraries(sftp_real_probe PRIVATE apm_sftp_core)
     add_executable(logdownloadviewmodel_tests
         tests/test_logdownloadviewmodel.cpp src/ui/LogDownloadViewModel.cpp
         ${LOG_DOWNLOAD_CORE_SOURCES} ${DATAFLASH_KML_SOURCES})

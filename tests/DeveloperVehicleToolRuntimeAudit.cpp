@@ -747,7 +747,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 31 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 32 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *offlineSerialBridge = page->findChild<QPushButton *>(

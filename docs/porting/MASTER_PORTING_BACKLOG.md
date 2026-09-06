@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,285/285 тестов; Developer31/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,290/290 тестов; Developer32/32 маршрута,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -127,8 +127,15 @@ CSV, frozen loaded culture, default-Cancel экспорт, резервиров�
 и2264 строки точно совпадают с фактическим .NET oracle после исключения ошибки.
 RESX/HTML экспорт совпал побайтно. Full285/285 (49.71s),10 повторов трёх suites,
 production X11 и просмотр окна/consent проходят. См. RESX_TRANSLATION_EDITOR_PORT.md.
-Следующий SFTP требует portable SSH dependency/host-key policy и BIN-to-LOG
-конвертер: их пока нет. Далее Settings; Swarm остаётся в конце.
+SFTP теперь перенесён: real SSH listing/download/delete/cancel, pre-auth host-key
+pinning, BIN→LOG/KML, safe publication и полноценное modeless окно. Full290/290
+(50.93s), localhost SSH, production X11 и побайтовый oracle реального BIN проходят.
+См. SFTP_LOG_DOWNLOAD_PORT.md. Число32/32 относится только к Developer: внутри
+Tools остаются disabled MATLAB export, Terrain3D guided click и Signing rekey/
+recovery; вне меню — отсутствующие DATA log-tool routes и другие диалоги.
+Следующий пакет — MATLAB export. TOOLS_REAUDIT_2026_09_06.md уточняет полный
+аудит, включая15 MP10 DATA tabs против6 mapped+Quick Legacy. Далее Settings;
+Swarm остаётся в конце.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
@@ -436,8 +443,9 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Translation Editor работают31/32; перенести оставшийся
-  SFTP Logs законченным пакетом, не включая кнопку заранее.
+- Developer Tools: после SFTP все32 маршрута имеют реализацию; это не полная
+  функциональная готовность всех диалогов Tools. Следующий MATLAB export,
+  Terrain3D guided click и Signing transitions остаются отдельными пакетами.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.
 - SETUP OSD: live 24-write full/partial path и profile gate.

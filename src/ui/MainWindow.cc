@@ -640,6 +640,7 @@ MainWindow::~MainWindow()
     closeMavlinkSerialTcpBridge();
     closeLogIndex();
     closeTranslationEditor();
+    closeSftpLogDownload();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
@@ -756,6 +757,9 @@ void MainWindow::buildMissionPlannerToolsMenu()
     translationAction->setObjectName(QStringLiteral("actionTranslationResxEditor"));
     translationAction->setToolTip(tr("Edit and export Mission Planner .NET RESX resources; this does not change the Qt application's language."));
     connect(translationAction, &QAction::triggered, this, &MainWindow::showTranslationEditor);
+    auto *sftpAction = new QAction(tr("Download DataFlash Logs over SFTP"), this);
+    sftpAction->setObjectName(QStringLiteral("actionSftpLogDownload"));
+    connect(sftpAction, &QAction::triggered, this, &MainWindow::showSftpLogDownload);
     auto *microdroneAction = new QAction(tr("MicroDrone Downlink"), this);
     microdroneAction->setObjectName(QStringLiteral("actionMicrodroneDownlink"));
     connect(microdroneAction, &QAction::triggered, this, [this] {
@@ -2269,7 +2273,7 @@ void MainWindow::showHILConfigurationWidget(UASInterface* uas)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if (!requestTranslationEditorClose()) {
+    if (!requestTranslationEditorClose() || !requestSftpLogDownloadClose()) {
         event->ignore();
         return;
     }

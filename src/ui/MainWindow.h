@@ -84,6 +84,7 @@ class OfflineMagFitWindow;
 class MavlinkSerialTcpBridgeWindow;
 class LogIndexWindow;
 class TranslationEditorWindow;
+class SftpLogDownloadWindow;
 class LogAnonymizeService;
 class WarningEngine;
 class WarningTelemetrySource;
@@ -585,6 +586,9 @@ private:
     void showTranslationEditor();
     void closeTranslationEditor();
     bool requestTranslationEditorClose();
+    void showSftpLogDownload();
+    void closeSftpLogDownload();
+    bool requestSftpLogDownloadClose();
     void showParameterMetaDataRegeneration();
     void closeParameterMetaDataRegeneration();
     void showAnonLog();
@@ -603,6 +607,8 @@ private:
     QPointer<LogIndexWindow> m_logIndexWindow;
     QPointer<TranslationEditorWindow> m_translationEditorWindow;
     bool m_waitingForTranslationEditorClose = false;
+    QPointer<SftpLogDownloadWindow> m_sftpLogDownloadWindow;
+    bool m_waitingForSftpLogDownloadClose = false;
     void pruneMavlinkInspectorWindows();
 
     bool m_heartbeatEnabled;

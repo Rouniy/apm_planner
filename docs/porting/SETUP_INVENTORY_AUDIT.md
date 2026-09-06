@@ -33,6 +33,18 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
+SFTP now brings Developer to **32/32 implemented routes**, not strict parity of
+all Tools dialogs. A real modeless SSH window lists/downloads/deletes logs with
+pre-auth host-key pinning, default-Cancel consent and truthful cancellation.
+Full290/290, real localhost SSH and inspected production X11 pass. BIN→LOG from
+a real129602-record fixture matches actual MP10 bytes. Root's screenshot found
+invisible grid rows despite rowCount=1; model notifications are now retained and
+visual row geometry is regression-tested. See `SFTP_LOG_DOWNLOAD_PORT.md`.
+Disabled MATLAB, read-only Terrain3D guided click, Signing transitions and absent
+DATA log-tool routes remain explicit in `TOOLS_REAUDIT_2026_09_06.md`.
+
+Previous checkpoint:
+
 Translation/RESX Editor brings the catalogue to **31/32 working**, with only
 SFTP logs unavailable. The existing action opens a real modeless offline editor
 with load/edit/filter/export/backup/resume and all-row CSV,858 cultures and
