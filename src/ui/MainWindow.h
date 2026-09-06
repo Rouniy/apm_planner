@@ -85,6 +85,8 @@ class MavlinkSerialTcpBridgeWindow;
 class LogIndexWindow;
 class DataFlashLogToolsController;
 class GeoRefWindow;
+class JoystickDevice;
+class JoystickControlService;
 class TranslationEditorWindow;
 class SftpLogDownloadWindow;
 class LogAnonymizeService;
@@ -609,6 +611,8 @@ private:
     QPointer<LogIndexWindow> m_logIndexWindow;
     QPointer<DataFlashLogToolsController> m_dataFlashLogTools;
     QPointer<GeoRefWindow> m_geoRefWindow;
+    QPointer<JoystickDevice> m_joystickDevice;
+    QPointer<JoystickControlService> m_joystickControl;
     bool m_waitingForGeoRefClose = false;
     QPointer<TranslationEditorWindow> m_translationEditorWindow;
     bool m_waitingForTranslationEditorClose = false;

@@ -31,6 +31,7 @@ private:
     friend int RunSigningTransportRuntimeAudit();
     friend int RunDeveloperVehicleToolRuntimeAudit();
     friend int RunGuidedNavigationRuntimeAudit();
+    friend int RunJoystickRuntimeAudit();
 #endif
     static void connectLinkSignals(LinkInterface *link, LinkManager *lmgr);
 };

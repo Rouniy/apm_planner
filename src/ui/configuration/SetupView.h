@@ -22,6 +22,8 @@ class ConfigFFTView;
 class DroneCanMavlinkTransport;
 class FrameDefaultCatalogService;
 class LinkInterface;
+class JoystickDevice;
+class JoystickControlService;
 class ParameterMetaDataRepository;
 class QGCUASParamManager;
 class UASInterface;
@@ -35,6 +37,7 @@ public:
     ~SetupView() override;
     /** Shared metadata/exact-target binding for the page and independent FFT windows. */
     void bindFFTView(ConfigFFTView *view);
+    void setJoystickServices(JoystickDevice *device, JoystickControlService *service);
 
 signals:
     void advancedModeChanged(bool advanced);
@@ -43,6 +46,7 @@ signals:
 public slots:
     void advModeChanged(bool advanced);
     bool showDeveloperTools();
+    bool showJoystick();
     /** Rebuilds lazy action pages after MainWindow registers shared TOOLS. */
     void applicationToolActionsReady();
 
@@ -107,6 +111,8 @@ private:
         int componentId) const;
 
     BackstageView *m_backstage = nullptr;
+    QPointer<JoystickDevice> m_joystickDevice;
+    QPointer<JoystickControlService> m_joystickControl;
     QPointer<ConfigGpsInjectView> m_gpsInjectPage;
     QPointer<ConfigCompassView> m_compassPage;
     QPointer<ConfigDroneCanView> m_droneCanPage;

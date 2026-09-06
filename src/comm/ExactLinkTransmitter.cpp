@@ -52,6 +52,26 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
                            message, frameWriterInvoked);
 }
 
+ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendJoystickControl(
+    int linkId, quint64 expectedEpoch, quint8 localSystemId,
+    quint8 localComponentId, const mavlink_message_t &message,
+    std::function<bool()> finalGuard, bool *frameWriterInvoked)
+{
+    if (frameWriterInvoked) *frameWriterInvoked = false;
+    if (message.msgid != MAVLINK_MSG_ID_RC_CHANNELS_OVERRIDE
+        && message.msgid != MAVLINK_MSG_ID_MANUAL_CONTROL)
+        return SendResult::InvalidMessage;
+    if (linkId < 0 || !expectedEpoch
+        || m_linkSessionEpochs.value(linkId, 0) != expectedEpoch)
+        return SendResult::InvalidLink;
+    return sendMessageImpl(linkId, localSystemId, localComponentId, message,
+        frameWriterInvoked, [this, linkId, expectedEpoch,
+                            guard = std::move(finalGuard)]() {
+            return m_linkSessionEpochs.value(linkId, 0) == expectedEpoch
+                && guard && guard();
+        });
+}
+
 ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendSerialControl(
     int linkId, quint64 expectedEpoch, quint8 localSystemId,
     quint8 localComponentId, quint8 device, quint8 flags, quint16 timeout,

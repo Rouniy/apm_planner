@@ -16,6 +16,15 @@ minor visual matching is recorded and deferred until the useful workflows exist.
 
 The immediate user-directed order is:
 
+User correction after GeoRef (2026-09-06): **popular SETUP widgets and tools
+take priority now, starting with Joystick**. Do not continue Telemetry Logs,
+MATLAB or unusual export/edge-case investigations while important everyday
+SETUP workflows remain wrappers or incomplete. Replace the Joystick legacy
+launcher with the actual channel/button/device/calibration page and shared
+control, then tackle the most useful remaining Advanced/Developer and hardware
+configuration workflows. Settings follows; Swarm stays last. The older queue
+below is background, not permission to return to export-first work.
+
 1. Keep the fixed SETUP Advanced/Developer Tools action rebinding green, including MAVLink Inspector and every already implemented shared tool.
 2. Port the remaining non-swarm TOOLS dialogs/workflows for one vehicle; empty placeholders, no-op actions and accidentally disabled implemented forms are functional defects.
 3. Then return to Settings/CONFIG. The route catalogue is 15/15 with concrete factories, while the nine-section Planner page has only 21/64 direct MP10 controls and Advanced Tools has 14/16 intended working actions.
@@ -23,6 +32,44 @@ The immediate user-directed order is:
 5. Retain audited useful older APM Planner modules with honest Legacy/partial labels, track functional and GUI inaccuracies separately, and keep committing complete slices.
 
 ## Verified checkpoint
+
+Latest implementation (2026-09-06): **SETUP Joystick — practical port**.
+The old launcher is replaced by the embedded `ConfigJoystickView`: device/raw
+input,16 RC channels, expo/reverse/Auto Detect, button mapping/settings,
+elevons/manual, range calibration and local Save/ZIP-XML Import/Export.
+MainWindow owns SDL2 input and the exact20Hz controller; leaving SETUP keeps
+control active, while Disable/device/target loss stops it without retargeting.
+Enable defaults Cancel. RC calibration parameters are consumed from the exact
+endpoint; common buttons share the existing ACK owner, and Disable clears any
+pending Guided-to-TakeOff continuation before a new session can begin.
+
+Final Qt5/audio build4 and full **313/313 (54.34s)** pass. Production X11 also
+has zero audit failures, including actual Auto Detect, nonzero RC/MANUAL
+output, Save, default-Cancel/Accept Enable, navigation and Disable. Root
+inspected the final real page screenshot after hiding retired editors before
+deferred deletion. See `JOYSTICK_PORT.md` and evidence
+`/tmp/apm-joystick-port.Ogdqvl/`. No commands were sent to
+the user's SITL: tests use SDL virtual input and an in-process vehicle link.
+
+Remaining Joystick gaps are explicit: two unavailable gimbal actions,
+generic single local profile/no automatic firmware selection, free-text mode
+settings, live remapping, release repetitions, built-in raw SITL shortcut,
+physical controllers and native-platform/visual parity. The inventory is now
+**129 rows:79 in-progress,35 partial,15 not-started;156 deviations**, no
+strict-complete claim. Joystick replaces a factory rather than adding a route,
+so SETUP remains46 pages/eight absent reference routes.
+
+Next practical SETUP work: **Calibrate Level** (the missing one-axis/AHRS trim
+action between Full and Simple), then everyday radio/RTK and firmware-page
+workflows and actual Advanced/Developer gaps. Claude TCP c344 and a Codex
+reference check confirm Level uses PREFLIGHT_CALIBRATION params0/0/0/0/2/0/0;
+the old APM Plane Level gyro/baro command is not an equivalent replacement.
+Keep existing useful calibration modes. Settings follows, Swarm last.
+Do not resume Telemetry Logs/MATLAB or rare export audits from historical
+queues below. Developer32/32 means registered implementations, not complete
+dialog behavior; its contradictory old disabled-three ledger note was removed.
+
+### Previous checkpoint: GeoRef
 
 Latest implementation (2026-09-06): **Geo Reference Images — verified slice**.
 DATA DataFlash Logs now wires **eight of eight** reference actions. Its GeoRef

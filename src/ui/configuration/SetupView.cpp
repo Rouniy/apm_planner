@@ -40,6 +40,9 @@
 #include "comm/Px4FlowService.h"
 #include "comm/SwarmTelemetryRegistry.h"
 #include "ConfigInitialParamsView.h"
+#include "ConfigJoystickView.h"
+#include "input/JoystickDevice.h"
+#include "services/JoystickControlService.h"
 #include "ConfigMavCommandView.h"
 #include "ConfigMotorTestView.h"
 #include "ConfigParachuteView.h"
@@ -854,6 +857,23 @@ bool SetupView::showDeveloperTools()
     }
     m_backstage->setGroupExpanded(kAdvancedGroup, true);
     return m_backstage->setCurrentPage(kDeveloperTools);
+}
+
+bool SetupView::showJoystick()
+{
+    if (!m_backstage) return false;
+    m_backstage->setGroupExpanded(kOptionalGroup, true);
+    return m_backstage->setCurrentPage(kJoystick);
+}
+
+void SetupView::setJoystickServices(JoystickDevice *device, JoystickControlService *service)
+{
+    if (m_joystickDevice == device && m_joystickControl == service) return;
+    m_joystickDevice = device;
+    m_joystickControl = service;
+    const bool selected = m_backstage->currentPageId() == kJoystick;
+    m_backstage->resetPage(kJoystick);
+    if (selected) m_backstage->restoreInitialPage(kJoystick);
 }
 
 void SetupView::applicationToolActionsReady()
@@ -2368,51 +2388,7 @@ QWidget *SetupView::createGpsInjectPage(QWidget *parent)
 
 QWidget *SetupView::createJoystickPage(QWidget *parent)
 {
-    auto *content = new QWidget;
-    auto *layout = new QVBoxLayout(content);
-    layout->setContentsMargins(24, 24, 24, 24);
-    layout->setSpacing(12);
-
-    auto *title = new QLabel(tr("Joystick Setup"), content);
-    QFont titleFont = title->font();
-    titleFont.setPointSize(titleFont.pointSize() + 3);
-    titleFont.setBold(true);
-    title->setFont(titleFont);
-    layout->addWidget(title);
-
-    auto *description = new QLabel(
-        tr("Configure axes, reversal, flight-mode buttons and live input "
-           "using the application's shared joystick controller."), content);
-    description->setWordWrap(true);
-    layout->addWidget(description);
-
-    auto *openButton = new QPushButton(tr("Open Joystick Settings"), content);
-    openButton->setObjectName(QStringLiteral("JoystickSettingsButton"));
-    openButton->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    layout->addWidget(openButton, 0, Qt::AlignLeft);
-    layout->addStretch(1);
-
-    // MainWindow's shared action owns the one production JoystickInput and
-    // reuses its modeless JoystickWidget. The SETUP route deliberately invokes
-    // that action instead of creating a second live controller or dialog.
-    QAction *const action = window()
-        ? window()->findChild<QAction *>(
-              QStringLiteral("actionJoystickSettings"))
-        : nullptr;
-    openButton->setEnabled(action && action->isEnabled());
-    if (action) {
-        connect(action, &QAction::changed, openButton,
-                [action, openButton]() {
-            openButton->setEnabled(action->isEnabled());
-        });
-        connect(openButton, &QPushButton::clicked,
-                action, [action]() { action->trigger(); });
-    } else {
-        openButton->setToolTip(
-            tr("Joystick settings are unavailable in this window."));
-    }
-
-    return scrollablePage(content, kJoystick, parent);
+    return new ConfigJoystickView(m_joystickDevice, m_joystickControl, parent);
 }
 
 void SetupView::bindFFTView(ConfigFFTView *view)

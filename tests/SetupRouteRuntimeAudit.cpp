@@ -2,6 +2,7 @@
 #include "ui/ConfigFFTWindow.h"
 #include "ui/configuration/ConfigFFTView.h"
 #include "ui/configuration/ConfigAdvancedView.h"
+#include "ui/configuration/ConfigJoystickView.h"
 #include "ui/configuration/ParameterMetaDataRegenerationWindow.h"
 #include "ui/AnonLogWindow.h"
 #include "ui/MavlinkSigningWindow.h"
@@ -923,19 +924,13 @@ int RunSetupRouteRuntimeAudit()
         joystickNavigation->click();
     }
     QWidget *const joystickPage = backstage->page(kJoystick);
-    QAbstractButton *const joystickSettings = joystickPage
-        ? joystickPage->findChild<QAbstractButton *>(
-              QStringLiteral("JoystickSettingsButton"))
-        : nullptr;
-    result.Expect(joystickSettings && joystickSettings->isEnabled(),
-                  QStringLiteral("Joystick route does not expose the shared "
-                                 "settings action after action registration"));
-    if (joystickSettings) {
-        joystickSettings->click();
-        result.Expect(joystickLaunchCount == 1,
-                      QStringLiteral("Joystick route bypassed or failed to "
-                                     "trigger MainWindow's shared action"));
-    }
+    result.Expect(qobject_cast<ConfigJoystickView *>(joystickPage),
+                  QStringLiteral("Joystick must be a real configuration page, not a launcher"));
+    result.Expect(joystickPage && !joystickPage->findChild<QAbstractButton *>(
+                      QStringLiteral("JoystickSettingsButton")),
+                  QStringLiteral("The obsolete joystick launcher is still present"));
+    result.Expect(joystickLaunchCount == 0,
+                  QStringLiteral("Constructing Joystick unexpectedly invoked the legacy sender"));
 
     const QStringList advancedButtons = {
         QStringLiteral("MAVLinkInspectorButton"),

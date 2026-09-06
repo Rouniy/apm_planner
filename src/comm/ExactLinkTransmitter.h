@@ -69,6 +69,11 @@ private:
     friend class VehicleCommandService;
     friend class RemoteDataFlashLogService;
     friend class MavlinkSerialTcpBridgeService;
+    friend class JoystickControlService;
+    SendResult sendJoystickControl(int linkId, quint64 expectedEpoch,
+        quint8 localSystemId, quint8 localComponentId,
+        const mavlink_message_t &message, std::function<bool()> finalGuard,
+        bool *frameWriterInvoked = nullptr);
     // The exact command owner must survive signing and may revalidate its
     // immutable reservation immediately before the physical writer.
     SendResult sendGuardedCommandLong(int linkId, quint8 localSystemId,

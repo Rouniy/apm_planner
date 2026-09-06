@@ -41,6 +41,10 @@ This file is part of the QGROUNDCONTROL project
 #include "flightdata/DataFlashLogsWidget.h"
 #include "flightdata/DataFlashLogToolsController.h"
 #include "Loghandling/GeoRefWindow.h"
+#include "input/JoystickDevice.h"
+#include "services/JoystickControlService.h"
+#include "comm/ParameterService.h"
+#include "core/parameters/ParameterStore.h"
 #include "Loghandling/LogAnalysis.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "MAVLinkInspectorView.h"
@@ -506,7 +510,8 @@ MainWindow::MainWindow(QWidget *parent):
 
     // Connect user interface devices
     joystickWidget = 0;
-    joystick = new JoystickInput();
+    // SETUP owns the presentation; MainWindow owns the new shared SDL/control
+    // services. Do not start the legacy global-UAS joystick sender as well.
 
 #ifdef MOUSE_ENABLED_WIN
 
@@ -629,6 +634,7 @@ MainWindow::MainWindow(QWidget *parent):
 
 MainWindow::~MainWindow()
 {
+    if (m_joystickControl) m_joystickControl->shutdown();
     // Logging remains active while child widgets are being destroyed. Detach
     // the GUI sink first so destructor messages cannot append to a QTextEdit
     // which is itself already in QObject teardown.
@@ -1075,6 +1081,44 @@ void MainWindow::buildCommonWidgets()
         configView = new SubMainWindow(this);
         configView->setObjectName("VIEW_HARDWARE_CONFIG");
         hardwareSetupView = new SetupView(this);
+        auto *joystickLinks = LinkManager::instance();
+        m_joystickDevice = new JoystickDevice(this);
+        m_joystickDevice->setObjectName(QStringLiteral("JoystickDevice"));
+        m_joystickControl = new JoystickControlService(
+            m_joystickDevice, joystickLinks->vehicleTargetManager(),
+            joystickLinks->swarmTelemetryRegistry(), joystickLinks->exactLinkTransmitter(),
+            joystickLinks->vehicleCommandService(), QGC::MavlinkID(), QGC::ComponentID(),
+            [joystickLinks](const SwarmVehicleInstanceLease &lease,
+                            QVector<JoystickControlService::ChannelLimits> *limits,
+                            QString *error) {
+                const auto snapshot = joystickLinks->parameterService()->store()->snapshot(lease.endpoint);
+                limits->resize(JoystickConfiguration::ChannelCount);
+                for (int channel = 1; channel <= limits->size(); ++channel) {
+                    auto &row = (*limits)[channel - 1];
+                    const auto read = [&](const char *suffix, int *destination) {
+                        const QString name = QStringLiteral("RC%1_%2").arg(channel).arg(QString::fromLatin1(suffix));
+                        if (!snapshot.contains(lease.endpoint.componentId, name)) return true;
+                        bool ok = false;
+                        const double value = snapshot.value(lease.endpoint.componentId, name).value.toDouble(&ok);
+                        if (!ok || !std::isfinite(value) || value < 0 || value > 65535) {
+                            if (error) *error = tr("Invalid joystick channel limit: %1").arg(name);
+                            return false;
+                        }
+                        *destination = int(value);
+                        return true;
+                    };
+                    if (!read("MIN", &row.minimum) || !read("MAX", &row.maximum)
+                        || !read("TRIM", &row.trim)) return false;
+                }
+                return true;
+            },
+            [joystickLinks](const SwarmVehicleInstanceLease &lease, QString *error) {
+                return !joystickLinks->isShuttingDown()
+                    && joystickLinks->singleEndpointRouteIsEligible(
+                        lease.endpoint, lease.linkSessionEpoch, error);
+            }, this);
+        m_joystickControl->setObjectName(QStringLiteral("JoystickControlService"));
+        hardwareSetupView->setJoystickServices(m_joystickDevice, m_joystickControl);
         configView->setCentralWidget(hardwareSetupView);
         addToCentralStackedWidget(configView,VIEW_HARDWARE_CONFIG, tr("Hardware"));
     }
@@ -2372,6 +2416,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;
+    if (m_joystickControl) m_joystickControl->shutdown();
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
     closeOfflineMagFit();
@@ -3166,15 +3211,8 @@ void MainWindow::showRoadMap()
 
 void MainWindow::configure()
 {
-    if (!joystickWidget)
-    {
-        if (!joystick->isRunning())
-        {
-            joystick->start();
-        }
-        joystickWidget = new JoystickWidget(joystick);
-    }
-    joystickWidget->show();
+    loadHardwareConfigView();
+    if (hardwareSetupView) hardwareSetupView->showJoystick();
 }
 
 void MainWindow::showMissionElevation()

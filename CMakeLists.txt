@@ -1620,6 +1620,18 @@ target_include_directories(apm_matlab_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/sr
     ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
 target_link_libraries(apm_matlab_core PUBLIC Qt::Core)
 
+add_library(apm_joystick_input STATIC
+    src/input/JoystickConfiguration.h src/input/JoystickConfiguration.cpp
+    src/input/JoystickDevice.h src/input/JoystickDevice.cpp)
+target_include_directories(apm_joystick_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(apm_joystick_input PUBLIC Qt::Core ${APM_SDL2_TARGET} quazip)
+add_library(apm_joystick_ui STATIC
+    src/services/JoystickControlService.h src/services/JoystickControlService.cpp
+    src/ui/configuration/ConfigJoystickView.h src/ui/configuration/ConfigJoystickView.cpp)
+target_include_directories(apm_joystick_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+target_link_libraries(apm_joystick_ui PUBLIC apm_joystick_input Qt::Widgets)
+
 add_library(apm_georef_core STATIC
     src/ui/Loghandling/GeoRefExif.h src/ui/Loghandling/GeoRefExif.cpp
     src/ui/Loghandling/GeoRefService.h src/ui/Loghandling/GeoRefService.cpp)
@@ -1676,6 +1688,7 @@ target_link_libraries(apm_firmware_archive_ui PUBLIC apm_firmware_archive Qt::Wi
 
 # Link Qt and additional libs
 target_link_libraries(${APM_PLANNER_TARGET}
+    apm_joystick_ui
     apm_matlab_core
     apm_sftp_ui
     apm_georef_ui
@@ -1869,6 +1882,8 @@ if(BUILD_TESTING)
         tests/GuidedNavigationRuntimeAudit.h
         tests/DataFlashLogToolsRuntimeAudit.cpp
         tests/DataFlashLogToolsRuntimeAudit.h
+        tests/JoystickRuntimeAudit.cpp
+        tests/JoystickRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1927,6 +1942,10 @@ if(BUILD_TESTING)
         RUN_SERIAL TRUE TIMEOUT 60)
     add_test(NAME dataflash_tools_runtime_tests
         COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --dataflash-tools-audit)
+    add_test(NAME joystick_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --joystick-audit)
+    set_tests_properties(joystick_runtime_tests PROPERTIES TIMEOUT 45 RUN_SERIAL TRUE
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
     set_tests_properties(dataflash_tools_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 90)
@@ -4087,6 +4106,14 @@ if(BUILD_TESTING)
     target_link_libraries(developer_vehicle_tool_test_support PUBLIC
         apm_parameter_core Qt::Core)
     add_executable(componentcommandservice_tests tests/test_componentcommandservice.cpp)
+    foreach(joystick_suite joystickconfiguration joystickdevice joystickcontrolservice configjoystickview)
+        add_executable(${joystick_suite}_tests tests/test_${joystick_suite}.cpp)
+        target_link_libraries(${joystick_suite}_tests PRIVATE apm_joystick_ui
+            developer_vehicle_tool_test_support Qt::Test)
+        add_test(NAME ${joystick_suite}_tests COMMAND ${joystick_suite}_tests)
+        set_tests_properties(${joystick_suite}_tests PROPERTIES TIMEOUT 45
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
     target_link_libraries(componentcommandservice_tests PRIVATE
         developer_vehicle_tool_test_support Qt::Test)
     add_test(NAME componentcommandservice_tests COMMAND componentcommandservice_tests)
