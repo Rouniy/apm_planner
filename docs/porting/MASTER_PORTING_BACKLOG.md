@@ -8,6 +8,25 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
+GeoRef проверен: DATA DataFlash Logs теперь имеет **8/8 подключённых действий**.
+Самостоятельное modeless окно реализует CAM/TRIG/time-offset, GPS2,
+поправки задержки/высоты, Estimate Offset и настоящие JPEG/TIFF EXIF-копии,
+TXT/KML. Есть immutable plan, точное default-Cancel подтверждение,
+no-overwrite, отмена и drain при закрытии; исходники не меняются.
+Qt5/audio build3, full **308/308 (53.26 s)**, десять повторов четырёх suites
+(8.21 s), production X11 без ошибок и native окно10/10 проходят.
+Actual Release-reference:11 matching/report cases +3 estimates; Pillow
+проверяет65 снимков, выбранные EXIF-поля/пиксели, SHA входов и точные receipts.
+Отрицательная высота — намеренное исправление неработающего reference EXIF,
+а не заявление полной EXIF-эквивалентности. Более широкие форматы EXIF-времени,
+BigTIFF/TLOG, повреждённые контейнеры и native Windows/macOS остаются gaps.
+См. `GEOREF_PORT.md`; inventory129 =78 in-progress/36 partial/15 not-started,
+deviations154, ни одна поверхность не strict-complete. Дальше **Telemetry Logs,
+оставшиеся single-vehicle Tools/Signing, затем Settings; Swarm последний**.
+Подключённые32 Developer actions не означают полный перенос всех диалогов.
+
+Предыдущий checkpoint (BIN/LOG MATLAB):
+
 BIN/LOG MATLAB проверен: DATA DataFlash Logs имеет 7/8 рабочих действий,
 недоступен только GeoRef. Полный Level-5 output содержит labels, числовые
 матрицы, вложенные MSG1/ISBD1, PARM и Seen; immutable plan, default-Cancel

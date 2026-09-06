@@ -40,6 +40,7 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCTabbedInfoView.h"
 #include "flightdata/DataFlashLogsWidget.h"
 #include "flightdata/DataFlashLogToolsController.h"
+#include "Loghandling/GeoRefWindow.h"
 #include "Loghandling/LogAnalysis.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "MAVLinkInspectorView.h"
@@ -1900,6 +1901,29 @@ void MainWindow::buildCommonWidgets()
     infoview->installDataFlashLogs(dataFlashLogs);
     connect(dataFlashLogs, &DataFlashLogsWidget::downloadRequested,
             this, &MainWindow::showLogDownload);
+    connect(dataFlashLogs, &DataFlashLogsWidget::geoReferenceRequested, this, [this]() {
+        if (aboutToCloseFlag || m_waitingForGeoRefClose) return;
+        // Do not resurrect a closing instance. Once its worker has drained,
+        // it is safe to replace it even before DeferredDelete is delivered.
+        if (m_geoRefWindow && m_geoRefWindow->isClosing()) {
+            if (m_geoRefWindow->isBusy()) return;
+            delete m_geoRefWindow.data();
+        }
+        if (!m_geoRefWindow) {
+            auto *window = new GeoRefWindow(this);
+            window->setAttribute(Qt::WA_DeleteOnClose);
+            m_geoRefWindow = window;
+            connect(window, &GeoRefWindow::shutdownReady, this, [this]() {
+                if (m_waitingForGeoRefClose && !aboutToCloseFlag) {
+                    m_waitingForGeoRefClose = false;
+                    close();
+                }
+            }, Qt::QueuedConnection);
+        }
+        m_geoRefWindow->show();
+        m_geoRefWindow->raise();
+        m_geoRefWindow->activateWindow();
+    });
     connect(dataFlashTools, &DataFlashLogToolsController::reviewLogRequested,
             this, [this](const QString &path) {
         if (aboutToCloseFlag) return;
@@ -2330,13 +2354,21 @@ void MainWindow::closeEvent(QCloseEvent *event)
         event->ignore();
         return;
     }
+    bool offlineBusy = false;
+    if (m_geoRefWindow) {
+        m_waitingForGeoRefClose = true;
+        m_geoRefWindow->requestShutdown();
+        offlineBusy = m_geoRefWindow && m_geoRefWindow->isBusy();
+        if (!offlineBusy) m_waitingForGeoRefClose = false;
+    }
     if (m_dataFlashLogTools) {
         if (!m_dataFlashLogTools->shutdownPending())
             m_dataFlashLogTools->shutdown();
-        if (m_dataFlashLogTools->busy()) {
-            event->ignore();
-            return;
-        }
+        offlineBusy = offlineBusy || m_dataFlashLogTools->busy();
+    }
+    if (offlineBusy) {
+        event->ignore();
+        return;
     }
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;

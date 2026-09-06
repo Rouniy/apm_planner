@@ -363,19 +363,19 @@ void DataFlashLogToolsControllerTest::widgetHasEightFaithfulActions()
         "DataFlashDownloadButton", "DataFlashReviewButton",
         "DataFlashAutoAnalysisButton", "DataFlashKmlGpxButton",
         "DataFlashBinToLogButton", "DataFlashMatlabButton",
-        "DataFlashOrganizeButton"};
+        "DataFlashOrganizeButton", "DataFlashGeoReferenceButton"};
     for (const char *name : working) {
         QPushButton *button = widget.findChild<QPushButton *>(QString::fromLatin1(name));
         QVERIFY(button);
         QVERIFY(button->isEnabled());
         QCOMPARE(button->minimumWidth(), 0);
     }
-    for (const char *name : {"DataFlashGeoReferenceButton"}) {
-        QPushButton *button = widget.findChild<QPushButton *>(QString::fromLatin1(name));
-        QVERIFY(button);
-        QVERIFY(!button->isEnabled());
-        QVERIFY(button->toolTip().contains(QStringLiteral("not yet ported")));
-    }
+    widget.setOperationBusy(true);
+    for (const char *name : working)
+        QVERIFY(!widget.findChild<QPushButton *>(QString::fromLatin1(name))->isEnabled());
+    widget.setOperationBusy(false);
+    for (const char *name : working)
+        QVERIFY(widget.findChild<QPushButton *>(QString::fromLatin1(name))->isEnabled());
     QCOMPARE(widget.findChildren<QPushButton *>().size(), 8);
     QVERIFY(widget.findChild<QLabel *>(QStringLiteral("DataFlashLogStatus")));
 }

@@ -1620,6 +1620,15 @@ target_include_directories(apm_matlab_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/sr
     ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
 target_link_libraries(apm_matlab_core PUBLIC Qt::Core)
 
+add_library(apm_georef_core STATIC
+    src/ui/Loghandling/GeoRefExif.h src/ui/Loghandling/GeoRefExif.cpp
+    src/ui/Loghandling/GeoRefService.h src/ui/Loghandling/GeoRefService.cpp)
+target_include_directories(apm_georef_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(apm_georef_core PUBLIC Qt::Core)
+add_library(apm_georef_ui STATIC
+    src/ui/Loghandling/GeoRefWindow.h src/ui/Loghandling/GeoRefWindow.cpp)
+target_link_libraries(apm_georef_ui PUBLIC apm_georef_core Qt::Widgets Qt::Concurrent)
+
 add_library(apm_sftp_core STATIC
     src/services/SftpLogSession.h src/services/SftpLogSession.cpp
     src/services/SftpLogDownloadSupport.h src/services/SftpLogDownloadSupport.cpp
@@ -1669,6 +1678,7 @@ target_link_libraries(apm_firmware_archive_ui PUBLIC apm_firmware_archive Qt::Wi
 target_link_libraries(${APM_PLANNER_TARGET}
     apm_matlab_core
     apm_sftp_ui
+    apm_georef_ui
     apm_resx_editor
     apm_firmware_archive_ui
     apm_shapefile_poly_ui
@@ -1920,6 +1930,15 @@ if(BUILD_TESTING)
     set_tests_properties(dataflash_tools_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 90)
+    foreach(georef_suite georefexif georefservice georefwindow)
+        add_executable(${georef_suite}_tests tests/test_${georef_suite}.cpp)
+        target_link_libraries(${georef_suite}_tests PRIVATE apm_georef_ui Qt::Test)
+        add_test(NAME ${georef_suite}_tests COMMAND ${georef_suite}_tests)
+        set_tests_properties(${georef_suite}_tests PROPERTIES TIMEOUT 90
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
+    add_executable(georef_probe tests/GeoRefProbe.cpp)
+    target_link_libraries(georef_probe PRIVATE apm_georef_core)
     foreach(resx_suite resxtranslationservice translationeditormodel translationeditorwindow)
         add_executable(${resx_suite}_tests tests/test_${resx_suite}.cpp)
         target_link_libraries(${resx_suite}_tests PRIVATE apm_resx_editor Qt::Test)

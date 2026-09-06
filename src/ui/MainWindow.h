@@ -84,6 +84,7 @@ class OfflineMagFitWindow;
 class MavlinkSerialTcpBridgeWindow;
 class LogIndexWindow;
 class DataFlashLogToolsController;
+class GeoRefWindow;
 class TranslationEditorWindow;
 class SftpLogDownloadWindow;
 class LogAnonymizeService;
@@ -607,6 +608,8 @@ private:
     QPointer<MavlinkSerialTcpBridgeWindow> m_mavlinkSerialTcpBridgeWindow;
     QPointer<LogIndexWindow> m_logIndexWindow;
     QPointer<DataFlashLogToolsController> m_dataFlashLogTools;
+    QPointer<GeoRefWindow> m_geoRefWindow;
+    bool m_waitingForGeoRefClose = false;
     QPointer<TranslationEditorWindow> m_translationEditorWindow;
     bool m_waitingForTranslationEditorClose = false;
     QPointer<SftpLogDownloadWindow> m_sftpLogDownloadWindow;

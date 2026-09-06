@@ -24,6 +24,49 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
+Latest implementation (2026-09-06): **Geo Reference Images — verified slice**.
+DATA DataFlash Logs now wires **eight of eight** reference actions. Its GeoRef
+button opens one independent modeless window with CAM/TRIG/time-offset,
+GPS2, shutter/altitude corrections, median Estimate, exact default-Cancel
+preparation and actual JPEG/classic TIFF EXIF copies plus TXT/KML reports.
+Originals are retained; existing outputs are refused. Cancellation has exact
+partial receipts and application close drains both offline owners immediately.
+
+Qt5/audio build3 and full **308/308 pass (53.26 s)**. Four related suites each
+pass ten repeats (8.21 s). Production X11 has zero audit failures, including
+real pickers/Estimate/consent/EXIF/no-overwrite and concurrent GeoRef+MATLAB
+MainWindow close. Native GeoRef window **10/10** passes (798 ms); root inspected
+the actual window and consent. A DeferredDelete reopen defect was corrected;
+the test-only sparse-GPS expectation and no-op input-mutation fixture were fixed,
+with failing evidence retained rather than hidden.
+
+Actual Release-reference comparisons pass for **11 matching/report scenarios**
+(ten UTC, one Asia/Nicosia) and **three offset estimates**. Independent Pillow
+checks decoded pixels and selected EXIF metadata on **65 tagged photos**;
+all source hashes and exact output receipts agree. Two comparator rejection
+tests cover bogus receipts, paths, coordinates and input hashes. These are
+valid synthetic LOG fixtures, not universal BIN/camera-file parity. Matching
+and report tolerance is1e-12 absolute; image metadata checks are semantic,
+not raw EXIF byte equivalence with MP10.
+
+Qt preserves MakerNote/orientation/image data and encodes negative altitude
+correctly, while MP10 fails EXIF publication for that seven-photo case. Its
+historical CAM/TRIG17s versus GPS18s clock is retained explicitly. Malformed
+old GPS values warn without losing valid capture time; strict container
+validation, nonstandard EXIF dates, BigTIFF/TLOG, bounds and native-platform
+verification remain disclosed gaps. See `GEOREF_PORT.md`; evidence
+`/tmp/apm-georef-port.ew63oT/`. Claude TCP c335/c337/c338 and three Codex streams
+contributed; actual validation, not review verdicts, determines this checkpoint.
+
+Inventory remains129 rows with no strict-complete surface: **78 in-progress,
+36 partial,15 not-started**; deviations154. DATA8 tabs/7 mapped+Quick Legacy/
+8 absent reference tabs, SETUP46/eight missing routes, Advanced14 working+
+partial Signing+Support Proxy gap, CONFIG15 factories/Planner21of64 remain.
+Next: **Telemetry Logs and remaining single-vehicle Tools/Signing**, then
+Settings/CONFIG; Swarm stays last. The whole port is unfinished.
+
+### Previous checkpoint: BIN/LOG MATLAB
+
 Latest implementation (2026-09-06): **BIN/LOG MATLAB — verified**.
 DATA DataFlash Logs wires **seven of eight** reference actions; only Geo
 Reference Images remains disabled. Create Matlab File performs read-only

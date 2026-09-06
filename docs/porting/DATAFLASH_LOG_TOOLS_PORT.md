@@ -3,16 +3,17 @@
 ## Scope and reference
 
 MP10 `GCSViews/FlightDataView.axaml:678–705` has eight DataFlash actions. The
-new Qt DATA tab retains that inventory and connects seven actual workflows:
+new Qt DATA tab retains that inventory and connects eight actual workflows:
 Download DataFlash Log Via Mavlink, Review a Log, Auto Analysis, Create KML + gpx,
-Convert Bin to Log, Create Matlab File and Organize tlog/rlog/bin/log. Only Geo
-Reference Images remains explicitly unavailable, not redirected to an unrelated
-tool. Telemetry Logs is a separate still-missing tab. The existing useful
+Convert Bin to Log, Create Matlab File, Organize tlog/rlog/bin/log and Geo
+Reference Images. GeoRef opens its own working modeless window and writes
+actual JPEG/TIFF EXIF copies; see `GEOREF_PORT.md`.
+Telemetry Logs is a separate still-missing tab. The existing useful
 Quick (Legacy) and standalone LogAnalysis are retained.
 
 DATA now has eight tabs: seven mapped MP10 surfaces plus Quick (Legacy).
 Eight reference tabs remain absent: Drone ID, Gauges, Transponder, Servo/Relay,
-Aux Function, Scripts, Payload Control and Telemetry Logs. Seven implemented hub
+Aux Function, Scripts, Payload Control and Telemetry Logs. Eight implemented hub
 actions do not make this screen or the overall Tools inventory strict-complete.
 
 Review opens the existing modeless LogAnalysis with the selected file; this
@@ -164,9 +165,9 @@ evaluated by all17 actual reference checks (1377 results). Actual .NET numeric
 probing confirms saturating .NET10 unchecked integer conversion and the
 different custom-format versus standard-percent rounding rules.
 
-Remaining whole-port gates include the unavailable Geo Reference Images action,
+Remaining whole-port gates include broader GeoRef camera-file compatibility,
 Telemetry Logs replay/presentation, Signing transitions, native Windows/macOS
 filesystem/UI evidence, HiDPI/reference screenshot comparison and the broader
 SETUP/Settings inventory. This tab does not close the Tools port. Next are
-GeoRef, Telemetry Logs and other non-swarm dialogs/Signing. Settings follows the
+Telemetry Logs and other non-swarm dialogs/Signing. Settings follows the
 remaining single-vehicle tools; Swarm remains last.

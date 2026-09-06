@@ -24,6 +24,7 @@ signals:
     void kmlGpxRequested();
     void binToLogRequested();
     void matlabRequested();
+    void geoReferenceRequested();
     void organizeRequested();
 
 private:

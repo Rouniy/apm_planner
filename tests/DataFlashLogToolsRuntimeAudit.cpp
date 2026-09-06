@@ -1,14 +1,18 @@
 #include "DataFlashLogToolsRuntimeAudit.h"
+#include "GeoRefRuntimeFixture.h"
 #include "ui/MainWindow.h"
 #include "ui/LogDownloadViewModel.h"
 #include "ui/LogDownloadWindow.h"
 #include "ui/Loghandling/LogAnalysis.h"
+#include "ui/Loghandling/GeoRefWindow.h"
+#include "ui/Loghandling/GeoRefExif.h"
 #include "ui/flightdata/DataFlashLogsWidget.h"
 #include "ui/flightdata/DataFlashLogToolsController.h"
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QDialogButtonBox>
+#include <QDoubleSpinBox>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -151,16 +155,24 @@ int RunDataFlashLogToolsRuntimeAudit()
     const QString screenshots = qEnvironmentVariable("APM_DATAFLASH_TOOLS_AUDIT_SCREENSHOT");
     const char *working[] = {"DataFlashDownloadButton", "DataFlashReviewButton",
         "DataFlashAutoAnalysisButton", "DataFlashKmlGpxButton",
-        "DataFlashBinToLogButton", "DataFlashOrganizeButton", "DataFlashMatlabButton"};
+        "DataFlashBinToLogButton", "DataFlashOrganizeButton", "DataFlashMatlabButton",
+        "DataFlashGeoReferenceButton"};
     for (const char *name : working) {
         auto *button = find<QPushButton>(page, name);
         check(button && button->isVisible() && button->isEnabled(), "implemented offline tool unavailable");
         if (!button) return 1;
     }
-    for (const char *name : {"DataFlashGeoReferenceButton"}) {
-        auto *button = find<QPushButton>(page, name);
-        check(button && button->isVisible() && !button->isEnabled()
-              && button->toolTip().contains("not yet ported"), "missing workflow falsely presented as working");
+    find<QPushButton>(page, "DataFlashGeoReferenceButton")->click();
+    check(wait([&] { return visible<GeoRefWindow>(main, "GeoRefWindow"); }),
+          "GeoRef did not open an actual independent window offline");
+    if (auto *geo = visible<GeoRefWindow>(main, "GeoRefWindow")) {
+        check(geo->isWindow(), "GeoRef is a embedded placeholder instead of a window");
+        find<QPushButton>(page, "DataFlashGeoReferenceButton")->click();
+        check(main->findChildren<GeoRefWindow *>().size() == 1,
+              "GeoRef route created duplicate windows");
+        geo->close();
+        check(wait([&] { return !visible<GeoRefWindow>(main, "GeoRefWindow"); }),
+              "idle GeoRef failed to close");
     }
     find<QPushButton>(page, "DataFlashDownloadButton")->click();
     check(wait([&] { return main->findChild<LogDownloadWindow *>(); }), "Download did not open real shared window offline");
@@ -258,6 +270,64 @@ int RunDataFlashLogToolsRuntimeAudit()
           "MATLAB replaced an existing file");
     stage("MATLAB completed and existing output preserved");
 
+    QString geoLog, geoPhotos;
+    check(GeoRefRuntimeFixture::create(directory.path(), &geoLog, &geoPhotos),
+          "cannot create real GeoRef JPEG/EXIF/log fixtures");
+    const QByteArray oldPhoto = bytes(geoPhotos + "/one.jpg");
+    find<QPushButton>(page, "DataFlashGeoReferenceButton")->click();
+    check(wait([&] { return visible<GeoRefWindow>(main, "GeoRefWindow"); }), "GeoRef reopen failed");
+    QPointer<GeoRefWindow> geo = visible<GeoRefWindow>(main, "GeoRefWindow");
+    if (!geo) return 1;
+    auto *geoBrowse = find<QPushButton>(geo, "GeoRefBrowseLogButton");
+    auto *geoFolder = find<QPushButton>(geo, "GeoRefBrowsePhotoButton");
+    auto *geoTag = find<QPushButton>(geo, "GeoRefGeoTagButton");
+    auto *geoEstimate = find<QPushButton>(geo, "GeoRefEstimateOffsetButton");
+    check(geoBrowse && geoFolder && geoTag && geoEstimate, "GeoRef controls absent");
+    if (!geoBrowse || !geoFolder || !geoTag || !geoEstimate) return 1;
+    geoBrowse->click();
+    check(wait([&] { return visible<QFileDialog>(geo, "GeoRefLogDialog"); })
+          && choose(visible<QFileDialog>(geo, "GeoRefLogDialog"), geoLog), "GeoRef log picker unusable");
+    geoFolder->click();
+    check(wait([&] { return visible<QFileDialog>(geo, "GeoRefPhotoDirectoryDialog"); })
+          && choose(visible<QFileDialog>(geo, "GeoRefPhotoDirectoryDialog"), geoPhotos), "GeoRef photo picker unusable");
+    geoEstimate->click();
+    check(wait([&] { return geo && !geo->isBusy(); }), "GeoRef estimate did not finish");
+    auto *offset = find<QDoubleSpinBox>(geo, "GeoRefTimeOffsetSeconds");
+    check(offset && qAbs(offset->value() - 12.0) < 0.0001, "GeoRef estimate differs from actual fixture offset");
+    const QString geoOutput = geoPhotos + "/geotagged/one_geotag.jpg";
+    const auto openGeoConsent = [&]() {
+        geoTag->click();
+        return wait([&] { return visible<QDialog>(geo, "GeoRefConfirmationDialog"); });
+    };
+    check(openGeoConsent(), "GeoRef preparation/consent missing");
+    auto *geoConsent = visible<QDialog>(geo, "GeoRefConfirmationDialog");
+    check(defaultCancel(geoConsent), "GeoRef consent not default-Cancel");
+    if (!screenshots.isEmpty() && geoConsent)
+        check(geoConsent->grab().save(screenshots + ".georef-consent.png"), "GeoRef consent screenshot failed");
+    if (geoConsent) geoConsent->reject();
+    check(wait([&] { return geo && !geo->isBusy(); }) && !QFile::exists(geoOutput), "GeoRef Cancel published a photo");
+    check(openGeoConsent() && confirm(visible<QDialog>(geo, "GeoRefConfirmationDialog")), "GeoRef consent cannot execute");
+    check(wait([&] { return geo && !geo->isBusy(); }), "GeoRef export did not drain");
+    const auto metadata = GeoRefExif::Inspect(geoOutput);
+    check(metadata.success && metadata.hasCoordinates
+          && qAbs(metadata.coordinates.latitude - 47.5) < 0.0000001
+          && qAbs(metadata.coordinates.longitude - 8.5) < 0.0000001
+          && qAbs(metadata.coordinates.altitude - 123.5) < 0.0000001,
+          "GeoRef did not write real GPS EXIF");
+    check(bytes(geoPhotos + "/one.jpg") == oldPhoto, "GeoRef changed original photo");
+    check(bytes(geoPhotos + "/geotagged/location.txt").contains("one.jpg"), "GeoRef location report missing");
+    auto *geoRows = find<QTableWidget>(geo, "GeoRefResults");
+    check(geoRows && geoRows->rowCount() == 2, "GeoRef result rows missing");
+    if (!screenshots.isEmpty())
+        check(geo->grab().save(screenshots + ".georef.png"), "GeoRef screenshot failed");
+    const QByteArray taggedPhoto = bytes(geoOutput);
+    geoTag->click();
+    check(wait([&] { return geo && !geo->isBusy(); }) && bytes(geoOutput) == taggedPhoto,
+          "GeoRef overwrote an existing tagged photo");
+    geo->close();
+    check(wait([&] { return !visible<GeoRefWindow>(main, "GeoRefWindow"); }), "GeoRef did not close");
+    stage("GeoRef real EXIF, reports, consent and new-only publication verified");
+
     const QString organizeRoot = directory.filePath("organize");
     QDir().mkpath(organizeRoot);
     QFile empty(organizeRoot + "/empty.log");
@@ -300,11 +370,25 @@ int RunDataFlashLogToolsRuntimeAudit()
           && !QFile::exists(directory.filePath("cancel.gpx")),
           "early cancellation did not drain or published outputs");
     stage("explicit cancellation drained");
+    // Both independent offline owners must receive shutdown immediately.  Do
+    // not serialize their cancellation behind one another's drain callback.
+    find<QPushButton>(page, "DataFlashGeoReferenceButton")->click();
+    geo = visible<GeoRefWindow>(main, "GeoRefWindow");
+    check(geo, "shutdown GeoRef window did not open");
+    if (geo) {
+        geo->setSource(cancelInput);
+        auto *photos = find<QLineEdit>(geo, "GeoRefPhotoDirectory");
+        check(photos, "shutdown GeoRef photo field missing");
+        if (photos) photos->setText(geoPhotos);
+    }
     check(openMatlab() && confirm(visible<QDialog>(main, "DataFlashMatlabConfirmationDialog")),
           "shutdown MATLAB conversion could not start");
+    if (geo) find<QPushButton>(geo, "GeoRefGeoTagButton")->click();
+    check(geo && geo->isBusy(), "shutdown GeoRef preparation did not start");
     main->close();
     check(controller->shutdownPending(), "MainWindow Close did not request controller shutdown");
-    check(wait([&] { return !controller->busy() && !main->isVisible(); })
+    check(!geo || geo->isClosing(), "MainWindow Close did not request GeoRef shutdown");
+    check(wait([&] { return !controller->busy() && (!geo || !geo->isBusy()) && !main->isVisible(); })
           && !QFile::exists(directory.filePath("cancel.kml"))
           && !QFile::exists(directory.filePath("cancel.gpx"))
           && !QFile::exists(cancelInput + QStringLiteral("-100002.mat")),

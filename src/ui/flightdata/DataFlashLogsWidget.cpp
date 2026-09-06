@@ -42,9 +42,6 @@ DataFlashLogsWidget::DataFlashLogsWidget(QWidget *parent)
     m_organize = makeButton(this, "DataFlashOrganizeButton",
                             tr("Organize tlog/rlog/\nbin/log"));
 
-    const QString unavailable = tr("This Mission Planner workflow is not yet ported.");
-    m_geoReference->setEnabled(false);
-    m_geoReference->setToolTip(unavailable);
 
     layout->addWidget(m_download, 0, 0);
     layout->addWidget(m_review, 0, 1);
@@ -83,6 +80,8 @@ DataFlashLogsWidget::DataFlashLogsWidget(QWidget *parent)
             this, &DataFlashLogsWidget::binToLogRequested);
     connect(m_matlab, &QPushButton::clicked,
             this, &DataFlashLogsWidget::matlabRequested);
+    connect(m_geoReference, &QPushButton::clicked,
+            this, &DataFlashLogsWidget::geoReferenceRequested);
     connect(m_organize, &QPushButton::clicked,
             this, &DataFlashLogsWidget::organizeRequested);
 }
@@ -96,8 +95,7 @@ void DataFlashLogsWidget::setOperationBusy(bool busy)
     m_binToLog->setEnabled(!busy);
     m_organize->setEnabled(!busy);
     m_matlab->setEnabled(!busy);
-    // Geo-reference remains intentionally unavailable even while idle.
-    m_geoReference->setEnabled(false);
+    m_geoReference->setEnabled(!busy);
 }
 
 void DataFlashLogsWidget::setStatusText(const QString &text)
