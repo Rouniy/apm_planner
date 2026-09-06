@@ -2,6 +2,10 @@
 
 Updated: 2026-09-06. This is the short operational handoff for the Mission Planner 10 Qt/CMake port. Update it whenever a functional package is committed or the immediate priority changes.
 
+Restart entry point: **[NEXT_SESSION_HANDOFF.md](NEXT_SESSION_HANDOFF.md)**.
+It records commit8591c65b, durable evidence paths, TCP4096 coordination and
+the concrete next Radio Calibration slice. Prefer it over historical queues below.
+
 ## Goal and current milestone
 
 The product goal is a cross-platform APM Planner 3.0 (`3.0.0`) that transfers the functionality and recognizable workflow of Mission Planner 10 to Qt/CMake on Linux, Windows and macOS. Existing QGroundControl and Hermes/GTU code may be reused where licensing and architecture fit.

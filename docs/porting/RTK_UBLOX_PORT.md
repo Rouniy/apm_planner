@@ -45,6 +45,8 @@ earlier writes. The initial configuration consent describes these limitations.
 ## Evidence
 
 Evidence directory: `/tmp/apm-ublox-port.thxRlW/`.
+Durable restart copy (logs and screenshots):
+`/home/alex/SRC/porting-evidence/2026-09-06-rtk-ublox-8591c65b/`.
 Qt5/audio configure and final application build3 pass; build4 recompiles only
 the source watchdog test. Final full **317/317 passes in 110.60 s**
 (`full4.log`), including the 41.17 s RTK runtime. Production X11 exits0 with
