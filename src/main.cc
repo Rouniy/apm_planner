@@ -48,6 +48,7 @@ This file is part of the QGROUNDCONTROL project
 #include "SetupRouteRuntimeAudit.h"
 #include "SigningTransportRuntimeAudit.h"
 #include "DeveloperVehicleToolRuntimeAudit.h"
+#include "LogIndexRuntimeAudit.h"
 
 #include <QSettings>
 #include <QStandardPaths>
@@ -135,6 +136,7 @@ int main(int argc, char *argv[])
     bool setupRouteAuditRequested = false;
     bool signingTransportAuditRequested = false;
     bool developerVehicleAuditRequested = false;
+    bool logIndexAuditRequested = false;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--setup-route-audit") == 0) {
             setupRouteAuditRequested = true;
@@ -143,12 +145,19 @@ int main(int argc, char *argv[])
             signingTransportAuditRequested = true;
         if (std::strcmp(argv[index], "--developer-vehicle-tools-audit") == 0)
             developerVehicleAuditRequested = true;
+        if (std::strcmp(argv[index], "--log-index-audit") == 0)
+            logIndexAuditRequested = true;
     }
+    // Keep the audit's directory picker introspectable under desktop platform
+    // themes as well as offscreen. Normal launches retain native file dialogs.
+    if (logIndexAuditRequested)
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
 
     // Construct before application singletons so their static destructors
     // release signing/file locks before the isolated directory is removed.
     static std::unique_ptr<QTemporaryDir> setupRouteAuditSettings;
-    if (setupRouteAuditRequested || signingTransportAuditRequested || developerVehicleAuditRequested) {
+    if (setupRouteAuditRequested || signingTransportAuditRequested || developerVehicleAuditRequested
+        || logIndexAuditRequested) {
         // The audit constructs production pages but must not observe or mutate
         // the operator's settings and writable application-data directories.
         QStandardPaths::setTestModeEnabled(true);
@@ -189,13 +198,14 @@ int main(int argc, char *argv[])
     QGCCore core(argc, argv);
 
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
-    if (signingTransportAuditRequested || developerVehicleAuditRequested) {
+    if (signingTransportAuditRequested || developerVehicleAuditRequested || logIndexAuditRequested) {
         // Synthetic security fixtures must not subscribe to the operator's
         // network SITL before the explicit listener-restoration test cases.
         QSettings auditSettings;
         auditSettings.setValue(QStringLiteral("startup_udp_listeners_enabled"), false);
         auditSettings.setValue(QStringLiteral("AUTO_UPDATE/ENABLED"), false);
         auditSettings.sync();
+        if (logIndexAuditRequested) return RunLogIndexRuntimeAudit();
         return developerVehicleAuditRequested ? RunDeveloperVehicleToolRuntimeAudit()
                                               : RunSigningTransportRuntimeAudit();
     }

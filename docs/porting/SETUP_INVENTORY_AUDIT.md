@@ -33,7 +33,16 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-MAVLink Serial TCP Bridge brings the exact Developer catalogue to24/32 working,
+Flight Log Index brings the exact Developer catalogue to25/32 working,
+with7 explicitly unavailable. It opens a real offline13-column window shared
+with the retained Log Browser and Logfile Plot Index entries. Background
+BIN/LOG/TLOG indexing, cache-only previews, sorting/summary, actual browser
+opening and exact-companion default/Escape-Cancel deletion are integrated.
+Full262 tests and production X11 verify navigation, picker cancellation,
+browser loading/reuse, deletion boundaries and immediate reopen. No Setup page
+or fixed Tools item was added. See `LOG_INDEX_PORT.md` for file/clock/GUI limits.
+
+The preceding MAVLink Serial TCP Bridge slice brought the exact Developer catalogue to24/32 working,
 with8 explicitly unavailable. The existing action opens a real modeless window
 offline through the shared MainWindow route; all15 UARTs and10 baud choices,
 exact consent, bounded single-client TCP and private SERIAL_CONTROL are wired.

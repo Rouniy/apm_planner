@@ -108,6 +108,11 @@ AP2DataPlot2D::AP2DataPlot2D(QWidget *parent) : QWidget(parent),
     activeUASSet(UASManager::instance()->getActiveUAS());
 
     connect(ui.loadOfflineLogButton,SIGNAL(clicked()),this,SLOT(loadButtonClicked()));
+    connect(ui.logIndexButton, &QPushButton::clicked, this, [] {
+        auto *action = MainWindow::instance()->findChild<QAction *>(
+            QStringLiteral("actionFlightLogIndex"));
+        if (action) action->trigger();
+    });
     connect(ui.autoScrollCheckBox,SIGNAL(clicked(bool)),this,SLOT(autoScrollClicked(bool)));
     //connect(ui.tableWidget,SIGNAL(currentCellChanged(int,int,int,int)),this,SLOT(tableCellChanged(int,int,int,int)));
 
@@ -623,6 +628,11 @@ void AP2DataPlot2D::loadButtonClicked()
         QString selectedFileName = dialog.selectedFiles().first();
 
         LogAnalysis *pAnalyze = new LogAnalysis(nullptr);
+        connect(pAnalyze, &LogAnalysis::logIndexRequested, this, [] {
+            auto *action = MainWindow::instance()->findChild<QAction *>(
+                QStringLiteral("actionFlightLogIndex"));
+            if (action) action->trigger();
+        });
         m_childGraphList.append(pAnalyze);
         connect(pAnalyze, SIGNAL(destroyed(QObject*)), this, SLOT(childGraphDestroyed(QObject*)));
         pAnalyze->setAttribute(Qt::WA_DeleteOnClose, true);

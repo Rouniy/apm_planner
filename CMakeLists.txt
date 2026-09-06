@@ -636,6 +636,16 @@ set(SOURCES
     src/comm/MavlinkSerialTcpBridgeService.h
     src/ui/MavlinkSerialTcpBridgeWindow.cpp
     src/ui/MavlinkSerialTcpBridgeWindow.h
+    src/ui/LogIndexWindow.cpp
+    src/ui/LogIndexWindow.h
+    src/ui/LogIndexWindowIntegration.cpp
+    src/ui/Loghandling/LogIndexTypes.h
+    src/ui/Loghandling/LogIndexService.cpp
+    src/ui/Loghandling/LogIndexService.h
+    src/ui/Loghandling/LogIndexFiles.cpp
+    src/ui/Loghandling/LogIndexFiles.h
+    src/ui/Loghandling/LogIndexTileCache.cpp
+    src/ui/Loghandling/LogIndexTileCache.h
     src/ui/OfflineMagFitWindow.cpp
     src/ui/OfflineMagFitWindow.h
     src/services/WarningTelemetrySource.cpp
@@ -1739,6 +1749,8 @@ if(BUILD_TESTING)
         tests/SigningTransportRuntimeAudit.h
         tests/DeveloperVehicleToolRuntimeAudit.cpp
         tests/DeveloperVehicleToolRuntimeAudit.h
+        tests/LogIndexRuntimeAudit.cpp
+        tests/LogIndexRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1773,6 +1785,11 @@ if(BUILD_TESTING)
     set_tests_properties(developer_vehicle_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 30)
+    add_test(NAME log_index_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --log-index-audit)
+    set_tests_properties(log_index_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 45)
 
     # Explicit desktop diagnostic, not an automatic/noisy CTest. The default
     # invocation only probes readiness; --speak exercises actual synthesis.
@@ -3986,6 +4003,44 @@ if(BUILD_TESTING)
             mavlinkserialtcpbridgeservice_tests mavlinkserialtcpbridgewindow_tests)
         add_test(NAME ${serial_bridge_test} COMMAND ${serial_bridge_test})
         set_tests_properties(${serial_bridge_test} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+    endforeach()
+
+    add_library(log_index_files_test_support STATIC
+        src/ui/Loghandling/LogIndexFiles.cpp
+        src/ui/Loghandling/LogIndexFiles.h
+        src/ui/Loghandling/LogIndexTypes.h)
+    target_include_directories(log_index_files_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(log_index_files_test_support PUBLIC Qt::Core Qt::Gui)
+    add_library(log_index_service_test_support STATIC
+        src/ui/Loghandling/LogIndexService.cpp
+        src/ui/Loghandling/LogIndexService.h
+        src/comm/TlogReader.cpp src/comm/MAVLinkFrameParser.cpp)
+    target_include_directories(log_index_service_test_support PUBLIC
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(log_index_service_test_support PUBLIC
+        log_index_files_test_support Qt::Concurrent)
+    add_executable(logindex_probe tests/LogIndexProbe.cpp)
+    target_link_libraries(logindex_probe PRIVATE log_index_service_test_support)
+    add_library(log_index_window_test_support STATIC
+        src/ui/LogIndexWindow.cpp src/ui/LogIndexWindow.h)
+    target_link_libraries(log_index_window_test_support PUBLIC
+        log_index_service_test_support Qt::Widgets Qt::Concurrent)
+    add_executable(logindexfiles_tests tests/test_logindexfiles.cpp)
+    target_link_libraries(logindexfiles_tests PRIVATE log_index_files_test_support Qt::Test)
+    add_executable(logindexservice_tests tests/test_logindexservice.cpp)
+    target_link_libraries(logindexservice_tests PRIVATE log_index_service_test_support Qt::Test)
+    add_executable(logindexwindow_tests tests/test_logindexwindow.cpp)
+    target_link_libraries(logindexwindow_tests PRIVATE log_index_window_test_support Qt::Test)
+    add_executable(logindextilecache_tests tests/test_logindextilecache.cpp
+        src/ui/Loghandling/LogIndexTileCache.cpp)
+    target_include_directories(logindextilecache_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(logindextilecache_tests PRIVATE opmapcontrol Qt::Network Qt::Test)
+    foreach(log_index_test IN ITEMS logindexfiles_tests logindexservice_tests
+            logindexwindow_tests logindextilecache_tests)
+        add_test(NAME ${log_index_test} COMMAND ${log_index_test})
+        set_tests_properties(${log_index_test} PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
     endforeach()
 

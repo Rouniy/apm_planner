@@ -208,6 +208,16 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="logIndexButton">
+       <property name="text">
+        <string>Index</string>
+       </property>
+       <property name="toolTip">
+        <string>Open the Flight Log Index.</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="loadTLogButton">
        <property name="text">
         <string>Enable Log Playback</string>

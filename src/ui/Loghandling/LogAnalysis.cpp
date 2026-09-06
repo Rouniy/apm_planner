@@ -29,6 +29,7 @@ This file is part of the APM_PLANNER project
 
 #include "LogAnalysis.h"
 #include "logging.h"
+#include <QPushButton>
 
 #include "ArduPilotMegaMAV.h"
 #include "Loghandling/LogExporter.h"
@@ -261,6 +262,11 @@ LogAnalysis::LogAnalysis(QWidget *parent) :
 
     // add menubar to window
     layout()->setMenuBar(m_menuBarPtr.data());
+    auto *indexButton = new QPushButton(tr("Index"), m_menuBarPtr.data());
+    indexButton->setObjectName(QStringLiteral("IndexBtn"));
+    indexButton->setToolTip(tr("Open the Flight Log Index."));
+    m_menuBarPtr->setCornerWidget(indexButton, Qt::TopRightCorner);
+    connect(indexButton, &QPushButton::clicked, this, &LogAnalysis::logIndexRequested);
 
     // create QCustomPlot
     m_plotPtr.reset(new QCustomPlot(ui.widget));

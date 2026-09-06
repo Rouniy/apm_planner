@@ -24,7 +24,65 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **MAVLink Serial TCP Bridge**. Its existing Developer
+Latest slice (2026-09-06): **Flight Log Index**. Its existing Developer action
+now opens a real shared modeless window offline, as do the retained Logfile Plot
+toolbar and Log Browser Index button. Double-click actually loads the selected
+file in a new working LogAnalysis browser. All13 columns, numeric sorting,
+multiselection summary, configured DataFlash/TLOG roots, Custom/Refresh/Cancel,
+bounded background BIN/LOG/TLOG metrics and cache-only JPEG previews are wired.
+The previous inventory mistakenly expected a search box; active MP10 has none.
+
+An immutable exact-path default/Escape-Cancel deletion plan names only selected
+sources, their JPEGs and paired TLOG RLOGs. Changed or linked files are refused;
+partial execution reports actual deleted sources/remaining logs and retained
+companions. No wildcard deletion, network thumbnails or private map cache.
+Workers are bounded1–4, discovery20000 logs, sampled track4000 points and encoded
+previews64MiB with a128-pixmap visible-row cache. Canonical root admission handles
+ordinary ancestor aliases without allowing a prepared deletion to be retargeted.
+Size/mtime/root checks are not file locks; stop active writers before deleting.
+
+An independent real-BIN comparison caught and fixed a DataFlash clock defect:
+MP10 anchors once to GPS/GPS2/GPSB then uses boot-relative times, not every GPS
+GMS value. The final Qt result matches two independent parsers on the5275648-byte
+ArduPilot00000002.BIN: duration242.800341s, air191.599996s, distance552.7791954304238m,
+1210 points and exact Home. Its incomplete40-byte tail remains a warning, not
+silently discarded evidence. Source size/mtime/SHA256 are unchanged. Details,
+prepass costs, millisecond date display and historical-clock limits are in
+`LOG_INDEX_PORT.md`.
+
+Qt5/audio configure and final build pass; focused9/9 (35.73s), full262/262
+(47.36s), ten repeats of each of4 Index suites (5.69s), production X11
+exit0/zero audit failures pass. The actual application
+audit covers offline navigation, singleton/reopen, picker Cancel, two indexed
+logs, all13 model columns, selected-file browser parsing, browser-to-Index reuse,
+default/Escape-Cancel and confirmed exact-companion deletion with unrelated
+files preserved. Root inspected `index.png`, `.right.png` and `.delete.png` in
+`/tmp/apm-log-index.rK5jYK/`. Final logs: configure-final.log, build-final3.log,
+focused-final2.log, full-final.log, repeat-final.log, x11-final2.log and real-bin-final.json;
+real-bin-oracle.log records the independent comparison. All destructive tests
+used temporary fixtures; no network SITL or real vehicle was changed.
+
+Three Codex streams implemented service/files/window; root integrated actual
+routes, canonical cache and production verification. Claude TCP c255–c261
+reviewed reference, filesystem, worker/UI lifetime and clock deltas; full reports
+and SHA256 were checked. Initial build/test defects were isolated test linkage,
+an old MAVLink pack signature, and a test listening to modelReset instead of
+Qt5 proxy layoutChanged; final gates preserve the real synchronous-close proof.
+Desktop audit uses Qt file dialogs for introspection only in audit mode; normal
+launches retain native pickers.
+
+Developer is now **25/32 working,7 unavailable**. SETUP46/eight absent reference
+routes, Advanced14 complete+partial Signing/disabled Support Proxy, fixedTools24
+plus Signing, CONFIG15/15 factories and Planner21/64 remain unchanged. The129
+surface inventory is now73 in-progress/36 partial/20 not-started, because the
+existing standalone Index row moved to in-progress. None is strict-complete.
+Next candidate: **Download/Cancel Firmware Archive**, then other single-drone
+tools and Settings. Claude c260 audited Camera Probe/SFTP: SFTP needs a portable
+SSH dependency and host-key policy; MP10 Camera Probe contains two mutating
+commands that must not be hidden as harmless discovery. Swarm remains last.
+The full Mission Planner port is incomplete.
+
+Previous slice (2026-09-06): **MAVLink Serial TCP Bridge**. Its existing Developer
 action now opens a real shared modeless window, including offline. All15 UART
 devices and10 baud choices match MP10; defaults remain GPS1/keep-baud/TCP500/
 loopback-only. Default/Escape-Cancel consent freezes exact vehicle/link/options

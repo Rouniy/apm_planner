@@ -637,6 +637,7 @@ MainWindow::~MainWindow()
     closeFftAnalysisWindows();
     closeOfflineMagFit();
     closeMavlinkSerialTcpBridge();
+    closeLogIndex();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
@@ -746,6 +747,9 @@ void MainWindow::buildMissionPlannerToolsMenu()
     serialBridgeAction->setObjectName(QStringLiteral("actionMavlinkSerialTcpBridge"));
     connect(serialBridgeAction, &QAction::triggered,
             this, &MainWindow::showMavlinkSerialTcpBridge);
+    auto *logIndexAction = new QAction(tr("Flight Log Index"), this);
+    logIndexAction->setObjectName(QStringLiteral("actionFlightLogIndex"));
+    connect(logIndexAction, &QAction::triggered, this, &MainWindow::showLogIndex);
     auto *paramGenAction = new QAction(tr("Param gen"), this);
     paramGenAction->setObjectName(QStringLiteral("actionParameterMetaDataRegeneration"));
     connect(paramGenAction, &QAction::triggered, this,
@@ -2260,6 +2264,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     closeFftAnalysisWindows();
     closeOfflineMagFit();
     closeMavlinkSerialTcpBridge();
+    closeLogIndex();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();

@@ -388,6 +388,7 @@ private slots:
     void mirrorsMissionPlannerInventory();
     void sharedApplicationActionsOpenTools();
     void serialBridgeSharedActionTracksAvailability();
+    void logIndexSharedActionTracksAvailability();
     void decodersAppendResultsAndErrors();
     void actionGridAdaptsToAvailableWidth();
     void wiredInventoryAndEligibility();
@@ -588,6 +589,24 @@ void ConfigDeveloperToolsViewTest::serialBridgeSharedActionTracksAvailability()
     bridge.setEnabled(false);
     QVERIFY(!button->isEnabled());
     bridge.setEnabled(true);
+    QVERIFY(button->isEnabled());
+}
+
+void ConfigDeveloperToolsViewTest::logIndexSharedActionTracksAvailability()
+{
+    QObject source;
+    QAction index(&source);
+    index.setObjectName(QStringLiteral("actionFlightLogIndex"));
+    QSignalSpy triggered(&index, &QAction::triggered);
+    ConfigDeveloperToolsView view(&source);
+    auto *button = tool(view, "FlightLogIndexButton");
+    QVERIFY(button && button->isEnabled());
+    QCOMPARE(view.ActionCount(), 32);
+    button->click();
+    QCOMPARE(triggered.count(), 1);
+    index.setEnabled(false);
+    QVERIFY(!button->isEnabled());
+    index.setEnabled(true);
     QVERIFY(button->isEnabled());
 }
 

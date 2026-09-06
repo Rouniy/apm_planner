@@ -203,6 +203,7 @@ public:
      * @param filename - filename of the log to load
      */
     void loadLog(QString filename);
+    bool isLoadingLog() const { return !m_loaderThreadPtr.isNull(); }
 
 public slots:
     /**
@@ -223,6 +224,9 @@ public slots:
      *                            values like min/max/average for all visible graphs within the cursor range.
      */
     void cursorRangeChange();
+
+signals:
+    void logIndexRequested();
 
 private:
 
@@ -643,4 +647,3 @@ private slots:
 };
 
 #endif // LOGANALYSIS_HPP
-

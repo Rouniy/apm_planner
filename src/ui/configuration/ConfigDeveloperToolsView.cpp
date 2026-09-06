@@ -165,8 +165,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
     AddToolAction(tr("Offline Magnetometer Calibration (MagFit)"),
                   QStringLiteral("OfflineMagFitButton"),
                   QStringLiteral("actionOfflineMagFit"));
-    AddUnavailableAction(tr("Flight Log Index"),
-                         QStringLiteral("FlightLogIndexButton"), notPorted);
+    AddToolAction(tr("Flight Log Index"),
+                  QStringLiteral("FlightLogIndexButton"),
+                  QStringLiteral("actionFlightLogIndex"));
     m_logOrganizerButton = AddAction(
         tr("Organize Log Directory"),
         QStringLiteral("OrganizeLogDirectoryButton"),

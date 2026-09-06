@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,257/257 тестов; Developer24/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,262/262 тестов; Developer25/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -75,15 +75,23 @@ Full257/257 (46.54s), focused7/7,10 повторов каждого из3 bridge
 с281/74 binary bytes/Cancel/armed release/читаемыми окнами проходят. Реальных
 SITL/UART записей не было. Shutdown-only, новый второй system на маршруте и
 потеря исходного instance могут запретить release; baud/flow control не восстановлены.
-Следующий кандидат — Flight Log Index: обе reference routes,13-column table,
-метрики, JPEG sidecars, immutable exact-companion delete и открытие Log Browser.
-Claude c250/c251 выполнил независимый аудит; thumbnails читают canonical shared
-tile cache с явным root, не private OPMap cache и не сеть. Затем остальные
-однодроновые инструменты.
+Flight Log Index теперь реализован: общее offline modeless-окно, все13 колонок,
+BIN/LOG/TLOG метрики, canonical cache-only JPEG sidecars, immutable exact-companion
+delete и настоящее открытие выбранного файла в сохранённом LogAnalysis.
+Тесты262/262 (47.36s), focused9/9 (35.73s) и production X11 проходят; root
+просмотрел список, правые колонки и полное предупреждение удаления. Реальный
+BIN и два независимых oracle выявили ошибку часов и подтвердили исправление:
+242.800341s/552.7791954304238m, исходный SHA256 сохранён; неполный40-byte хвост
+честно предупреждается. Ожидание Search удалено из реестра: в active MP10 его нет.
+Следующий кандидат — Download/Cancel Firmware Archive, затем остальные
+однодроновые инструменты. Claude c260 проверил SFTP/Camera Probe: SFTP требует
+portable SSH dependency/host-key policy; в MP10 Camera Probe есть две скрытые
+изменяющие состояние команды, их нельзя выдавать за безвредную диагностику.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
 `APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`,
+`LOG_INDEX_PORT.md`,
 `PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`, `REMOTE_DATAFLASH_LOG_PORT.md`,
 `MAVLINK_SERIAL_TCP_BRIDGE_PORT.md`.
 
@@ -101,7 +109,7 @@ Settings после Tools, Swarm в конце. Подробности: `TLOG_RE
   `QDockWidget` или KDDockWidgets.
 
 Это не означает готовность продукта. В реестре 129 поверхностей. Таблица ниже
-пересчитана непосредственно из TSV после MagFit: предыдущая сводка отставала
+пересчитана непосредственно из TSV после Flight Log Index: предыдущая сводка отставала
 от уже внесённых SETUP/CONFIG/TOOLS статусов, поэтому это не число новых
 экранов в текущем коммите.
 
@@ -112,10 +120,10 @@ Settings после Tools, Swarm в конце. Подробности: `TLOG_RE
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 31 | 16 | 9 | 56 |
 | CONFIG | 11 | 9 | 0 | 20 |
-| TOOLS | 22 | 1 | 8 | 31 |
+| TOOLS | 23 | 1 | 7 | 31 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **72** | **36** | **21** | **129** |
+| **Итого** | **73** | **36** | **20** | **129** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
