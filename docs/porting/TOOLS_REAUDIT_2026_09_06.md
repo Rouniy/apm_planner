@@ -8,7 +8,7 @@ queue, not a new completeness claim or replacement for the129-row ledger.
 
 The fixed header TOOLS menu has24 reference entries, plus the separate Signing
 extension. Advanced has16 actions (14 working slices, partial Signing, unavailable
-Support Proxy). Developer has32 actions once SFTP is verified. **None of these
+Support Proxy). Developer has32 implemented routes including SFTP. **None of these
 counts means every Tools dialog is fully ported.** Some entries navigate to a
 page, some open a dialog, and some dialogs still lack reference functionality.
 An old class can have been rewritten; a new class can be partial. Git creation
@@ -16,16 +16,23 @@ dates are not acceptance evidence.
 
 Highest-priority concrete gaps in existing Tools windows:
 
-1. `MavlinkLogWindow`: MATLAB export is disabled. MP10
-   `MavlinkLogConvertViewModel` and `DataFlashLog` dispatch TLOG versus BIN/LOG
-   to Utilities `MatLab`. Port real MAT output (not CSV renamed .mat), with
-   bounded processing, no-overwrite/cancel, source-derived schemas and independent
-   MATLAB/Octave-compatible reader validation. This is the next offline slice.
+1. `MavlinkLogWindow`: the TLOG MATLAB gap is now closed functionally by a real
+   bounded Level5 writer, named consent/Save As, progress/cancel and no-overwrite.
+   Actual MP10 oracle plus SciPy proves283 real-log and160 extended synthetic
+   variables bit-exact. See `MATLAB_TLOG_EXPORT_PORT.md` for remaining dialect,
+   filesystem and visual limits. The separate BIN/LOG `MatLab.ProcessLog` and
+   its DATA routes remain missing; enabling this button does not cover them.
 2. `Terrain3DWindow`: guided map clicks are explicitly read-only. MP10
    `Terrain3DViewModel.SendGuidedTargetAsync` sends a target using GuidedMode.z,
    not current vehicle altitude. Add an authoritative guided-altitude source,
    immutable target/point consent and shared exact GuidedTargetService before
    enabling commands. Imagery draping remains a separate gap.
+   Follow-up source audit confirms frame3, DO_REPOSITION p2=0 (no mode change)
+   and a one-shot request. Current GuidedTargetService changes mode on its first
+   send and remains Active; add an explicit default-preserving one-shot policy,
+   physical instance/route checks and a real exact-instance guided-altitude
+   setting producer before connecting Terrain clicks. Existing scaled-image
+   raycast already matches; freeze its hit point before default-Cancel consent.
 3. `MavlinkSigningWindow`: rekey/disable/recovery are unavailable. This requires
    persisted transitions, verified new-key traffic and explicit uncertain outcomes;
    SETUP_SIGNING has no ACK. Do not copy MP10's optimistic success message or
@@ -60,8 +67,8 @@ does not itself implement a terminal. Do not delete retained modules for counts.
 
 ## Queue discipline
 
-Finish and commit verified SFTP; then MATLAB export and the other concrete
-single-vehicle Tools gaps. Restore missing log-tool routes as complete UI/service
+SFTP and TLOG MATLAB are implemented; continue the other concrete single-vehicle
+Tools gaps. Restore missing log-tool routes as complete UI/service
 slices, then resume Settings/CONFIG (15 route factories is not full functionality;
 Planner still21/64 controls). Swarm remains last. SETUP46 pages/eight absent
 reference routes and its disconnected/profile visibility gates remain explicit.

@@ -9,10 +9,18 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,290/290 тестов; Developer32/32 маршрута,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,293/293 теста; Developer32/32 маршрута,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
+Tlog Convert теперь имеет рабочий MATLAB Level5 export: настоящее окно,
+неизменяемый вход, default-Cancel/Save As, progress/cancel и no-overwrite.
+Все283 переменные реального TLOG и160 переменных synthetic совпадают побитно
+с actual MP10 .NET;24 scalar extensions добавлены только в offline schema.
+Full293/293 (52.13s),10 повторов4 suites и просмотренный production X11 проходят.
+Это не закрывает74 отсутствующих MAVLink message types, отдельный BIN/LOG
+ProcessLog и отсутствующие DATA log tabs. Далее Terrain3D/Signing/прочие Tools,
+затем Settings; Swarm последний. См. `MATLAB_TLOG_EXPORT_PORT.md`.
 Split DataFlash Log теперь работает с BIN/LOG, целыми записями, метаданными,
 отменой и честным описанием публикации нескольких файлов без перезаписи.
 Create DashWare CSV работает offline через реальные диалоги: исходный порядок

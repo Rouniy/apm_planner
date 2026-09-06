@@ -24,6 +24,48 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
+Latest slice (2026-09-06): **Tlog Convert MATLAB export**. All seven formats now
+have working buttons in the real independent460x340 modeless Tools window.
+MATLAB writes actual Level5 numeric Nx2 matrices, not renamed CSV. Frozen input,
+named default-Cancel consent/Save As, progress/cancel, new-output-only publication
+and close/drain are wired; the existing six exports and replay remain useful.
+
+Actual MP10 .NET service plus independent SciPy comparison proves **283 variables
+on32565 real TLOG packets** and **160 variables on34 synthetic packets** bit-exact,
+including local timestamps, long75-character names, UInt64 conversion and raw
+nonzero/omitted extensions. Synthetic oracle passes in UTC and Asia/Nicosia.
+The comparison exposed missing MAVLink fields: the exporter now supplements all
+24 numeric extensions in10 shared messages without touching live transport.
+MP10's nonstandard AddYears/date leap-day quirk is deliberately preserved. Its
+invalid-prefix fallback is367, confirmed against the actual service; Claude's
+initial368 and NaN-sentinel suggestions were rejected on evidence.
+
+Qt5/audio configure/build5 pass; full **293/293 (52.13s)**; all four related
+unit suites pass ten repeats (3.51s), complete window X11 suite13/13 and actual
+production X11 zero failures. Root inspected the visible window and consent.
+A million ATTITUDE records export in11.71s with14040KiB peak RSS, Debug/local
+filesystem; five input reads and native filesystem limits remain explicit.
+No network SITL or physical vehicle was modified. Evidence:
+`/tmp/apm-matlab-port.98lQAK/`; reusable actual-service and independent-reader
+oracles are committed under `tests/oracles/`. See `MATLAB_TLOG_EXPORT_PORT.md`.
+
+Three Codex streams and Claude TCP c305/c307/c308/c309 reviews contributed.
+Root corrected the dialect inventory against the compiled macro:276 messages
+versus MP10's350,74 missing, no Qt-only STATUSTEXT_LONG (its header is unused).
+Those whole-message additions require a separate transport-aware update;
+the verified fixture results are not universal dialect parity.
+
+Developer32/32 routed workflows still does **not** mean complete Tools parity.
+Next concrete gaps: Terrain3D no-mode-change one-shot guided click with a real
+exact-instance guided-altitude producer; Signing transitions/recovery; missing
+DATA log-tool dialogs and BIN/LOG MATLAB ProcessLog. Then Settings/CONFIG;
+Swarm remains last. SETUP46/eight absent reference routes, Advanced14 working+
+partial Signing+unported Support Proxy, CONFIG15 factories/Planner21of64 remain.
+Inventory129 stays77 in-progress/36 partial/16 not-started, none strict-complete;
+deviations147. The complete port remains unfinished.
+
+### Previous checkpoint: SFTP DataFlash Logs
+
 Latest slice (2026-09-06): **SFTP DataFlash Logs**. The Developer action now opens
 one real modeless companion-computer SSH window, offline or online: listing,
 selected/all download, BIN→LOG, GPS naming, optional KML, selected/all confirmed

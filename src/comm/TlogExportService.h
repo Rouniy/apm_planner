@@ -15,11 +15,12 @@ class TlogReader;
 /*
  * Mission Planner 10 "Tlog Convert / Extract" core (Services/TlogExportService.cs,
  * ViewModels/MavlinkLogConvertViewModel.cs, Services/DataFlashLog.cs track writers),
- * without UI, LinkManager or the Matlab writer.
+ * without UI or LinkManager. MATLAB uses the bounded MatFileWriter backend.
  *
- * Every export streams the .tlog through TlogReader and writes its result with
- * QSaveFile, so each output file is replaced atomically and cancellation never
- * commits a partially written file. Mission snapshots are all staged before
+ * Every export streams the .tlog through TlogReader. Ordinary formats use
+ * QSaveFile for atomic replacement; MATLAB requires a new destination and uses
+ * staged atomic no-replace publication. Cancellation never commits a partially
+ * written file. Mission snapshots are all staged before
  * the commit phase; filesystem commit failures can still occur between files.
  *
  * MP10 semantics reproduced:
@@ -42,13 +43,13 @@ class TlogReader;
  *   each snapshot is a "QGC WPL 110" file; the first uses the selected path,
  *   the others get "-2", "-3", ... before the extension.
  */
-enum class TlogExportFormat { Kml, Gpx, Csv, Text, Parameters, Missions };
+enum class TlogExportFormat { Kml, Gpx, Csv, Text, Parameters, Missions, Matlab };
 
 struct TlogExportResult
 {
     bool success = false;
     bool cancelled = false;
-    int itemCount = 0;          // packets, parameters, snapshots or track points written
+    int itemCount = 0;          // packets, parameters, snapshots, track points or MATLAB variables
     QStringList outputPaths;    // committed files; may be nonempty if a later mission-file commit fails
     QString error;              // MP10 error text when !success && !cancelled
     // Additional detail (not required by the window):
@@ -91,7 +92,8 @@ class TlogExportService
 {
 public:
     using CancelRequested = std::function<bool()>;
-    using Progress = std::function<void(qint64 bytesProcessed, qint64 bytesTotal)>;
+    // MATLAB reports weighted multi-pass work units; other formats report bytes.
+    using Progress = std::function<void(qint64 processed, qint64 total)>;
 
     // Integration entry point (MavlinkLogWindow). selectedOutput is the file the
     // user chose; Missions may add "-2", "-3", ... siblings.

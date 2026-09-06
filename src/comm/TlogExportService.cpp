@@ -1,6 +1,7 @@
 #include "TlogExportService.h"
 
 #include "TlogReader.h"
+#include "TlogMatlabExporter.h"
 #include "core/parameters/ParameterCodec.h"
 
 #include <QDateTime>
@@ -218,6 +219,7 @@ QString TlogExportService::FormatLabel(TlogExportFormat format)
     case TlogExportFormat::Text: return QStringLiteral("human-readable text");
     case TlogExportFormat::Parameters: return QStringLiteral("parameters");
     case TlogExportFormat::Missions: return QStringLiteral("mission snapshots");
+    case TlogExportFormat::Matlab: return QStringLiteral("Matlab");
     }
     return QString();
 }
@@ -231,6 +233,7 @@ QString TlogExportService::DefaultExtension(TlogExportFormat format)
     case TlogExportFormat::Text: return QStringLiteral("txt");
     case TlogExportFormat::Parameters: return QStringLiteral("param");
     case TlogExportFormat::Missions: return QStringLiteral("waypoints");
+    case TlogExportFormat::Matlab: return QStringLiteral("mat");
     }
     return QString();
 }
@@ -655,6 +658,8 @@ TlogExportResult TlogExportService::Export(TlogExportFormat format, const QStrin
                                            const QString &selectedOutput,
                                            const CancelRequested &cancel, const Progress &progress)
 {
+    if (format == TlogExportFormat::Matlab)
+        return TlogMatlabExporter::Export(input, selectedOutput, cancel, progress);
     if (selectedOutput.trimmed().isEmpty()) {
         return fail(QStringLiteral("No output file selected."));
     }
@@ -691,6 +696,8 @@ TlogExportResult TlogExportService::Export(TlogExportFormat format, const QStrin
     const QString label = FormatLabel(format);
 
     switch (format) {
+    case TlogExportFormat::Matlab:
+        return fail(QStringLiteral("MATLAB export dispatch failed."));
     case TlogExportFormat::Kml:
     case TlogExportFormat::Gpx: {
         const QVector<TlogTrackPoint> track = ReadTrack(reader, cancel);

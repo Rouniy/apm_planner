@@ -1596,6 +1596,13 @@ target_include_directories(${APM_PLANNER_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/output
 )
 
+add_library(apm_matlab_core STATIC
+    src/comm/MatFileWriter.h src/comm/MatFileWriter.cpp
+    src/comm/TlogMatlabExporter.h src/comm/TlogMatlabExporter.cpp)
+target_include_directories(apm_matlab_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+target_link_libraries(apm_matlab_core PUBLIC Qt::Core)
+
 add_library(apm_sftp_core STATIC
     src/services/SftpLogSession.h src/services/SftpLogSession.cpp
     src/services/SftpLogDownloadSupport.h src/services/SftpLogDownloadSupport.cpp
@@ -1643,6 +1650,7 @@ target_link_libraries(apm_firmware_archive_ui PUBLIC apm_firmware_archive Qt::Wi
 
 # Link Qt and additional libs
 target_link_libraries(${APM_PLANNER_TARGET}
+    apm_matlab_core
     apm_sftp_ui
     apm_resx_editor
     apm_firmware_archive_ui
@@ -1828,6 +1836,8 @@ if(BUILD_TESTING)
         tests/TranslationEditorRuntimeAudit.h
         tests/SftpLogDownloadRuntimeAudit.cpp
         tests/SftpLogDownloadRuntimeAudit.h
+        tests/TlogMatlabRuntimeAudit.cpp
+        tests/TlogMatlabRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1874,6 +1884,11 @@ if(BUILD_TESTING)
     set_tests_properties(sftp_log_download_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 45)
+    add_test(NAME tlog_matlab_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --tlog-matlab-audit)
+    set_tests_properties(tlog_matlab_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 60)
     foreach(resx_suite resxtranslationservice translationeditormodel translationeditorwindow)
         add_executable(${resx_suite}_tests tests/test_${resx_suite}.cpp)
         target_link_libraries(${resx_suite}_tests PRIVATE apm_resx_editor Qt::Test)
@@ -5927,11 +5942,24 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(tlogexportservice_tests PRIVATE
+        apm_matlab_core
         apm_parameter_core
         Qt::Core
         Qt::Test
     )
     add_test(NAME tlogexportservice_tests COMMAND tlogexportservice_tests)
+
+    add_executable(matfilewriter_tests tests/test_matfilewriter.cpp)
+    target_link_libraries(matfilewriter_tests PRIVATE apm_matlab_core Qt::Test)
+    add_test(NAME matfilewriter_tests COMMAND matfilewriter_tests)
+    add_executable(tlogmatlabexporter_tests tests/test_tlogmatlabexporter.cpp
+        src/comm/TlogReader.cpp src/comm/MAVLinkFrameParser.cpp)
+    target_link_libraries(tlogmatlabexporter_tests PRIVATE apm_matlab_core Qt::Test)
+    add_test(NAME tlogmatlabexporter_tests COMMAND tlogmatlabexporter_tests)
+    set_tests_properties(matfilewriter_tests tlogmatlabexporter_tests PROPERTIES TIMEOUT 60)
+    add_executable(tlog_matlab_probe tests/TlogMatlabProbe.cpp
+        src/comm/TlogReader.cpp src/comm/MAVLinkFrameParser.cpp)
+    target_link_libraries(tlog_matlab_probe PRIVATE apm_matlab_core)
 
     add_executable(mavlinksigningwindow_tests
         tests/test_mavlinksigningwindow.cpp
@@ -6009,6 +6037,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(mavlinklogwindow_tests PRIVATE
+        apm_matlab_core
         apm_parameter_core
         Qt::Core
         Qt::Gui

@@ -5,10 +5,16 @@
 
 #include <QDialog>
 #include <QDir>
+#include <QApplication>
 #include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPointer>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QTemporaryFile>
 #include <QThread>
@@ -26,6 +32,10 @@ private slots:
     void selectingAFileEnablesOnlyImplementedExports();
     void confirmationDefaultsCanRejectWithoutStartingWork();
     void outputCannotReplaceTheSelectedTlog();
+    void matlabUsesFullInputFilenameAndNeverReplacesOutput();
+    void callbacksCannotRetargetOrReenterAnAdmittedExport();
+    void matlabProgressCanBeCancelledWithoutResurrection();
+    void closeFromConfirmationCallbackStartsNoWorker();
     void exportRunsOffTheUiThreadAndReportsCompletion();
     void closeCancelsAndJoinsBackgroundExport();
     void windowsAreIndependentModelessTopLevels();
@@ -33,9 +43,21 @@ private slots:
 
 namespace
 {
+template<typename T>
+T *visibleDialog(QWidget *window, const QString &name)
+{
+    const auto dialogs = window->findChildren<T *>(name);
+    for (T *dialog : dialogs) {
+        if (dialog->isVisible())
+            return dialog;
+    }
+    return nullptr;
+}
+
 const QStringList kImplementedButtons = {
     QStringLiteral("convertKmlButton"),
     QStringLiteral("convertGpxButton"),
+    QStringLiteral("convertMatlabButton"),
     QStringLiteral("convertCsvButton"),
     QStringLiteral("convertTextButton"),
     QStringLiteral("extractParametersButton"),
@@ -68,7 +90,10 @@ void MavlinkLogWindowTest::initialStateMatchesMp10()
     QVERIFY(matlab);
     QCOMPARE(matlab->text(), QStringLiteral("Matlab"));
     QVERIFY(!matlab->isEnabled());
-    QVERIFY(!matlab->property("unavailableReason").toString().isEmpty());
+    QVERIFY(window.findChild<QProgressBar *>(
+        QStringLiteral("MavlinkLogExportProgressBar")));
+    QVERIFY(window.findChild<QPushButton *>(
+        QStringLiteral("MavlinkLogExportCancelButton")));
 }
 
 void MavlinkLogWindowTest::selectingAFileEnablesOnlyImplementedExports()
@@ -89,8 +114,8 @@ void MavlinkLogWindowTest::selectingAFileEnablesOnlyImplementedExports()
         QVERIFY2(window.findChild<QPushButton *>(name)->isEnabled(),
                  qPrintable(name));
     }
-    QVERIFY(!window.findChild<QPushButton *>(
-                 QStringLiteral("convertMatlabButton"))->isEnabled());
+    QVERIFY(window.findChild<QPushButton *>(
+                QStringLiteral("convertMatlabButton"))->isEnabled());
 
     window.setTlogPath(tlog.fileName() + QStringLiteral(".missing"));
     QVERIFY(window.tlogPath().isEmpty());
@@ -99,6 +124,251 @@ void MavlinkLogWindowTest::selectingAFileEnablesOnlyImplementedExports()
     for (const QString &name : kImplementedButtons) {
         QVERIFY(!window.findChild<QPushButton *>(name)->isEnabled());
     }
+}
+
+void MavlinkLogWindowTest::matlabUsesFullInputFilenameAndNeverReplacesOutput()
+{
+    QTemporaryFile tlog(QDir::tempPath()
+                        + QStringLiteral("/apm-tlog-matlab-XXXXXX.tlog"));
+    QVERIFY(tlog.open());
+    QVERIFY(tlog.write("matlab fixture") > 0);
+    tlog.flush();
+    const QString expectedOutput = QFileInfo(tlog.fileName()).absoluteFilePath()
+        + QStringLiteral(".mat");
+    QFile::remove(expectedOutput);
+
+    std::atomic_bool exporterCalled(false);
+    std::atomic_int formatSeen(-1);
+    QString inputSeen;
+    QString outputSeen;
+    MavlinkLogWindow::Dependencies dependencies;
+    dependencies.exportLog = [&](TlogExportFormat format, const QString &input,
+                                 const QString &output,
+                                 const TlogExportService::CancelRequested &) {
+        exporterCalled.store(true);
+        formatSeen.store(static_cast<int>(format));
+        inputSeen = input;
+        outputSeen = output;
+        TlogExportResult result;
+        result.success = true;
+        result.outputPaths = QStringList{output};
+        result.message = QStringLiteral("Wrote Matlab MAT file to ") + output;
+        return result;
+    };
+
+    MavlinkLogWindow window(dependencies);
+    window.show();
+    window.setTlogPath(tlog.fileName());
+    auto *matlab = window.findChild<QPushButton *>(
+        QStringLiteral("convertMatlabButton"));
+    matlab->click();
+    auto *confirmation = visibleDialog<QMessageBox>(&window,
+        QStringLiteral("MavlinkLogSensitiveExportConfirmation"));
+    QVERIFY(confirmation && confirmation->isVisible());
+    QCOMPARE(confirmation->defaultButton(),
+             qobject_cast<QPushButton *>(confirmation->button(QMessageBox::Cancel)));
+    qobject_cast<QPushButton *>(confirmation->button(QMessageBox::Cancel))->click();
+    QTRY_VERIFY(!window.isBusy());
+    QVERIFY(!exporterCalled.load());
+
+    matlab->click();
+    confirmation = visibleDialog<QMessageBox>(&window,
+        QStringLiteral("MavlinkLogSensitiveExportConfirmation"));
+    QVERIFY(confirmation && confirmation->isVisible());
+    confirmation->findChild<QPushButton *>(
+        QStringLiteral("MavlinkLogExportConfirmButton"))->click();
+    auto *outputDialog = visibleDialog<QFileDialog>(&window,
+        QStringLiteral("MavlinkLogOutputDialog"));
+    QVERIFY(outputDialog && outputDialog->isVisible());
+    QCOMPARE(QDir::cleanPath(outputDialog->selectedFiles().value(0)),
+             QDir::cleanPath(expectedOutput));
+    outputDialog->selectFile(expectedOutput);
+    QVERIFY(QMetaObject::invokeMethod(outputDialog, "accept", Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy(), 3000);
+    QVERIFY(exporterCalled.load());
+    QCOMPARE(formatSeen.load(), static_cast<int>(TlogExportFormat::Matlab));
+    QCOMPARE(inputSeen, QFileInfo(tlog.fileName()).absoluteFilePath());
+    QCOMPARE(outputSeen, expectedOutput);
+
+    exporterCalled.store(false);
+    QFile existing(expectedOutput);
+    QVERIFY(existing.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(existing.write("keep"), qint64(4));
+    existing.close();
+    dependencies.confirmExport = [](const QString &) { return true; };
+    QString suggestedSeen;
+    QString labelSeen;
+    QString extensionSeen;
+    dependencies.chooseOutput = [&, expectedOutput](const QString &suggested,
+                                                     const QString &label,
+                                                     const QString &extension) {
+        suggestedSeen = suggested;
+        labelSeen = label;
+        extensionSeen = extension;
+        return expectedOutput;
+    };
+    MavlinkLogWindow refusal(dependencies);
+    refusal.setTlogPath(tlog.fileName());
+    refusal.findChild<QPushButton *>(QStringLiteral("convertMatlabButton"))->click();
+    QVERIFY(!refusal.isBusy());
+    QVERIFY(!exporterCalled.load());
+    QCOMPARE(suggestedSeen, expectedOutput);
+    QCOMPARE(labelSeen, QStringLiteral("Matlab"));
+    QCOMPARE(extensionSeen, QStringLiteral("mat"));
+    QVERIFY(refusal.statusText().contains(QStringLiteral("already exists")));
+    QVERIFY(existing.open(QIODevice::ReadOnly));
+    QCOMPARE(existing.readAll(), QByteArray("keep"));
+    existing.close();
+    QFile::remove(expectedOutput);
+}
+
+void MavlinkLogWindowTest::callbacksCannotRetargetOrReenterAnAdmittedExport()
+{
+    QTemporaryFile original(QDir::tempPath()
+        + QStringLiteral("/apm-tlog-frozen-XXXXXX.tlog"));
+    QTemporaryFile replacement(QDir::tempPath()
+        + QStringLiteral("/apm-tlog-replacement-XXXXXX.tlog"));
+    QVERIFY(original.open());
+    QVERIFY(replacement.open());
+    original.write("original");
+    replacement.write("replacement");
+    original.flush();
+    replacement.flush();
+    const QString originalPath = QFileInfo(original.fileName()).absoluteFilePath();
+    const QString replacementPath = QFileInfo(replacement.fileName()).absoluteFilePath();
+    MavlinkLogWindow *window = nullptr;
+    int confirmationCalls = 0;
+    int outputCalls = 0;
+    bool busySeen = false;
+    QString suggestedSeen;
+    std::atomic_int formatSeen(-1);
+    QString inputSeen;
+    MavlinkLogWindow::Dependencies dependencies;
+    dependencies.confirmExport = [&](const QString &) {
+        ++confirmationCalls;
+        busySeen = window->isBusy();
+        window->setTlogPath(replacementPath);
+        window->findChild<QPushButton *>(QStringLiteral("convertCsvButton"))->click();
+        return true;
+    };
+    dependencies.chooseOutput = [&](const QString &suggested,
+        const QString &, const QString &) {
+        ++outputCalls;
+        suggestedSeen = suggested;
+        window->setTlogPath(replacementPath);
+        return originalPath + QStringLiteral(".new.mat");
+    };
+    dependencies.exportLog = [&](TlogExportFormat format, const QString &input,
+                                  const QString &,
+                                  const TlogExportService::CancelRequested &) {
+        formatSeen.store(static_cast<int>(format));
+        inputSeen = input;
+        TlogExportResult result;
+        result.success = true;
+        result.message = QStringLiteral("done");
+        return result;
+    };
+    MavlinkLogWindow concrete(dependencies);
+    window = &concrete;
+    window->setTlogPath(originalPath);
+    window->findChild<QPushButton *>(QStringLiteral("convertMatlabButton"))->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!window->isBusy(), 3000);
+    QCOMPARE(confirmationCalls, 1);
+    QCOMPARE(outputCalls, 1);
+    QVERIFY(busySeen);
+    QCOMPARE(suggestedSeen, originalPath + QStringLiteral(".mat"));
+    QCOMPARE(formatSeen.load(), static_cast<int>(TlogExportFormat::Matlab));
+    QCOMPARE(inputSeen, originalPath);
+    QCOMPARE(window->tlogPath(), originalPath);
+}
+
+void MavlinkLogWindowTest::matlabProgressCanBeCancelledWithoutResurrection()
+{
+    QTemporaryFile tlog(QDir::tempPath()
+                        + QStringLiteral("/apm-tlog-progress-XXXXXX.tlog"));
+    QVERIFY(tlog.open());
+    const QString outputPath = tlog.fileName() + QStringLiteral(".progress.mat");
+    QFile::remove(outputPath);
+    std::atomic_bool entered(false);
+    std::atomic_bool cancelled(false);
+    std::atomic_int formatSeen(-1);
+    MavlinkLogWindow::Dependencies dependencies;
+    dependencies.confirmExport = [](const QString &) { return true; };
+    dependencies.chooseOutput = [outputPath](const QString &, const QString &,
+                                             const QString &) {
+        return outputPath;
+    };
+    dependencies.exportLogWithProgress = [&](TlogExportFormat format,
+        const QString &, const QString &,
+        const TlogExportService::CancelRequested &cancel,
+        const TlogExportService::Progress &progress) {
+        formatSeen.store(static_cast<int>(format));
+        entered.store(true);
+        progress(1, 10);
+        QElapsedTimer timer;
+        timer.start();
+        while (!cancel() && timer.elapsed() < 5000)
+            QThread::msleep(1);
+        cancelled.store(cancel());
+        progress(9, 10);
+        TlogExportResult result;
+        result.cancelled = true;
+        return result;
+    };
+    MavlinkLogWindow window(dependencies);
+    window.show();
+    window.setTlogPath(tlog.fileName());
+    window.findChild<QPushButton *>(QStringLiteral("convertMatlabButton"))->click();
+    QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 3000);
+    auto *progress = window.findChild<QProgressBar *>(
+        QStringLiteral("MavlinkLogExportProgressBar"));
+    auto *cancel = window.findChild<QPushButton *>(
+        QStringLiteral("MavlinkLogExportCancelButton"));
+    QVERIFY(progress->isVisible());
+    QVERIFY(cancel->isVisible());
+    cancel->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!window.isBusy(), 6000);
+    QVERIFY(cancelled.load());
+    QCOMPARE(formatSeen.load(), static_cast<int>(TlogExportFormat::Matlab));
+    QVERIFY(!progress->isVisible());
+    QVERIFY(!cancel->isVisible());
+    QCOMPARE(window.statusText(), QStringLiteral("Matlab export cancelled."));
+    QTest::qWait(150);
+    QVERIFY(!progress->isVisible());
+    QCOMPARE(window.statusText(), QStringLiteral("Matlab export cancelled."));
+}
+
+void MavlinkLogWindowTest::closeFromConfirmationCallbackStartsNoWorker()
+{
+    QTemporaryFile tlog(QDir::tempPath()
+                        + QStringLiteral("/apm-tlog-callback-close-XXXXXX.tlog"));
+    QVERIFY(tlog.open());
+    QPointer<MavlinkLogWindow> window;
+    bool outputCalled = false;
+    bool exporterCalled = false;
+    MavlinkLogWindow::Dependencies dependencies;
+    dependencies.confirmExport = [&](const QString &) {
+        window->close();
+        return true;
+    };
+    dependencies.chooseOutput = [&](const QString &, const QString &,
+                                     const QString &) {
+        outputCalled = true;
+        return QStringLiteral("/tmp/unused.mat");
+    };
+    dependencies.exportLog = [&](TlogExportFormat, const QString &,
+                                  const QString &,
+                                  const TlogExportService::CancelRequested &) {
+        exporterCalled = true;
+        return TlogExportResult();
+    };
+    window = new MavlinkLogWindow(dependencies);
+    window->setTlogPath(tlog.fileName());
+    window->show();
+    window->findChild<QPushButton *>(QStringLiteral("convertMatlabButton"))->click();
+    QTRY_VERIFY(window.isNull());
+    QVERIFY(!outputCalled);
+    QVERIFY(!exporterCalled);
 }
 
 void MavlinkLogWindowTest::confirmationDefaultsCanRejectWithoutStartingWork()
@@ -266,5 +536,12 @@ void MavlinkLogWindowTest::windowsAreIndependentModelessTopLevels()
     delete second;
 }
 
-QTEST_MAIN(MavlinkLogWindowTest)
+int main(int argc, char **argv)
+{
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    QApplication app(argc, argv);
+    MavlinkLogWindowTest test;
+    return QTest::qExec(&test, argc, argv);
+}
+
 #include "test_mavlinklogwindow.moc"

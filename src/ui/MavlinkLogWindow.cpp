@@ -4,6 +4,7 @@
 #include "configuration.h"
 
 #include <QApplication>
+#include <QCloseEvent>
 #include <QDialog>
 #include <QDir>
 #include <QFileDialog>
@@ -12,9 +13,11 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QThread>
+#include <QTimer>
 
 #include <utility>
 
@@ -38,6 +41,20 @@ QString comparablePath(const QString &path)
 }
 }
 
+struct MavlinkLogWindow::PendingExport
+{
+    Operation operation = Operation::Csv;
+    QString input;
+    QString label;
+    quint64 flow = 0;
+};
+
+struct MavlinkLogWindow::ProgressState
+{
+    std::atomic<qint64> completed{0};
+    std::atomic<qint64> total{0};
+};
+
 MavlinkLogWindow::MavlinkLogWindow(QWidget *owner)
     : MavlinkLogWindow(Dependencies(), owner)
 {
@@ -53,6 +70,10 @@ MavlinkLogWindow::MavlinkLogWindow(Dependencies dependencies, QWidget *owner)
 
 MavlinkLogWindow::~MavlinkLogWindow()
 {
+    m_closing = true;
+    ++m_flow;
+    if (m_progressTimer)
+        m_progressTimer->stop();
     stopWorker();
 }
 
@@ -128,14 +149,12 @@ void MavlinkLogWindow::buildUi(QWidget *owner)
 
     auto *matlab = makeButton(tr("Matlab"),
                               QStringLiteral("convertMatlabButton"), this);
-    const QString matlabReason = tr(
-        "Matlab export is not ported yet because a verified cross-platform "
-        "MAT-file writer is not available.");
-    matlab->setEnabled(false);
-    matlab->setToolTip(matlabReason);
-    matlab->setStatusTip(matlabReason);
-    matlab->setWhatsThis(matlabReason);
-    matlab->setProperty("unavailableReason", matlabReason);
+    matlab->setToolTip(tr("Export numeric scalar fields to a new MATLAB Level-5 file. "
+                         "Arrays are omitted. Uses Mission Planner's local-time convention "
+                         "and the bundled MAVLink message definitions."));
+    m_exportButtons.append(matlab);
+    connect(matlab, &QPushButton::clicked, this,
+            [this]() { beginExport(Operation::Matlab); });
     formats->addWidget(matlab, 0, 2);
     formats->setColumnStretch(4, 1);
     root->addLayout(formats, 2, 0);
@@ -160,19 +179,39 @@ void MavlinkLogWindow::buildUi(QWidget *owner)
             [this]() { beginExport(Operation::Missions); });
 
     root->setRowStretch(4, 1);
+    auto *progressRow = new QHBoxLayout;
+    m_progress = new QProgressBar(this);
+    m_progress->setObjectName(QStringLiteral("MavlinkLogExportProgressBar"));
+    m_progress->setRange(0, 1000);
+    m_progress->setValue(0);
+    m_progress->setTextVisible(true);
+    m_progress->hide();
+    progressRow->addWidget(m_progress, 1);
+    m_cancel = makeButton(tr("Cancel export"),
+                          QStringLiteral("MavlinkLogExportCancelButton"), this);
+    m_cancel->hide();
+    progressRow->addWidget(m_cancel);
+    root->addLayout(progressRow, 5, 0);
+
     m_status = new QLabel(this);
     m_status->setObjectName(QStringLiteral("tlogConvertStatus"));
     m_status->setWordWrap(true);
     m_status->setTextFormat(Qt::PlainText);
     m_status->setStyleSheet(QStringLiteral("color: #99AADD;"));
-    root->addWidget(m_status, 5, 0);
+    root->addWidget(m_status, 6, 0);
 
     connect(m_pick, &QPushButton::clicked, this, &MavlinkLogWindow::pickTlog);
+    connect(m_cancel, &QPushButton::clicked,
+            this, &MavlinkLogWindow::cancelCurrent);
+    m_progressTimer = new QTimer(this);
+    m_progressTimer->setInterval(100);
+    connect(m_progressTimer, &QTimer::timeout,
+            this, &MavlinkLogWindow::updateProgress);
 }
 
 void MavlinkLogWindow::setTlogPath(const QString &path)
 {
-    if (m_busy) {
+    if (m_busy || m_closing) {
         return;
     }
 
@@ -202,110 +241,267 @@ QString MavlinkLogWindow::statusText() const
 
 void MavlinkLogWindow::pickTlog()
 {
-    if (m_busy) {
+    if (m_busy || m_closing) {
         return;
     }
-    const QString path = QFileDialog::getOpenFileName(
+    const quint64 flow = ++m_flow;
+    setBusy(true);
+    auto *dialog = new QFileDialog(
         this, tr("Select telemetry log"), QGC::MAVLinkLogDirectory(),
         tr("Telemetry log (*.tlog)"));
-    if (!path.isEmpty()) {
-        setTlogPath(path);
-    }
+    dialog->setObjectName(QStringLiteral("MavlinkLogInputDialog"));
+    dialog->setAcceptMode(QFileDialog::AcceptOpen);
+    dialog->setFileMode(QFileDialog::ExistingFile);
+    dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    m_inputDialog = dialog;
+    connect(dialog, &QFileDialog::finished, this,
+            [this, dialog, flow](int result) {
+        if (m_inputDialog != dialog || flow != m_flow)
+            return;
+        const QString selected = dialog->selectedFiles().value(0);
+        m_inputDialog = nullptr;
+        setBusy(false);
+        if (result == QDialog::Accepted && !selected.isEmpty())
+            setTlogPath(selected);
+        else
+            m_status->setText(tr("Telemetry-log selection cancelled."));
+    });
+    dialog->open();
 }
 
 void MavlinkLogWindow::beginExport(Operation operation)
 {
-    if (m_busy || m_tlogPath.isEmpty()) {
+    if (m_busy || m_closing || m_tlogPath.isEmpty()) {
         return;
     }
-    const QString label = operationLabel(operation);
-    if (!confirmSensitiveExport(label)) {
-        m_status->setText(tr("%1 export cancelled.").arg(label));
-        return;
-    }
-    const QString output = chooseOutput(operation);
-    if (output.isEmpty()) {
-        return;
-    }
-    if (comparablePath(output) == comparablePath(m_tlogPath)) {
-        m_status->setText(tr("The export destination must not replace the selected .tlog."));
-        return;
-    }
-
-    TlogExportFormat format = TlogExportFormat::Kml;
-    switch (operation) {
-    case Operation::Kml: format = TlogExportFormat::Kml; break;
-    case Operation::Gpx: format = TlogExportFormat::Gpx; break;
-    case Operation::Csv: format = TlogExportFormat::Csv; break;
-    case Operation::Text: format = TlogExportFormat::Text; break;
-    case Operation::Parameters: format = TlogExportFormat::Parameters; break;
-    case Operation::Missions: format = TlogExportFormat::Missions; break;
-    }
-
-    m_cancelFlag = std::make_shared<std::atomic_bool>(false);
-    const std::shared_ptr<std::atomic_bool> cancelFlag = m_cancelFlag;
-    const QString input = m_tlogPath;
+    auto pending = std::make_shared<PendingExport>();
+    pending->operation = operation;
+    pending->input = m_tlogPath;
+    pending->label = operationLabel(operation);
+    pending->flow = ++m_flow;
+    m_pending = pending;
     setBusy(true);
+    const auto confirm = m_dependencies.confirmExport;
+    if (confirm) {
+        QPointer<MavlinkLogWindow> guard(this);
+        const bool accepted = confirm(pending->label);
+        if (!guard || m_pending != pending || pending->flow != m_flow
+            || m_closing)
+            return;
+        if (!accepted) {
+            finishPending(tr("%1 export cancelled.").arg(pending->label));
+            return;
+        }
+        continueAfterConfirmation(pending);
+        return;
+    }
+
+    auto *box = new QMessageBox(
+        QMessageBox::Warning, tr("Export %1").arg(pending->label),
+        tr("Exported vehicle data can contain precise GPS coordinates, vehicle "
+           "identifiers, missions, network details and sensitive parameter "
+           "values. Save the file only to a trusted location and review it "
+           "before sharing. Cancel is the default action."),
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    box->setObjectName(QStringLiteral("MavlinkLogSensitiveExportConfirmation"));
+    box->setTextFormat(Qt::PlainText);
+    box->setDefaultButton(QMessageBox::Cancel);
+    box->setEscapeButton(QMessageBox::Cancel);
+    box->setAttribute(Qt::WA_DeleteOnClose, true);
+    if (QPushButton *accept = qobject_cast<QPushButton *>(box->button(QMessageBox::Yes))) {
+        accept->setObjectName(QStringLiteral("MavlinkLogExportConfirmButton"));
+        accept->setText(tr("EXPORT FILE"));
+        accept->setAutoDefault(false);
+    }
+    m_confirmationDialog = box;
+    connect(box, &QMessageBox::finished, this,
+            [this, box, pending](int result) {
+        if (m_confirmationDialog != box || m_pending != pending
+            || pending->flow != m_flow)
+            return;
+        m_confirmationDialog = nullptr;
+        if (result != QMessageBox::Yes) {
+            finishPending(tr("%1 export cancelled.").arg(pending->label));
+            return;
+        }
+        continueAfterConfirmation(pending);
+    });
+    box->open();
+}
+
+void MavlinkLogWindow::continueAfterConfirmation(
+    const std::shared_ptr<PendingExport> &pending)
+{
+    if (!pending || pending != m_pending || pending->flow != m_flow
+        || m_closing || !m_busy)
+        return;
+    const QString suggested = suggestedOutput(pending->operation, pending->input);
+    const QString extension = operationExtension(pending->operation);
+    const auto choose = m_dependencies.chooseOutput;
+    if (choose) {
+        QPointer<MavlinkLogWindow> guard(this);
+        const QString output = choose(suggested, pending->label, extension);
+        if (!guard || m_pending != pending || pending->flow != m_flow
+            || m_closing)
+            return;
+        if (output.isEmpty()) {
+            finishPending(tr("%1 output selection cancelled.").arg(pending->label));
+            return;
+        }
+        continueAfterOutput(output, pending);
+        return;
+    }
+
+    auto *dialog = new QFileDialog(
+        this,
+        pending->operation == Operation::Matlab
+            ? tr("Save new Matlab file (existing files are refused)")
+            : tr("Save converted log"),
+        suggested,
+        tr("%1 files (*.%2)").arg(pending->label, extension));
+    dialog->setObjectName(QStringLiteral("MavlinkLogOutputDialog"));
+    dialog->setAcceptMode(QFileDialog::AcceptSave);
+    dialog->setFileMode(QFileDialog::AnyFile);
+    dialog->setDefaultSuffix(extension);
+    dialog->setOption(QFileDialog::DontConfirmOverwrite,
+                      pending->operation == Operation::Matlab);
+    dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    m_outputDialog = dialog;
+    connect(dialog, &QFileDialog::finished, this,
+            [this, dialog, pending](int result) {
+        if (m_outputDialog != dialog || m_pending != pending
+            || pending->flow != m_flow)
+            return;
+        const QString output = dialog->selectedFiles().value(0);
+        m_outputDialog = nullptr;
+        if (result != QDialog::Accepted || output.isEmpty()) {
+            finishPending(tr("%1 output selection cancelled.").arg(pending->label));
+            return;
+        }
+        continueAfterOutput(output, pending);
+    });
+    dialog->open();
+}
+
+void MavlinkLogWindow::continueAfterOutput(
+    const QString &output, const std::shared_ptr<PendingExport> &pending)
+{
+    if (!pending || pending != m_pending || pending->flow != m_flow
+        || m_closing || !m_busy)
+        return;
+    if (comparablePath(output) == comparablePath(pending->input)) {
+        finishPending(tr("The export destination must not replace the selected .tlog."));
+        return;
+    }
+    if (pending->operation == Operation::Matlab && QFileInfo::exists(output)) {
+        finishPending(tr("The Matlab export destination already exists. Choose a new path; existing MAT files are never replaced."));
+        return;
+    }
+    startExportWorker(output, pending);
+}
+
+void MavlinkLogWindow::startExportWorker(
+    const QString &output, const std::shared_ptr<PendingExport> &pending)
+{
+    if (!pending || pending != m_pending || pending->flow != m_flow
+        || m_closing || m_thread)
+        return;
+    const TlogExportFormat format = exportFormat(pending->operation);
+    m_cancelFlag = std::make_shared<std::atomic_bool>(false);
+    m_progressState = std::make_shared<ProgressState>();
+    const auto cancelFlag = m_cancelFlag;
+    const auto progressState = m_progressState;
+    const auto exporter = m_dependencies.exportLog;
+    const auto exporterWithProgress = m_dependencies.exportLogWithProgress;
+    const auto result = std::make_shared<TlogExportResult>();
+    const QString input = pending->input;
+    const QString label = pending->label;
+    const quint64 flow = pending->flow;
+
+    const bool progressSignalsBlocked = m_progress->blockSignals(true);
+    m_progress->setRange(0, 0);
+    m_progress->blockSignals(progressSignalsBlocked);
+    m_progress->show();
+    m_cancel->setEnabled(true);
+    m_cancel->show();
+    m_progressTimer->start();
     m_status->setText(
-        (operation == Operation::Kml || operation == Operation::Gpx)
+        (pending->operation == Operation::Kml
+         || pending->operation == Operation::Gpx
+         || pending->operation == Operation::Matlab)
             ? tr("Converting to %1…").arg(label)
             : tr("Exporting %1…").arg(label));
 
-    auto exporter = m_dependencies.exportLog;
-    if (!exporter) {
-        exporter = [](TlogExportFormat requestedFormat,
-                      const QString &requestedInput,
-                      const QString &requestedOutput,
-                      const TlogExportService::CancelRequested &cancel) {
-            return TlogExportService::Export(
-                requestedFormat, requestedInput, requestedOutput, cancel);
-        };
-    }
-    const auto result = std::make_shared<TlogExportResult>();
     QThread *thread = QThread::create(
-        [cancelFlag, format, input, output, exporter, result]() {
-            *result = exporter(
-                format, input, output,
-                [cancelFlag]() { return cancelFlag->load(); });
-        });
+        [cancelFlag, progressState, format, input, output, exporter,
+         exporterWithProgress, result]() {
+        const TlogExportService::CancelRequested cancel = [cancelFlag]() {
+            return cancelFlag->load(std::memory_order_relaxed);
+        };
+        const TlogExportService::Progress progress =
+            [progressState](qint64 completed, qint64 total) {
+            progressState->completed.store(qMax<qint64>(0, completed),
+                                           std::memory_order_relaxed);
+            progressState->total.store(qMax<qint64>(0, total),
+                                       std::memory_order_relaxed);
+        };
+        if (exporterWithProgress) {
+            *result = exporterWithProgress(
+                format, input, output, cancel, progress);
+        } else if (exporter) {
+            *result = exporter(format, input, output, cancel);
+        } else {
+            *result = TlogExportService::Export(
+                format, input, output, cancel, progress);
+        }
+    });
     m_thread = thread;
     connect(thread, &QThread::finished, this,
-            [this, thread, result, label]() {
-                if (m_thread == thread) {
-                    m_thread = nullptr;
-                }
-                finishExport(*result, label);
-            });
+            [this, thread, result, label, flow]() {
+        if (m_thread != thread || !m_pending
+            || m_pending->flow != flow || m_flow != flow)
+            return;
+        m_thread = nullptr;
+        finishExport(*result, label, flow);
+    });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
     thread->start();
 }
 
 void MavlinkLogWindow::finishExport(const TlogExportResult &result,
-                                    const QString &label)
+                                    const QString &label, quint64 flow)
 {
+    if (!m_pending || m_pending->flow != flow || m_flow != flow)
+        return;
+    m_progressTimer->stop();
+    m_progress->hide();
+    m_cancel->hide();
+    m_progressState.reset();
+    m_pending.reset();
     setBusy(false);
     m_cancelFlag.reset();
     if (result.cancelled) {
         m_status->setText(tr("%1 export cancelled.").arg(label));
-        return;
-    }
-    if (!result.success) {
+    } else if (!result.success) {
         const bool track = label == QStringLiteral("KML")
             || label == QStringLiteral("GPX");
         m_status->setText(
             track ? tr("%1 conversion failed: %2").arg(label, result.error)
                   : tr("%1 export failed: %2").arg(label, result.error));
-        return;
+    } else {
+        m_status->setText(result.message);
     }
-
-    m_status->setText(result.message);
+    if (m_closeWhenIdle) {
+        m_closeWhenIdle = false;
+        QTimer::singleShot(0, this, &QWidget::close);
+    }
 }
 
 void MavlinkLogWindow::setBusy(bool busy)
 {
     m_busy = busy;
-    m_pick->setEnabled(!busy);
-    const bool canExport = !busy && !m_tlogPath.isEmpty();
+    m_pick->setEnabled(!busy && !m_closing);
+    const bool canExport = !busy && !m_closing && !m_tlogPath.isEmpty();
     for (QPushButton *button : m_exportButtons) {
         button->setEnabled(canExport);
     }
@@ -330,47 +526,105 @@ void MavlinkLogWindow::stopWorker()
     delete thread;
 }
 
-bool MavlinkLogWindow::confirmSensitiveExport(const QString &label)
+void MavlinkLogWindow::cancelCurrent()
 {
-    if (m_dependencies.confirmExport) {
-        return m_dependencies.confirmExport(label);
+    if (!m_busy)
+        return;
+    if (m_thread && m_cancelFlag) {
+        m_cancelFlag->store(true, std::memory_order_relaxed);
+        m_cancel->setEnabled(false);
+        m_status->setText(tr("Cancelling export; waiting for the worker to stop safely…"));
+        return;
     }
-    QMessageBox box(
-        QMessageBox::Warning, tr("Export %1").arg(label),
-        tr("Exported vehicle data can contain precise GPS coordinates, vehicle "
-           "identifiers, missions, network details and sensitive parameter "
-           "values. Save the file only to a trusted location and review it "
-           "before sharing. Cancel is the default action."),
-        QMessageBox::NoButton, this);
-    QPushButton *cancel = box.addButton(QMessageBox::Cancel);
-    QPushButton *accept = box.addButton(tr("EXPORT FILE"),
-                                        QMessageBox::AcceptRole);
-    box.setDefaultButton(cancel);
-    box.setEscapeButton(cancel);
-    box.exec();
-    return box.clickedButton() == accept;
+    ++m_flow;
+    if (!dismissDialogs())
+        return;
+    m_pending.reset();
+    setBusy(false);
+    m_status->setText(tr("Export cancelled before background work started."));
 }
 
-QString MavlinkLogWindow::chooseOutput(Operation operation)
+void MavlinkLogWindow::updateProgress()
 {
-    const QFileInfo input(m_tlogPath);
-    const QString extension = operationExtension(operation);
-    const QString suggested = input.dir().filePath(
-        input.completeBaseName() + QLatin1Char('.') + extension);
-    if (m_dependencies.chooseOutput) {
-        return m_dependencies.chooseOutput(
-            suggested, operationLabel(operation), extension);
+    if (!m_thread || !m_progressState)
+        return;
+    const qint64 completed = m_progressState->completed.load(
+        std::memory_order_relaxed);
+    const qint64 total = m_progressState->total.load(
+        std::memory_order_relaxed);
+    const bool blocked = m_progress->blockSignals(true);
+    if (total > 0) {
+        m_progress->setRange(0, 1000);
+        m_progress->setValue(int(qMin<qint64>(1000,
+            completed > total ? 1000 : completed * 1000 / total)));
+    } else {
+        m_progress->setRange(0, 0);
     }
-    QFileDialog dialog(
-        this, tr("Save converted log"), suggested,
-        tr("%1 files (*.%2)").arg(operationLabel(operation), extension));
-    dialog.setAcceptMode(QFileDialog::AcceptSave);
-    dialog.setFileMode(QFileDialog::AnyFile);
-    dialog.setDefaultSuffix(extension);
-    if (dialog.exec() != QDialog::Accepted) {
-        return QString();
+    m_progress->blockSignals(blocked);
+}
+
+bool MavlinkLogWindow::dismissDialogs()
+{
+    const auto dismiss = [](auto &member) {
+        auto dialog = member;
+        member = nullptr;
+        if (!dialog)
+            return;
+        const bool blocked = dialog->blockSignals(true);
+        dialog->reject();
+        if (!dialog)
+            return;
+        dialog->blockSignals(blocked);
+        dialog->deleteLater();
+    };
+    QPointer<MavlinkLogWindow> guard(this);
+    dismiss(m_inputDialog);
+    if (!guard)
+        return false;
+    dismiss(m_outputDialog);
+    if (!guard)
+        return false;
+    dismiss(m_confirmationDialog);
+    return bool(guard);
+}
+
+void MavlinkLogWindow::finishPending(const QString &status)
+{
+    m_pending.reset();
+    setBusy(false);
+    if (!status.isEmpty())
+        m_status->setText(status);
+}
+
+QString MavlinkLogWindow::suggestedOutput(
+    Operation operation, const QString &inputPath) const
+{
+    const QFileInfo input(inputPath);
+    if (operation == Operation::Matlab)
+        return input.absoluteFilePath() + QStringLiteral(".mat");
+    return input.dir().filePath(
+        input.completeBaseName() + QLatin1Char('.')
+        + operationExtension(operation));
+}
+
+void MavlinkLogWindow::closeEvent(QCloseEvent *event)
+{
+    m_closing = true;
+    if (m_thread) {
+        event->ignore();
+        m_closeWhenIdle = true;
+        if (m_cancelFlag)
+            m_cancelFlag->store(true, std::memory_order_relaxed);
+        m_cancel->setEnabled(false);
+        m_status->setText(tr("Cancelling export; this window will close after the worker stops safely…"));
+        return;
     }
-    return dialog.selectedFiles().value(0);
+    ++m_flow;
+    if (!dismissDialogs())
+        return;
+    m_pending.reset();
+    setBusy(false);
+    event->accept();
 }
 
 QString MavlinkLogWindow::operationLabel(Operation operation) const
@@ -378,6 +632,7 @@ QString MavlinkLogWindow::operationLabel(Operation operation) const
     switch (operation) {
     case Operation::Kml: return QStringLiteral("KML");
     case Operation::Gpx: return QStringLiteral("GPX");
+    case Operation::Matlab: return QStringLiteral("Matlab");
     case Operation::Csv: return QStringLiteral("CSV");
     case Operation::Text: return tr("human-readable text");
     case Operation::Parameters: return tr("parameters");
@@ -391,10 +646,25 @@ QString MavlinkLogWindow::operationExtension(Operation operation) const
     switch (operation) {
     case Operation::Kml: return QStringLiteral("kml");
     case Operation::Gpx: return QStringLiteral("gpx");
+    case Operation::Matlab: return QStringLiteral("mat");
     case Operation::Csv: return QStringLiteral("csv");
     case Operation::Text: return QStringLiteral("txt");
     case Operation::Parameters: return QStringLiteral("param");
     case Operation::Missions: return QStringLiteral("waypoints");
     }
     return QString();
+}
+
+TlogExportFormat MavlinkLogWindow::exportFormat(Operation operation) const
+{
+    switch (operation) {
+    case Operation::Kml: return TlogExportFormat::Kml;
+    case Operation::Gpx: return TlogExportFormat::Gpx;
+    case Operation::Matlab: return TlogExportFormat::Matlab;
+    case Operation::Csv: return TlogExportFormat::Csv;
+    case Operation::Text: return TlogExportFormat::Text;
+    case Operation::Parameters: return TlogExportFormat::Parameters;
+    case Operation::Missions: return TlogExportFormat::Missions;
+    }
+    return TlogExportFormat::Csv;
 }
