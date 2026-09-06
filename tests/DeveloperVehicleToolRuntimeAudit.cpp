@@ -2,12 +2,14 @@
 #include "comm/LinkManager.h"
 #include "comm/LinkManagerFactory.h"
 #include "comm/MAVLinkFrameParser.h"
+#include "comm/MavlinkComponentRegistry.h"
 #include "comm/MavFtpProtocol.h"
 #include "comm/MavFtpServiceInterface.h"
 #include "comm/TCPLink.h"
 #include "comm/VehicleTargetManager.h"
 #include "core/parameters/ParameterStore.h"
 #include "services/DeveloperVehicleToolService.h"
+#include "services/CameraProbeService.h"
 #include "services/ParameterRecoveryService.h"
 #include "services/OfflineMagFitApplyService.h"
 #include "ui/OfflineMagFitWindow.h"
@@ -664,6 +666,18 @@ public:
             if (message.msgid == MAVLINK_MSG_ID_COMMAND_LONG) {
                 mavlink_command_long_t command{};
                 mavlink_msg_command_long_decode(&message, &command);
+                if (command.target_system == FixtureSystem && command.target_component == MAV_COMP_ID_CAMERA) {
+                    cameraCommands.append(command);
+                    mavlink_command_ack_t ack{};
+                    ack.command = command.command;
+                    ack.result = command.command == MAV_CMD_REQUEST_CAMERA_SETTINGS ? MAV_RESULT_UNSUPPORTED : MAV_RESULT_ACCEPTED;
+                    ack.target_system = message.sysid;
+                    ack.target_component = message.compid;
+                    mavlink_message_t reply{};
+                    mavlink_msg_command_ack_encode(FixtureSystem, MAV_COMP_ID_CAMERA, &reply, &ack);
+                    inject(reply);
+                    continue;
+                }
                 if (command.target_system != FixtureSystem || command.target_component != 1) continue;
                 if (command.command == MAV_CMD_PREFLIGHT_CALIBRATION
                     || command.command == MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN
@@ -683,6 +697,7 @@ public:
     int parameterWrites = 0;
     float pressure = 101325.0f;
     QVector<mavlink_command_long_t> commands;
+    QVector<mavlink_command_long_t> cameraCommands;
     QMap<QString, float> recoveryValues{
         {QStringLiteral("RECOVERY_ENABLE"), 0.0f},
         {QStringLiteral("RECOVERY_GAIN"), 7.0f},
@@ -732,7 +747,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 29 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 30 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *offlineSerialBridge = page->findChild<QPushButton *>(
@@ -1607,6 +1622,79 @@ int RunDeveloperVehicleToolRuntimeAudit()
         if (fixture) fixture->heartbeat(fixtureArmed);
     });
     heartbeat.start(250);
+    {
+        auto *cameraService = links->cameraProbeService();
+        auto *probe = page->findChild<QPushButton *>(QStringLiteral("ProbeMavlinkCameraButton"));
+        expect(cameraService && probe && probe->isEnabled(), "Camera Probe controller is unavailable");
+        if (cameraService && probe) {
+            const auto selected = links->vehicleTargetManager()->acquireTarget();
+            mavlink_message_t cameraHeartbeat{};
+            mavlink_msg_heartbeat_pack(FixtureSystem, MAV_COMP_ID_CAMERA, &cameraHeartbeat,
+                MAV_TYPE_CAMERA, MAV_AUTOPILOT_INVALID, 0, 0, MAV_STATE_ACTIVE);
+            fixture->inject(cameraHeartbeat);
+            expect(waitFor([&] {
+                const auto components = links->componentRegistry()->components();
+                return std::any_of(components.cbegin(), components.cend(), [](const MavlinkComponentInstanceLease &lease) {
+                    return lease.endpoint.linkId == FixtureLinkId
+                        && lease.endpoint.systemId == FixtureSystem
+                        && lease.endpoint.componentId == MAV_COMP_ID_CAMERA;
+                });
+            }), "Camera Probe fixture heartbeat did not reach component discovery");
+            auto confirmation = [&]() -> QMessageBox * {
+                probe->click();
+                QMessageBox *dialog = nullptr;
+                waitFor([&] {
+                    for (auto *box : page->findChildren<QMessageBox *>(QStringLiteral("DeveloperCameraProbeConfirmation")))
+                        if (box->isVisible()) { dialog = box; return true; }
+                    return false;
+                });
+                return dialog;
+            };
+            QPointer<QMessageBox> cancel = confirmation();
+            expect(cancel && cancel->defaultButton() == cancel->button(QMessageBox::Cancel)
+                       && cancel->escapeButton() == cancel->button(QMessageBox::Cancel),
+                   "Camera Probe confirmation is not default/Escape Cancel");
+            if (cancel) cancel->reject();
+            QCoreApplication::processEvents();
+            expect(fixture->cameraCommands.isEmpty(), "Camera Probe Cancel sent commands");
+            QPointer<QMessageBox> stale = confirmation();
+            links->vehicleTargetManager()->clearTarget();
+            if (stale) stale->done(QMessageBox::Yes);
+            QCoreApplication::processEvents();
+            expect(fixture->cameraCommands.isEmpty(), "Camera Probe stale consent sent commands");
+            links->vehicleTargetManager()->selectTarget(FixtureLinkId, FixtureSystem, 1);
+            fixture->inject(cameraHeartbeat);
+            const auto finalSelection = links->vehicleTargetManager()->acquireTarget();
+            QPointer<QMessageBox> consent = confirmation();
+            expect(consent && consent->text().contains(QStringLiteral("mode 0"))
+                       && consent->text().contains(QStringLiteral("stream 0"))
+                       && consent->text().contains(QStringLiteral("%1:100").arg(FixtureSystem)),
+                   "Camera Probe consent omitted exact target/state changes");
+            const QString screenshot = qEnvironmentVariable("APM_CAMERA_PROBE_AUDIT_SCREENSHOT");
+            if (consent && !screenshot.isEmpty()) expect(consent->grab().save(screenshot), "Camera Probe screenshot failed");
+            if (consent) consent->done(QMessageBox::Yes);
+            expect(waitFor([&] { return fixture->cameraCommands.size() == 6 && !cameraService->busy(); }),
+                   "Camera Probe did not complete six acknowledged requests");
+            const auto expected = CameraProbeService::Commands();
+            for (int index = 0; index < fixture->cameraCommands.size(); ++index) {
+                const auto command = fixture->cameraCommands[index];
+                expect(index < expected.size() && command.command == expected[index]
+                           && command.target_system == FixtureSystem && command.target_component == MAV_COMP_ID_CAMERA
+                           && command.confirmation == 0, "Camera Probe order/target/confirmation differs");
+                for (float parameter : {command.param1, command.param2, command.param3, command.param4,
+                                         command.param5, command.param6, command.param7})
+                    expect(parameter == 0 && !std::signbit(parameter), "Camera Probe changed an all-zero reference parameter");
+            }
+            const auto report = cameraService->lastReport();
+            expect(report.steps.size() == 6 && report.steps[2].outcome == CameraProbeService::StepOutcome::Rejected
+                       && report.steps[5].outcome == CameraProbeService::StepOutcome::Accepted,
+                   "Camera Probe rejection incorrectly stopped later requests");
+            const auto after = links->vehicleTargetManager()->acquireTarget();
+            expect(after.generation == finalSelection.generation && after.endpoint == selected.endpoint,
+                   "Camera Probe changed the selected autopilot");
+            if (!screenshot.isEmpty()) expect(page->grab().save(screenshot + QStringLiteral(".page.png")), "Camera Probe page screenshot failed");
+        }
+    }
     fixture->pressureReply();
     expect(waitFor([&] { return service->canPrepare(DeveloperVehicleToolService::Action::SetQnh); }),
            "exact pressure snapshot did not become ready");

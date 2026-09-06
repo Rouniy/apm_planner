@@ -801,6 +801,7 @@ void SetupView::buildPages()
     developerTools.factory = [this](QWidget *parent) {
         auto *page = new ConfigDeveloperToolsView(window(), parent);
         page->setVehicleToolService(LinkManager::instance()->developerVehicleToolService());
+        page->setCameraProbeService(LinkManager::instance()->cameraProbeService());
         page->setParameterRecoveryService(LinkManager::instance()->parameterRecoveryService());
         page->setRemoteDataFlashLogService(LinkManager::instance()->remoteDataFlashLogService(),
                                            GlobalObject::sharedInstance()->logDirectory());

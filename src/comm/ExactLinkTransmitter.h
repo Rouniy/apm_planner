@@ -66,8 +66,14 @@ signals:
 
 private:
     friend class LinkManager;
+    friend class VehicleCommandService;
     friend class RemoteDataFlashLogService;
     friend class MavlinkSerialTcpBridgeService;
+    // The exact command owner must survive signing and may revalidate its
+    // immutable reservation immediately before the physical writer.
+    SendResult sendGuardedCommandLong(int linkId, quint8 localSystemId,
+        quint8 localComponentId, const mavlink_message_t &message,
+        std::function<bool()> finalGuard, bool *frameWriterInvoked);
     // SERIAL_CONTROL has no destination fields. Only the dedicated-route
     // session owner may submit UART requests, data or its bounded release.
     SendResult sendSerialControl(int linkId, quint64 expectedEpoch,
@@ -88,7 +94,7 @@ private:
         quint64 initialTimestamp, bool *frameWriterInvoked = nullptr);
     SendResult sendMessageImpl(int linkId, quint8 localSystemId,
         quint8 localComponentId, mavlink_message_t message,
-        bool *frameWriterInvoked);
+        bool *frameWriterInvoked, std::function<bool()> finalGuard = {});
     mavlink_status_t &transmitStatus(int linkId);
 
     const FrameWriter m_frameWriter;

@@ -37,6 +37,7 @@ This file is part of the APM_PLANNER project
 #include "SwarmTelemetryRegistry.h"
 #include "services/SwarmSequenceExecutor.h"
 #include "services/DeveloperVehicleToolService.h"
+#include "services/CameraProbeService.h"
 #include "services/ParameterRecoveryService.h"
 #include "services/OfflineMagFitApplyService.h"
 #include "RemoteDataFlashLogService.h"
@@ -435,6 +436,20 @@ LinkManager::LinkManager(QObject *parent) :
             return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
         });
     Q_ASSERT(componentParametersConfigured);
+    const bool componentCommandsConfigured = m_vehicleCommandService->configureComponentExactTransactions(
+        [this](const MavlinkComponentInstanceLease &lease) {
+            return m_componentRegistry->validateLease(lease);
+        },
+        [this](const MavlinkComponentInstanceLease &lease, QString *error) {
+            return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
+        });
+    Q_ASSERT(componentCommandsConfigured);
+    connect(m_componentRegistry, &MavlinkComponentRegistry::componentRetired,
+            m_vehicleCommandService, &VehicleCommandService::retireComponent);
+    m_cameraProbeService = new CameraProbeService(m_vehicleTargetManager, m_componentRegistry,
+        m_vehicleCommandService, [this](const MavlinkComponentInstanceLease &lease, QString *error) {
+            return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
+        }, this);
     connect(m_componentRegistry, &MavlinkComponentRegistry::componentRetired,
             m_parameterService, &ParameterService::retireComponent);
     m_px4FlowService = new Px4FlowService(m_componentRegistry, m_parameterService, this);
@@ -484,6 +499,8 @@ LinkManager::LinkManager(QObject *parent) :
         m_componentRegistry->observeMessage(id, epoch, message);
         if (!current()) return;
         m_parameterService->observePhysicalMessage(id, epoch, message);
+        if (!current()) return;
+        m_vehicleCommandService->observePhysicalMessage(id, epoch, message);
         if (!current()) return;
         m_px4FlowService->observeMessage(id, epoch, message);
         if (!current()) return;
@@ -764,6 +781,7 @@ void LinkManager::shutdown()
     // transport are still available. No terminal signal is needed during
     // application shutdown.
     m_developerVehicleToolService->shutdown();
+    if (m_cameraProbeService) m_cameraProbeService->shutdown();
     m_parameterRecoveryService->shutdown();
     m_offlineMagFitApplyService->shutdown();
     m_remoteDataFlashLogService->shutdown();
@@ -1204,6 +1222,11 @@ CompassCalibrationService *LinkManager::compassCalibrationService() const
 DeveloperVehicleToolService *LinkManager::developerVehicleToolService() const
 {
     return m_developerVehicleToolService;
+}
+
+CameraProbeService *LinkManager::cameraProbeService() const
+{
+    return m_cameraProbeService;
 }
 
 ParameterRecoveryService *LinkManager::parameterRecoveryService() const
@@ -1959,10 +1982,9 @@ void LinkManager::receiveMessage(LinkInterface* link,mavlink_message_t message)
                 == ingressSwarmSession;
     };
     if (!linkIsCurrent()) return;
-    m_vehicleCommandService->observeMessage(linkId, message);
-    if (!linkIsCurrent()) {
-        return;
-    }
+    // COMMAND_ACK already reached the shared component/vehicle/legacy arbiter
+    // at physical ingress. A second delivery could complete a successor that
+    // was submitted synchronously by the first command's completion callback.
     m_compassCalibrationService->observeMessage(linkId, message);
     if (!linkIsCurrent()) {
         return;

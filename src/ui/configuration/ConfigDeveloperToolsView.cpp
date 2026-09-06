@@ -2,6 +2,7 @@
 
 #include "DeveloperToolParsers.h"
 #include "FirmwareArchiveController.h"
+#include "CameraProbeController.h"
 #include "ShapefilePolyController.h"
 #include "MavFtpFileDownload.h"
 #include "comm/MavFtpServiceInterface.h"
@@ -147,8 +148,14 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
             this, [this](const QString &message) {
         if (!m_fileToolsClosing) AppendLog(message);
     });
-    AddUnavailableAction(tr("Probe MAVLink Camera"),
-                         QStringLiteral("ProbeMavlinkCameraButton"), notPorted);
+    m_cameraProbeButton = AddAction(
+        tr("Probe MAVLink Camera"),
+        QStringLiteral("ProbeMavlinkCameraButton"), [this]() {
+            if (!m_fileToolsClosing && m_cameraProbe
+                && m_cameraProbeButton->isEnabled()) {
+                m_cameraProbe->start();
+            }
+        }, false, tr("The guarded camera probe service is unavailable."));
     m_apjButton = AddAction(tr("Embed Defaults in APJ"),
         QStringLiteral("EmbedDefaultsInApjButton"),
         [this]() { PickApjFirmware(); });
@@ -258,7 +265,8 @@ int ConfigDeveloperToolsView::ImplementedActionCount() const
     return m_implementedActionCount + (m_vehicleTools ? m_vehicleButtons.size() : 0)
         + (m_mavFtpService && m_mavFtpTargets ? 1 : 0)
         + (m_parameterRecoveryService ? 2 : 0)
-        + (m_remoteDataFlashLogService ? 2 : 0);
+        + (m_remoteDataFlashLogService ? 2 : 0)
+        + (m_cameraProbeService ? 1 : 0);
 }
 
 bool ConfigDeveloperToolsView::MavFtpDownloadBusy() const
@@ -282,9 +290,158 @@ bool ConfigDeveloperToolsView::FirmwareArchiveBusy() const
     return m_firmwareArchive && m_firmwareArchive->busy();
 }
 
-bool ConfigDeveloperToolsView::ShapefilePolyBusy() const
+bool ConfigDeveloperToolsView::PageControllerBusy() const
 {
-    return m_shapefilePoly && m_shapefilePoly->busy();
+    // These two page-owned controllers participate in every existing
+    // Developer-operation gate. Keep the aggregate here so direct public
+    // entry points cannot bypass the newly added camera workflow.
+    return (m_shapefilePoly && m_shapefilePoly->busy())
+        || CameraProbeBusy();
+}
+
+bool ConfigDeveloperToolsView::CameraProbeBusy() const
+{
+    return m_cameraProbe && m_cameraProbe->busy();
+}
+
+void ConfigDeveloperToolsView::setCameraProbeService(
+    CameraProbeService *service)
+{
+    if (m_cameraProbeService == service) {
+        const QPointer<ConfigDeveloperToolsView> guard(this);
+        RefreshCameraProbeActions();
+        if (guard)
+            RefreshVehicleActions();
+        return;
+    }
+
+    const quint64 bindingRevision = ++m_cameraProbeBindingRevision;
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<CameraProbeService> incoming(service);
+    if (m_cameraProbe) {
+        disconnect(m_cameraProbe, nullptr, this, nullptr);
+        delete m_cameraProbe;
+        m_cameraProbe = nullptr;
+    }
+    if (!guard || bindingRevision != m_cameraProbeBindingRevision)
+        return;
+    if (m_cameraProbeService)
+        disconnect(m_cameraProbeService, nullptr, this, nullptr);
+    m_cameraProbeService = incoming;
+    m_seenCameraProbeHistory.clear();
+    if (incoming) {
+        m_cameraProbe = new CameraProbeController(incoming, this);
+        connect(m_cameraProbe, &CameraProbeController::busyChanged,
+                this, &ConfigDeveloperToolsView::RefreshVehicleActions);
+        connect(m_cameraProbe, &CameraProbeController::logMessage,
+                this, [this, incoming, bindingRevision](
+                    const QString &message) {
+            if (bindingRevision != m_cameraProbeBindingRevision
+                || m_cameraProbeService != incoming) {
+                return;
+            }
+            if (m_fileToolsClosing || QCoreApplication::closingDown())
+                return;
+            const QStringList history = incoming
+                ? incoming->history() : QStringList();
+            const bool alreadyRelayed = !history.isEmpty()
+                && history.constLast() == message
+                && m_seenCameraProbeHistory == history;
+            m_seenCameraProbeHistory = history;
+            if (!alreadyRelayed) {
+                AppendLog(message);
+            }
+        });
+        // The application service can also be driven by another page instance.
+        // Drain its bounded history here; the overlap check prevents the owned
+        // controller relay above from duplicating the same line.
+        connect(incoming, &CameraProbeService::logMessage,
+                this, [this, bindingRevision](const QString &) {
+            if (bindingRevision == m_cameraProbeBindingRevision)
+                RefreshCameraProbeActions();
+        });
+        connect(incoming, &CameraProbeService::stateChanged,
+                this, [this, bindingRevision]() {
+            const QPointer<ConfigDeveloperToolsView> guard(this);
+            RefreshCameraProbeActions();
+            if (!guard
+                || bindingRevision != m_cameraProbeBindingRevision) {
+                return;
+            }
+            // The final service state notification follows its finishing
+            // fence. Recompute vehicle gates as well as offline actions so a
+            // local or foreign probe cannot leave them disabled.
+            RefreshVehicleActions();
+        });
+        connect(incoming, &CameraProbeService::operationFinished,
+                this, [this, bindingRevision](
+                    const CameraProbeService::Report &) {
+            if (bindingRevision != m_cameraProbeBindingRevision)
+                return;
+            RefreshCameraProbeActions();
+        });
+        connect(incoming, &QObject::destroyed, this,
+                [this, bindingRevision]() {
+            if (bindingRevision != m_cameraProbeBindingRevision)
+                return;
+            const QPointer<ConfigDeveloperToolsView> guard(this);
+            ++m_cameraProbeBindingRevision;
+            m_cameraProbeService.clear();
+            RefreshCameraProbeActions();
+            if (guard)
+                RefreshVehicleActions();
+        });
+    }
+    if (!guard || bindingRevision != m_cameraProbeBindingRevision)
+        return;
+    AppendLog(tr("%1 of %2 Mission Planner Developer tools are available.")
+                  .arg(ImplementedActionCount()).arg(ActionCount()));
+    if (!guard || bindingRevision != m_cameraProbeBindingRevision)
+        return;
+    RefreshCameraProbeActions();
+    if (!guard || bindingRevision != m_cameraProbeBindingRevision)
+        return;
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::RefreshCameraProbeActions()
+{
+    if (m_refreshingCameraProbe || m_fileToolsClosing)
+        return;
+    m_refreshingCameraProbe = true;
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<CameraProbeService> service(m_cameraProbeService);
+    const quint64 bindingRevision = m_cameraProbeBindingRevision;
+    if (service) {
+        const QStringList history = service->history();
+        int overlap = qMin(m_seenCameraProbeHistory.size(), history.size());
+        while (overlap > 0
+               && m_seenCameraProbeHistory.mid(
+                      m_seenCameraProbeHistory.size() - overlap)
+                    != history.mid(0, overlap)) {
+            --overlap;
+        }
+        for (int index = overlap; index < history.size(); ++index) {
+            AppendLog(history.at(index));
+            if (!guard)
+                return;
+            if (bindingRevision != m_cameraProbeBindingRevision
+                || service != m_cameraProbeService) {
+                m_refreshingCameraProbe = false;
+                return;
+            }
+        }
+        m_seenCameraProbeHistory = history;
+    }
+    if (!guard)
+        return;
+    if (bindingRevision != m_cameraProbeBindingRevision
+        || service != m_cameraProbeService) {
+        m_refreshingCameraProbe = false;
+        return;
+    }
+    m_refreshingCameraProbe = false;
+    RefreshOfflineFileActions();
 }
 
 bool ConfigDeveloperToolsView::ParameterRecoveryBusy() const
@@ -595,7 +752,7 @@ void ConfigDeveloperToolsView::PickParameterRecoveryFile()
     if (m_fileToolsClosing || !service || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy()
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy()
         || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -609,7 +766,7 @@ void ConfigDeveloperToolsView::PickParameterRecoveryFile()
         || ParameterRecoveryBusy() || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -677,7 +834,7 @@ void ConfigDeveloperToolsView::ConfirmParameterRecovery(
         || m_parameterRecoveryPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -690,7 +847,7 @@ void ConfigDeveloperToolsView::ConfirmParameterRecovery(
         || m_parameterRecoveryPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -758,7 +915,7 @@ void ConfigDeveloperToolsView::StartParameterRecovery(
         || m_parameterRecoveryPrompt || m_ownedParameterRecoveryOperationId
         || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy()
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy()
         || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -771,7 +928,7 @@ void ConfigDeveloperToolsView::StartParameterRecovery(
         || m_parameterRecoveryPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -973,7 +1130,7 @@ void ConfigDeveloperToolsView::StartMavFtpDownload()
         return;
     if (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_remoteDataFlashLogPrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -992,7 +1149,7 @@ void ConfigDeveloperToolsView::StartRemoteDataFlashLog()
         || m_remoteDataFlashLogPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy()
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy()
         || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
@@ -1009,7 +1166,7 @@ void ConfigDeveloperToolsView::StartRemoteDataFlashLog()
         || m_remoteDataFlashLogPrompt || service->busy()
         || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -1084,7 +1241,7 @@ void ConfigDeveloperToolsView::StartRemoteDataFlashLog()
             || m_remoteDataFlashLogPrompt || service->busy()
             || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
             || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-            || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+            || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
             || MavFtpDownloadBusy() || ParameterRecoveryBusy()
             || m_vehiclePrompt
             || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -1302,7 +1459,7 @@ void ConfigDeveloperToolsView::RefreshRemoteDataFlashActions()
 
     const bool otherBusy = m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt || m_dashWareState
-        || m_dashWarePrompt || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || m_dashWarePrompt || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy());
     QString startReason;
@@ -1332,7 +1489,7 @@ void ConfigDeveloperToolsView::RefreshRemoteDataFlashActions()
                       || m_gpsExtractionState || m_gpsExtractionPrompt
                       || m_splitState || m_splitPrompt || m_dashWareState
                       || m_dashWarePrompt || ApjEmbeddingBusy()
-                      || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || MavFtpDownloadBusy()
+                      || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || MavFtpDownloadBusy()
                       || ParameterRecoveryBusy() || m_vehiclePrompt
                       || (m_vehicleTools && m_vehicleTools->busy()))) {
         startReady = false;
@@ -1464,7 +1621,7 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
         else if (m_gpsExtractionState || m_gpsExtractionPrompt
                  || m_splitState || m_splitPrompt
                  || m_dashWareState || m_dashWarePrompt
-                 || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+                 || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
                  || MavFtpDownloadBusy() || ParameterRecoveryBusy()
                  || m_remoteDataFlashLogPrompt)
             reason = tr("Finish or cancel the current offline file operation first.");
@@ -1522,6 +1679,10 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
     CancelVehiclePrompt();
     if (!guard)
         return;
+    if (m_cameraProbe)
+        m_cameraProbe->cancel();
+    if (!guard)
+        return;
     if (m_firmwareArchive && m_firmwareArchive->busy()) m_firmwareArchive->cancel();
     if (!guard) return;
     if (m_shapefilePoly && m_shapefilePoly->busy()) m_shapefilePoly->cancel();
@@ -1568,6 +1729,8 @@ ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
 {
     m_fileToolsClosing = true;
     // Stop owned worker activity before page members begin destruction.
+    delete m_cameraProbe;
+    m_cameraProbe = nullptr;
     delete m_shapefilePoly;
     m_shapefilePoly = nullptr;
     delete m_firmwareArchive;
@@ -1635,6 +1798,7 @@ void ConfigDeveloperToolsView::showEvent(QShowEvent *event)
         ShowParameterRecoveryProgress(
             m_ownedParameterRecoveryOperationId);
     }
+    RefreshCameraProbeActions();
     RefreshOfflineFileActions();
     ActionPageView::showEvent(event);
 }
@@ -1657,7 +1821,7 @@ void ConfigDeveloperToolsView::PickGpsCorrectionInput()
     if (m_fileToolsClosing || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy()))
         return;
@@ -1721,7 +1885,7 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
     const bool idle = !m_gpsExtractionState && !m_gpsExtractionPrompt
         && !m_splitState && !m_splitPrompt
         && !m_dashWareState && !m_dashWarePrompt && !ApjEmbeddingBusy()
-        && !LogOrganizerBusy() && !FirmwareArchiveBusy() && !ShapefilePolyBusy()
+        && !LogOrganizerBusy() && !FirmwareArchiveBusy() && !PageControllerBusy()
         && !MavFtpDownloadBusy() && !ParameterRecoveryBusy()
         && !m_remoteDataFlashLogPrompt
         && !m_vehiclePrompt
@@ -1733,6 +1897,14 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
     m_logOrganizerButton->setEnabled(idle);
     m_firmwareArchiveButton->setEnabled(idle);
     m_shapefilePolyButton->setEnabled(idle);
+    const bool cameraAvailable = m_cameraProbeService && m_cameraProbe;
+    m_cameraProbeButton->setEnabled(idle && cameraAvailable);
+    m_cameraProbeButton->setToolTip(!cameraAvailable
+        ? tr("The guarded camera probe service is unavailable.")
+        : !idle
+            ? tr("Finish or cancel the active Developer operation first.")
+            : tr("Requires a connected selected vehicle. If no exact camera "
+                 "component is known, the log explains why no command was sent."));
     m_cancelFirmwareArchiveButton->setEnabled(FirmwareArchiveBusy());
     m_cancelFirmwareArchiveButton->setToolTip(FirmwareArchiveBusy()
         ? tr("Cancel only the firmware archive operation owned by this page.")
@@ -1767,7 +1939,7 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
     if (recoveryReady
         && (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
             || m_splitPrompt || m_dashWareState || m_dashWarePrompt
-            || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+            || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
             || MavFtpDownloadBusy() || ParameterRecoveryBusy()
             || m_vehiclePrompt
             || (m_vehicleTools && m_vehicleTools->busy()))) {
@@ -1800,7 +1972,7 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
     if (m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
@@ -1918,7 +2090,7 @@ void ConfigDeveloperToolsView::PickSplitInput()
     if (m_fileToolsClosing || m_splitState || m_splitPrompt
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
@@ -2028,7 +2200,7 @@ void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
         return;
     if (m_splitState || m_splitPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DataFlash log split: another file selection, offline operation, or vehicle operation is already active."));
@@ -2163,7 +2335,7 @@ void ConfigDeveloperToolsView::CancelDashWareExport()
 void ConfigDeveloperToolsView::PickDashWareInput()
 {
     if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt
-        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt || m_vehiclePrompt
@@ -2264,7 +2436,7 @@ void ConfigDeveloperToolsView::ExportDashWareCsv(
     if (m_fileToolsClosing)
         return;
     if (m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
@@ -2392,7 +2564,7 @@ void ConfigDeveloperToolsView::CancelApjEmbedding()
 
 void ConfigDeveloperToolsView::PickApjFirmware()
 {
-    if (m_fileToolsClosing || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+    if (m_fileToolsClosing || ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
@@ -2500,7 +2672,7 @@ void ConfigDeveloperToolsView::EmbedDefaultsInApj(
 {
     if (m_fileToolsClosing)
         return;
-    if (ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+    if (ApjEmbeddingBusy() || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
@@ -2644,7 +2816,7 @@ void ConfigDeveloperToolsView::CancelLogOrganizer()
 
 void ConfigDeveloperToolsView::PickLogOrganizerDirectory()
 {
-    if (m_fileToolsClosing || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || ApjEmbeddingBusy()
+    if (m_fileToolsClosing || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || ApjEmbeddingBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
@@ -2681,7 +2853,7 @@ void ConfigDeveloperToolsView::AnalyzeLogDirectory(QString root)
 {
     if (m_fileToolsClosing)
         return;
-    if (LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || ApjEmbeddingBusy() || MavFtpDownloadBusy()
+    if (LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || ApjEmbeddingBusy() || MavFtpDownloadBusy()
         || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
@@ -2809,7 +2981,7 @@ void ConfigDeveloperToolsView::ShowLogOrganizerPlan(
     FlightLogOrganizer::Plan plan, quint64 revision)
 {
     if (m_fileToolsClosing || revision != m_logOrganizerRevision
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || !plan.isValid()) {
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || !plan.isValid()) {
         if (!m_fileToolsClosing)
             RefreshVehicleActions();
         return;
@@ -2917,7 +3089,7 @@ void ConfigDeveloperToolsView::ExecuteLogOrganizerPlan(
     FlightLogOrganizer::Plan plan, quint64 revision)
 {
     if (m_fileToolsClosing || revision != m_logOrganizerRevision
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy() || !plan.isValid()
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy() || !plan.isValid()
         || plan.entries().isEmpty()) {
         RefreshVehicleActions();
         return;
@@ -3040,7 +3212,7 @@ void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
     if (m_fileToolsClosing || !service || m_vehiclePrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
-        || LogOrganizerBusy() || FirmwareArchiveBusy() || ShapefilePolyBusy()
+        || LogOrganizerBusy() || FirmwareArchiveBusy() || PageControllerBusy()
         || MavFtpDownloadBusy() || ParameterRecoveryBusy())
         return;
     const quint64 revision = ++m_promptRevision;

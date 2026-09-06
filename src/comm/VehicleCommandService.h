@@ -3,6 +3,7 @@
 
 #include "SwarmTelemetryRegistry.h"
 #include "VehicleEndpoint.h"
+#include "MavlinkComponentInstanceLease.h"
 
 #include <QElapsedTimer>
 #include <QHash>
@@ -14,6 +15,7 @@
 
 #include <array>
 #include <functional>
+#include <memory>
 
 #include <mavlink.h>
 
@@ -38,6 +40,8 @@ public:
         const SwarmVehicleInstanceLease &lease)>;
     using ExactRouteValidator = std::function<bool(
         const SwarmVehicleInstanceLease &lease, QString *error)>;
+    using ComponentLeaseValidator = std::function<bool(const MavlinkComponentInstanceLease &)>;
+    using ComponentRouteValidator = std::function<bool(const MavlinkComponentInstanceLease &, QString *)>;
 
     enum class SendResult {
         Sent,
@@ -58,11 +62,13 @@ public:
         QPointer<QObject> owner;
         quint64 reservationId = 0;
         QList<SwarmVehicleInstanceLease> leases;
+        QList<MavlinkComponentInstanceLease> componentLeases;
 
         bool isValid() const noexcept
         {
             return !owner.isNull() && reservationId != 0
-                && !leases.isEmpty();
+                && ((!leases.isEmpty() && componentLeases.isEmpty())
+                    || (leases.isEmpty() && componentLeases.size() == 1));
         }
     };
 
@@ -77,10 +83,14 @@ public:
         // absolute lifetime is captured at submission and is never extended
         // by MAV_RESULT_IN_PROGRESS acknowledgements.
         int maximumLifetimeMs = 0;
-        // Optional operation-specific safety gate, run once immediately
-        // before the command waiter and frame are created. Returning false
-        // rejects the command without transmission.
+        // Optional operation-specific safety gate, run at admission and
+        // again after signing, including every retry. It must tolerate
+        // repeated validation. A retry refusal cannot undo earlier
+        // transmissions and is therefore an uncertain outcome.
         std::function<bool(QString *)> validateBeforeWrite;
+        // Optional inactivity retries, 0..3. IN_PROGRESS disables retries;
+        // the original absolute lifetime still bounds the transaction.
+        int maximumRetries = 0;
     };
 
     struct ExactCommandToken
@@ -89,12 +99,14 @@ public:
         quint64 reservationId = 0;
         SwarmVehicleInstanceLease lease;
         MAV_CMD command = static_cast<MAV_CMD>(0);
+        MavlinkComponentInstanceLease componentLease;
 
         bool isValid() const noexcept
         {
             return transactionId != 0 && reservationId != 0
-                && lease.isValid();
+                && (lease.isValid() != componentLease.isValid());
         }
+        bool isComponentOperation() const noexcept { return componentLease.isValid() && !lease.isValid(); }
     };
 
     enum class ExactReservationResult {
@@ -149,6 +161,7 @@ public:
         bool frameAttempted = false;
         bool ownerDetached = false;
         QString description;
+        int transmissionAttempts = 0;
     };
 
     static constexpr int DefaultExactCommandTimeoutMs = 2000;
@@ -174,6 +187,20 @@ public:
         ExactRouteValidator routeValidator);
     bool configureSingleVehicleExactRoute(
         ExactRouteValidator routeValidator);
+    bool configureComponentExactTransactions(ComponentLeaseValidator, ComponentRouteValidator);
+    ExactReservationResult reserveComponentEndpoint(QObject *owner,
+        const MavlinkComponentInstanceLease &, ExactReservationToken *, QString *error = nullptr);
+    ExactSubmitResult submitComponentCommandLong(const ExactReservationToken &,
+        const MavlinkComponentInstanceLease &, const ExactCommandRequest &,
+        ExactCommandToken *commandOut = nullptr, QString *error = nullptr);
+    void retireComponent(const MavlinkComponentInstanceLease &);
+    // Physical ingress ONLY; legacy observeMessage deliberately does not
+    // consume component-domain ACKs, preventing a second dispatch of a frame.
+    void observeComponentMessage(int linkId, quint64 physicalEpoch, const mavlink_message_t &);
+    // Production forwards every physical COMMAND_ACK here exactly once,
+    // before legacy UAS filtering, and must not later call observeMessage
+    // for that same packet. This dispatches both exact domains and legacy.
+    void observePhysicalMessage(int linkId, quint64 physicalEpoch, const mavlink_message_t &);
     void setExactCommandTimeoutForTesting(int timeoutMs);
     void setExactQuarantineForTesting(int timeoutMs);
 
@@ -246,7 +273,20 @@ private:
     enum class ExactReservationPolicy
     {
         Swarm,
-        SingleVehicle
+        SingleVehicle,
+        Component
+    };
+    enum class ExactLeaseDomain { Swarm, Component };
+    struct ExactInstanceLease {
+        VehicleEndpoint endpoint;
+        quint64 linkSessionEpoch = 0, instanceEpoch = 0;
+        ExactLeaseDomain domain = ExactLeaseDomain::Swarm;
+        bool isValid() const noexcept { return endpoint.isValid() && linkSessionEpoch && instanceEpoch; }
+        bool sameInstance(const ExactInstanceLease &other) const noexcept {
+            return endpoint == other.endpoint && linkSessionEpoch == other.linkSessionEpoch
+                && instanceEpoch == other.instanceEpoch && domain == other.domain;
+        }
+        bool operator==(const ExactInstanceLease &other) const noexcept { return sameInstance(other); }
     };
 
     struct SenderIdentity
@@ -259,7 +299,7 @@ private:
     struct ExactReservationRecord
     {
         QPointer<QObject> owner;
-        QList<SwarmVehicleInstanceLease> leases;
+        QList<ExactInstanceLease> leases;
         VehicleTargetLease target;
         ExactReservationPolicy policy = ExactReservationPolicy::Swarm;
         bool closing = false;
@@ -275,6 +315,11 @@ private:
         qint64 absoluteDeadlineMs = 0;
         int timeoutMs = DefaultExactCommandTimeoutMs;
         bool frameAttempted = false;
+        std::shared_ptr<bool> inFlightAttempt;
+        int transmissionAttempts = 0, remainingRetries = 0, attemptIndex = 0;
+        ExactCommandRequest request;
+        bool wasFrameAttempted() const noexcept { return frameAttempted || (inFlightAttempt && *inFlightAttempt); }
+        int attemptedTransmissions() const noexcept { return transmissionAttempts + (inFlightAttempt && *inFlightAttempt ? 1 : 0); }
     };
 
     struct QuarantinedExactCommand
@@ -284,22 +329,37 @@ private:
         quint8 localSystemId = 0;
         quint8 localComponentId = 0;
         qint64 expiresAtMs = 0;
+        ExactLeaseDomain domain = ExactLeaseDomain::Swarm;
+        quint64 linkSessionEpoch = 0;
     };
 
     bool targetIsCurrent(const VehicleTargetLease &target) const;
-    bool leaseIsCurrent(const SwarmVehicleInstanceLease &lease) const;
+    static ExactInstanceLease exactInstance(const SwarmVehicleInstanceLease &);
+    static ExactInstanceLease exactInstance(const MavlinkComponentInstanceLease &);
+    static ExactInstanceLease exactInstance(const ExactCommandToken &);
+    static bool reservationTokenMatches(const ExactReservationToken &, const ExactReservationRecord &);
+    bool leaseIsCurrent(const ExactInstanceLease &lease) const;
+    bool routeIsEligible(const ExactInstanceLease &, ExactReservationPolicy, QString *) const;
+    bool validatorsAvailable(ExactReservationPolicy) const;
+    void retireInstance(const ExactInstanceLease &);
     bool reservationTargetIsCurrent(
         const ExactReservationRecord &reservation) const;
     ExactReservationResult reserveExactEndpointsWithPolicy(
         QObject *owner,
-        const QList<SwarmVehicleInstanceLease> &leases,
+        const QList<ExactInstanceLease> &leases,
         ExactReservationPolicy policy,
         const VehicleTargetLease &target,
         ExactReservationToken *reservationOut,
         QString *error);
     bool reservationContains(
         const ExactReservationRecord &reservation,
-        const SwarmVehicleInstanceLease &lease) const;
+        const ExactInstanceLease &lease) const;
+    ExactSubmitResult submitCommand(const ExactReservationToken &, const ExactInstanceLease &,
+        const ExactCommandRequest &, ExactCommandToken *, QString *);
+    ExactSubmitResult transmitExactCommand(quint64 transactionId);
+    bool validateCommandBeforeWriter(quint64 transactionId,
+        const std::shared_ptr<bool> &attempt, QString *error);
+    void retryExactCommand(quint64 transactionId);
     bool legacyCommandPendingFor(const VehicleEndpoint &endpoint) const;
     bool exactEndpointBlocksLegacy(const VehicleEndpoint &endpoint,
                                    quint16 command);
@@ -308,11 +368,13 @@ private:
         quint8 localSystemId, quint8 localComponentId) const noexcept;
     bool observeExactAcknowledgement(
         int linkId, const mavlink_message_t &message,
-        const mavlink_command_ack_t &acknowledgement);
+        const mavlink_command_ack_t &acknowledgement,
+        ExactLeaseDomain domain = ExactLeaseDomain::Swarm, quint64 physicalEpoch = 0);
+    void observeMessageImpl(int linkId, quint64 physicalEpoch, const mavlink_message_t &);
     bool matchesQuarantine(
         const VehicleEndpoint &endpoint, quint16 command,
         quint8 targetSystem, quint8 targetComponent,
-        int *index = nullptr) const;
+        int *index = nullptr, int domain = -1, quint64 physicalEpoch = 0) const;
     void addQuarantine(const PendingExactCommand &pending);
     void cleanupExpiredQuarantines();
     void scheduleExactDeadline();
@@ -344,6 +406,8 @@ private:
     ExactLeaseValidator m_exactLeaseValidator;
     ExactRouteValidator m_exactRouteValidator;
     ExactRouteValidator m_singleVehicleExactRouteValidator;
+    ComponentLeaseValidator m_componentLeaseValidator;
+    ComponentRouteValidator m_componentRouteValidator;
     QHash<quint64, ExactReservationRecord> m_exactReservations;
     QHash<VehicleEndpoint, quint64> m_exactEndpointReservations;
     QHash<quint64, PendingExactCommand> m_pendingExactCommands;

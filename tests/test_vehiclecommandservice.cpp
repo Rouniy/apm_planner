@@ -1204,7 +1204,7 @@ singleVehicleReservationUsesDedicatedRouteAndExactAck()
                  reservation, lease, request, &commandToken),
              VehicleCommandService::ExactSubmitResult::Started);
     QVERIFY(commandToken.isValid());
-    QCOMPARE(safetyCalls, 1);
+    QCOMPARE(safetyCalls, 2); // Admission and final post-signing/pre-writer gate.
     QCOMPARE(swarmRouteCalls, 0);
     QCOMPARE(frames.size(), 1);
     QCOMPARE(frames.first().linkId, lease.endpoint.linkId);

@@ -33,7 +33,18 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-MicroDrone Downlink now brings the catalogue to **29/32 working**, with three
+Probe MAVLink Camera now brings the catalogue to **30/32 working**, with two
+unavailable: Translation/RESX Editor and SFTP logs. The existing button opens
+real default-Cancel consent and modeless progress for a frozen first-known
+component100 camera. Six reference zero-parameter commands, exact ACK/retry
+handling, owned cancellation, page gates and history are wired. Full281/281 and
+production X11/inspected consent and page pass. Hardware and native-platform
+limits remain in `CAMERA_PROBE_PORT.md`; no SETUP page or fixed Tools item was
+added, so the53-versus46 route comparison above is unchanged.
+
+Previous checkpoint:
+
+MicroDrone Downlink brought the catalogue to **29/32 working**, with three
 unavailable: Probe MAVLink Camera, Translation/RESX Editor and SFTP logs. Its
 existing button opens a modeless serial-output window even offline; seven-record
 encoding, exact source binding, partial writes, source-change stop and Close are

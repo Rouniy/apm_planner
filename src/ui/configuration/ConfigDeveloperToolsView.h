@@ -19,6 +19,8 @@ class QShowEvent;
 class MavFtpServiceInterface;
 class MavFtpFileDownload;
 class RemoteDataFlashLogService;
+class CameraProbeController;
+class CameraProbeService;
 class FirmwareArchiveController;
 class ShapefilePolyController;
 class VehicleTargetManager;
@@ -40,6 +42,7 @@ public:
     void setParameterRecoveryService(ParameterRecoveryService *service);
     void setRemoteDataFlashLogService(RemoteDataFlashLogService *service,
                                       const QString &defaultLogDirectory);
+    void setCameraProbeService(CameraProbeService *service);
 
 public slots:
     void DecodeMavlinkInput(const QString &input);
@@ -104,7 +107,9 @@ private:
     void CancelLogOrganizer();
     bool LogOrganizerBusy() const;
     bool FirmwareArchiveBusy() const;
-    bool ShapefilePolyBusy() const;
+    bool PageControllerBusy() const;
+    bool CameraProbeBusy() const;
+    void RefreshCameraProbeActions();
     void RefreshOfflineFileActions();
     void StartMavFtpDownload();
     bool MavFtpDownloadBusy() const;
@@ -193,6 +198,12 @@ private:
     quint64 m_remoteDataFlashLogProgressOperationId = 0;
     bool m_refreshingRemoteDataFlashLog = false;
     bool m_fileToolsClosing = false;
+    QPointer<CameraProbeService> m_cameraProbeService;
+    CameraProbeController *m_cameraProbe = nullptr;
+    QPushButton *m_cameraProbeButton = nullptr;
+    QStringList m_seenCameraProbeHistory;
+    quint64 m_cameraProbeBindingRevision = 0;
+    bool m_refreshingCameraProbe = false;
     ShapefilePolyController *m_shapefilePoly = nullptr;
     QPushButton *m_shapefilePolyButton = nullptr;
     FirmwareArchiveController *m_firmwareArchive = nullptr;

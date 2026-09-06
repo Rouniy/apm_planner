@@ -625,6 +625,8 @@ set(SOURCES
     src/ui/AnonLogWindow.cpp
     src/services/WarningEngine.cpp
     src/services/DeveloperVehicleToolService.cpp
+    src/services/CameraProbeService.cpp
+    src/services/CameraProbeService.h
     src/services/DeveloperVehicleToolService.h
     src/services/ParameterRecoveryService.cpp
     src/services/ParameterRecoveryService.h
@@ -1000,6 +1002,8 @@ set(SOURCES
     src/ui/configuration/ConfigADSBViewModel.cpp
     src/ui/configuration/ConfigADSBViewModel.h
     src/ui/configuration/ConfigDeveloperToolsView.cpp
+    src/ui/configuration/CameraProbeController.cpp
+    src/ui/configuration/CameraProbeController.h
     src/ui/configuration/ConfigDeveloperToolsView.h
     src/ui/configuration/ConfigDefaultSettingsView.cpp
     src/ui/configuration/ConfigDefaultSettingsView.h
@@ -3956,6 +3960,25 @@ if(BUILD_TESTING)
         ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
     target_link_libraries(developer_vehicle_tool_test_support PUBLIC
         apm_parameter_core Qt::Core)
+    add_executable(componentcommandservice_tests tests/test_componentcommandservice.cpp)
+    target_link_libraries(componentcommandservice_tests PRIVATE
+        developer_vehicle_tool_test_support Qt::Test)
+    add_test(NAME componentcommandservice_tests COMMAND componentcommandservice_tests)
+    set_tests_properties(componentcommandservice_tests PROPERTIES TIMEOUT 60)
+    add_library(camera_probe_test_support STATIC
+        src/services/CameraProbeService.cpp src/services/CameraProbeService.h
+        src/comm/MavlinkComponentRegistry.cpp src/comm/MavlinkComponentRegistry.h
+        src/comm/Px4FlowFrameAssembler.cpp src/comm/Px4FlowFrameAssembler.h
+        src/ui/configuration/CameraProbeController.cpp src/ui/configuration/CameraProbeController.h)
+    target_include_directories(camera_probe_test_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(camera_probe_test_support PUBLIC developer_vehicle_tool_test_support Qt::Widgets)
+    foreach(camera_suite cameraprobeservice cameraprobecontroller)
+        add_executable(${camera_suite}_tests tests/test_${camera_suite}.cpp)
+        target_link_libraries(${camera_suite}_tests PRIVATE camera_probe_test_support Qt::Test)
+        add_test(NAME ${camera_suite}_tests COMMAND ${camera_suite}_tests)
+        set_tests_properties(${camera_suite}_tests PROPERTIES TIMEOUT 60
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
     add_executable(developervehicletoolservice_tests tests/test_developervehicletoolservice.cpp)
     target_link_libraries(developervehicletoolservice_tests PRIVATE
         developer_vehicle_tool_test_support Qt::Test)
@@ -4232,6 +4255,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(configdevelopertoolsview_tests PRIVATE
+        camera_probe_test_support
         apm_firmware_archive_ui
         apm_shapefile_poly_ui
         remote_dataflash_log_test_support

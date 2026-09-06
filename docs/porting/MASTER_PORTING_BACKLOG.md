@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,278/278 тестов; Developer29/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,281/281 тестов; Developer30/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -111,11 +111,18 @@ Developer29/32; inventory129:75 in-progress/36 partial/18 not-started,
 ни одна поверхность не strict-complete. См. MICRODRONE_DOWNLINK_PORT.md:
 SI вместо display units, точные epochs/retirement, bounded backpressure и
 непроверенное физическое оборудование остаются явными границами.
-Следующий кандидат — Probe MAVLink Camera (Claude TCP c284), затем остальные
-однодроновые инструменты и Settings. Swarm в конце. Claude c260 проверил
-SFTP/Camera Probe: SFTP требует
-portable SSH dependency/host-key policy; в MP10 Camera Probe есть две скрытые
-изменяющие состояние команды, их нельзя выдавать за безвредную диагностику.
+Probe MAVLink Camera теперь также перенесён: отдельный component100, frozen
+default-Cancel consent, шесть точных all-zero команд, ACK/retries и modeless
+progress. Общий command arbiter обрабатывает physical ACK один раз и повторно
+проверяет операцию после signing перед writer. Full281/281 (48.78s), production
+X11 и просмотр диалога/страницы проходят; Developer30/32. Подробности и границы
+оборудования/протокола: CAMERA_PROBE_PORT.md. Первоначальные предположения Claude
+об отсутствии ACK и необходимости убрать Camera Probe были опровергнуты:
+оригинальный диалог прямо предупреждает об изменениях режима и streaming.
+Следующий кандидат — Translation/RESX Editor, затем SFTP и Settings. Редактор
+в MP10 является полноценным offline load/edit/filter/export/backup/resume
+workflow, не заглушкой; portable Qt XML/Widgets/Concurrent достаточны. SFTP
+требует portable SSH dependency/host-key policy. Swarm остаётся в конце.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
@@ -138,7 +145,7 @@ Settings после Tools, Swarm в конце. Подробности: `TLOG_RE
   `QDockWidget` или KDDockWidgets.
 
 Это не означает готовность продукта. В реестре 129 поверхностей. Таблица ниже
-пересчитана непосредственно из TSV после Flight Log Index: предыдущая сводка отставала
+пересчитана непосредственно из TSV после Camera Probe: предыдущая сводка отставала
 от уже внесённых SETUP/CONFIG/TOOLS статусов, поэтому это не число новых
 экранов в текущем коммите.
 
@@ -149,10 +156,10 @@ Settings после Tools, Swarm в конце. Подробности: `TLOG_RE
 | PLAN | 5 | 2 | 4 | 11 |
 | SETUP | 31 | 16 | 9 | 56 |
 | CONFIG | 11 | 9 | 0 | 20 |
-| TOOLS | 23 | 1 | 7 | 31 |
+| TOOLS | 25 | 1 | 5 | 31 |
 | SIMULATION | 0 | 1 | 0 | 1 |
 | HELP | 0 | 1 | 0 | 1 |
-| **Итого** | **73** | **36** | **20** | **129** |
+| **Итого** | **75** | **36** | **18** | **129** |
 
 Ни одна строка пока не считается strict-complete: отсутствует полный набор
 эталонных screenshot-diff, native Windows/macOS и hardware/live-vehicle
@@ -424,7 +431,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после MicroDrone Downlink работают29/32; заменить оставшиеся3
+- Developer Tools: после Camera Probe работают30/32; заменить оставшиеся2
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.

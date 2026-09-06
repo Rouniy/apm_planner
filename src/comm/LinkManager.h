@@ -69,6 +69,7 @@ class MovingBasePositionStore;
 class MovingBaseService;
 class CompassCalibrationService;
 class DeveloperVehicleToolService;
+class CameraProbeService;
 class ParameterRecoveryService;
 class OfflineMagFitApplyService;
 class RemoteDataFlashLogService;
@@ -121,6 +122,7 @@ public:
     // Link-scoped SiK RADIO_STATUS / legacy RADIO statistics (MP10 localsnrdb).
     RadioStatusMonitor *radioStatusMonitor() const;
     VehicleCommandService *vehicleCommandService() const;
+    CameraProbeService *cameraProbeService() const;
     GuidedTargetService *guidedTargetService() const;
     MovingBasePositionStore *movingBasePositionStore() const;
     MovingBaseService *movingBaseService() const;
@@ -286,6 +288,7 @@ private:
     QHash<int, quint64> m_udpIngressRevision;
     RadioStatusMonitor *m_radioStatusMonitor = nullptr;
     VehicleCommandService *m_vehicleCommandService = nullptr;
+    CameraProbeService *m_cameraProbeService = nullptr;
     GuidedTargetService *m_guidedTargetService = nullptr;
     MovingBasePositionStore *m_movingBasePositionStore = nullptr;
     MovingBaseService *m_movingBaseService = nullptr;

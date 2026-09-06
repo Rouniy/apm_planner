@@ -58,8 +58,8 @@ int RunMicrodroneDownlinkRuntimeAudit()
     action->trigger(); QApplication::processEvents();
     auto *page = main->findChild<ConfigDeveloperToolsView *>();
     auto *button = find<QPushButton>(page, "MicroDroneDownlinkButton");
-    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 29,
-           "Developer inventory is not 29 of 32");
+    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 30,
+           "Developer inventory is not 30 of 32");
     expect(button && button->isEnabled(), "MicroDrone unavailable offline");
     if (!button) return 1;
     button->click(); QApplication::processEvents();

@@ -3,10 +3,12 @@
 #include "ui/configuration/ConfigDeveloperToolsView.h"
 #include "comm/ExactLinkTransmitter.h"
 #include "comm/MAVLinkFrameParser.h"
+#include "comm/MavlinkComponentRegistry.h"
 #include "comm/MavFtpServiceInterface.h"
 #include "comm/RemoteDataFlashLogService.h"
 #include "comm/VehicleTargetManager.h"
 #include "core/parameters/ParameterStore.h"
+#include "services/CameraProbeService.h"
 #include "ui/Loghandling/DataFlashLogSplitter.h"
 
 #include <QAction>
@@ -162,6 +164,56 @@ struct VehicleFixture
         mavlink_message_t response{};
         mavlink_msg_param_value_encode(42, 1, &response, &payload);
         parameters.observePhysicalMessage(endpoint.linkId, session, response);
+    }
+};
+
+struct CameraProbePageFixture
+{
+    VehicleFixture vehicle;
+    MavlinkComponentRegistry components;
+    CameraProbeService service{
+        &vehicle.targets, &components, &vehicle.commands,
+        [](const MavlinkComponentInstanceLease &, QString *) {
+            return true;
+        }};
+    bool configured = false;
+
+    CameraProbePageFixture()
+    {
+        vehicle.transmitter.setLinkSessionEpoch(
+            vehicle.endpoint.linkId, vehicle.session);
+        configured = vehicle.commands.configureComponentExactTransactions(
+            [this](const MavlinkComponentInstanceLease &lease) {
+                return components.validateLease(lease);
+            }, [](const MavlinkComponentInstanceLease &, QString *) {
+                return true;
+            });
+        components.beginLinkSession(
+            vehicle.endpoint.linkId, vehicle.session);
+        mavlink_message_t heartbeat{};
+        mavlink_msg_heartbeat_pack(
+            static_cast<quint8>(vehicle.endpoint.systemId),
+            MAV_COMP_ID_CAMERA, &heartbeat, MAV_TYPE_CAMERA,
+            MAV_AUTOPILOT_INVALID, 0, 0, MAV_STATE_ACTIVE);
+        components.observeMessage(
+            vehicle.endpoint.linkId, vehicle.session, heartbeat);
+    }
+
+    void acknowledge(MAV_CMD command,
+                     MAV_RESULT result = MAV_RESULT_ACCEPTED)
+    {
+        mavlink_command_ack_t payload{};
+        payload.command = static_cast<quint16>(command);
+        payload.result = static_cast<quint8>(result);
+        payload.progress = 255;
+        payload.target_system = 250;
+        payload.target_component = 190;
+        mavlink_message_t message{};
+        mavlink_msg_command_ack_encode(
+            static_cast<quint8>(vehicle.endpoint.systemId),
+            MAV_COMP_ID_CAMERA, &message, &payload);
+        vehicle.commands.observeComponentMessage(
+            vehicle.endpoint.linkId, vehicle.session, message);
     }
 };
 
@@ -392,6 +444,7 @@ private slots:
     void decodersAppendResultsAndErrors();
     void actionGridAdaptsToAvailableWidth();
     void wiredInventoryAndEligibility();
+    void cameraProbeBindingAndGateRestoration();
     void everyVehicleWriteRequiresDefaultCancel_data();
     void everyVehicleWriteRequiresDefaultCancel();
     void numericInputKeepsCapturedParameterSnapshot();
@@ -678,6 +731,92 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     QCOMPARE(view.ImplementedActionCount(), 10);
     QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(fixture.frames.isEmpty());
+}
+
+void ConfigDeveloperToolsViewTest::cameraProbeBindingAndGateRestoration()
+{
+    CameraProbePageFixture fixture;
+    QVERIFY(fixture.configured);
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.vehicle.service);
+    QCOMPARE(view.ImplementedActionCount(), 17);
+    view.setCameraProbeService(&fixture.service);
+    QCOMPARE(view.ImplementedActionCount(), 18);
+    view.show();
+
+    auto *probe = tool(view, "ProbeMavlinkCameraButton");
+    auto *reboot = tool(view, "RebootVehicleButton");
+    QVERIFY(probe);
+    QVERIFY(reboot);
+    QTRY_VERIFY(probe->isEnabled());
+    QTRY_VERIFY(reboot->isEnabled());
+
+    // A pending camera consent gates every other Developer operation, and a
+    // default-Cancel dismissal restores all gates without transmitting.
+    probe->click();
+    auto *confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperCameraProbeConfirmation");
+    QVERIFY(confirm);
+    QVERIFY(!reboot->isEnabled());
+    QCOMPARE(confirm->defaultButton(),
+             confirm->button(QMessageBox::Cancel));
+    confirm->button(QMessageBox::Cancel)->click();
+    QVERIFY(fixture.vehicle.frames.isEmpty());
+    QTRY_VERIFY(probe->isEnabled());
+    QTRY_VERIFY(reboot->isEnabled());
+
+    // Complete the real six-command service flow. Its final stateChanged()
+    // follows the service finishing fence and must restore vehicle actions,
+    // not only the offline-file buttons.
+    probe->click();
+    confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperCameraProbeConfirmation");
+    QVERIFY(confirm);
+    confirm->button(QMessageBox::Yes)->click();
+    const QList<MAV_CMD> commands = CameraProbeService::Commands();
+    for (int index = 0; index < commands.size(); ++index) {
+        QTRY_COMPARE(fixture.vehicle.frames.size(), index + 1);
+        const mavlink_message_t message =
+            fixture.vehicle.messageAt(index);
+        QCOMPARE(message.msgid,
+                 static_cast<quint32>(MAVLINK_MSG_ID_COMMAND_LONG));
+        mavlink_command_long_t payload{};
+        mavlink_msg_command_long_decode(&message, &payload);
+        QCOMPARE(payload.command,
+                 static_cast<quint16>(commands.at(index)));
+        QCOMPARE(payload.target_component,
+                 static_cast<quint8>(MAV_COMP_ID_CAMERA));
+        fixture.acknowledge(commands.at(index));
+    }
+    QTRY_VERIFY(!fixture.service.busy());
+    QTRY_VERIFY(probe->isEnabled());
+    QTRY_VERIFY(reboot->isEnabled());
+
+    // Closing requests cancellation only for this page's exact operation.
+    // Its app-owned terminal history is deliberately not marked seen while
+    // the page is closed, then appears exactly once after reopening.
+    const int priorFrames = fixture.vehicle.frames.size();
+    probe->click();
+    confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperCameraProbeConfirmation");
+    QVERIFY(confirm);
+    confirm->button(QMessageBox::Yes)->click();
+    QTRY_COMPARE(fixture.vehicle.frames.size(), priorFrames + 1);
+    view.close();
+    fixture.acknowledge(commands.constFirst());
+    QTRY_VERIFY(!fixture.service.busy());
+    const QString cancelledTerminal = QStringLiteral(
+        "Camera probe cancelled. Remaining requests were not sent");
+    QVERIFY(!view.Log().contains(cancelledTerminal));
+    view.show();
+    QTRY_VERIFY(view.Log().contains(cancelledTerminal));
+    QCOMPARE(view.Log().count(cancelledTerminal), 1);
+    QTRY_VERIFY(reboot->isEnabled());
+
+    view.setCameraProbeService(nullptr);
+    QCOMPARE(view.ImplementedActionCount(), 17);
+    QVERIFY(!probe->isEnabled());
+    QVERIFY(reboot->isEnabled());
 }
 
 void ConfigDeveloperToolsViewTest::everyVehicleWriteRequiresDefaultCancel_data()

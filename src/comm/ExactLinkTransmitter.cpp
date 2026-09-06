@@ -140,9 +140,22 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendSetupSigning(
                            message, frameWriterInvoked);
 }
 
+ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendGuardedCommandLong(
+    int linkId, quint8 localSystemId, quint8 localComponentId,
+    const mavlink_message_t &message, std::function<bool()> finalGuard,
+    bool *frameWriterInvoked)
+{
+    if (frameWriterInvoked) *frameWriterInvoked = false;
+    if (message.msgid != MAVLINK_MSG_ID_COMMAND_LONG || !finalGuard)
+        return SendResult::InvalidMessage;
+    return sendMessageImpl(linkId, localSystemId, localComponentId, message,
+                           frameWriterInvoked, std::move(finalGuard));
+}
+
 ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessageImpl(
     int linkId, quint8 localSystemId, quint8 localComponentId,
-    mavlink_message_t message, bool *frameWriterInvoked)
+    mavlink_message_t message, bool *frameWriterInvoked,
+    std::function<bool()> finalGuard)
 {
     const bool sensitive = message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING;
     const SecretMessageGuard messageGuard{message, sensitive};
@@ -201,6 +214,7 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessageImpl(
     QByteArray signedFrame;
     const SecretFrameGuard frameGuard{sensitive, buffer, frame, signedFrame};
     const quint64 submittedEpoch = m_linkSessionEpochs.value(linkId, 0);
+    const quint64 signingRevision = m_signerRevision;
     const QPointer<ExactLinkTransmitter> guardedThis(this);
     if (m_frameSigner) {
         const FrameSigner signer = m_frameSigner;
@@ -236,6 +250,18 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessageImpl(
         frame = std::move(signedFrame);
     } else if (m_signingRequired.value(linkId, false)) {
         return SendResult::SigningUnavailable;
+    }
+    if (finalGuard) {
+        // This callable is a local copy and may delete either owner. Its
+        // callbacks can also retire the physical session or replace signing
+        // policy, so preserve the signed frame's transport context as well.
+        if (!finalGuard() || !guardedThis
+            || guardedThis->m_linkSessionEpochs.value(linkId, 0) != submittedEpoch
+            || guardedThis->m_signerRevision != signingRevision)
+            return SendResult::TransportUnavailable;
+        if (guardedThis->m_signingRequired.value(linkId, false)
+            && !(message.incompat_flags & MAVLINK_IFLAG_SIGNED))
+            return SendResult::SigningUnavailable;
     }
     if (frameWriterInvoked) {
         *frameWriterInvoked = true;

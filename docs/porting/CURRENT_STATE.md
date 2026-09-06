@@ -24,7 +24,67 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **MicroDrone Downlink**. The existing Developer Tools
+Latest slice (2026-09-06): **Probe MAVLink Camera**. Its existing Developer action
+now opens a real default/Escape-Cancel confirmation and modeless owned progress.
+It selects the first heartbeat-known component100 on the selected physical link,
+including external cameras with autopilotINVALID and a different system id.
+No autopilot substitution or selection change is performed. Six COMMAND_LONGs
+retain the exact MP10 order and seven positive-zero parameters, including its
+legacy request-flag quirks; consent names image mode and all-stream streaming.
+
+The central VehicleCommandService now accepts a typed component lease, sharing
+endpoint ownership, ACK arbitration and quarantine with existing command users.
+Each camera command has2000ms inactivity, up to four transmissions/confirmation0..3,
+rejection continues, exhausted timeout stops, and IN_PROGRESS disables retries
+within a30-second absolute bound. Other callers keep zero retries by default.
+Production ACKs enter once at physical ingress, before the legacy UAS gate;
+one dispatch cannot complete a cross-domain callback successor, and wrong ACK
+destinations or stale physical epochs are rejected. Signing/transport policy and operation identity are checked
+again before the actual writer, with truthful initial/retry attempt receipts.
+
+Frozen target/instance/physical epochs, target changes, page closure and owned
+Cancel stop remaining work without claiming to undo applied camera changes.
+The app-owned bounded history survives page recreation. All page gates refresh
+after the service's finishing barrier, and terminal history produced while
+closed is restored exactly once on reopen. The wire lacks a transaction nonce;
+late-ACK quarantine, external camera behavior, native platforms, old dialect and
+reference/HiDPI visuals remain explicit gates in `CAMERA_PROBE_PORT.md`.
+This tool does not add camera definition parsing or Flight Data video playback.
+
+Qt5/audio configure and build2 pass; full **281/281 (48.78s)**. New command-domain,
+probe-service and controller suites have38/11/8 cases including fixtures;
+existing command/page suites have32/66, all without failures or skips.
+All five suites also pass ten consecutive repeats (40.18s).
+The complete controller suite also passes X11 (8 cases), including cancellation.
+Production X11 exits0 with zero audit failures; root inspected readable consent
+and result-page screenshots. Actual navigation proves Cancel, stale consent,
+six exact frames, rejection continuation and unchanged selected autopilot.
+Initial focused runtime failed only because the fixture clicked before queued
+camera heartbeat discovery; waiting for actual registry admission fixed the
+test without weakening production gates. No network SITL, physical camera or
+real vehicle was modified. Evidence: `/tmp/apm-camera-probe.6iIRAO/`:
+`configure.log`, `build2.log`, `full.log`, `repeat.log`, `x11.log`, `controller-x11.log`, `consent.png`,
+`consent.png.page.png`; initial evidence is retained in `focused.log`.
+
+Three Codex streams implemented the engine/UI/independent tests; root integrated
+the application and production audit. Claude TCP c285/c287/c288/c290 full reports
+and hashes were reviewed. His initial no-ACK/retirement, silent48s and domain-only
+quarantine assumptions were corrected from source and callback analysis; final
+frozen review found no further blocker. Post-signer cancellation, single physical
+dispatch, hidden-history and finishing-gate defects are regression-tested.
+
+Developer is now **30/32 working,2 unavailable**: Translation/RESX Editor and
+SFTP logs. SETUP46/eight absent reference routes, Advanced14 complete+partial
+Signing/disabled Support Proxy, fixedTools24 plus Signing, CONFIG15/15 factories
+and Planner21/64 remain unchanged. Inventory129 remains75 in-progress/36 partial/
+18 not-started, none strict-complete; deviations142. Next: **Translation/RESX
+Editor**, a real standalone offline MP10 workflow (load/edit/filter/export/
+backup/resume), then SFTP with a portable SSH/host-key policy, then Settings.
+Swarm remains last. The complete port remains incomplete.
+
+### Previous checkpoint: MicroDrone Downlink
+
+Previous slice (2026-09-06): **MicroDrone Downlink**. The existing Developer Tools
 button now opens a real 580x440 modeless serial-output window offline or online.
 It has the eight MP10 baud choices/default57600, Refresh, Connect/Stop, source,
 status and last complete #9 record. It encodes all seven reference records,
