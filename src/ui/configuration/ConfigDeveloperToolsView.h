@@ -20,6 +20,7 @@ class MavFtpServiceInterface;
 class MavFtpFileDownload;
 class RemoteDataFlashLogService;
 class FirmwareArchiveController;
+class ShapefilePolyController;
 class VehicleTargetManager;
 
 /** Mission Planner 10 Developer Tools action page. */
@@ -103,6 +104,7 @@ private:
     void CancelLogOrganizer();
     bool LogOrganizerBusy() const;
     bool FirmwareArchiveBusy() const;
+    bool ShapefilePolyBusy() const;
     void RefreshOfflineFileActions();
     void StartMavFtpDownload();
     bool MavFtpDownloadBusy() const;
@@ -191,6 +193,8 @@ private:
     quint64 m_remoteDataFlashLogProgressOperationId = 0;
     bool m_refreshingRemoteDataFlashLog = false;
     bool m_fileToolsClosing = false;
+    ShapefilePolyController *m_shapefilePoly = nullptr;
+    QPushButton *m_shapefilePolyButton = nullptr;
     FirmwareArchiveController *m_firmwareArchive = nullptr;
     QPushButton *m_firmwareArchiveButton = nullptr;
     QPushButton *m_cancelFirmwareArchiveButton = nullptr;

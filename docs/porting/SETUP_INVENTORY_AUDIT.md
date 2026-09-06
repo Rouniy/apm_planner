@@ -33,7 +33,18 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-Download/Cancel Firmware Archive brings the exact Developer catalogue to27/32
+Convert Shapefile to POLY brings the exact Developer catalogue to28/32 working,
+with4 explicitly unavailable: MicroDrone Downlink, Probe MAVLink Camera,
+Translation/RESX Editor and SFTP logs. The existing button now opens a real
+offline workflow: source picker, background geometry/projection preparation,
+exact Create/Replace default-Cancel plan and atomic per-file export with owned
+cancellation. Actual Tools navigation, exact CRLF outputs, source preservation
+and a PLAN polygon round-trip are verified. Runtime dependencies and source/
+projection/filesystem limits remain explicit in `SHAPEFILE_POLY_PORT.md`.
+No Setup page or fixed Tools item was added; the53-versus46 route comparison
+above is unchanged. Final test evidence is in `CURRENT_STATE.md`.
+
+The preceding Download/Cancel Firmware Archive brought the exact Developer catalogue to27/32
 working, with5 explicitly unavailable: MicroDrone Downlink, Probe MAVLink
 Camera, Convert Shapefile to POLY, Translation/RESX Editor and SFTP logs. The two
 existing buttons now use real offline-visible parent/default-Cancel/progress

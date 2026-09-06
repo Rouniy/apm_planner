@@ -108,8 +108,8 @@ int RunFirmwareArchiveRuntimeAudit()
     auto *start = find<QPushButton>(page, "DownloadFirmwareArchiveButton");
     auto *cancel = find<QPushButton>(page, "CancelFirmwareArchiveButton");
     auto *split = find<QPushButton>(page, "SplitDataFlashLogButton");
-    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 27,
-           "Developer inventory is not 27 of 32");
+    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 28,
+           "Developer inventory is not 28 of 32");
     expect(controller && start && cancel && split && start->isEnabled() && !cancel->isEnabled(),
            "archive actions are not available offline with owned idle Cancel");
     if (!controller || !start || !cancel || !split) return 1;

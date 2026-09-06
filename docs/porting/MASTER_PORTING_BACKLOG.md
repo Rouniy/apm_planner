@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,267/267 тестов; Developer27/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,272/272 тестов; Developer28/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -93,15 +93,26 @@ X11 проходят. Root просмотрел полное предупреж�
 Отдельная строка Serial TCP Bridge в реестре ошибочно оставалась not-started;
 она приведена к уже проверенной реализации. Inventory129:74 in-progress,
 36 partial,19 not-started; ни одна поверхность не strict-complete.
-Следующий кандидат — Convert Shapefile to POLY, затем остальные
-однодроновые инструменты. Claude c260 проверил SFTP/Camera Probe: SFTP требует
+Convert Shapefile to POLY теперь реализован: offline-выбор SHP, bounded
+геометрия/DBF, строгая GDAL/GEOS validity и private offline PROJ, точный
+default-Cancel Create/Replace план, атомарные файлы и честные частичные итоги.
+Тест выявил потерю семантики нулевого TOWGS84 при промежуточном WKT2;
+исходный проверенный WKT сохраняется без ослабления strict/no-ballpark policy.
+Developer28/32; SETUP/Tools route counts и inventory129 не изменились.
+Следующий кандидат — MicroDrone Downlink, затем остальные однодроновые
+инструменты. Claude c276 подтвердил working encoder+serial output в MP10;
+Это не decoder/diagnostics: ошибочная отдельная строка реестра исправлена
+после чтения первичных Encoder.cs и View.axaml, статус остаётся not-started.
+Перед реализацией сверить поля CurrentState/числа/serial conflict guard с
+первичными исходниками; никакой протокольной совместимости по одному ревью
+не заявлено. Claude c260 проверил SFTP/Camera Probe: SFTP требует
 portable SSH dependency/host-key policy; в MP10 Camera Probe есть две скрытые
 изменяющие состояние команды, их нельзя выдавать за безвредную диагностику.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
 `APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`,
-`LOG_INDEX_PORT.md`, `FIRMWARE_ARCHIVE_PORT.md`,
+`LOG_INDEX_PORT.md`, `FIRMWARE_ARCHIVE_PORT.md`, `SHAPEFILE_POLY_PORT.md`,
 `PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`, `REMOTE_DATAFLASH_LOG_PORT.md`,
 `MAVLINK_SERIAL_TCP_BRIDGE_PORT.md`.
 
@@ -404,7 +415,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Firmware Archive работают27/32; заменить оставшиеся5
+- Developer Tools: после Shapefile to POLY работают28/32; заменить оставшиеся4
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.

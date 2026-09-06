@@ -445,8 +445,8 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
     QCOMPARE(view.objectName(), QStringLiteral("ConfigDeveloperToolsView"));
     QCOMPARE(view.Title(), QStringLiteral("Developer Tools"));
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 9);
-    QVERIFY(view.Log().contains(QStringLiteral("9 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 10);
+    QVERIFY(view.Log().contains(QStringLiteral("10 of 32")));
 
     const QList<QPushButton *> buttons = view.findChildren<QPushButton *>();
     QCOMPARE(buttons.size(), 32);
@@ -458,7 +458,7 @@ void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
             QVERIFY(!button->toolTip().isEmpty());
         }
     }
-    QCOMPARE(enabled, 8); // Download added; owned Cancel stays disabled while idle.
+    QCOMPARE(enabled, 9); // Shapefile conversion is offline; owned Cancel stays disabled while idle.
     QVERIFY(view.findChild<QPushButton *>(
         QStringLiteral("DecodeMavlinkPacketButton"))->isEnabled());
     QVERIFY(view.findChild<QPushButton *>(
@@ -500,8 +500,8 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     ConfigDeveloperToolsView view(&actionSource);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 13);
-    QVERIFY(view.Log().contains(QStringLiteral("13 of 32")));
+    QCOMPARE(view.ImplementedActionCount(), 14);
+    QVERIFY(view.Log().contains(QStringLiteral("14 of 32")));
     auto *deviceButton = view.findChild<QPushButton *>(
         QStringLiteral("MavlinkDeviceOperationsButton"));
     auto *terrainButton = view.findChild<QPushButton *>(
@@ -544,16 +544,16 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
 
     VehicleFixture fixture;
     view.setVehicleToolService(&fixture.service);
-    QCOMPARE(view.ImplementedActionCount(), 20);
+    QCOMPARE(view.ImplementedActionCount(), 21);
     DeveloperFtpStub ftp;
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
-    QCOMPARE(view.ImplementedActionCount(), 21);
+    QCOMPARE(view.ImplementedActionCount(), 22);
     ParameterRecoveryService recovery(
         &fixture.targets, &fixture.registry, &fixture.parameters,
         &fixture.commands,
         [](const SwarmVehicleInstanceLease &, QString *) { return true; });
     view.setParameterRecoveryService(&recovery);
-    QCOMPARE(view.ImplementedActionCount(), 23);
+    QCOMPARE(view.ImplementedActionCount(), 24);
     QTemporaryDir remoteDirectory;
     QVERIFY(remoteDirectory.isValid());
     fixture.transmitter.setLinkSessionEpoch(
@@ -563,15 +563,15 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
         &fixture.transmitter, 250, 190,
         [](const SwarmVehicleInstanceLease &, QString *) { return true; });
     view.setRemoteDataFlashLogService(&remoteLog, remoteDirectory.path());
-    QCOMPARE(view.ImplementedActionCount(), 25);
+    QCOMPARE(view.ImplementedActionCount(), 26);
     view.setRemoteDataFlashLogService(nullptr, QString());
-    QCOMPARE(view.ImplementedActionCount(), 23);
+    QCOMPARE(view.ImplementedActionCount(), 24);
     view.setParameterRecoveryService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 21);
+    QCOMPARE(view.ImplementedActionCount(), 22);
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 20);
+    QCOMPARE(view.ImplementedActionCount(), 21);
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 13);
+    QCOMPARE(view.ImplementedActionCount(), 14);
 }
 
 void ConfigDeveloperToolsViewTest::serialBridgeSharedActionTracksAvailability()
@@ -662,7 +662,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 16);
+    QCOMPARE(view.ImplementedActionCount(), 17);
     QVERIFY(tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(tool(view, "RebootVehicleButton")->isEnabled());
     QVERIFY(tool(view, "UpgradeBootloaderButton")->isEnabled());
@@ -675,7 +675,7 @@ void ConfigDeveloperToolsViewTest::wiredInventoryAndEligibility()
     fixture.registry.endLinkSession(fixture.endpoint.linkId, fixture.session);
     QTRY_VERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
     view.setVehicleToolService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 9);
+    QCOMPARE(view.ImplementedActionCount(), 10);
     QVERIFY(!tool(view, "SetQnhButton")->isEnabled());
     QVERIFY(fixture.frames.isEmpty());
 }
@@ -1754,7 +1754,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
     view.show();
     QCOMPARE(view.ActionCount(), 32);
-    QCOMPARE(view.ImplementedActionCount(), 17); // Nine offline + seven vehicle + FTP.
+    QCOMPARE(view.ImplementedActionCount(), 18); // Ten offline + seven vehicle + FTP.
     auto *button = tool(view, "DownloadMavftpFileButton");
     QVERIFY(button->isEnabled());
     button->click();
@@ -1796,7 +1796,7 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     QVERIFY(!button->isEnabled());
     QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
     view.setMavFtpDownloadServices(nullptr, nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 16);
+    QCOMPARE(view.ImplementedActionCount(), 17);
     QVERIFY(!button->isEnabled());
     QCOMPARE(ftp.cancelCalls, 0); // Never cancels the browser's shared work.
 }
@@ -1807,13 +1807,13 @@ void ConfigDeveloperToolsViewTest::mavFtpServiceRemovalDisablesAction()
     ConfigDeveloperToolsView view;
     auto *ftp = new DeveloperFtpStub;
     view.setMavFtpDownloadServices(ftp, &targets);
-    QCOMPARE(view.ImplementedActionCount(), 10);
+    QCOMPARE(view.ImplementedActionCount(), 11);
     auto *button = tool(view, "DownloadMavftpFileButton");
     QVERIFY(button->isEnabled());
     button->click(); // A disconnected tool reports the missing target, no prompt.
     QVERIFY(!view.findChild<QInputDialog *>("DeveloperMavFtpPathDialog"));
     delete ftp;
-    QCOMPARE(view.ImplementedActionCount(), 9);
+    QCOMPARE(view.ImplementedActionCount(), 10);
     QVERIFY(!button->isEnabled());
     QVERIFY(!button->toolTip().isEmpty());
 }
@@ -2280,12 +2280,12 @@ void ConfigDeveloperToolsViewTest::parameterRecoveryBindingAndDefaultCancel()
         [](const SwarmVehicleInstanceLease &, QString *) { return true; });
     ConfigDeveloperToolsView view;
     view.setVehicleToolService(&fixture.service);
-    QCOMPARE(view.ImplementedActionCount(), 16);
+    QCOMPARE(view.ImplementedActionCount(), 17);
     QVERIFY(!tool(view, "RestoreParametersButton")->isEnabled());
     QVERIFY(!tool(view, "CancelParameterRestoreButton")->isEnabled());
 
     view.setParameterRecoveryService(&recovery);
-    QCOMPARE(view.ImplementedActionCount(), 18);
+    QCOMPARE(view.ImplementedActionCount(), 19);
     view.show();
     QTRY_VERIFY(tool(view, "RestoreParametersButton")->isEnabled());
     QVERIFY(!tool(view, "CancelParameterRestoreButton")->isEnabled());
@@ -2340,7 +2340,7 @@ void ConfigDeveloperToolsViewTest::parameterRecoveryBindingAndDefaultCancel()
     QTRY_VERIFY_WITH_TIMEOUT(!recovery.busy(), 2000);
 
     view.setParameterRecoveryService(nullptr);
-    QCOMPARE(view.ImplementedActionCount(), 16);
+    QCOMPARE(view.ImplementedActionCount(), 17);
     QVERIFY(!tool(view, "RestoreParametersButton")->isEnabled());
 }
 
@@ -2443,7 +2443,7 @@ void ConfigDeveloperToolsViewTest::parameterRecoveryExecutesOrderedPlanAndReport
     view.setVehicleToolService(&fixture.service);
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
     view.setParameterRecoveryService(&recovery);
-    QCOMPARE(view.ImplementedActionCount(), 19);
+    QCOMPARE(view.ImplementedActionCount(), 20);
     view.show();
 
     ftp.setSharedBusy(true);
@@ -2631,7 +2631,7 @@ void ConfigDeveloperToolsViewTest::remoteDataFlashBindingAndStartConsent()
     ConfigDeveloperToolsView view;
     view.setRemoteDataFlashLogService(
         &fixture.service, fixture.directory.path());
-    QCOMPARE(view.ImplementedActionCount(), 11);
+    QCOMPARE(view.ImplementedActionCount(), 12);
     view.show();
 
     auto *start = tool(view, "StartRemoteDataFlashLogButton");
@@ -2673,7 +2673,7 @@ void ConfigDeveloperToolsViewTest::remoteDataFlashBindingAndStartConsent()
     QTRY_VERIFY(start->isEnabled());
 
     view.setRemoteDataFlashLogService(nullptr, QString());
-    QCOMPARE(view.ImplementedActionCount(), 9);
+    QCOMPARE(view.ImplementedActionCount(), 10);
     QVERIFY(!start->isEnabled());
     QVERIFY(!stop->isEnabled());
 

@@ -1,5 +1,6 @@
 #include "ElevationSourceService.h"
 #include "SrtmElevationSource.h"
+#include "services/NativeGdalLibrary.h"
 
 #include <QCoreApplication>
 #include <QBuffer>
@@ -1355,35 +1356,7 @@ QStringList ElevationSourceService::findNativeRasterCandidates(
 
 QStringList ElevationSourceService::nativeGdalLibraryCandidates()
 {
-    QStringList candidates;
-    const QString configured = QString::fromLocal8Bit(
-        qgetenv("MISSIONPLANNER_GDAL_LIBRARY")).trimmed();
-    if (!configured.isEmpty()) {
-        candidates.append(configured);
-    }
-#ifdef Q_OS_WIN
-    candidates.append({QStringLiteral("gdal.dll"),
-                       QStringLiteral("gdal313.dll"),
-                       QStringLiteral("gdal312.dll"),
-                       QStringLiteral("gdal311.dll"),
-                       QStringLiteral("gdal310.dll"),
-                       QStringLiteral("gdal309.dll"),
-                       QStringLiteral("gdal308.dll"),
-                       QStringLiteral("gdal307.dll"),
-                       QStringLiteral("gdal306.dll"),
-                       QStringLiteral("gdal305.dll")});
-#elif defined(Q_OS_MACOS)
-    candidates.append({QStringLiteral("libgdal.dylib"),
-                       QStringLiteral("/opt/homebrew/lib/libgdal.dylib"),
-                       QStringLiteral("/usr/local/lib/libgdal.dylib")});
-#else
-    candidates.append(QStringLiteral("libgdal.so"));
-    for (int abi = 40; abi >= 30; --abi) {
-        candidates.append(QStringLiteral("libgdal.so.%1").arg(abi));
-    }
-#endif
-    candidates.removeDuplicates();
-    return candidates;
+    return ::nativeGdalLibraryCandidates();
 }
 
 bool ElevationSourceService::isBusy() const

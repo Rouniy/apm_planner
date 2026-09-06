@@ -24,7 +24,75 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Download / Cancel Firmware Archive**. The two
+Latest slice (2026-09-06): **Convert Shapefile to POLY**. Its existing Developer
+action now opens a real offline picker, bounded background read/transform,
+scrollable exact Create/Replace confirmation (default/Escape Cancel) and owned
+export progress. SHP Point/MultiPoint/PolyLine/Polygon XY/M/Z, reference DBF
+deletion/count semantics, strict ring grouping/validity, contiguous numbering,
+closing vertices and CRLF/tab latitude-longitude output are wired. No SHX is
+required/restored; no source sidecar or stale higher-numbered POLY is removed.
+
+GDAL validates ESRI WKT and polygon topology; private PROJ>=9.2 handles original
+validated WKT with networking/cache off, ONLY_BEST and no ballpark operation.
+The initial WKT2 round-trip broke explicit-zero TOWGS84 non-Greenwich frames;
+native diagnostics isolated serialization, not axis normalization or absent
+grids. Preserving original WKT fixed Paris/Rome/Lisbon without weakening the
+strict policy. UTM33N/55S, Web Mercator, Lambert, Albers, angular units, explicit
+100 m datum shift, invalid coordinates and missing-grid rejection are tested.
+Shared GDAL runtime candidates keep ElevationSourceService behavior unchanged.
+
+Immutable output bytes and exact stamps are reviewed before publication;
+source SHA is rechecked before the first write. QSaveFile with fallback=false
+and repeated type/path/stamp checks refuse linked/changed outputs. Cancellation
+or later failure reports actual earlier publications; this is not a multi-file
+transaction or filesystem lock. Bounds, stopped-writer/trusted-observer
+contract, strict Unicode/layout handling, CPG language-driver fallback,
+near-collinear orientation/DBF-number differences, engine/numerical and native
+packaging/GUI gaps are explicit in `SHAPEFILE_POLY_PORT.md`.
+
+Final Qt5/audio configure/build pass; focused11/11 (28.92s), full272/272
+(48.42s). Production X11 proves actual Tools navigation, picker/consent Cancel,
+one replacement plus one creation with exactly eight points, unchanged source
+files/no generated sidecars and a real PLAN round-trip to two three-vertex
+polygons. Root inspected full readable consent/buttons and Developer page/log
+screenshots under `/tmp/apm-shapefile-poly.SLKkvi/`. The controller suite also
+passed all10 X11 cases (2.163s). Ten repeats of each of4 new suites pass
+(15.76s), with no skipped native projection cases on this GDAL3.8.4/PROJ9.4
+host. Final production X11 exits0 with zero audit failures. Evidence:
+`configure.log`, `build3.log`, `focused3.log`, `full.log`, `repeat.log`,
+`x11-final.log`, `controller-x11.log`, `prime-meridian-oracle.log`,
+`consent.png`, `consent.png.page.png`; root inspected both final screenshots.
+All file writes used isolated temporary fixtures; no network SITL subscription,
+vehicle command, parameter change or real serial output was performed.
+
+Three Codex streams implemented reader/projection/controller and independent
+service/runtime tests; root integrated all Developer operation gates and counts.
+Claude TCP c274/c275 reviewed architecture/source. Primary NTS decompilation
+corrected his speculative DBF leniency assumption; malformed ordinary values,
+deleted-row parsing and version/name/date checks are reference behavior. His
+GDAL cdecl ABI and GEOS-availability findings were fixed. A known-valid-square
+self-test distinguishes unusable GEOS from invalid user geometry. Initial test
+failures also corrected stale count strings and exposed the WKT2 issue above.
+
+Developer is now **28/32 working,4 unavailable**: MicroDrone Downlink, Probe
+MAVLink Camera, Translation/RESX Editor and SFTP logs. SETUP46/eight absent
+reference routes, Advanced14 complete+partial Signing/disabled Support Proxy,
+fixedTools24 plus Signing, CONFIG15/15 factories and Planner21/64 are unchanged.
+Inventory129 remains74 in-progress/36 partial/19 not-started, none strict-complete;
+deviations now138. The full Mission Planner port remains incomplete.
+
+Next candidate: **MicroDrone Downlink**, then remaining single-drone Tools,
+then Settings; Swarm stays last. Claude c276 full12615-byte report was read and
+SHA256 checked (`14d274fcb7fe166781e79fe93e6c88270b6605e9db391b4bca9a37d5c789b5a9`),
+at `/home/alex/SRC/claude-reports/c276-microdrone-reference.md`. Root also read
+the primary Encoder.cs and View.axaml: MP10 sends seven record families at10Hz
+through serial, not decode/diagnostics. That mistaken inventory wording is fixed
+without changing not-started status. Preserve MP10 widened-float/UTC/no-leap-second
+wire semantics; independently settle exact telemetry/target/port-conflict details
+before implementation. SFTP still needs portable SSH/host-key policy; Camera
+Probe must not disguise its mutating commands as harmless discovery.
+
+Previous slice (2026-09-06): **Download / Cancel Firmware Archive**. The two
 existing Developer actions now open actual asynchronous parent/confirmation/
 progress dialogs offline. Default/Escape Cancel protects an exact frozen fresh
 destination. First-success HTTPS manifest mirrors, all url* fields, deduplication,

@@ -1578,6 +1578,18 @@ target_include_directories(${APM_PLANNER_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/output
 )
 
+add_library(apm_shapefile_poly STATIC
+    src/services/NativeGdalLibrary.h src/services/ShapefileTypes.h
+    src/services/ShapefileGeometryReader.h src/services/ShapefileGeometryReader.cpp
+    src/services/ShapefileProjection.h src/services/ShapefileProjection.cpp
+    src/services/ShapefileImportService.h src/services/ShapefileImportService.cpp)
+target_include_directories(apm_shapefile_poly PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(apm_shapefile_poly PUBLIC Qt::Core)
+add_library(apm_shapefile_poly_ui STATIC
+    src/ui/configuration/ShapefilePolyController.h
+    src/ui/configuration/ShapefilePolyController.cpp)
+target_link_libraries(apm_shapefile_poly_ui PUBLIC apm_shapefile_poly Qt::Widgets Qt::Concurrent)
+
 add_library(apm_firmware_archive STATIC
     src/services/FirmwareArchiveTypes.h
     src/services/FirmwareArchiveManifest.h src/services/FirmwareArchiveManifest.cpp
@@ -1593,6 +1605,7 @@ target_link_libraries(apm_firmware_archive_ui PUBLIC apm_firmware_archive Qt::Wi
 # Link Qt and additional libs
 target_link_libraries(${APM_PLANNER_TARGET}
     apm_firmware_archive_ui
+    apm_shapefile_poly_ui
     Threads::Threads
     Qt::Widgets
     Qt::Concurrent
@@ -1766,6 +1779,8 @@ if(BUILD_TESTING)
         tests/LogIndexRuntimeAudit.h
         tests/FirmwareArchiveRuntimeAudit.cpp
         tests/FirmwareArchiveRuntimeAudit.h
+        tests/ShapefilePolyRuntimeAudit.cpp
+        tests/ShapefilePolyRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1808,6 +1823,12 @@ if(BUILD_TESTING)
     add_test(NAME firmware_archive_runtime_tests
         COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --firmware-archive-audit)
     set_tests_properties(firmware_archive_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 45)
+
+    add_test(NAME shapefile_poly_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --shapefile-poly-audit)
+    set_tests_properties(shapefile_poly_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 45)
 
@@ -4159,6 +4180,15 @@ if(BUILD_TESTING)
     target_link_libraries(flight_log_organizer_probe PRIVATE
         flight_log_organizer_test_support)
 
+    foreach(shapefile_test IN ITEMS shapefilegeometryreader shapefileprojection
+            shapefileimportservice shapefilepolycontroller)
+        add_executable(${shapefile_test}_tests tests/test_${shapefile_test}.cpp)
+        target_link_libraries(${shapefile_test}_tests PRIVATE apm_shapefile_poly_ui Qt::Test)
+        add_test(NAME ${shapefile_test}_tests COMMAND ${shapefile_test}_tests)
+        set_tests_properties(${shapefile_test}_tests PROPERTIES
+            TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
+
     foreach(archive_test IN ITEMS firmwarearchivemanifest firmwarearchiveservice
             firmwarearchivehttp firmwarearchivecontroller)
         add_executable(${archive_test}_tests tests/test_${archive_test}.cpp)
@@ -4184,6 +4214,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(configdevelopertoolsview_tests PRIVATE
         apm_firmware_archive_ui
+        apm_shapefile_poly_ui
         remote_dataflash_log_test_support
         developer_vehicle_tool_test_support
         gps_correction_test_support
