@@ -67,6 +67,7 @@
 #include "OpticalFlowConfig.h"
 #include "QGCUASParamManager.h"
 #include "QGCCore.h"
+#include "globalobject.h"
 #include "Radio3DRConfig.h"
 #include "QmlPluginManagerView.h"
 #include "RadioCalibrationConfig.h"
@@ -801,6 +802,8 @@ void SetupView::buildPages()
         auto *page = new ConfigDeveloperToolsView(window(), parent);
         page->setVehicleToolService(LinkManager::instance()->developerVehicleToolService());
         page->setParameterRecoveryService(LinkManager::instance()->parameterRecoveryService());
+        page->setRemoteDataFlashLogService(LinkManager::instance()->remoteDataFlashLogService(),
+                                           GlobalObject::sharedInstance()->logDirectory());
         page->setMavFtpDownloadServices(LinkManager::instance()->mavFtpService(),
                                         LinkManager::instance()->vehicleTargetManager());
         return page;

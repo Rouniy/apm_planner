@@ -19,6 +19,8 @@
 #include "ui/configuration/SetupView.h"
 
 #include <QAction>
+#include "comm/RemoteDataFlashLogService.h"
+#include "comm/ExactLogTransferService.h"
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QCheckBox>
@@ -75,7 +77,8 @@ QMap<QString, float> magFitParameters()
             {QStringLiteral("COMPASS_EXTERNAL"), 1.0f},
             {QStringLiteral("AHRS_ORIENTATION"), 0.0f},
             {QStringLiteral("COMPASS_CAL_FIT"), 16.0f},
-            {QStringLiteral("COMPASS_OFFS_MAX"), 1800.0f}};
+            {QStringLiteral("COMPASS_OFFS_MAX"), 1800.0f},
+            {QStringLiteral("LOG_BACKEND_TYPE"), 3.0f}};
 }
 
 QByteArray magFitLogFixture()
@@ -343,6 +346,7 @@ public:
             : (name == QStringLiteral("COMPASS_LEARN")
                || name == QStringLiteral("COMPASS_ORIENT")
                || name == QStringLiteral("COMPASS_EXTERNAL")
+               || name == QStringLiteral("LOG_BACKEND_TYPE")
                || name == QStringLiteral("AHRS_ORIENTATION"))
                 ? MAV_PARAM_TYPE_INT8 : MAV_PARAM_TYPE_REAL32;
         value.param_count = static_cast<quint16>(magFitValues.size());
@@ -515,10 +519,52 @@ public:
             inject(correct);
         });
     }
+    QByteArray remoteBlockBytes(quint32 sequence) const {
+        QByteArray bytes(200, '\0');
+        if (sequence == 0) {
+            for (int i = 0; i < bytes.size(); ++i) bytes[i] = char(i);
+        } else if (sequence == 1) bytes.fill(char(0x7e));
+        return bytes;
+    }
+    void remoteBlock(quint32 sequence, quint8 system = FixtureSystem,
+                     quint8 component = MAV_COMP_ID_LOG, bool wrongDestination = false) {
+        mavlink_remote_log_data_block_t data{};
+        data.seqno = sequence;
+        data.target_system = wrongDestination ? quint8(remoteGcsSystem - 1) : remoteGcsSystem;
+        data.target_component = remoteGcsComponent;
+        const auto bytes = remoteBlockBytes(sequence);
+        std::memcpy(data.data, bytes.constData(), 200);
+        mavlink_message_t message{};
+        mavlink_msg_remote_log_data_block_encode(system, component, &message, &data);
+        inject(message);
+    }
     void writeBytes(const char *bytes, qint64 size) override {
         mavlink_message_t message{};
         for (qint64 i = 0; i < size; ++i) {
             if (parser.parseByte(quint8(bytes[i]), &message) != MAVLINK_FRAMING_OK) continue;
+            if (message.msgid == MAVLINK_MSG_ID_REMOTE_LOG_BLOCK_STATUS) {
+                mavlink_remote_log_block_status_t status{};
+                mavlink_msg_remote_log_block_status_decode(&message, &status);
+                remoteControls.append(status);
+                remoteGcsSystem = message.sysid;
+                remoteGcsComponent = message.compid;
+                if (status.seqno == MAV_REMOTE_LOG_DATA_BLOCK_START) {
+                    QTimer::singleShot(0, this, [this] {
+                        remoteBlock(77, FixtureSystem, 1);
+                        remoteBlock(78, FixtureSystem - 1, MAV_COMP_ID_LOG);
+                        remoteBlock(79, FixtureSystem, MAV_COMP_ID_LOG, true);
+                        remoteBlock(1);
+                        remoteBlock(0);
+                        remoteBlock(2); // Zero-tail trimmed MAVLink2 payload.
+                    });
+                } else if (status.seqno == 1 && !remoteDuplicateSent) {
+                    remoteDuplicateSent = true;
+                    // Simulate a lost ACK only after the first durable receipt;
+                    // retransmissions still pending storage are coalesced.
+                    QTimer::singleShot(0, this, [this] { remoteBlock(1); });
+                }
+                continue;
+            }
             if (message.msgid == MAVLINK_MSG_ID_FILE_TRANSFER_PROTOCOL) {
                 handleFtpRequest(message);
                 continue;
@@ -607,6 +653,9 @@ public:
     int recoveryReads = 0;
     bool suppressRecoveryWriteEcho = false;
     bool magFitMode = false;
+    QVector<mavlink_remote_log_block_status_t> remoteControls;
+    bool remoteDuplicateSent = false;
+    quint8 remoteGcsSystem = 0, remoteGcsComponent = 0;
     QMap<QString, float> magFitValues = magFitParameters();
     QVector<QPair<QString, float>> magFitWrites;
     std::function<void()> recoveryWriteHook;
@@ -641,7 +690,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 21 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 23 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *offlineMagFit = page->findChild<QPushButton *>(QStringLiteral("OfflineMagFitButton"));
@@ -1450,8 +1499,11 @@ int RunDeveloperVehicleToolRuntimeAudit()
     expect(waitFor([&] { return links->vehicleTargetManager()->contains(FixtureLinkId, FixtureSystem, 1); }),
            "heartbeat did not discover exact fixture");
     links->vehicleTargetManager()->selectTarget(FixtureLinkId, FixtureSystem, 1);
+    bool fixtureArmed = false;
     QTimer heartbeat;
-    QObject::connect(&heartbeat, &QTimer::timeout, fixture, [fixture] { if (fixture) fixture->heartbeat(); });
+    QObject::connect(&heartbeat, &QTimer::timeout, fixture, [fixture, &fixtureArmed] {
+        if (fixture) fixture->heartbeat(fixtureArmed);
+    });
     heartbeat.start(250);
     fixture->pressureReply();
     expect(waitFor([&] { return service->canPrepare(DeveloperVehicleToolService::Action::SetQnh); }),
@@ -2258,6 +2310,177 @@ int RunDeveloperVehicleToolRuntimeAudit()
                     qInfo() << "Developer runtime Offline MagFit audit passed";
                 }
             }
+        }
+    }
+    // Remote DataFlash: actual Developer prompts, physical protocol ingress
+    // (logger component155), async disk writes and explicit captured-file save.
+    {
+        auto *remote = links->remoteDataFlashLogService();
+        QTemporaryDir remoteFiles;
+        expect(remote && remoteFiles.isValid(), "remote log service/directory unavailable");
+        expect(backstage && backstage->setCurrentPage(QStringLiteral("ConfigDeveloperToolsView")),
+               "remote logger Developer route did not open");
+        page = window->findChild<ConfigDeveloperToolsView *>();
+        if (page && remote && remoteFiles.isValid()) {
+            page->setRemoteDataFlashLogService(remote, remoteFiles.path());
+            const auto button = [&](const char *name) -> QPushButton * {
+                return page ? page->findChild<QPushButton *>(QString::fromLatin1(name)) : nullptr;
+            };
+            const auto prompt = [&](const char *name) -> QMessageBox * {
+                if (!page) return nullptr;
+                for (auto *dialog : page->findChildren<QMessageBox *>(QString::fromLatin1(name)))
+                    if (dialog->isVisible()) return dialog;
+                return nullptr;
+            };
+            auto *start = button("StartRemoteDataFlashLogButton");
+            // The converse interlock must hold before a remote session exists:
+            // keep a classic list request active (this fixture never answers
+            // LOG requests), then reject remote admission without sending START.
+            {
+                RemoteDataFlashLogService::Plan remotePlan;
+                QString interlockError;
+                const bool prepared = remote->prepare(
+                    remoteFiles.path(), &remotePlan, &interlockError);
+                expect(prepared && remotePlan.isValid(),
+                       "remote interlock preflight could not capture the exact fixture");
+                if (prepared && remotePlan.isValid()) {
+                    QObject classicOwner;
+                    ExactLogTransferToken classicToken;
+                    auto *classic = links->exactLogTransferService();
+                    expect(classic->requestList(&classicOwner, remotePlan.vehicle(),
+                                               &classicToken, &interlockError)
+                               == ExactLogTransferService::StartResult::Started
+                               && classicToken.isValid() && classic->busy(),
+                           "classic list fixture did not remain active for converse interlock");
+                    expect(!remote->canPrepare(&interlockError)
+                               && !interlockError.isEmpty() && !remote->busy()
+                               && fixture->remoteControls.isEmpty(),
+                           "remote admission entered an active classic log protocol");
+                    if (classicToken.isValid()) {
+                        expect(classic->cancel(classicToken,
+                                   QStringLiteral("Remote-log converse interlock audit complete")),
+                               "classic interlock audit could not cancel its owned token");
+                    }
+                    expect(!classic->busy(),
+                           "classic interlock audit left its owned request active");
+                }
+            }
+            expect(waitFor([&] { return start && start->isEnabled(); }),
+                   "remote Start unavailable with complete LOG_BACKEND_TYPE snapshot");
+            if (start) start->click();
+            expect(waitFor([&] { return prompt("DeveloperRemoteDataFlashStartConfirmation"); }),
+                   "remote Start confirmation missing");
+            if (auto *dialog = prompt("DeveloperRemoteDataFlashStartConfirmation")) {
+                expect(dialog->defaultButton() == dialog->button(QMessageBox::Cancel)
+                           && dialog->escapeButton() == dialog->button(QMessageBox::Cancel)
+                           && dialog->text().contains(remoteFiles.path())
+                           && dialog->text().contains(QString::number(FixtureSystem))
+                           && dialog->text().contains(QString::number(FixtureLinkId)),
+                       "remote Start consent lacks exact target/directory/default Cancel");
+                dialog->button(QMessageBox::Cancel)->click();
+            }
+            expect(fixture->remoteControls.isEmpty() && !remote->busy(),
+                   "remote Start Cancel transmitted or admitted work");
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            if (start) start->click();
+            expect(waitFor([&] { return prompt("DeveloperRemoteDataFlashStartConfirmation"); }),
+                   "remote Start confirmation did not reopen");
+            if (auto *dialog = prompt("DeveloperRemoteDataFlashStartConfirmation"))
+                dialog->button(QMessageBox::Yes)->click();
+            expect(waitFor([&] {
+                return remote->phase() == RemoteDataFlashLogService::Phase::Receiving
+                    && remote->blocksStored() == 3 && fixture->remoteControls.size() >= 5;
+            }, 8000), "remote stream did not store and acknowledge three blocks and a duplicate");
+            qInfo() << "Remote DataFlash runtime receiving:" << remote->status();
+            const quint64 operation = remote->currentOperationId();
+            QMap<quint32, int> acknowledgements;
+            for (const auto &control : fixture->remoteControls) {
+                expect(control.target_system == FixtureSystem && control.target_component == 1
+                           && control.status == MAV_REMOTE_LOG_DATA_BLOCK_ACK,
+                       "remote STATUS has wrong exact target/type");
+                ++acknowledgements[control.seqno];
+            }
+            expect(acknowledgements.value(MAV_REMOTE_LOG_DATA_BLOCK_START) == 1
+                       && acknowledgements.value(0) == 1
+                       && acknowledgements.value(1) == 2
+                       && acknowledgements.value(2) == 1
+                       && acknowledgements.size() == 4,
+                   "remote logger acknowledged a foreign frame, lost a duplicate or retried START");
+            QObject logOwner;
+            ExactLogTransferToken logToken;
+            QString logError;
+            expect(links->exactLogTransferService()->requestList(
+                       &logOwner, remote->activePlan().vehicle(), &logToken, &logError)
+                       == ExactLogTransferService::StartResult::UnsafeRoute
+                       && !logToken.isValid(),
+                   "classic log list entered the active remote log protocol");
+            // Destroy and recreate the actual page: recording belongs to the
+            // app, not to the widget. No STOP may be sent by page teardown.
+            const int controlsBeforeClose = fixture->remoteControls.size();
+            backstage->resetPage(QStringLiteral("ConfigDeveloperToolsView"));
+            expect(backstage->setCurrentPage(QStringLiteral("ConfigDeveloperToolsView")),
+                   "remote logger Developer route did not recreate");
+            page = window->findChild<ConfigDeveloperToolsView *>();
+            expect(page && remote->busy() && remote->currentOperationId() == operation
+                       && fixture->remoteControls.size() == controlsBeforeClose,
+                   "Developer recreation stopped or replaced the active remote log");
+            if (page) page->setRemoteDataFlashLogService(remote, remoteFiles.path());
+            auto *stop = button("StopRemoteDataFlashLogButton");
+            expect(waitFor([&] { return stop && stop->isEnabled(); }),
+                   "reopened Developer page cannot stop its app-owned remote log");
+            if (stop) stop->click();
+            expect(waitFor([&] { return prompt("DeveloperRemoteDataFlashStopConfirmation"); }),
+                   "remote Stop confirmation missing");
+            if (auto *dialog = prompt("DeveloperRemoteDataFlashStopConfirmation")) {
+                expect(dialog->defaultButton() == dialog->button(QMessageBox::Cancel)
+                           && dialog->escapeButton() == dialog->button(QMessageBox::Cancel),
+                       "remote Stop consent is not default/Escape Cancel");
+                dialog->button(QMessageBox::Cancel)->click();
+            }
+            expect(remote->busy() && fixture->remoteControls.size() == controlsBeforeClose,
+                   "remote Stop Cancel stopped recording");
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            fixtureArmed = true;
+            fixture->heartbeat(true);
+            expect(waitFor([&] {
+                SwarmTelemetrySnapshot snapshot;
+                return links->swarmTelemetryRegistry()->snapshotForLease(
+                    remote->activePlan().vehicle(), &snapshot) && snapshot.armed;
+            }), "remote logger armed fixture was not observed");
+            expect(waitFor([&] { return stop && stop->isEnabled(); }),
+                   "remote Stop became inaccessible while armed");
+            if (stop) stop->click();
+            expect(waitFor([&] { return prompt("DeveloperRemoteDataFlashStopConfirmation"); }),
+                   "remote Stop confirmation did not reopen");
+            if (auto *dialog = prompt("DeveloperRemoteDataFlashStopConfirmation")) {
+                const QString evidence = qEnvironmentVariable("APM_REMOTE_LOG_AUDIT_SCREENSHOT");
+                if (!evidence.isEmpty())
+                    expect(dialog->grab().save(evidence), "remote Stop screenshot failed");
+                dialog->button(QMessageBox::Save)->click();
+            }
+            expect(waitFor([&] { return !remote->busy(); }, 8000),
+                   "remote Stop and captured-file save did not finish");
+            const auto report = remote->lastReport();
+            qInfo() << "Remote DataFlash runtime result:" << report.description << report.destinationPath;
+            expect(report.operationId == operation && report.published()
+                       && report.outcome == RemoteDataFlashLogService::Outcome::SavedUnverified
+                       && report.blocks == 3 && report.bytes == 600
+                       && report.duplicateBlocks == 1 && report.missingBlocks == 0
+                       && report.stopAttempted && report.stopSubmitted,
+                   "remote capture receipt is incomplete or falsely claims remote completion");
+            const auto expected = fixture->remoteBlockBytes(0)
+                + fixture->remoteBlockBytes(1) + fixture->remoteBlockBytes(2);
+            expect(readFileBytes(report.destinationPath) == expected,
+                   "remote log saved bytes differ from the ordered three-block fixture");
+            expect(fixture->remoteControls.size() == controlsBeforeClose + 1
+                       && fixture->remoteControls.last().seqno == MAV_REMOTE_LOG_DATA_BLOCK_STOP,
+                   "remote Stop did not send exactly one STATUS sentinel");
+            const QString evidence = qEnvironmentVariable("APM_REMOTE_LOG_AUDIT_SCREENSHOT");
+            if (!evidence.isEmpty() && report.published())
+                expect(QFile::copy(report.destinationPath, evidence + QStringLiteral(".capture.bin")),
+                       "remote capture evidence copy failed");
+            fixtureArmed = false;
+            fixture->heartbeat(false);
         }
     }
     heartbeat.stop();

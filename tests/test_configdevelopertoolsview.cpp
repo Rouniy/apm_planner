@@ -4,6 +4,7 @@
 #include "comm/ExactLinkTransmitter.h"
 #include "comm/MAVLinkFrameParser.h"
 #include "comm/MavFtpServiceInterface.h"
+#include "comm/RemoteDataFlashLogService.h"
 #include "comm/VehicleTargetManager.h"
 #include "core/parameters/ParameterStore.h"
 #include "ui/Loghandling/DataFlashLogSplitter.h"
@@ -161,6 +162,45 @@ struct VehicleFixture
         mavlink_message_t response{};
         mavlink_msg_param_value_encode(42, 1, &response, &payload);
         parameters.observePhysicalMessage(endpoint.linkId, session, response);
+    }
+};
+
+struct RemoteDataFlashFixture
+{
+    VehicleFixture vehicle;
+    QTemporaryDir directory;
+    RemoteDataFlashLogService service{
+        &vehicle.targets, &vehicle.registry, &vehicle.parameters,
+        &vehicle.transmitter, 250, 190,
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; }};
+    bool ready = false;
+
+    RemoteDataFlashFixture()
+    {
+        vehicle.transmitter.setLinkSessionEpoch(
+            vehicle.endpoint.linkId, vehicle.session);
+        auto *store = vehicle.parameters.store();
+        store->beginLoad(vehicle.endpoint);
+        const bool ingested = store->ingest(
+            vehicle.endpoint, 1, 0,
+            QStringLiteral("LOG_BACKEND_TYPE"),
+            QVariant::fromValue<quint32>(2), ParameterType::UInt32);
+        store->finishLoad(vehicle.endpoint);
+        ready = ingested && store->snapshot(vehicle.endpoint).isComplete();
+    }
+
+    void block(quint32 sequence, char value = 'R')
+    {
+        mavlink_remote_log_data_block_t payload{};
+        payload.seqno = sequence;
+        payload.target_system = 250;
+        payload.target_component = 190;
+        std::memset(payload.data, value, sizeof payload.data);
+        mavlink_message_t message{};
+        mavlink_msg_remote_log_data_block_encode(
+            42, MAV_COMP_ID_LOG, &message, &payload);
+        service.observeMessage(vehicle.endpoint.linkId,
+                               vehicle.session, message);
     }
 };
 
@@ -392,6 +432,9 @@ private slots:
     void parameterRecoveryRejectsChangedOrArmedTarget();
     void parameterRecoveryExecutesOrderedPlanAndReports();
     void parameterRecoveryCancellationIsOwnedAndRetained();
+    void remoteDataFlashBindingAndStartConsent();
+    void remoteDataFlashSessionSurvivesCloseAndSaves();
+    void remoteDataFlashRejectsStaleConsentAndOldStopToken();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -508,6 +551,18 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
         &fixture.commands,
         [](const SwarmVehicleInstanceLease &, QString *) { return true; });
     view.setParameterRecoveryService(&recovery);
+    QCOMPARE(view.ImplementedActionCount(), 21);
+    QTemporaryDir remoteDirectory;
+    QVERIFY(remoteDirectory.isValid());
+    fixture.transmitter.setLinkSessionEpoch(
+        fixture.endpoint.linkId, fixture.session);
+    RemoteDataFlashLogService remoteLog(
+        &fixture.targets, &fixture.registry, &fixture.parameters,
+        &fixture.transmitter, 250, 190,
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; });
+    view.setRemoteDataFlashLogService(&remoteLog, remoteDirectory.path());
+    QCOMPARE(view.ImplementedActionCount(), 23);
+    view.setRemoteDataFlashLogService(nullptr, QString());
     QCOMPARE(view.ImplementedActionCount(), 21);
     view.setParameterRecoveryService(nullptr);
     QCOMPARE(view.ImplementedActionCount(), 19);
@@ -2529,6 +2584,225 @@ void ConfigDeveloperToolsViewTest::parameterRecoveryCancellationIsOwnedAndRetain
     ConfigDeveloperToolsView reopened;
     reopened.setParameterRecoveryService(&recovery);
     QVERIFY(reopened.Log().contains(recovery.lastReport().description));
+}
+
+void ConfigDeveloperToolsViewTest::remoteDataFlashBindingAndStartConsent()
+{
+    RemoteDataFlashFixture fixture;
+    QVERIFY(fixture.ready);
+    ConfigDeveloperToolsView view;
+    view.setRemoteDataFlashLogService(
+        &fixture.service, fixture.directory.path());
+    QCOMPARE(view.ImplementedActionCount(), 9);
+    view.show();
+
+    auto *start = tool(view, "StartRemoteDataFlashLogButton");
+    auto *stop = tool(view, "StopRemoteDataFlashLogButton");
+    QVERIFY(start);
+    QVERIFY(stop);
+    QTRY_VERIFY(start->isEnabled());
+    QVERIFY(!stop->isEnabled());
+    start->click();
+    auto *confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperRemoteDataFlashStartConfirmation");
+    QVERIFY(confirm);
+    QCOMPARE(confirm->textFormat(), Qt::PlainText);
+    QCOMPARE(confirm->defaultButton(),
+             confirm->button(QMessageBox::Cancel));
+    QCOMPARE(confirm->escapeButton(),
+             confirm->button(QMessageBox::Cancel));
+    QVERIFY(confirm->text().contains(fixture.vehicle.endpoint.displayName()));
+    QVERIFY(confirm->text().contains(fixture.directory.path()));
+    QVERIFY(confirm->text().contains(QStringLiteral("LOG_BACKEND_TYPE")));
+    QVERIFY(confirm->text().contains(QStringLiteral("dedicated trusted")));
+    QVERIFY(confirm->text().contains(QStringLiteral("no START acknowledgement")));
+    QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+    QVERIFY(fixture.vehicle.frames.isEmpty());
+
+    confirm->button(QMessageBox::Cancel)->click();
+    QTRY_VERIFY(start->isEnabled());
+    QVERIFY(!fixture.service.busy());
+    QVERIFY(fixture.vehicle.frames.isEmpty());
+
+    start->click();
+    QVERIFY(visibleNamed<QMessageBox>(
+        &view, "DeveloperRemoteDataFlashStartConfirmation"));
+    view.close();
+    QVERIFY(!fixture.service.busy());
+    QVERIFY(fixture.vehicle.frames.isEmpty());
+    view.show();
+    QTRY_VERIFY(start->isEnabled());
+
+    view.setRemoteDataFlashLogService(nullptr, QString());
+    QCOMPARE(view.ImplementedActionCount(), 7);
+    QVERIFY(!start->isEnabled());
+    QVERIFY(!stop->isEnabled());
+
+    auto *disposable = new RemoteDataFlashLogService(
+        &fixture.vehicle.targets, &fixture.vehicle.registry,
+        &fixture.vehicle.parameters, &fixture.vehicle.transmitter,
+        250, 190,
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; });
+    view.setRemoteDataFlashLogService(
+        disposable, fixture.directory.path());
+    QTRY_VERIFY(start->isEnabled());
+    start->click();
+    QVERIFY(visibleNamed<QMessageBox>(
+        &view, "DeveloperRemoteDataFlashStartConfirmation"));
+    delete disposable;
+    QTRY_VERIFY(!start->isEnabled());
+    QVERIFY(!visibleNamed<QMessageBox>(
+        &view, "DeveloperRemoteDataFlashStartConfirmation"));
+}
+
+void ConfigDeveloperToolsViewTest::remoteDataFlashSessionSurvivesCloseAndSaves()
+{
+    RemoteDataFlashFixture fixture;
+    QVERIFY(fixture.ready);
+    auto *first = new ConfigDeveloperToolsView;
+    first->setRemoteDataFlashLogService(
+        &fixture.service, fixture.directory.path());
+    first->show();
+    QTRY_VERIFY(tool(*first, "StartRemoteDataFlashLogButton")->isEnabled());
+    tool(*first, "StartRemoteDataFlashLogButton")->click();
+    auto *startConfirm = visibleNamed<QMessageBox>(
+        first, "DeveloperRemoteDataFlashStartConfirmation");
+    QVERIFY(startConfirm);
+    startConfirm->button(QMessageBox::Yes)->click();
+    QVERIFY(fixture.service.busy());
+    // Writer completion is posted back to the GUI thread, so Opening remains
+    // observable until the event loop is allowed to deliver that callback.
+    QCOMPARE(fixture.service.phase(),
+             RemoteDataFlashLogService::Phase::Opening);
+    auto *openingStop = tool(*first, "StopRemoteDataFlashLogButton");
+    QVERIFY(!openingStop->isEnabled());
+    QVERIFY(openingStop->toolTip().contains(QStringLiteral("still opening")));
+
+    // Even a programmatic enable must not bypass the service phase gate.
+    openingStop->setEnabled(true);
+    openingStop->click();
+    QVERIFY(!visibleNamed<QMessageBox>(
+        first, "DeveloperRemoteDataFlashStopConfirmation"));
+    QCOMPARE(fixture.service.phase(),
+             RemoteDataFlashLogService::Phase::Opening);
+    QTRY_VERIFY_WITH_TIMEOUT(!fixture.vehicle.frames.isEmpty(), 2000);
+    QVERIFY(visibleNamed<QProgressDialog>(
+        first, "DeveloperRemoteDataFlashProgressDialog"));
+
+    fixture.block(0, 'L');
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.service.blocksStored(), qint64(1), 2000);
+    const quint64 operationId = fixture.service.currentOperationId();
+    QVERIFY(operationId != 0);
+    first->close();
+    delete first;
+    QVERIFY(fixture.service.busy());
+    QCOMPARE(fixture.service.currentOperationId(), operationId);
+
+    ConfigDeveloperToolsView reopened;
+    reopened.setRemoteDataFlashLogService(
+        &fixture.service, fixture.directory.path());
+    reopened.show();
+    auto *stop = tool(reopened, "StopRemoteDataFlashLogButton");
+    QTRY_VERIFY(stop->isEnabled());
+    QVERIFY(visibleNamed<QProgressDialog>(
+        &reopened, "DeveloperRemoteDataFlashProgressDialog"));
+    stop->click();
+    auto *stopConfirm = visibleNamed<QMessageBox>(
+        &reopened, "DeveloperRemoteDataFlashStopConfirmation");
+    QVERIFY(stopConfirm);
+    QCOMPARE(stopConfirm->defaultButton(),
+             stopConfirm->button(QMessageBox::Cancel));
+    QCOMPARE(stopConfirm->escapeButton(),
+             stopConfirm->button(QMessageBox::Cancel));
+    QVERIFY(stopConfirm->text().contains(
+        fixture.vehicle.endpoint.displayName()));
+    QVERIFY(stopConfirm->text().contains(QStringLiteral("1 blocks")));
+    QVERIFY(stopConfirm->text().contains(QStringLiteral("no STOP acknowledgement")));
+    stopConfirm->button(QMessageBox::Cancel)->click();
+    QVERIFY(fixture.service.busy());
+
+    QTRY_VERIFY(stop->isEnabled());
+    stop->click();
+    stopConfirm = visibleNamed<QMessageBox>(
+        &reopened, "DeveloperRemoteDataFlashStopConfirmation");
+    QVERIFY(stopConfirm);
+    stopConfirm->button(QMessageBox::Save)->click();
+    QTRY_VERIFY_WITH_TIMEOUT(!fixture.service.busy(), 5000);
+    const RemoteDataFlashLogService::Report report =
+        fixture.service.lastReport();
+    QCOMPARE(report.operationId, operationId);
+    QCOMPARE(report.outcome,
+             RemoteDataFlashLogService::Outcome::SavedUnverified);
+    QCOMPARE(report.blocks, qint64(1));
+    QCOMPARE(report.bytes, qint64(200));
+    QVERIFY(report.published());
+    QVERIFY(QFileInfo::exists(report.destinationPath));
+    QCOMPARE(readFixture(report.destinationPath), QByteArray(200, 'L'));
+    QTRY_VERIFY(reopened.Log().contains(QStringLiteral("not proof")));
+}
+
+void ConfigDeveloperToolsViewTest::remoteDataFlashRejectsStaleConsentAndOldStopToken()
+{
+    RemoteDataFlashFixture fixture;
+    QVERIFY(fixture.ready);
+    ConfigDeveloperToolsView view;
+    view.setRemoteDataFlashLogService(
+        &fixture.service, fixture.directory.path());
+    view.show();
+    auto *start = tool(view, "StartRemoteDataFlashLogButton");
+    QTRY_VERIFY(start->isEnabled());
+    start->click();
+    auto *confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperRemoteDataFlashStartConfirmation");
+    QVERIFY(confirm);
+    fixture.vehicle.targets.clearTarget();
+    QVERIFY(fixture.vehicle.targets.selectTarget(
+        fixture.vehicle.endpoint.linkId,
+        fixture.vehicle.endpoint.systemId,
+        fixture.vehicle.endpoint.componentId));
+    fixture.vehicle.heartbeat(false);
+    confirm->button(QMessageBox::Yes)->click();
+    QTRY_VERIFY(!fixture.service.busy());
+    QVERIFY(fixture.vehicle.frames.isEmpty());
+    QVERIFY(view.Log().contains(QStringLiteral("cancelled before start")));
+
+    QTRY_VERIFY(start->isEnabled());
+    start->click();
+    confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperRemoteDataFlashStartConfirmation");
+    QVERIFY(confirm);
+    confirm->button(QMessageBox::Yes)->click();
+    QTRY_VERIFY_WITH_TIMEOUT(fixture.service.busy(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!fixture.vehicle.frames.isEmpty(), 2000);
+    fixture.block(0, 'A');
+    QTRY_COMPARE_WITH_TIMEOUT(fixture.service.blocksStored(), qint64(1), 2000);
+    const quint64 oldOperation = fixture.service.currentOperationId();
+    tool(view, "StopRemoteDataFlashLogButton")->click();
+    auto *oldStop = visibleNamed<QMessageBox>(
+        &view, "DeveloperRemoteDataFlashStopConfirmation");
+    QVERIFY(oldStop);
+
+    QString error;
+    QVERIFY(fixture.service.cancel(oldOperation, &error));
+    QTRY_VERIFY_WITH_TIMEOUT(!fixture.service.busy(), 3000);
+    RemoteDataFlashLogService::Plan replacement;
+    QVERIFY2(fixture.service.prepare(fixture.directory.path(),
+                                     &replacement, &error),
+             qPrintable(error));
+    quint64 replacementOperation = 0;
+    QCOMPARE(fixture.service.start(replacement, &replacementOperation, &error),
+             RemoteDataFlashLogService::StartResult::Started);
+    QVERIFY(replacementOperation != 0);
+    QVERIFY(replacementOperation != oldOperation);
+    QVERIFY(fixture.service.busy());
+
+    oldStop->button(QMessageBox::Save)->click();
+    QVERIFY(fixture.service.busy());
+    QCOMPARE(fixture.service.currentOperationId(), replacementOperation);
+    QVERIFY(view.Log().contains(QStringLiteral("session changed")));
+    QVERIFY(fixture.service.cancel(replacementOperation, &error));
+    QTRY_VERIFY_WITH_TIMEOUT(!fixture.service.busy(), 3000);
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)

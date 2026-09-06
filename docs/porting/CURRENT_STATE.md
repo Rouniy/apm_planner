@@ -24,7 +24,65 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Offline MagFit**. Developer Tools and Compass
+Latest slice (2026-09-06): **Start/Stop Remote DataFlash Log**. The two existing
+Developer actions now open real named asynchronous default/Escape-Cancel
+confirmations with exact vehicle/link/destination and protocol limitations.
+Start requires already-enabled LOG_BACKEND_TYPE bit2, complete exact parameters,
+a fresh disarmed autopilot and an operator-confirmed dedicated trusted route.
+There is no implicit parameter write, reboot or takeover STOP. Established
+recording continues while armed and after page close/destruction; reopening
+controls the same application-owned session through its immutable operation ID.
+
+Ingress matches physical epoch, vehicle system, logging component155 and frozen
+GCS destination. The bounded worker stores200-byte blocks before ACK; statuses
+target autopilot1 (correcting MP10's logger-component routing). Before stored
+sequence0 there is no ACK or ownership-assuming STOP. Pending repeats coalesce
+so400 retransmissions cannot overflow the disk queue; stored identical repeats
+are compared and re-ACKed. Conflicts retain original recovery bytes. The protocol
+has no nonce, START/STOP acknowledgement, EOF or final-length proof.
+
+Explicit Stop/Save drains250ms then publishes a unique no-overwrite BIN or a
+warned partial.BIN with known holes zero-filled. Unexpected loss/shutdown retains
+nonempty unpublished .part; explicit service-level discard removes only owned
+staging. The page exposes Stop/Save, not a separate Discard button. Shutdown
+stops only local capture and sends no STOP. Limits are512MiB,8h,256 pending
+blocks and bounded gap/interval metadata. Silence is advisory while heartbeats
+remain fresh: LOG_DISARMED0 legitimately produces idle periods. Both directions
+interlock with classic onboard log list/download/erase. One-peer UDP uses existing
+peer-revision/epoch and configured-signing checks; no authentication is claimed
+for an unsigned trusted route.
+
+Qt5/audio configure/final build, focused6/6 (35.35s), final full254/254 (46.33s) and production X11
+exit0/zero audit failures pass. Actual Tools navigation tests both Cancel
+boundaries, three out-of-order blocks, lost-ACK retransmission, wrong
+source/destination rejection, both log interlocks, page recreation and armed
+Stop. The independently checked capture is exactly600 bytes, SHA256
+`7d40d47c29fef6f510d0c879be2c3ad96d8ee21182d72d3cd310d9308f134f28`.
+Root inspected the complete readable warning and both buttons at
+`/tmp/apm-remote-dataflash.N5trJR/remote-stop-final.png`; final build/full/X11
+logs and the byte-identical repeat capture are in
+that directory. No network SITL or physical board was changed.
+
+Three Codex streams implemented writer, exact service and UI; root integrated
+and scheduled every build/test. Claude TCP c237–c244 reviewed firmware protocol,
+UDP policy, writer/UI/service and supplied hashed full reports. Review found
+pending-resend backpressure and two callback-deletion paths, now regression
+tested. Opening no longer offers unsupported Stop; waiting-for-zero consent
+explains local-only termination and uncertain .part. See
+`REMOTE_DATAFLASH_LOG_PORT.md`: rejected ACK submission remains fail-closed,
+250ms cannot guarantee late-tail capture, no durable gap sidecar/recovery import,
+no fsync guarantee, native/hardware/reference visual parity remain open.
+
+Developer is now **23/32 working,9 unavailable**. SETUP46/eight absent reference
+routes, Advanced14 complete+partial Signing/disabled Support Proxy, fixedTools24
+plus Signing, CONFIG15/15 factories and Planner21/64 remain unchanged. The
+authoritative129-surface status distribution remains72 in-progress/36 partial/
+21 not-started: these two actions fill one existing surface, not two new pages.
+Next: **MAVLink Serial TCP Bridge**, distinct from the already ported MAVLink
+Mirror; then Flight Log Index and remaining single-drone tools, then Settings.
+Swarm stays last. The full Mission Planner10 port is still incomplete.
+
+Previous slice (2026-09-06): **Offline MagFit**. Developer Tools and Compass
 Calibrate from Log open the same real modeless window, including while offline.
 BIN/LOG/TLOG analysis, MP10 sphere/diagonal/full-ellipsoid math, single-sender
 telemetry filtering, nine-column results, quality warnings and cancellation

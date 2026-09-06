@@ -109,6 +109,7 @@ private slots:
     void signingRequirementPinsV2AndSurvivesForget();
     void signedSubmissionContainsActualWireSignature();
     void setupSigningNeverPublishesKeyMaterial();
+    void remoteLogControlRequiresExactSessionOwner();
     void reentrantSignerChangesAbortBeforeWrite_data();
     void reentrantSignerChangesAbortBeforeWrite();
     void reentrantSignerDestructionIsSafe();
@@ -586,6 +587,35 @@ void ExactLinkTransmitterTest::signedSubmissionContainsActualWireSignature()
     mavlink_signing_t signing = signingFixture();
     mavlink_signing_streams_t streams{};
     QVERIFY(mavlink_signature_check(&signing, &streams, &published));
+}
+
+void ExactLinkTransmitterTest::remoteLogControlRequiresExactSessionOwner()
+{
+    QVector<CapturedFrame> frames;
+    ExactLinkTransmitter transmitter([&](int link, const QByteArray &frame) {
+        frames.append({link, frame});
+        return true;
+    });
+    transmitter.setLinkSessionEpoch(11, 7);
+    int submitted = 0;
+    connect(&transmitter, &ExactLinkTransmitter::messageSubmitted,
+            &transmitter, [&](int, quint64, mavlink_message_t) { ++submitted; });
+    for (quint32 sequence : {quint32(MAV_REMOTE_LOG_DATA_BLOCK_START),
+                            quint32(MAV_REMOTE_LOG_DATA_BLOCK_STOP), quint32(0)}) {
+        mavlink_message_t message{};
+        mavlink_msg_remote_log_block_status_pack(250, 190, &message,
+            42, 1, sequence, MAV_REMOTE_LOG_DATA_BLOCK_ACK);
+        bool attempted = true;
+        QCOMPARE(transmitter.sendMessage(11, 250, 190, message, &attempted),
+                 ExactLinkTransmitter::SendResult::RestrictedMessage);
+        QVERIFY(!attempted);
+    }
+    QVERIFY(frames.isEmpty());
+    QCOMPARE(submitted, 0);
+    QCOMPARE(transmitter.sendMessage(11, 250, 190,
+                 commandMessage(MAV_CMD_NAV_RETURN_TO_LAUNCH)),
+             ExactLinkTransmitter::SendResult::Sent);
+    QCOMPARE(decodeFrame(frames.first().bytes).seq, quint8(0));
 }
 
 void ExactLinkTransmitterTest::setupSigningNeverPublishesKeyMaterial()

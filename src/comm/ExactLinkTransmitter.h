@@ -66,6 +66,13 @@ signals:
 
 private:
     friend class LinkManager;
+    friend class RemoteDataFlashLogService;
+    // REMOTE_LOG has no transaction nonce and its backend does not verify
+    // session ownership. Only the reviewed exact-session service sends it.
+    SendResult sendRemoteLogBlockStatus(int linkId, quint64 expectedEpoch,
+        quint8 localSystemId, quint8 localComponentId,
+        quint8 targetSystem, quint8 targetComponent, quint32 sequence,
+        quint8 status, bool *frameWriterInvoked = nullptr);
     // Secret-bearing provisioning is not a generic tool/plugin send. Only the
     // reviewed LinkManager transition may reach this typed, no-observer path.
     SendResult sendSetupSigning(int linkId, quint64 expectedEpoch,

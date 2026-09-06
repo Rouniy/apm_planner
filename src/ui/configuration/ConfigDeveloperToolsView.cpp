@@ -3,6 +3,7 @@
 #include "DeveloperToolParsers.h"
 #include "MavFtpFileDownload.h"
 #include "comm/MavFtpServiceInterface.h"
+#include "comm/RemoteDataFlashLogService.h"
 #include "comm/VehicleTargetManager.h"
 #include "comm/GpsCorrectionExtractor.h"
 #include "ui/Loghandling/DataFlashDashWareCsvExporter.h"
@@ -200,10 +201,16 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                      QStringLiteral("UpgradeBootloaderButton"),
                      VehicleAction::UpgradeBootloader);
     AddVehicleAction(tr("Reboot to DFU"), QStringLiteral("RebootToDfuButton"), VehicleAction::RebootToDfu);
-    AddUnavailableAction(tr("Start Remote DataFlash Log"),
-                         QStringLiteral("StartRemoteDataFlashLogButton"), notPorted);
-    AddUnavailableAction(tr("Stop Remote DataFlash Log"),
-                         QStringLiteral("StopRemoteDataFlashLogButton"), notPorted);
+    m_startRemoteDataFlashLogButton = AddAction(
+        tr("Start Remote DataFlash Log"),
+        QStringLiteral("StartRemoteDataFlashLogButton"),
+        [this]() { StartRemoteDataFlashLog(); }, false,
+        tr("The guarded remote DataFlash log service is unavailable."));
+    m_stopRemoteDataFlashLogButton = AddAction(
+        tr("Stop Remote DataFlash Log"),
+        QStringLiteral("StopRemoteDataFlashLogButton"),
+        [this]() { StopRemoteDataFlashLog(); }, false,
+        tr("No application-owned remote DataFlash capture is active."));
 
     AppendLog(tr("%1 of %2 Mission Planner Developer tools are available. "
                  "The remaining actions stay disabled until their guarded "
@@ -221,7 +228,8 @@ int ConfigDeveloperToolsView::ImplementedActionCount() const
 {
     return m_implementedActionCount + (m_vehicleTools ? m_vehicleButtons.size() : 0)
         + (m_mavFtpService && m_mavFtpTargets ? 1 : 0)
-        + (m_parameterRecoveryService ? 2 : 0);
+        + (m_parameterRecoveryService ? 2 : 0)
+        + (m_remoteDataFlashLogService ? 2 : 0);
 }
 
 bool ConfigDeveloperToolsView::MavFtpDownloadBusy() const
@@ -362,6 +370,147 @@ void ConfigDeveloperToolsView::setParameterRecoveryService(
     AppendLog(tr("%1 of %2 Mission Planner Developer tools are available.")
                   .arg(ImplementedActionCount()).arg(ActionCount()));
     RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::setRemoteDataFlashLogService(
+    RemoteDataFlashLogService *service, const QString &defaultLogDirectory)
+{
+    if (m_remoteDataFlashLogService == service
+        && m_remoteDataFlashLogDirectory == defaultLogDirectory) {
+        RefreshVehicleActions();
+        return;
+    }
+
+    const quint64 bindingRevision = ++m_remoteDataFlashLogBindingRevision;
+    ++m_remoteDataFlashLogPromptRevision;
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<RemoteDataFlashLogService> incoming(service);
+    const QPointer<RemoteDataFlashLogService> old(
+        m_remoteDataFlashLogService);
+    const QPointer<QDialog> prompt(m_remoteDataFlashLogPrompt);
+    m_remoteDataFlashLogPrompt.clear();
+    const QPointer<QProgressDialog> progress(
+        m_remoteDataFlashLogProgress);
+    m_remoteDataFlashLogProgress.clear();
+    m_remoteDataFlashLogProgressOperationId = 0;
+    if (prompt) {
+        const QSignalBlocker blocker(prompt);
+        prompt->reject();
+    }
+    if (!guard || bindingRevision != m_remoteDataFlashLogBindingRevision)
+        return;
+    if (progress) {
+        const QSignalBlocker blocker(progress);
+        progress->hide();
+        progress->deleteLater();
+    }
+    if (!guard || bindingRevision != m_remoteDataFlashLogBindingRevision)
+        return;
+    if (old)
+        disconnect(old, nullptr, this, nullptr);
+
+    m_remoteDataFlashLogService = incoming;
+    m_remoteDataFlashLogDirectory = defaultLogDirectory;
+    m_seenRemoteDataFlashLogHistory.clear();
+    m_seenRemoteDataFlashLogStatus.clear();
+    if (incoming) {
+        connect(incoming, &RemoteDataFlashLogService::stateChanged,
+                this, &ConfigDeveloperToolsView::RefreshVehicleActions);
+        connect(incoming, &RemoteDataFlashLogService::operationFinished,
+                this, [this, bindingRevision](
+                    const RemoteDataFlashLogService::Report &report) {
+            if (bindingRevision != m_remoteDataFlashLogBindingRevision
+                || m_remoteDataFlashLogService.isNull()) {
+                return;
+            }
+            const QPointer<ConfigDeveloperToolsView> guard(this);
+            if (m_remoteDataFlashLogProgressOperationId
+                    == report.operationId) {
+                const QPointer<QProgressDialog> progress(
+                    m_remoteDataFlashLogProgress);
+                m_remoteDataFlashLogProgress.clear();
+                m_remoteDataFlashLogProgressOperationId = 0;
+                if (progress) {
+                    const QSignalBlocker blocker(progress);
+                    progress->hide();
+                    progress->deleteLater();
+                }
+            }
+            if (!guard || m_fileToolsClosing
+                || QCoreApplication::closingDown()) {
+                return;
+            }
+            AppendLog(report.description);
+            if (!guard)
+                return;
+            if (report.published()) {
+                AppendLog(tr("Remote DataFlash capture published %1 blocks "
+                             "(%2 bytes) to %3. This is a local capture, not "
+                             "proof of a complete remote log or STOP.")
+                              .arg(report.blocks)
+                              .arg(report.bytes)
+                              .arg(report.destinationPath));
+                if (!guard)
+                    return;
+            } else if (!report.destinationPath.isEmpty()) {
+                AppendLog(tr("Remote DataFlash recovery data remains at %1. "
+                             "It is not a finalized or verified log.")
+                              .arg(report.destinationPath));
+                if (!guard)
+                    return;
+            }
+            for (const QString &warning : report.warnings) {
+                AppendLog(tr("Remote DataFlash warning: %1").arg(warning));
+                if (!guard)
+                    return;
+            }
+            RefreshVehicleActions();
+        });
+        connect(incoming, &QObject::destroyed, this,
+                [this, bindingRevision]() {
+            if (bindingRevision != m_remoteDataFlashLogBindingRevision)
+                return;
+            ++m_remoteDataFlashLogBindingRevision;
+            ++m_remoteDataFlashLogPromptRevision;
+            m_remoteDataFlashLogService.clear();
+            const QPointer<QDialog> prompt(m_remoteDataFlashLogPrompt);
+            m_remoteDataFlashLogPrompt.clear();
+            const QPointer<QProgressDialog> progress(
+                m_remoteDataFlashLogProgress);
+            m_remoteDataFlashLogProgress.clear();
+            m_remoteDataFlashLogProgressOperationId = 0;
+            if (m_fileToolsClosing || QCoreApplication::closingDown())
+                return;
+            if (prompt) {
+                const QSignalBlocker blocker(prompt);
+                prompt->reject();
+            }
+            if (progress) {
+                const QSignalBlocker blocker(progress);
+                progress->hide();
+                progress->deleteLater();
+            }
+            AppendLog(tr("Remote DataFlash log service became unavailable."));
+            RefreshVehicleActions();
+        });
+    }
+
+    if (!guard || bindingRevision != m_remoteDataFlashLogBindingRevision)
+        return;
+    AppendLog(tr("%1 of %2 Mission Planner Developer tools are available.")
+                  .arg(ImplementedActionCount()).arg(ActionCount()));
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::CancelRemoteDataFlashPrompt()
+{
+    ++m_remoteDataFlashLogPromptRevision;
+    const QPointer<QDialog> prompt(m_remoteDataFlashLogPrompt);
+    m_remoteDataFlashLogPrompt.clear();
+    if (prompt) {
+        const QSignalBlocker blocker(prompt);
+        prompt->reject();
+    }
 }
 
 void ConfigDeveloperToolsView::CancelParameterRecoveryPrompt()
@@ -786,12 +935,448 @@ void ConfigDeveloperToolsView::StartMavFtpDownload()
     if (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
         || ApjEmbeddingBusy() || LogOrganizerBusy()
-        || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+        || m_remoteDataFlashLogPrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("MAVFTP download: finish or cancel the current Developer operation first."));
         return;
     }
     m_mavFtpDownload->start();
+}
+
+void ConfigDeveloperToolsView::StartRemoteDataFlashLog()
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<RemoteDataFlashLogService> service(
+        m_remoteDataFlashLogService);
+    if (m_fileToolsClosing || !service || service->busy()
+        || m_remoteDataFlashLogPrompt || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy() || MavFtpDownloadBusy()
+        || ParameterRecoveryBusy() || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+
+    const quint64 revision = ++m_remoteDataFlashLogPromptRevision;
+    RemoteDataFlashLogService::Plan plan;
+    QString error;
+    const bool prepared = service->prepare(
+        m_remoteDataFlashLogDirectory, &plan, &error);
+    if (!guard || !service || m_fileToolsClosing
+        || revision != m_remoteDataFlashLogPromptRevision
+        || m_remoteDataFlashLogService != service
+        || m_remoteDataFlashLogPrompt || service->busy()
+        || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
+        || m_splitPrompt || m_dashWareState || m_dashWarePrompt
+        || ApjEmbeddingBusy() || LogOrganizerBusy()
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+        || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    if (!prepared || !plan.isValid()) {
+        AppendLog(tr("Remote DataFlash capture is unavailable: %1")
+                      .arg(error.isEmpty()
+                               ? tr("the service returned an invalid plan")
+                               : error));
+        RefreshVehicleActions();
+        return;
+    }
+
+    const VehicleEndpoint endpoint = plan.target().endpoint;
+    const QString text = tr(
+        "Start a remote DataFlash capture from this exact target?\n\n"
+        "Target: %1\nLink: %2\nSystem/component: %3/%4\n"
+        "Destination: %5\n\n"
+        "Use only a dedicated trusted connection to this vehicle. Another "
+        "GCS using the same MAVLink identity can affect this log session. "
+        "Another sender appearing on a UDP listening port ends this capture; "
+        "use a dedicated trusted connection.\n\n"
+        "ArduPilot must already have remote MAVLink logging enabled through "
+        "LOG_BACKEND_TYPE; this tool never enables or changes it. Any enabled "
+        "MAVLink logging backend participates in firmware logging and arming "
+        "checks. Streaming can consume substantial link bandwidth. The local "
+        "capture is bounded to 512 MiB and eight hours; an unexpected "
+        "interruption may retain only an unfinalized .part recovery file.\n\n"
+        "The protocol has no START acknowledgement or session nonce. A "
+        "Receiving status proves only that compatible packets arrived, not "
+        "that they belong to a fresh or exclusive log session.")
+        .arg(endpoint.displayName(), QString::number(endpoint.linkId),
+             QString::number(endpoint.systemId),
+             QString::number(endpoint.componentId),
+             plan.destinationDescription());
+    auto *dialog = new QMessageBox(
+        QMessageBox::Warning, tr("Start Remote DataFlash Log"), text,
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(
+        QStringLiteral("DeveloperRemoteDataFlashStartConfirmation"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->button(QMessageBox::Yes)->setText(tr("Start capture"));
+    if (auto *startButton = qobject_cast<QPushButton *>(
+            dialog->button(QMessageBox::Yes))) {
+        startButton->setAutoDefault(false);
+    }
+    m_remoteDataFlashLogPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, service, dialog, plan, revision](int result) {
+        if (!service || m_fileToolsClosing
+            || revision != m_remoteDataFlashLogPromptRevision
+            || m_remoteDataFlashLogService != service
+            || m_remoteDataFlashLogPrompt != dialog) {
+            return;
+        }
+        m_remoteDataFlashLogPrompt.clear();
+        if (result != QMessageBox::Yes) {
+            RefreshVehicleActions();
+            return;
+        }
+
+        const QPointer<ConfigDeveloperToolsView> guard(this);
+        QString error;
+        const bool valid = service->validate(plan, &error);
+        if (!guard || !service || m_fileToolsClosing
+            || revision != m_remoteDataFlashLogPromptRevision
+            || m_remoteDataFlashLogService != service
+            || m_remoteDataFlashLogPrompt || service->busy()
+            || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
+            || m_splitPrompt || m_dashWareState || m_dashWarePrompt
+            || ApjEmbeddingBusy() || LogOrganizerBusy()
+            || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+            || m_vehiclePrompt
+            || (m_vehicleTools && m_vehicleTools->busy())) {
+            return;
+        }
+        if (!valid) {
+            AppendLog(tr("Remote DataFlash capture cancelled before start: %1")
+                          .arg(error));
+            RefreshVehicleActions();
+            return;
+        }
+
+        quint64 operationId = 0;
+        const RemoteDataFlashLogService::StartResult started =
+            service->start(plan, &operationId, &error);
+        if (!guard)
+            return;
+        if (!service || m_remoteDataFlashLogService != service
+            || revision != m_remoteDataFlashLogPromptRevision) {
+            return;
+        }
+        if (started != RemoteDataFlashLogService::StartResult::Started
+            || operationId == 0) {
+            AppendLog(tr("Remote DataFlash capture was not started: %1")
+                          .arg(error.isEmpty()
+                                   ? tr("the guarded service rejected the request")
+                                   : error));
+            RefreshVehicleActions();
+            return;
+        }
+        if (!service->busy()
+            || service->currentOperationId() != operationId) {
+            // A synchronous terminal report is authoritative and has already
+            // been delivered by the application-owned service.
+            RefreshVehicleActions();
+            return;
+        }
+        AppendLog(tr("Remote DataFlash capture admitted for %1. "
+                     "Submission is not proof that the remote logger started.")
+                      .arg(plan.destinationDescription()));
+        if (!guard)
+            return;
+        if (service->busy()
+            && service->currentOperationId() == operationId) {
+            ShowRemoteDataFlashProgress(operationId);
+        }
+        RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::StopRemoteDataFlashLog()
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<RemoteDataFlashLogService> service(
+        m_remoteDataFlashLogService);
+    if (m_fileToolsClosing || !service || m_remoteDataFlashLogPrompt
+        || !service->busy() || service->currentOperationId() == 0) {
+        return;
+    }
+    const auto phase = service->phase();
+    if (phase != RemoteDataFlashLogService::Phase::AwaitingSequenceZero
+        && phase != RemoteDataFlashLogService::Phase::Receiving) {
+        RefreshVehicleActions();
+        return;
+    }
+    const quint64 operationId = service->currentOperationId();
+    const RemoteDataFlashLogService::Plan plan = service->activePlan();
+    if (!plan.isValid()) {
+        AppendLog(tr("Remote DataFlash stop is unavailable: the active exact "
+                     "session plan is missing."));
+        RefreshVehicleActions();
+        return;
+    }
+    const quint64 revision = ++m_remoteDataFlashLogPromptRevision;
+    const VehicleEndpoint endpoint = plan.target().endpoint;
+    const qint64 blocks = service->blocksStored();
+    const qint64 bytes = service->bytesStored();
+    QString text = tr(
+        "Stop and save this exact remote DataFlash capture?\n\n"
+        "Original target: %1\nLink: %2\nSystem/component: %3/%4\n"
+        "Destination: %5\nCaptured so far: %6 blocks, %7 bytes\n\n"
+        "Save captured blocks publishes only the local capture. The protocol "
+        "has no STOP acknowledgement or end-of-file marker, so the file is "
+        "not proof of a complete log or that remote streaming stopped. "
+        "Missing blocks are reported and saved only in an explicit "
+        ".partial.bin file. If the MAVLink logging backend remains enabled, "
+        "stopping its stream can make a later firmware arming check report "
+        "'Logging failed'. Cancel leaves the capture running.")
+        .arg(endpoint.displayName(), QString::number(endpoint.linkId),
+             QString::number(endpoint.systemId),
+             QString::number(endpoint.componentId),
+             plan.destinationDescription(), QString::number(blocks),
+             QString::number(bytes));
+    if (phase == RemoteDataFlashLogService::Phase::AwaitingSequenceZero) {
+        text += tr(
+            "\n\nSequence zero is not yet stored. If it remains unconfirmed "
+            "when accepted, this ends only the local wait: no STOP is sent "
+            "and nonempty blocks are preserved as an unpublished .part file.");
+    }
+    auto *dialog = new QMessageBox(
+        QMessageBox::Warning, tr("Stop Remote DataFlash Log"), text,
+        QMessageBox::Save | QMessageBox::Cancel, this);
+    dialog->setObjectName(
+        QStringLiteral("DeveloperRemoteDataFlashStopConfirmation"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->button(QMessageBox::Save)->setText(tr("Stop and save"));
+    if (auto *saveButton = qobject_cast<QPushButton *>(
+            dialog->button(QMessageBox::Save))) {
+        saveButton->setAutoDefault(false);
+    }
+    m_remoteDataFlashLogPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, service, dialog, operationId, revision](int result) {
+        if (!service || m_fileToolsClosing
+            || revision != m_remoteDataFlashLogPromptRevision
+            || m_remoteDataFlashLogService != service
+            || m_remoteDataFlashLogPrompt != dialog) {
+            return;
+        }
+        m_remoteDataFlashLogPrompt.clear();
+        if (result != QMessageBox::Save) {
+            RefreshVehicleActions();
+            return;
+        }
+        if (!service->busy()
+            || service->currentOperationId() != operationId) {
+            AppendLog(tr("Remote DataFlash stop was not applied because the "
+                         "captured session changed during confirmation."));
+            RefreshVehicleActions();
+            return;
+        }
+        const QPointer<ConfigDeveloperToolsView> guard(this);
+        QString error;
+        const bool accepted = service->stopAndSave(operationId, &error);
+        if (!guard)
+            return;
+        if (!accepted) {
+            AppendLog(tr("Remote DataFlash stop/save was not accepted: %1")
+                          .arg(error.isEmpty()
+                                   ? tr("the session is no longer current")
+                                   : error));
+        } else if (service && service->busy()
+                   && service->currentOperationId() == operationId) {
+            AppendLog(tr("Remote DataFlash stop/save requested. The terminal "
+                         "report remains authoritative."));
+        }
+        RefreshVehicleActions();
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ShowRemoteDataFlashProgress(
+    quint64 operationId)
+{
+    const QPointer<RemoteDataFlashLogService> service(
+        m_remoteDataFlashLogService);
+    if (m_fileToolsClosing || !service || !service->busy()
+        || operationId == 0
+        || service->currentOperationId() != operationId) {
+        return;
+    }
+    if (m_remoteDataFlashLogProgress
+        && m_remoteDataFlashLogProgressOperationId == operationId) {
+        return;
+    }
+    const QPointer<QProgressDialog> old(m_remoteDataFlashLogProgress);
+    m_remoteDataFlashLogProgress.clear();
+    m_remoteDataFlashLogProgressOperationId = 0;
+    if (old) {
+        const QSignalBlocker blocker(old);
+        old->hide();
+        old->deleteLater();
+    }
+    auto *progress = new QProgressDialog(this);
+    progress->setObjectName(
+        QStringLiteral("DeveloperRemoteDataFlashProgressDialog"));
+    progress->setWindowTitle(tr("Remote DataFlash Capture"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setRange(0, 0);
+    progress->setCancelButton(nullptr);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setMinimumDuration(0);
+    progress->setLabelText(
+        tr("%1\nCaptured %2 blocks (%3 bytes).\n"
+           "Use Stop Remote DataFlash Log to review and save.")
+            .arg(service->status().isEmpty()
+                     ? tr("Starting remote DataFlash capture…")
+                     : service->status())
+            .arg(service->blocksStored())
+            .arg(service->bytesStored()));
+    m_remoteDataFlashLogProgress = progress;
+    m_remoteDataFlashLogProgressOperationId = operationId;
+    progress->show();
+}
+
+void ConfigDeveloperToolsView::RefreshRemoteDataFlashActions()
+{
+    if (m_refreshingRemoteDataFlashLog || m_fileToolsClosing
+        || !m_startRemoteDataFlashLogButton
+        || !m_stopRemoteDataFlashLogButton) {
+        return;
+    }
+    m_refreshingRemoteDataFlashLog = true;
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<RemoteDataFlashLogService> service(
+        m_remoteDataFlashLogService);
+    const quint64 bindingRevision = m_remoteDataFlashLogBindingRevision;
+
+    const bool otherBusy = m_gpsExtractionState || m_gpsExtractionPrompt
+        || m_splitState || m_splitPrompt || m_dashWareState
+        || m_dashWarePrompt || ApjEmbeddingBusy() || LogOrganizerBusy()
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+        || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy());
+    QString startReason;
+    bool startReady = false;
+    if (!service) {
+        startReason = tr("The guarded remote DataFlash log service is unavailable.");
+    } else if (m_remoteDataFlashLogPrompt) {
+        startReason = tr("Finish or cancel the current remote-log confirmation first.");
+    } else if (service->busy()) {
+        startReason = tr("An application-owned remote DataFlash capture is already active.");
+    } else if (otherBusy) {
+        startReason = tr("Finish or cancel the active Developer operation first.");
+    } else if (m_remoteDataFlashLogDirectory.trimmed().isEmpty()) {
+        startReason = tr("The default log directory is unavailable.");
+    } else {
+        startReady = service->canPrepare(&startReason);
+    }
+    if (!guard)
+        return;
+    if (m_fileToolsClosing
+        || bindingRevision != m_remoteDataFlashLogBindingRevision
+        || service != m_remoteDataFlashLogService) {
+        m_refreshingRemoteDataFlashLog = false;
+        return;
+    }
+    if (startReady && (m_remoteDataFlashLogPrompt || service->busy()
+                      || m_gpsExtractionState || m_gpsExtractionPrompt
+                      || m_splitState || m_splitPrompt || m_dashWareState
+                      || m_dashWarePrompt || ApjEmbeddingBusy()
+                      || LogOrganizerBusy() || MavFtpDownloadBusy()
+                      || ParameterRecoveryBusy() || m_vehiclePrompt
+                      || (m_vehicleTools && m_vehicleTools->busy()))) {
+        startReady = false;
+        startReason = tr("The Developer operation context changed while checking availability.");
+    }
+    m_startRemoteDataFlashLogButton->setEnabled(startReady);
+    m_startRemoteDataFlashLogButton->setToolTip(startReady
+        ? tr("Start a confirmed exact-target remote DataFlash capture in the default log directory.")
+        : startReason);
+
+    bool canStop = false;
+    QString stopReason;
+    if (!service || !service->busy()) {
+        stopReason = tr("No application-owned remote DataFlash capture is active.");
+    } else if (m_remoteDataFlashLogPrompt) {
+        stopReason = tr("Finish or cancel the current remote-log confirmation first.");
+    } else if (service->currentOperationId() == 0
+               || !service->activePlan().isValid()) {
+        stopReason = tr("The active remote capture has no current exact session plan.");
+    } else {
+        const auto phase = service->phase();
+        canStop = phase == RemoteDataFlashLogService::Phase::AwaitingSequenceZero
+            || phase == RemoteDataFlashLogService::Phase::Receiving;
+        if (!canStop) {
+            stopReason = phase == RemoteDataFlashLogService::Phase::Opening
+                ? tr("The remote capture is still opening its private staging file; Stop and save becomes available after opening completes.")
+                : tr("The remote capture is already stopping, publishing, or discarding.");
+        }
+    }
+    m_stopRemoteDataFlashLogButton->setEnabled(canStop);
+    m_stopRemoteDataFlashLogButton->setToolTip(canStop
+        ? tr("Stop and save the exact current application-owned capture after explicit confirmation.")
+        : stopReason);
+
+    if (service) {
+        const QStringList history = service->history();
+        int overlap = qMin(m_seenRemoteDataFlashLogHistory.size(),
+                           history.size());
+        while (overlap > 0
+               && m_seenRemoteDataFlashLogHistory.mid(
+                      m_seenRemoteDataFlashLogHistory.size() - overlap)
+                    != history.mid(0, overlap)) {
+            --overlap;
+        }
+        for (int index = overlap; index < history.size(); ++index) {
+            AppendLog(history.at(index));
+            if (!guard)
+                return;
+        }
+        m_seenRemoteDataFlashLogHistory = history;
+        const QString status = service->status();
+        if (!status.isEmpty() && status != m_seenRemoteDataFlashLogStatus
+            && !history.contains(status)) {
+            AppendLog(status);
+            if (!guard)
+                return;
+        }
+        m_seenRemoteDataFlashLogStatus = status;
+
+        if (service->busy() && service->currentOperationId() != 0
+            && isVisible()) {
+            ShowRemoteDataFlashProgress(service->currentOperationId());
+        }
+        if (!guard)
+            return;
+        if (!service
+            || bindingRevision != m_remoteDataFlashLogBindingRevision
+            || service != m_remoteDataFlashLogService) {
+            m_refreshingRemoteDataFlashLog = false;
+            return;
+        }
+        if (m_remoteDataFlashLogProgress
+            && m_remoteDataFlashLogProgressOperationId
+                == service->currentOperationId()) {
+            m_remoteDataFlashLogProgress->setLabelText(
+                tr("%1\nCaptured %2 blocks (%3 bytes).\n"
+                   "Use Stop Remote DataFlash Log to review and save.")
+                    .arg(service->status())
+                    .arg(service->blocksStored())
+                    .arg(service->bytesStored()));
+        }
+    }
+    m_refreshingRemoteDataFlashLog = false;
 }
 
 void ConfigDeveloperToolsView::AddVehicleAction(
@@ -841,7 +1426,8 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
                  || m_splitState || m_splitPrompt
                  || m_dashWareState || m_dashWarePrompt
                  || ApjEmbeddingBusy() || LogOrganizerBusy()
-                 || MavFtpDownloadBusy() || ParameterRecoveryBusy())
+                 || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+                 || m_remoteDataFlashLogPrompt)
             reason = tr("Finish or cancel the current offline file operation first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
@@ -911,6 +1497,20 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
             progress->deleteLater();
         }
     }
+    CancelRemoteDataFlashPrompt();
+    if (!guard)
+        return;
+    if (m_remoteDataFlashLogProgress) {
+        const QPointer<QProgressDialog> progress(
+            m_remoteDataFlashLogProgress);
+        m_remoteDataFlashLogProgress.clear();
+        m_remoteDataFlashLogProgressOperationId = 0;
+        if (progress) {
+            const QSignalBlocker blocker(progress);
+            progress->hide();
+            progress->deleteLater();
+        }
+    }
     CancelGpsExtraction();
     CancelSplit();
     CancelDashWareExport();
@@ -924,6 +1524,17 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
 ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
 {
     m_fileToolsClosing = true;
+    ++m_remoteDataFlashLogBindingRevision;
+    ++m_remoteDataFlashLogPromptRevision;
+    if (m_remoteDataFlashLogService)
+        disconnect(m_remoteDataFlashLogService, nullptr, this, nullptr);
+    if (m_remoteDataFlashLogPrompt)
+        disconnect(m_remoteDataFlashLogPrompt, nullptr, nullptr, nullptr);
+    m_remoteDataFlashLogPrompt.clear();
+    if (m_remoteDataFlashLogProgress)
+        disconnect(m_remoteDataFlashLogProgress, nullptr, nullptr, nullptr);
+    m_remoteDataFlashLogProgress.clear();
+    m_remoteDataFlashLogProgressOperationId = 0;
     CancelParameterRecoveryPrompt();
     const QPointer<ParameterRecoveryService> recovery(
         m_parameterRecoveryService);
@@ -962,6 +1573,12 @@ ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
 void ConfigDeveloperToolsView::showEvent(QShowEvent *event)
 {
     m_fileToolsClosing = false;
+    if (m_remoteDataFlashLogService
+        && m_remoteDataFlashLogService->busy()
+        && m_remoteDataFlashLogService->currentOperationId() != 0) {
+        ShowRemoteDataFlashProgress(
+            m_remoteDataFlashLogService->currentOperationId());
+    }
     if (m_parameterRecoveryService
         && m_ownedParameterRecoveryOperationId != 0
         && m_parameterRecoveryService->currentOperationId()
@@ -1058,6 +1675,7 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
         && !m_dashWareState && !m_dashWarePrompt && !ApjEmbeddingBusy()
         && !LogOrganizerBusy()
         && !MavFtpDownloadBusy() && !ParameterRecoveryBusy()
+        && !m_remoteDataFlashLogPrompt
         && !m_vehiclePrompt
         && (!m_vehicleTools || !m_vehicleTools->busy());
     m_gpsExtractionButton->setEnabled(idle);
@@ -1118,6 +1736,7 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
         ? tr("Request cancellation of this page's active parameter recovery. Completed writes are not rolled back.")
         : tr("No parameter recovery started by this page is active."));
     RefreshParameterRecoveryActions();
+    RefreshRemoteDataFlashActions();
 }
 
 void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const QString &output)

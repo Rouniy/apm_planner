@@ -626,6 +626,10 @@ set(SOURCES
     src/services/OfflineMagFitService.h
     src/services/OfflineMagFitApplyService.cpp
     src/services/OfflineMagFitApplyService.h
+    src/comm/RemoteDataFlashLogWriter.cpp
+    src/comm/RemoteDataFlashLogWriter.h
+    src/comm/RemoteDataFlashLogService.cpp
+    src/comm/RemoteDataFlashLogService.h
     src/ui/OfflineMagFitWindow.cpp
     src/ui/OfflineMagFitWindow.h
     src/services/WarningTelemetrySource.cpp
@@ -3931,6 +3935,28 @@ if(BUILD_TESTING)
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
     endforeach()
 
+    add_library(remote_dataflash_writer_test_support STATIC
+        src/comm/RemoteDataFlashLogWriter.cpp
+        src/comm/RemoteDataFlashLogWriter.h)
+    target_include_directories(remote_dataflash_writer_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(remote_dataflash_writer_test_support PUBLIC Qt::Core)
+    add_library(remote_dataflash_log_test_support STATIC
+        src/comm/RemoteDataFlashLogService.cpp
+        src/comm/RemoteDataFlashLogService.h)
+    target_link_libraries(remote_dataflash_log_test_support PUBLIC
+        remote_dataflash_writer_test_support developer_vehicle_tool_test_support)
+    add_executable(remotedataflashlogwriter_tests tests/test_remotedataflashlogwriter.cpp)
+    target_link_libraries(remotedataflashlogwriter_tests PRIVATE
+        remote_dataflash_writer_test_support Qt::Test)
+    add_executable(remotedataflashlogservice_tests tests/test_remotedataflashlogservice.cpp)
+    target_link_libraries(remotedataflashlogservice_tests PRIVATE
+        remote_dataflash_log_test_support Qt::Test)
+    foreach(remote_log_test IN ITEMS remotedataflashlogwriter_tests remotedataflashlogservice_tests)
+        add_test(NAME ${remote_log_test} COMMAND ${remote_log_test})
+        set_tests_properties(${remote_log_test} PROPERTIES TIMEOUT 60)
+    endforeach()
+
     add_library(gps_correction_test_support STATIC
         src/comm/GpsCorrectionExtractor.cpp
         src/comm/GpsCorrectionExtractor.h
@@ -4041,6 +4067,7 @@ if(BUILD_TESTING)
         ${MAVLINKPATH}/${MAVLINK_CONF}
     )
     target_link_libraries(configdevelopertoolsview_tests PRIVATE
+        remote_dataflash_log_test_support
         developer_vehicle_tool_test_support
         gps_correction_test_support
         dataflash_splitter_test_support

@@ -39,6 +39,7 @@ This file is part of the APM_PLANNER project
 #include "services/DeveloperVehicleToolService.h"
 #include "services/ParameterRecoveryService.h"
 #include "services/OfflineMagFitApplyService.h"
+#include "RemoteDataFlashLogService.h"
 #include "services/SwarmWaypointLeaderExecutor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
@@ -191,6 +192,12 @@ LinkManager::LinkManager(QObject *parent) :
     m_exactLogTransferService = new ExactLogTransferService(
         m_swarmTelemetryRegistry, m_exactLinkTransmitter,
         [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            // Both services publish admission-busy before invoking validators,
+            // so nested starts cannot interleave the two log protocols.
+            if (m_remoteDataFlashLogService && m_remoteDataFlashLogService->busy()) {
+                if (error) *error = tr("Remote DataFlash recording owns the log protocol. Stop it before listing, downloading or erasing onboard logs.");
+                return false;
+            }
             LinkInterface *const link = getLink(lease.endpoint.linkId);
             if (!link || !link->isConnected()
                 || !isCurrentPhysicalIngress(link)) {
@@ -349,6 +356,38 @@ LinkManager::LinkManager(QObject *parent) :
             return singleEndpointRouteIsEligible(
                 lease.endpoint, lease.linkSessionEpoch, error);
         }, this);
+    m_remoteDataFlashLogService = new RemoteDataFlashLogService(
+        m_vehicleTargetManager, m_swarmTelemetryRegistry, m_parameterService,
+        m_exactLinkTransmitter, QGC::MavlinkID(), QGC::ComponentID(),
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            if (m_exactLogTransferService->busy()) {
+                if (error) *error = tr("An onboard log list, download or erase owns the log protocol.");
+                return false;
+            }
+            if (!singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error))
+                return false;
+            auto *link = getLink(lease.endpoint.linkId);
+            if (link && link->getLinkType() == LinkInterface::SERIAL_LINK)
+                return true; // Operator affirms a dedicated trusted connection.
+            if (qobject_cast<UDPLink *>(link))
+                // singleEndpointRouteIsEligible has checked exactly one peer
+                // and the pinned ingress revision. Any new peer retires the
+                // physical epoch before another frame can be submitted.
+                return true;
+            if (auto *tcp = qobject_cast<TCPLink *>(link)) {
+                if (!tcp->isServer()) return true;
+            }
+            if (auto *udp = qobject_cast<UDPClientLink *>(link)) {
+                const auto address = udp->getHostAddress();
+                if (!address.isNull() && !address.isMulticast()
+                    && address != QHostAddress::Broadcast
+                    && address != QHostAddress::Any
+                    && address != QHostAddress::AnyIPv4
+                    && address != QHostAddress::AnyIPv6) return true;
+            }
+            if (error) *error = tr("Remote DataFlash requires a dedicated trusted Serial, TCP client, unicast UDP client or pinned single-peer UDP connection; fan-out links are not supported.");
+            return false;
+        }, this);
     connect(m_swarmTelemetryRegistry,
             &SwarmTelemetryRegistry::endpointRetired,
             m_parameterService,
@@ -423,6 +462,10 @@ LinkManager::LinkManager(QObject *parent) :
         m_parameterService->observePhysicalMessage(id, epoch, message);
         if (!current()) return;
         m_px4FlowService->observeMessage(id, epoch, message);
+        if (!current()) return;
+        // Remote logger packets originate from MAV_COMP_ID_LOG rather than
+        // the autopilot component and must not depend on legacy UAS discovery.
+        m_remoteDataFlashLogService->observeMessage(id, epoch, message);
         if (!current()) return;
         emit mavlinkMessageObserved(id, epoch, message);
     });
@@ -697,6 +740,7 @@ void LinkManager::shutdown()
     m_developerVehicleToolService->shutdown();
     m_parameterRecoveryService->shutdown();
     m_offlineMagFitApplyService->shutdown();
+    m_remoteDataFlashLogService->shutdown();
     m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
     m_exactLogTransferService->shutdown();
@@ -1143,6 +1187,11 @@ ParameterRecoveryService *LinkManager::parameterRecoveryService() const
 OfflineMagFitApplyService *LinkManager::offlineMagFitApplyService() const
 {
     return m_offlineMagFitApplyService;
+}
+
+RemoteDataFlashLogService *LinkManager::remoteDataFlashLogService() const
+{
+    return m_remoteDataFlashLogService;
 }
 
 ParameterService *LinkManager::parameterService() const

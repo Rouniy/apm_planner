@@ -44,8 +44,36 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
     const mavlink_message_t &message, bool *frameWriterInvoked)
 {
     if (frameWriterInvoked) *frameWriterInvoked = false;
-    if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING)
+    if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING
+        || message.msgid == MAVLINK_MSG_ID_REMOTE_LOG_BLOCK_STATUS)
         return SendResult::RestrictedMessage;
+    return sendMessageImpl(linkId, localSystemId, localComponentId,
+                           message, frameWriterInvoked);
+}
+
+ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendRemoteLogBlockStatus(
+    int linkId, quint64 expectedEpoch, quint8 localSystemId,
+    quint8 localComponentId, quint8 targetSystem, quint8 targetComponent,
+    quint32 sequence, quint8 status, bool *frameWriterInvoked)
+{
+    if (frameWriterInvoked) *frameWriterInvoked = false;
+    if (linkId < 0 || !expectedEpoch
+        || m_linkSessionEpochs.value(linkId, 0) != expectedEpoch)
+        return SendResult::InvalidLink;
+    if (!localSystemId || !localComponentId || !targetSystem || !targetComponent
+        || status != MAV_REMOTE_LOG_DATA_BLOCK_ACK
+        || (sequence >= MAV_REMOTE_LOG_DATA_BLOCK_STOP
+            && sequence != MAV_REMOTE_LOG_DATA_BLOCK_START
+            && sequence != MAV_REMOTE_LOG_DATA_BLOCK_STOP))
+        return SendResult::InvalidMessage;
+    mavlink_message_t message{};
+    message.msgid = MAVLINK_MSG_ID_REMOTE_LOG_BLOCK_STATUS;
+    message.len = MAVLINK_MSG_ID_REMOTE_LOG_BLOCK_STATUS_LEN;
+    char *payload = _MAV_PAYLOAD_NON_CONST(&message);
+    _mav_put_uint32_t(payload, 0, sequence);
+    _mav_put_uint8_t(payload, 4, targetSystem);
+    _mav_put_uint8_t(payload, 5, targetComponent);
+    _mav_put_uint8_t(payload, 6, status);
     return sendMessageImpl(linkId, localSystemId, localComponentId,
                            message, frameWriterInvoked);
 }

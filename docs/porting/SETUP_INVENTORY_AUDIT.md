@@ -33,7 +33,15 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-The Offline MagFit slice brings the exact Developer action catalogue to21/32
+Remote DataFlash Log brings the exact Developer catalogue to23/32 working,
+with9 explicitly unavailable. The existing Start and Stop actions now use
+real consent, exact application-owned streaming and explicit local Save;
+closing/recreating the page preserves the recording. Full254 tests and
+production X11 verify both classic-log interlocks, armed Stop, foreign-packet
+rejection and a byte-exact600-byte capture. No new Setup page or fixed Tools
+item is added. See `REMOTE_DATAFLASH_LOG_PORT.md` for protocol/partial-file limits.
+
+The preceding Offline MagFit slice brought the exact Developer action catalogue to21/32
 working actions, with11 explicitly unavailable. Its existing button and Compass
 Calibrate from Log now open the same modeless offline analysis window, with
 separately confirmed exact-target apply only for proven DataFlash context.

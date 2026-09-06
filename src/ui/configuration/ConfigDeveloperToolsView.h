@@ -18,6 +18,7 @@ class QProgressDialog;
 class QShowEvent;
 class MavFtpServiceInterface;
 class MavFtpFileDownload;
+class RemoteDataFlashLogService;
 class VehicleTargetManager;
 
 /** Mission Planner 10 Developer Tools action page. */
@@ -35,6 +36,8 @@ public:
     void setMavFtpDownloadServices(MavFtpServiceInterface *service,
                                    VehicleTargetManager *targets);
     void setParameterRecoveryService(ParameterRecoveryService *service);
+    void setRemoteDataFlashLogService(RemoteDataFlashLogService *service,
+                                      const QString &defaultLogDirectory);
 
 public slots:
     void DecodeMavlinkInput(const QString &input);
@@ -113,6 +116,11 @@ private:
         const ParameterRecoveryService::Report &report);
     void RefreshParameterRecoveryActions();
     bool ParameterRecoveryBusy() const;
+    void StartRemoteDataFlashLog();
+    void StopRemoteDataFlashLog();
+    void CancelRemoteDataFlashPrompt();
+    void ShowRemoteDataFlashProgress(quint64 operationId);
+    void RefreshRemoteDataFlashActions();
     struct GpsExtractionState;
     struct SplitState;
     struct DashWareState;
@@ -168,6 +176,18 @@ private:
     quint64 m_parameterRecoveryPromptRevision = 0;
     quint64 m_ownedParameterRecoveryOperationId = 0;
     bool m_refreshingParameterRecovery = false;
+    QPointer<RemoteDataFlashLogService> m_remoteDataFlashLogService;
+    QString m_remoteDataFlashLogDirectory;
+    QPushButton *m_startRemoteDataFlashLogButton = nullptr;
+    QPushButton *m_stopRemoteDataFlashLogButton = nullptr;
+    QPointer<QDialog> m_remoteDataFlashLogPrompt;
+    QPointer<QProgressDialog> m_remoteDataFlashLogProgress;
+    QStringList m_seenRemoteDataFlashLogHistory;
+    QString m_seenRemoteDataFlashLogStatus;
+    quint64 m_remoteDataFlashLogBindingRevision = 0;
+    quint64 m_remoteDataFlashLogPromptRevision = 0;
+    quint64 m_remoteDataFlashLogProgressOperationId = 0;
+    bool m_refreshingRemoteDataFlashLog = false;
     bool m_fileToolsClosing = false;
 };
 

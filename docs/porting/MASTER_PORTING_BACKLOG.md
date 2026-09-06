@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,252/252 теста (45.44s); Developer21/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,254/254 теста; Developer23/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -61,13 +61,18 @@ device ID и ориентации. Последовательные typed writes
 receipts и не обещают rollback. Реальный BIN:3x2299 образцов, независимый sphere
 oracle отличается менее чем на0.00004мГс по OFS; слабое покрытие4/8 предупреждается.
 Экспорта файла в MP10 окне нет; ошибочное ожидание export в реестре исправлено.
-Следующий кандидат — Start/Stop Remote DataFlash Log: сначала отдельная проверка
-владения сессией, STOP от чужого GCS, ACK повторных блоков и partial-файлов.
+Start/Stop Remote DataFlash Log теперь реализованы: точные подтверждения,
+application-owned запись после закрытия страницы, bounded worker, повторные ACK,
+явное сохранение BIN/partial.BIN и unpublished .part при обрыве. Production X11
+проверяет ровно600 байт, чужие пакеты, armed Stop и оба log-protocol interlock.
+Протокол не даёт nonce/EOF/STOP ACK; отправленный STOP не доказывает остановку.
+Следующий кандидат — MAVLink Serial TCP Bridge (SERIAL_CONTROL, не Mirror),
+затем Flight Log Index и остальные однодроновые инструменты.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
 `APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`,
-`PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`.
+`PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`, `REMOTE_DATAFLASH_LOG_PORT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
@@ -368,7 +373,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Offline MagFit работают21/32; заменить оставшиеся11
+- Developer Tools: после Remote DataFlash Log работают23/32; заменить оставшиеся9
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.
