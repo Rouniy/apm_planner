@@ -2357,18 +2357,6 @@ QWidget *SetupView::createGpsInjectPage(QWidget *parent)
             "%1 receiver auto-configuration is not implemented yet; "
             "RTCM injection remains available.").arg(receiver));
     };
-    connect(model, &ConfigGpsInjectViewModel::ubloxConfigureRequested,
-            page, [receiverUnavailable](bool) {
-        receiverUnavailable(QStringLiteral("UBlox M8P/F9P"));
-    }, Qt::QueuedConnection);
-    connect(model, &ConfigGpsInjectViewModel::ubloxSurveyInRequested,
-            page, [receiverUnavailable](int, double, bool) {
-        receiverUnavailable(QStringLiteral("UBlox M8P/F9P"));
-    }, Qt::QueuedConnection);
-    connect(model, &ConfigGpsInjectViewModel::ubloxBasePositionRequested,
-            page, [receiverUnavailable](double, double, double, int, double) {
-        receiverUnavailable(QStringLiteral("UBlox M8P/F9P"));
-    }, Qt::QueuedConnection);
     connect(model, &ConfigGpsInjectViewModel::septentrioConfigureRequested,
             page, [receiverUnavailable]() {
         receiverUnavailable(QStringLiteral("Septentrio"));

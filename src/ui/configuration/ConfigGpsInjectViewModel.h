@@ -2,6 +2,7 @@
 #define CONFIGGPSINJECTVIEWMODEL_H
 
 #include "comm/GpsCorrectionSource.h"
+#include "comm/UbloxBaseStationService.h"
 
 #include <QHash>
 #include <QList>
@@ -97,7 +98,15 @@ public:
     bool Active() const { return m_active; }
     bool Connected() const { return m_connected; }
     QString ConnectLabel() const;
-    bool CanEditSource() const { return !m_active; }
+    bool CanEditSource() const;
+    bool CanToggleConnect() const;
+    bool ReceiverBusy() const;
+    bool CanRestartSurveyIn() const;
+    bool CanUseBasePosition() const;
+    quint64 PendingUbloxAuthorization() const noexcept
+    {
+        return m_pendingUbloxAuthorization;
+    }
 
     QString Status() const { return m_status; }
     QString Injected() const { return m_injected; }
@@ -120,6 +129,10 @@ public:
     BasePosRow ActiveBasePosition() const { return m_activeBasePosition; }
 
     GpsCorrectionSource *Source() const { return m_source.data(); }
+    UbloxBaseStationService *UbloxService() const
+    {
+        return m_ubloxService.data();
+    }
 
 public slots:
     void SetSelectedPort(const QString &value);
@@ -156,6 +169,8 @@ public slots:
 
     bool RefreshPorts();
     bool ToggleConnect();
+    bool ResolveUbloxAuthorization(quint64 authorizationId,
+                                   bool accepted);
     void UpdateStats();
     void ReportInjectionResult(qint64 bytes, bool accepted,
                                const QString &reason = QString());
@@ -174,8 +189,12 @@ signals:
     void basePositionsChanged();
     void rtcmDataReady(const QByteArray &frame);
 
-    // Receiver drivers are intentionally outside this ViewModel. These
-    // signals request the MP10 actions without claiming that they succeeded.
+    void ubloxAuthorizationRequested(quint64 authorizationId,
+                                     const QString &confirmationText);
+
+    // Compatibility notifications for receiver integrations not owned by
+    // this model. u-blox actions above use UbloxBaseStationService directly;
+    // Septentrio remains explicitly unavailable in this slice.
     void ubloxConfigureRequested(bool m8p130Plus);
     void ubloxSurveyInRequested(int durationSeconds,
                                 double accuracyMeters,
@@ -198,6 +217,9 @@ private slots:
     void sourceStatusChanged(const QString &status);
     void sourceInputBytes(qint64 bytes);
     void sourceRtcmFrame(const QByteArray &frame, quint16 messageId);
+    void ubloxStateChanged();
+    void ubloxOperationFinished(
+        const UbloxBaseStationService::Report &report);
 
 private:
     void initialize();
@@ -209,7 +231,14 @@ private:
     void saveActiveBasePosition();
     void resetStatistics();
     void markFreshness(quint16 messageId, qint64 now);
+    bool beginSource(const GpsCorrectionSourceSettings &settings);
     void requestAutoConfiguration();
+    bool validateSurveySettings(quint32 *durationSeconds,
+                                double *accuracyMeters,
+                                QString *error) const;
+    void setSurveyInPresentation(const QString &baseStatus, bool valid);
+    void rebuildSurveyInPresentation();
+    void refreshUbloxObservations();
     QString connectedStatus() const;
     GpsCorrectionSourceSettings sourceSettings() const;
     void setStatus(const QString &status);
@@ -225,6 +254,7 @@ private:
     static bool isFresh(qint64 seenAt, int timeoutSeconds);
 
     QPointer<GpsCorrectionSource> m_source;
+    QPointer<UbloxBaseStationService> m_ubloxService;
     QSettings *m_settings = nullptr;
     QTimer *m_statisticsTimer = nullptr;
     bool m_ownsSettings = false;
@@ -248,6 +278,7 @@ private:
     bool m_m8p130Plus = true;
     QString m_surveyInAcc = QStringLiteral("2");
     QString m_surveyInTime = QStringLiteral("60");
+    QString m_surveyInBaseStatus = QStringLiteral("Survey In: not started");
     QString m_surveyInStatus = QStringLiteral("Survey In: not started");
     bool m_surveyInValid = false;
 
@@ -266,6 +297,14 @@ private:
     bool m_active = false;
     bool m_connected = false;
     bool m_receiverActionsRequested = false;
+    quint64 m_nextUbloxAuthorization = 1;
+    quint64 m_pendingUbloxAuthorization = 0;
+    quint64 m_ownedUbloxOperation = 0;
+    GpsCorrectionSourceSettings m_pendingSourceSettings;
+    bool m_pendingM8p130Plus = true;
+    bool m_pendingFixedPosition = false;
+    UbloxBaseStationService::FixedPosition m_pendingFixed;
+    bool m_ubloxConnectAuthorized = false;
     QString m_status = QStringLiteral(
         "Select a serial port or NTRIP and press Connect.");
     QString m_injected = QStringLiteral("0 bytes");

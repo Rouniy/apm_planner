@@ -1,5 +1,6 @@
 #include "ConfigGpsInjectView.h"
 
+#include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QCheckBox>
 #include <QColor>
@@ -11,6 +12,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPalette>
@@ -635,8 +637,76 @@ ConfigGpsInjectView::ConfigGpsInjectView(
             this, &ConfigGpsInjectView::syncFromModel);
     connect(m_viewModel, &ConfigGpsInjectViewModel::basePositionsChanged,
             this, &ConfigGpsInjectView::syncFromModel);
+    connect(m_viewModel,
+            &ConfigGpsInjectViewModel::ubloxAuthorizationRequested,
+            this, &ConfigGpsInjectView::showUbloxAuthorization);
 
     syncFromModel();
+}
+
+ConfigGpsInjectView::~ConfigGpsInjectView()
+{
+    if (m_viewModel) {
+        disconnect(m_viewModel, nullptr, this, nullptr);
+    }
+    const quint64 authorizationId = m_ubloxAuthorizationId;
+    m_ubloxAuthorizationId = 0;
+    QPointer<QMessageBox> dialog(m_ubloxAuthorizationDialog);
+    m_ubloxAuthorizationDialog.clear();
+    if (dialog) {
+        disconnect(dialog, nullptr, this, nullptr);
+        dialog->blockSignals(true);
+        dialog->reject();
+    }
+    if (m_viewModel && authorizationId != 0) {
+        (void) m_viewModel->ResolveUbloxAuthorization(
+            authorizationId, false);
+    }
+}
+
+void ConfigGpsInjectView::showUbloxAuthorization(
+    quint64 authorizationId, const QString &confirmationText)
+{
+    if (authorizationId == 0 || !m_viewModel
+        || authorizationId != m_viewModel->PendingUbloxAuthorization()) {
+        return;
+    }
+    if (m_ubloxAuthorizationDialog) {
+        // The model admits only one frozen authorization at a time.  A
+        // duplicate notification must not replace or implicitly accept the
+        // already visible consent boundary.
+        return;
+    }
+
+    auto *dialog = new QMessageBox(
+        QMessageBox::Warning, tr("Authorize u-blox Auto Configure"),
+        confirmationText, QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(
+        QStringLiteral("gpsInjectUbloxAutoConfigureConfirmation"));
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    if (QAbstractButton *confirm = dialog->button(QMessageBox::Yes)) {
+        confirm->setObjectName(
+            QStringLiteral("gpsInjectUbloxAutoConfigureConfirmButton"));
+        confirm->setText(tr("Configure and Connect"));
+    }
+    m_ubloxAuthorizationDialog = dialog;
+    m_ubloxAuthorizationId = authorizationId;
+    connect(dialog, &QDialog::finished, this,
+            [this, authorizationId](int result) {
+        if (m_ubloxAuthorizationId != authorizationId) {
+            return;
+        }
+        m_ubloxAuthorizationDialog.clear();
+        m_ubloxAuthorizationId = 0;
+        if (m_viewModel) {
+            (void) m_viewModel->ResolveUbloxAuthorization(
+                authorizationId, result == QMessageBox::Yes);
+        }
+    });
+    dialog->open();
 }
 
 QSize ConfigGpsInjectView::sizeHint() const
@@ -733,6 +803,7 @@ void ConfigGpsInjectView::syncFromModel()
                       m_viewModel->SurveyInValid());
 
     const bool canEditSource = m_viewModel->CanEditSource();
+    m_connectButton->setEnabled(m_viewModel->CanToggleConnect());
     m_sourceCombo->setEnabled(canEditSource);
     m_baudCombo->setEnabled(canEditSource && m_viewModel->IsSerial());
     m_refreshPortsButton->setEnabled(canEditSource);
@@ -744,12 +815,24 @@ void ConfigGpsInjectView::syncFromModel()
     m_receiverTypeCombo->setVisible(m_viewModel->AutoConfig());
     m_receiverTypeCombo->setEnabled(canEditSource);
     m_autoConfigPanel->setVisible(m_viewModel->AutoConfig());
+    m_m8p130PlusCheck->setEnabled(!m_viewModel->ReceiverBusy());
+    m_surveyAccuracyEdit->setEnabled(!m_viewModel->ReceiverBusy());
+    m_surveyTimeEdit->setEnabled(!m_viewModel->ReceiverBusy());
+    m_restartSurveyButton->setEnabled(
+        m_viewModel->CanRestartSurveyIn());
+    m_savePositionButton->setEnabled(
+        m_viewModel->HasCurrentBasePosition());
     m_septentrioPanel->setVisible(m_viewModel->IsSeptentrio());
     m_septentrioPositionWidget->setEnabled(
         m_viewModel->SeptentrioFixedPosition());
 
     if (m_renderedBasePositions != m_viewModel->BasePositions()) {
         rebuildBasePositions();
+    }
+    for (int row = 0; row < m_basePositionsTable->rowCount(); ++row) {
+        if (QWidget *use = m_basePositionsTable->cellWidget(row, 4)) {
+            use->setEnabled(m_viewModel->CanUseBasePosition());
+        }
     }
 }
 

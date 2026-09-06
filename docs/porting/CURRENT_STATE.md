@@ -33,6 +33,37 @@ below is background, not permission to return to export-first work.
 
 ## Verified checkpoint
 
+Latest implementation (2026-09-06): **SETUP RTK/GPS Inject — u-blox**.
+The real, disconnected-accessible page now configures M8P/F9P through its
+existing QSerialPort instead of displaying placeholder responses. Authorized
+Connect performs setup only; Restart alone starts Survey In. Saved-base
+Connect performs setup/reset/fixed, while connected Use sends only fixed
+TMODE3 plus poll. Live NAV status and saved positions are wired; disconnect
+stops the exact serial operation without replay on another receiver session.
+
+Configuration is explicitly reported as host submission, not verified receiver
+acceptance. Serial NAV activity now refreshes the watchdog during normal
+Survey In before RTCM becomes available, fixing the30s disconnect caught by
+Claude TCP c351. NTRIP still requires valid correction frames. ACK text no
+longer accumulates before the first NAV-SVIN. Production X11 reports zero
+runtime failures, including31s NAV-only observation; page and consent
+screenshots were inspected. Tests use a private PTY, not the user's SITL/GNSS.
+Final Qt5/audio application build3 and test-only rebuild4 pass; full
+**317/317 (110.60s)** passes, including the41.17s RTK runtime. See
+`RTK_UBLOX_PORT.md` and `/tmp/apm-ublox-port.thxRlW/` for receipts and
+explicit remaining differences.
+
+Inventory: **129 rows:81 in-progress,33 partial,15 not-started;160 deviations**,
+none strict-complete. SETUP remains46 routes/eight absent reference routes;
+Advanced14 working+Signing partial+Support Proxy gap and Developer32 registered
+implementations are not complete workflow parity. Septentrio's driver, ECEF
+base input, hardware/caster/native-platform evidence and other RTK gaps remain.
+Next practical SETUP slice: **Radio Calibration**, especially missing Spektrum
+Bind, modern `RCn_REVERSED` mapping and acknowledged calibration writes.
+Then firmware/remaining Advanced/Developer workflows, Settings later, Swarm last.
+
+### Previous checkpoint: Calibrate Level and Simple
+
 Latest implementation (2026-09-06): **SETUP Calibrate Level and Simple**.
 The real accelerometer page now has Full, Level and Simple sections in a
 resizable layout, plus the useful Legacy option. Level sends the MP10

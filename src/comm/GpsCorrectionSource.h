@@ -50,12 +50,35 @@ public:
     virtual void setGgaPosition(double latitude, double longitude,
                                 double altitudeMsl, bool valid) = 0;
 
+    /**
+     * Identifies the currently open, application-owned serial receiver.
+     * Zero means that no writable receiver session exists.  The identifier
+     * changes on every successful serial open and is never reused for an
+     * automatic reconnect/replacement.
+     */
+    virtual quint64 receiverSession() const noexcept;
+    virtual bool canConfigureReceiver() const noexcept;
+    virtual int receiverBaudRate() const noexcept;
+    virtual bool setReceiverBaudRate(int baudRate,
+                                     quint64 expectedSession,
+                                     QString *error = nullptr);
+
+    /**
+     * Queues bytes on the already-open serial receiver only when its exact
+     * session still matches.  NTRIP and stale/replaced serial sessions reject
+     * writes.  Existing subclasses remain read-only unless they override it.
+     */
+    virtual bool writeReceiverData(const QByteArray &bytes,
+                                   quint64 expectedSession,
+                                   QString *error = nullptr);
+
 signals:
     void stateChanged(bool active, bool connected);
     void statusChanged(const QString &status);
     void inputBytes(qint64 bytes);
     void rtcmFrame(const QByteArray &frame, quint16 messageId);
     void invalidRtcmFrame(quint16 messageId);
+    void receiverBytes(const QByteArray &bytes, quint64 receiverSession);
     void plaintextCredentialsWarning();
 };
 
@@ -74,6 +97,15 @@ public:
     void stop() override;
     void setGgaPosition(double latitude, double longitude,
                         double altitudeMsl, bool valid) override;
+    quint64 receiverSession() const noexcept override;
+    bool canConfigureReceiver() const noexcept override;
+    int receiverBaudRate() const noexcept override;
+    bool setReceiverBaudRate(int baudRate,
+                             quint64 expectedSession,
+                             QString *error = nullptr) override;
+    bool writeReceiverData(const QByteArray &bytes,
+                           quint64 expectedSession,
+                           QString *error = nullptr) override;
 
     static QByteArray buildNtripRequest(
         const GpsCorrectionSourceSettings &settings,
@@ -125,6 +157,8 @@ private:
     bool m_chunkedTransfer = false;
     bool m_chunkedFinished = false;
     bool m_closing = false;
+    quint64 m_receiverSession = 0;
+    quint64 m_nextReceiverSession = 1;
 };
 
 #endif // GPSCORRECTIONSOURCE_H

@@ -1620,6 +1620,12 @@ target_include_directories(apm_matlab_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/sr
     ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
 target_link_libraries(apm_matlab_core PUBLIC Qt::Core)
 
+add_library(apm_ublox_core STATIC
+    src/comm/UbloxBaseStationProtocol.h src/comm/UbloxBaseStationProtocol.cpp
+    src/comm/UbloxBaseStationService.h src/comm/UbloxBaseStationService.cpp)
+target_include_directories(apm_ublox_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(apm_ublox_core PUBLIC Qt::Core)
+
 add_library(apm_joystick_input STATIC
     src/input/JoystickConfiguration.h src/input/JoystickConfiguration.cpp
     src/input/JoystickDevice.h src/input/JoystickDevice.cpp)
@@ -1689,6 +1695,7 @@ target_link_libraries(apm_firmware_archive_ui PUBLIC apm_firmware_archive Qt::Wi
 # Link Qt and additional libs
 target_link_libraries(${APM_PLANNER_TARGET}
     apm_joystick_ui
+    apm_ublox_core
     apm_matlab_core
     apm_sftp_ui
     apm_georef_ui
@@ -1884,6 +1891,8 @@ if(BUILD_TESTING)
         tests/DataFlashLogToolsRuntimeAudit.h
         tests/JoystickRuntimeAudit.cpp
         tests/JoystickRuntimeAudit.h
+        tests/UbloxRuntimeAudit.cpp
+        tests/UbloxRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1946,6 +1955,11 @@ if(BUILD_TESTING)
         COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --joystick-audit)
     set_tests_properties(joystick_runtime_tests PROPERTIES TIMEOUT 45 RUN_SERIAL TRUE
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME ublox_runtime_tests COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --ublox-audit)
+        set_tests_properties(ublox_runtime_tests PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+    endif()
     set_tests_properties(dataflash_tools_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 90)
@@ -5043,6 +5057,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/configuration
     )
     target_link_libraries(configgpsinjectview_tests PRIVATE
+        apm_ublox_core
         Qt::Core
         Qt::Network
         Qt::SerialPort
@@ -5054,6 +5069,16 @@ if(BUILD_TESTING)
     set_tests_properties(configgpsinjectview_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    foreach(ublox_suite ubloxbasestationprotocol ubloxbasestationservice gpscorrectionsource)
+        add_executable(${ublox_suite}_tests tests/test_${ublox_suite}.cpp
+            src/comm/GpsCorrectionSource.cpp src/comm/GpsCorrectionSource.h
+            src/comm/Rtcm3Parser.cpp src/comm/Rtcm3Parser.h)
+        target_link_libraries(${ublox_suite}_tests PRIVATE apm_ublox_core
+            Qt::Network Qt::SerialPort Qt::Test)
+        add_test(NAME ${ublox_suite}_tests COMMAND ${ublox_suite}_tests)
+        set_tests_properties(${ublox_suite}_tests PROPERTIES TIMEOUT 60)
+    endforeach()
 
     add_executable(confighwcanview_tests
         tests/test_confighwcanview.cpp

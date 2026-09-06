@@ -4,11 +4,13 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QIODevice>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QSerialPort>
 #include <QSerialPortInfo>
 #include <QSslSocket>
 #include <QTcpSocket>
+#include <QThread>
 #include <QTime>
 #include <QTimer>
 #include <QUrl>
@@ -100,6 +102,39 @@ quint8 nmeaChecksum(const QByteArray &body)
     return checksum;
 }
 } // namespace
+
+quint64 GpsCorrectionSource::receiverSession() const noexcept
+{
+    return 0;
+}
+
+bool GpsCorrectionSource::canConfigureReceiver() const noexcept
+{
+    return false;
+}
+
+int GpsCorrectionSource::receiverBaudRate() const noexcept
+{
+    return 0;
+}
+
+bool GpsCorrectionSource::setReceiverBaudRate(
+    int, quint64, QString *error)
+{
+    if (error) {
+        *error = tr("This correction source cannot change receiver baud rate.");
+    }
+    return false;
+}
+
+bool GpsCorrectionSource::writeReceiverData(
+    const QByteArray &, quint64, QString *error)
+{
+    if (error) {
+        *error = tr("This correction source does not expose a writable receiver.");
+    }
+    return false;
+}
 
 QString GpsCorrectionSourceSettings::validationError() const
 {
@@ -231,6 +266,11 @@ void QtGpsCorrectionSource::startSerial()
         fail(tr("Connect failed: %1").arg(m_serialPort->errorString()));
         return;
     }
+    if (m_nextReceiverSession == 0) {
+        fail(tr("Connect failed: receiver session identifiers are exhausted."));
+        return;
+    }
+    m_receiverSession = m_nextReceiverSession++;
     m_device = m_serialPort;
     connect(m_serialPort, &QSerialPort::readyRead,
             this, &QtGpsCorrectionSource::readAvailable);
@@ -368,6 +408,21 @@ void QtGpsCorrectionSource::readAvailable()
     const QByteArray bytes = m_device->readAll();
     if (bytes.isEmpty()) {
         return;
+    }
+    if (m_serialPort && m_device == m_serialPort
+        && m_receiverSession != 0) {
+        const QPointer<QtGpsCorrectionSource> guard(this);
+        const quint64 session = m_receiverSession;
+        // During survey-in a receiver can legitimately emit UBX NAV status
+        // for longer than the RTCM watchdog interval.  Raw serial activity
+        // proves that this exact local receiver session is alive; NTRIP still
+        // refreshes its watchdog only after a CRC-valid RTCM frame below.
+        m_watchdogTimer->start(kDataWatchdogMs);
+        emit receiverBytes(bytes, session);
+        if (!guard || !m_active || !m_connected
+            || m_receiverSession != session) {
+            return;
+        }
     }
     if (m_settings.isNtrip() && !m_handshakeComplete) {
         handleNtripResponse(bytes);
@@ -599,6 +654,92 @@ void QtGpsCorrectionSource::setGgaPosition(
         && std::isfinite(longitude) && std::isfinite(altitudeMsl);
 }
 
+quint64 QtGpsCorrectionSource::receiverSession() const noexcept
+{
+    return canConfigureReceiver() ? m_receiverSession : 0;
+}
+
+bool QtGpsCorrectionSource::canConfigureReceiver() const noexcept
+{
+    return m_active && m_connected && m_serialPort
+        && m_device == m_serialPort && m_serialPort->isOpen()
+        && m_receiverSession != 0;
+}
+
+int QtGpsCorrectionSource::receiverBaudRate() const noexcept
+{
+    return canConfigureReceiver()
+        ? static_cast<int>(m_serialPort->baudRate()) : 0;
+}
+
+bool QtGpsCorrectionSource::setReceiverBaudRate(
+    int baudRate, quint64 expectedSession, QString *error)
+{
+    if (error) {
+        error->clear();
+    }
+    if (QThread::currentThread() != thread()) {
+        if (error) {
+            *error = tr("Receiver baud-rate changes must run on the source thread.");
+        }
+        return false;
+    }
+    if (!canConfigureReceiver() || expectedSession == 0
+        || expectedSession != m_receiverSession) {
+        if (error) {
+            *error = tr("The serial receiver session changed or is unavailable.");
+        }
+        return false;
+    }
+    if (baudRate <= 0 || !m_serialPort->setBaudRate(baudRate)) {
+        if (error) {
+            *error = tr("Receiver baud-rate change failed: %1")
+                .arg(m_serialPort->errorString());
+        }
+        return false;
+    }
+    return true;
+}
+
+bool QtGpsCorrectionSource::writeReceiverData(
+    const QByteArray &bytes, quint64 expectedSession, QString *error)
+{
+    if (error) {
+        error->clear();
+    }
+    if (QThread::currentThread() != thread()) {
+        if (error) {
+            *error = tr("Receiver writes must run on the source thread.");
+        }
+        return false;
+    }
+    if (bytes.isEmpty()) {
+        if (error) {
+            *error = tr("Receiver configuration data is empty.");
+        }
+        return false;
+    }
+    if (!canConfigureReceiver() || expectedSession == 0
+        || expectedSession != m_receiverSession) {
+        if (error) {
+            *error = tr("The serial receiver session changed or is unavailable.");
+        }
+        return false;
+    }
+    const qint64 accepted = m_serialPort->write(bytes);
+    if (accepted != bytes.size()) {
+        if (error) {
+            *error = accepted < 0
+                ? tr("Receiver write failed: %1")
+                      .arg(m_serialPort->errorString())
+                : tr("Receiver accepted only %1 of %2 configuration bytes.")
+                      .arg(accepted).arg(bytes.size());
+        }
+        return false;
+    }
+    return true;
+}
+
 void QtGpsCorrectionSource::sendGga()
 {
     if (!m_connected || !m_settings.isNtrip() || !m_settings.sendGga
@@ -641,6 +782,7 @@ void QtGpsCorrectionSource::stop()
 void QtGpsCorrectionSource::closeDevice()
 {
     m_closing = true;
+    m_receiverSession = 0;
     if (m_device) {
         m_device->disconnect(this);
         m_device->close();

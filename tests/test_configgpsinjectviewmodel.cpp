@@ -4,12 +4,14 @@
 #include "ui/configuration/ConfigGpsInjectView.h"
 #include "ui/configuration/ConfigGpsInjectViewModel.h"
 
+#include <QAbstractButton>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFile>
 #include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
@@ -48,6 +50,12 @@ public:
 
         isActive = true;
         isConnected = connectImmediately;
+        if (!settings.isNtrip() && isConnected) {
+            currentReceiverSession = nextReceiverSession++;
+            currentReceiverBaud = settings.baudRate;
+        } else {
+            currentReceiverSession = 0;
+        }
         if (!startStatus.isEmpty()) {
             emit statusChanged(startStatus);
         }
@@ -60,6 +68,7 @@ public:
         ++stopCalls;
         isActive = false;
         isConnected = false;
+        currentReceiverSession = 0;
         emit stateChanged(false, false);
     }
 
@@ -71,6 +80,51 @@ public:
         ggaLongitude = longitude;
         ggaAltitude = altitudeMsl;
         ggaValid = valid;
+    }
+
+    quint64 receiverSession() const noexcept override
+    {
+        return canConfigureReceiver() ? currentReceiverSession : 0;
+    }
+
+    bool canConfigureReceiver() const noexcept override
+    {
+        return isActive && isConnected && currentReceiverSession != 0;
+    }
+
+    int receiverBaudRate() const noexcept override
+    {
+        return canConfigureReceiver() ? currentReceiverBaud : 0;
+    }
+
+    bool setReceiverBaudRate(int baudRate, quint64 expectedSession,
+                             QString *error) override
+    {
+        if (!canConfigureReceiver()
+            || expectedSession != currentReceiverSession || baudRate <= 0) {
+            if (error) {
+                *error = QStringLiteral("stale receiver session");
+            }
+            return false;
+        }
+        currentReceiverBaud = baudRate;
+        return true;
+    }
+
+    bool writeReceiverData(const QByteArray &bytes,
+                           quint64 expectedSession,
+                           QString *error) override
+    {
+        if (!canConfigureReceiver()
+            || expectedSession != currentReceiverSession
+            || bytes.isEmpty()) {
+            if (error) {
+                *error = QStringLiteral("stale receiver session");
+            }
+            return false;
+        }
+        receiverWrites.append(bytes);
+        return true;
     }
 
     void publishState(bool active, bool connected)
@@ -97,6 +151,11 @@ public:
         emit rtcmFrame(frame, messageId);
     }
 
+    void emitReceiverData(const QByteArray &bytes)
+    {
+        emit receiverBytes(bytes, currentReceiverSession);
+    }
+
     QStringList ports;
     bool startResult = true;
     bool connectImmediately = true;
@@ -111,6 +170,10 @@ public:
     double ggaLongitude = 0.0;
     double ggaAltitude = 0.0;
     bool ggaValid = false;
+    quint64 nextReceiverSession = 1;
+    quint64 currentReceiverSession = 0;
+    int currentReceiverBaud = 0;
+    QList<QByteArray> receiverWrites;
 };
 
 void setUnsignedBits(QByteArray *bytes, int bitOffset, int bitCount,
@@ -184,6 +247,22 @@ void stopAutomaticStatistics(ConfigGpsInjectViewModel *model)
         timer->stop();
     }
 }
+
+QMessageBox *visibleUbloxAuthorization(ConfigGpsInjectView *view)
+{
+    if (!view) {
+        return nullptr;
+    }
+    const QList<QMessageBox *> dialogs =
+        view->findChildren<QMessageBox *>(
+            QStringLiteral("gpsInjectUbloxAutoConfigureConfirmation"));
+    for (QMessageBox *dialog : dialogs) {
+        if (dialog && dialog->isVisible()) {
+            return dialog;
+        }
+    }
+    return nullptr;
+}
 } // namespace
 
 class ConfigGpsInjectViewModelTest final : public QObject
@@ -199,6 +278,10 @@ private slots:
     void messagesSeenAreSortedAfterStatsUpdate();
     void basePositionsSaveUseDeleteAndPersist();
     void autoConfigOnlyRequestsReceiverActions();
+    void restartSurveyAndConnectedFixedUseAreRealOperations();
+    void repeatedReceiverAckDoesNotGrowSurveyStatus();
+    void receiverCallbacksMayDeleteModel();
+    void ubloxConnectAuthorizationIsDefaultCancel();
     void viewMatchesMissionPlannerSurfaceAndBindings();
 };
 
@@ -383,6 +466,7 @@ void ConfigGpsInjectViewModelTest::toggleConnectTracksSourceStateAndStatus()
     source.connectImmediately = false;
     source.startStatus = QStringLiteral("Connecting fake source.");
     ConfigGpsInjectViewModel model(&source, &settings);
+    model.SetSelectedPort(QStringLiteral("COM4"));
     stopAutomaticStatistics(&model);
 
     QSignalSpy states(&model, &ConfigGpsInjectViewModel::stateChanged);
@@ -558,9 +642,35 @@ void ConfigGpsInjectViewModelTest::basePositionsSaveUseDeleteAndPersist()
         QVERIFY(model.UseBasePos(saved));
         QVERIFY(model.HasActiveBasePosition());
         QVERIFY(model.ActiveBasePosition() == saved);
-        QCOMPARE(model.Status(),
-                 QStringLiteral("Using fixed base position: %1")
-                     .arg(saved.Name));
+        QVERIFY(model.Status().contains(
+            QStringLiteral("Saved fixed base position")));
+        QVERIFY(model.Status().contains(saved.Name));
+        QVERIFY(model.Status().contains(
+            QStringLiteral("not sent")));
+        BasePosRow invalidAltitude = saved;
+        invalidAltitude.Alt = QStringLiteral("100001");
+        invalidAltitude.Name = QStringLiteral("Invalid altitude");
+        QVERIFY(!model.UseBasePos(invalidAltitude));
+        QVERIFY(model.ActiveBasePosition() == saved);
+        QVERIFY(model.Status().contains(
+            QStringLiteral("outside the receiver's supported range")));
+
+        source.ports = QStringList({QStringLiteral("COM8")});
+        model.SetSelectedPort(QStringLiteral("COM8"));
+        model.SetAutoConfig(true);
+        model.SetSurveyInTime(QStringLiteral("invalid but unused"));
+        QSignalSpy authorization(
+            &model,
+            &ConfigGpsInjectViewModel::ubloxAuthorizationRequested);
+        QVERIFY(model.ToggleConnect());
+        QCOMPARE(source.startCalls, 0);
+        QCOMPARE(authorization.count(), 1);
+        const QList<QVariant> request = authorization.takeFirst();
+        QVERIFY(request.at(1).toString().contains(
+            QStringLiteral("Fixed base")));
+        QVERIFY(model.ResolveUbloxAuthorization(
+            request.at(0).toULongLong(), false));
+        QCOMPARE(source.startCalls, 0);
         settings.sync();
         QVERIFY(!settings.value(QStringLiteral("base_pos_list"))
                      .toString().isEmpty());
@@ -596,12 +706,8 @@ void ConfigGpsInjectViewModelTest::autoConfigOnlyRequestsReceiverActions()
     ConfigGpsInjectViewModel model(&source, &settings);
     stopAutomaticStatistics(&model);
 
-    QSignalSpy ubloxConfigure(
-        &model, &ConfigGpsInjectViewModel::ubloxConfigureRequested);
-    QSignalSpy ubloxSurvey(
-        &model, &ConfigGpsInjectViewModel::ubloxSurveyInRequested);
-    QSignalSpy ubloxBase(
-        &model, &ConfigGpsInjectViewModel::ubloxBasePositionRequested);
+    QSignalSpy ubloxAuthorization(
+        &model, &ConfigGpsInjectViewModel::ubloxAuthorizationRequested);
     QSignalSpy septentrioConfigure(
         &model, &ConfigGpsInjectViewModel::septentrioConfigureRequested);
     QSignalSpy septentrioPosition(
@@ -612,33 +718,57 @@ void ConfigGpsInjectViewModelTest::autoConfigOnlyRequestsReceiverActions()
     model.SetSelectedPort(QStringLiteral("COM8"));
     model.SetAutoConfig(true);
     model.SetM8p130Plus(false);
-    model.SetSurveyInTime(QStringLiteral("75"));
+    // Connect-time auto-configuration does not start Survey In. Invalid
+    // survey fields therefore do not block the separate receiver setup.
+    model.SetSurveyInTime(QStringLiteral("not-a-duration"));
     model.SetSurveyInAcc(QStringLiteral("1.25"));
     QVERIFY(model.ToggleConnect());
-    QCOMPARE(ubloxConfigure.count(), 1);
-    QCOMPARE(ubloxConfigure.first().at(0).toBool(), false);
-    QCOMPARE(model.Status(), QStringLiteral(
-        "Connected — receiving RTCM correction data. Receiver configuration requested."));
+    QCOMPARE(source.startCalls, 0);
+    QCOMPARE(ubloxAuthorization.count(), 1);
+    const QList<QVariant> firstAuthorization =
+        ubloxAuthorization.takeFirst();
+    QVERIFY(firstAuthorization.at(1).toString().contains(
+        QStringLiteral("Receiver setup only")));
+    QVERIFY(model.ResolveUbloxAuthorization(
+        firstAuthorization.at(0).toULongLong(), false));
+    QCOMPARE(source.startCalls, 0);
 
-    QVERIFY(model.RestartSurveyIn());
-    QCOMPARE(ubloxSurvey.count(), 1);
-    QCOMPARE(ubloxSurvey.first().at(0).toInt(), 75);
-    QCOMPARE(ubloxSurvey.first().at(1).toDouble(), 1.25);
-    QCOMPARE(ubloxSurvey.first().at(2).toBool(), false);
-    QVERIFY(!model.SurveyInValid());
-    QCOMPARE(model.Status(), QStringLiteral("Survey In: restart requested."));
+    model.SetSurveyInTime(QStringLiteral("75"));
+    QVERIFY(model.ToggleConnect());
+    QCOMPARE(source.startCalls, 0);
+    QCOMPARE(ubloxAuthorization.count(), 1);
+    const quint64 cancelledAuthorization =
+        ubloxAuthorization.takeFirst().at(0).toULongLong();
+    QVERIFY(cancelledAuthorization != 0);
+    QVERIFY(model.ReceiverBusy());
+    QVERIFY(!model.CanEditSource());
+    QVERIFY(model.ResolveUbloxAuthorization(cancelledAuthorization, false));
+    QCOMPARE(source.startCalls, 0);
+    QVERIFY(!model.ReceiverBusy());
+    QVERIFY(model.Status().contains(QStringLiteral("not opened")));
+
+    QVERIFY(model.ToggleConnect());
+    QCOMPARE(ubloxAuthorization.count(), 1);
+    const QList<QVariant> authorization = ubloxAuthorization.takeFirst();
+    const quint64 acceptedAuthorization =
+        authorization.at(0).toULongLong();
+    QVERIFY(authorization.at(1).toString().contains(QStringLiteral("COM8")));
+    QVERIFY(authorization.at(1).toString().contains(
+        QStringLiteral("Survey In will not start")));
+    QVERIFY(model.ResolveUbloxAuthorization(acceptedAuthorization, true));
+    QCOMPARE(source.startCalls, 1);
+    QVERIFY(model.Connected());
+    QVERIFY(model.UbloxService());
+    QVERIFY(model.UbloxService()->busy());
+    QVERIFY(!model.CanRestartSurveyIn());
 
     const BasePosRow fixed = {
         QStringLiteral("35.1"), QStringLiteral("33.2"),
         QStringLiteral("100.5"), QStringLiteral("Home")
     };
-    QVERIFY(model.UseBasePos(fixed));
-    QCOMPARE(ubloxBase.count(), 1);
-    QCOMPARE(ubloxBase.first().at(0).toDouble(), 35.1);
-    QCOMPARE(ubloxBase.first().at(1).toDouble(), 33.2);
-    QCOMPARE(ubloxBase.first().at(2).toDouble(), 100.5);
-    QCOMPARE(model.Status(),
-             QStringLiteral("Using fixed base position: Home"));
+    QVERIFY(!model.UseBasePos(fixed));
+    QVERIFY(model.Status().contains(
+        QStringLiteral("another receiver configuration")));
     QVERIFY(model.ToggleConnect());
 
     model.SetSelectedReceiverType(QStringLiteral("Septentrio"));
@@ -668,24 +798,232 @@ void ConfigGpsInjectViewModelTest::autoConfigOnlyRequestsReceiverActions()
     QCOMPARE(septentrioRtcm.first().at(4).toBool(), true);
     QCOMPARE(septentrioRtcm.first().at(5).toBool(), false);
     QCOMPARE(model.Status(), QStringLiteral(
-        "Connected — receiving RTCM correction data. Receiver configuration requested."));
+        "Connected — receiving RTCM. Septentrio receiver auto-configuration is not implemented yet."));
 
-    QVERIFY(model.ApplySeptentrioRtcm());
+    QVERIFY(!model.ApplySeptentrioRtcm());
     QCOMPARE(septentrioRtcm.count(), 2);
     QCOMPARE(model.Status(),
-             QStringLiteral("Septentrio RTCM settings requested."));
-    QVERIFY(model.ApplySeptentrioPosition());
+             QStringLiteral("Septentrio receiver configuration is not implemented yet; RTCM injection remains available."));
+    QVERIFY(!model.ApplySeptentrioPosition());
     QCOMPARE(septentrioPosition.count(), 2);
     QCOMPARE(model.Status(),
-             QStringLiteral("Septentrio base position update requested."));
+             QStringLiteral("Septentrio receiver configuration is not implemented yet; RTCM injection remains available."));
     QVERIFY(model.ToggleConnect());
 
     model.SetSelectedReceiverType(QStringLiteral("Unicore UM982"));
     QVERIFY(model.ToggleConnect());
-    QCOMPARE(ubloxConfigure.count(), 1);
     QCOMPARE(septentrioConfigure.count(), 1);
     QCOMPARE(model.Status(), QStringLiteral(
         "Connected — receiving RTCM. Auto-config for Unicore UM982 is not supported here."));
+}
+
+void ConfigGpsInjectViewModelTest::
+    restartSurveyAndConnectedFixedUseAreRealOperations()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("gps.ini")),
+                       QSettings::IniFormat);
+    FakeGpsCorrectionSource source;
+    source.ports = QStringList({QStringLiteral("COM8")});
+    ConfigGpsInjectViewModel model(&source, &settings);
+    stopAutomaticStatistics(&model);
+    model.SetSelectedPort(QStringLiteral("COM8"));
+    QVERIFY(model.ToggleConnect());
+    QVERIFY(model.Connected());
+
+    const int writesBeforeValidation = source.receiverWrites.size();
+    model.SetSurveyInTime(QStringLiteral("not-a-duration"));
+    QVERIFY(!model.RestartSurveyIn());
+    QVERIFY(model.Status().contains(QStringLiteral("whole number")));
+    QCOMPARE(source.receiverWrites.size(), writesBeforeValidation);
+    model.SetSurveyInTime(QStringLiteral("60"));
+    model.SetSurveyInAcc(QStringLiteral("0"));
+    QVERIFY(!model.RestartSurveyIn());
+    QVERIFY(model.Status().contains(QStringLiteral("between")));
+    QCOMPARE(source.receiverWrites.size(), writesBeforeValidation);
+
+    model.SetSurveyInAcc(QStringLiteral("1.25"));
+    QVERIFY(model.RestartSurveyIn());
+    QVERIFY(model.UbloxService()->busy());
+    QVERIFY(model.SurveyInStatus().contains(QStringLiteral("restarting")));
+    QVERIFY(model.ToggleConnect());
+
+    QVERIFY(model.ToggleConnect());
+    const BasePosRow fixed = {
+        QStringLiteral("35.1"), QStringLiteral("33.2"),
+        QStringLiteral("100.5"), QStringLiteral("Home")
+    };
+    QVERIFY(model.UseBasePos(fixed));
+    QVERIFY(model.UbloxService()->busy());
+    QVERIFY(model.ActiveBasePosition() == fixed);
+    QVERIFY(model.ToggleConnect());
+}
+
+void ConfigGpsInjectViewModelTest::
+    repeatedReceiverAckDoesNotGrowSurveyStatus()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("gps.ini")),
+                       QSettings::IniFormat);
+    FakeGpsCorrectionSource source;
+    source.ports = QStringList({QStringLiteral("COM8")});
+    ConfigGpsInjectViewModel model(&source, &settings);
+    stopAutomaticStatistics(&model);
+    model.SetSelectedPort(QStringLiteral("COM8"));
+    model.SetAutoConfig(true);
+    QSignalSpy authorization(
+        &model, &ConfigGpsInjectViewModel::ubloxAuthorizationRequested);
+    QVERIFY(model.ToggleConnect());
+    QCOMPARE(authorization.count(), 1);
+    QVERIFY(model.ResolveUbloxAuthorization(
+        authorization.takeFirst().at(0).toULongLong(), true));
+    QVERIFY(model.UbloxService()->busy());
+
+    QByteArray payload;
+    payload.append(char(0x06));
+    payload.append(char(0x00));
+    const QByteArray acknowledgement = UbloxBaseStationProtocol::frame(
+        0x05, 0x01, payload);
+    source.emitReceiverData(acknowledgement);
+    const QString first = model.SurveyInStatus();
+    QCOMPARE(first.count(QStringLiteral("Receiver ACK")), 1);
+    QVERIFY(first.startsWith(QStringLiteral("Survey In: not started")));
+
+    source.emitReceiverData(acknowledgement);
+    QCOMPARE(model.SurveyInStatus(), first);
+    QCOMPARE(model.SurveyInStatus().count(QStringLiteral("Receiver ACK")), 1);
+
+    const QString fixedBase =
+        QStringLiteral("Fixed base: submitting receiver configuration");
+    model.SetSurveyInStatus(fixedBase, false);
+    source.emitReceiverData(acknowledgement);
+    const QString fixedWithAck = model.SurveyInStatus();
+    QVERIFY(fixedWithAck.startsWith(fixedBase));
+    QCOMPARE(fixedWithAck.count(QStringLiteral("Receiver ACK")), 1);
+    source.emitReceiverData(acknowledgement);
+    QCOMPARE(model.SurveyInStatus(), fixedWithAck);
+    QVERIFY(model.ToggleConnect());
+}
+
+void ConfigGpsInjectViewModelTest::receiverCallbacksMayDeleteModel()
+{
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QSettings settings(directory.filePath(QStringLiteral("cancel.ini")),
+                           QSettings::IniFormat);
+        FakeGpsCorrectionSource source;
+        source.ports = QStringList({QStringLiteral("COM8")});
+        auto *model = new ConfigGpsInjectViewModel(&source, &settings);
+        stopAutomaticStatistics(model);
+        model->SetSelectedPort(QStringLiteral("COM8"));
+        model->SetAutoConfig(true);
+        QSignalSpy authorization(
+            model,
+            &ConfigGpsInjectViewModel::ubloxAuthorizationRequested);
+        QVERIFY(model->ToggleConnect());
+        QCOMPARE(authorization.count(), 1);
+        const quint64 authorizationId =
+            authorization.takeFirst().at(0).toULongLong();
+        QVERIFY(model->ResolveUbloxAuthorization(authorizationId, true));
+        QVERIFY(model->UbloxService()->busy());
+
+        QPointer<ConfigGpsInjectViewModel> guard(model);
+        QObject::connect(
+            model->UbloxService(),
+            &UbloxBaseStationService::operationFinished, &source,
+            [model](const UbloxBaseStationService::Report &) {
+                delete model;
+            });
+        QVERIFY(!model->ToggleConnect());
+        QVERIFY(guard.isNull());
+    }
+
+    {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        QSettings settings(directory.filePath(QStringLiteral("start.ini")),
+                           QSettings::IniFormat);
+        FakeGpsCorrectionSource source;
+        source.ports = QStringList({QStringLiteral("COM8")});
+        auto *model = new ConfigGpsInjectViewModel(&source, &settings);
+        stopAutomaticStatistics(model);
+        model->SetSelectedPort(QStringLiteral("COM8"));
+        model->SetAutoConfig(true);
+        QSignalSpy authorization(
+            model,
+            &ConfigGpsInjectViewModel::ubloxAuthorizationRequested);
+        QVERIFY(model->ToggleConnect());
+        QCOMPARE(authorization.count(), 1);
+        const quint64 authorizationId =
+            authorization.takeFirst().at(0).toULongLong();
+
+        QPointer<ConfigGpsInjectViewModel> guard(model);
+        QMetaObject::Connection deletion;
+        deletion = QObject::connect(
+            &source, &GpsCorrectionSource::stateChanged, &source,
+            [&deletion, model](bool active, bool connected) {
+                if (active && connected) {
+                    QObject::disconnect(deletion);
+                    delete model;
+                }
+            });
+        QVERIFY(!model->ResolveUbloxAuthorization(authorizationId, true));
+        QVERIFY(guard.isNull());
+    }
+}
+
+void ConfigGpsInjectViewModelTest::
+    ubloxConnectAuthorizationIsDefaultCancel()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QSettings settings(directory.filePath(QStringLiteral("gps.ini")),
+                       QSettings::IniFormat);
+    FakeGpsCorrectionSource source;
+    source.ports = QStringList({QStringLiteral("COM8")});
+    ConfigGpsInjectView view(&source, &settings);
+    stopAutomaticStatistics(view.viewModel());
+    view.show();
+
+    auto *sourceCombo = view.findChild<QComboBox *>(
+        QStringLiteral("gpsInjectSourceCombo"));
+    auto *autoConfig = view.findChild<QCheckBox *>(
+        QStringLiteral("gpsInjectAutoConfigCheck"));
+    auto *connectButton = view.findChild<QPushButton *>(
+        QStringLiteral("gpsInjectConnectButton"));
+    QVERIFY(sourceCombo);
+    QVERIFY(autoConfig);
+    QVERIFY(connectButton);
+    sourceCombo->setCurrentText(QStringLiteral("COM8"));
+    autoConfig->setChecked(true);
+    connectButton->click();
+
+    QMessageBox *dialog = nullptr;
+    QTRY_VERIFY((dialog = visibleUbloxAuthorization(&view)) != nullptr);
+    QCOMPARE(dialog->defaultButton(),
+             qobject_cast<QPushButton *>(dialog->button(QMessageBox::Cancel)));
+    QCOMPARE(dialog->escapeButton(), dialog->button(QMessageBox::Cancel));
+    QVERIFY(dialog->text().contains(QStringLiteral("COM8")));
+    QVERIFY(dialog->text().contains(
+        QStringLiteral("Survey In will not start")));
+    QCOMPARE(source.startCalls, 0);
+
+    QTest::keyClick(dialog, Qt::Key_Escape);
+    QTRY_COMPARE(view.viewModel()->PendingUbloxAuthorization(), quint64(0));
+    QCOMPARE(source.startCalls, 0);
+
+    connectButton->click();
+    QTRY_VERIFY((dialog = visibleUbloxAuthorization(&view)) != nullptr);
+    QAbstractButton *confirm = dialog->button(QMessageBox::Yes);
+    QVERIFY(confirm);
+    QCOMPARE(confirm->objectName(),
+             QStringLiteral("gpsInjectUbloxAutoConfigureConfirmButton"));
+    confirm->click();
+    QTRY_COMPARE(source.startCalls, 1);
+    QVERIFY(view.viewModel()->Connected());
 }
 
 void ConfigGpsInjectViewModelTest::

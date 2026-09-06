@@ -46,6 +46,7 @@ ConfigGpsInjectViewModel::ConfigGpsInjectViewModel(
     if (!m_source) {
         m_source = new QtGpsCorrectionSource(this);
     }
+    m_ubloxService = new UbloxBaseStationService(m_source, this);
     initialize();
 }
 
@@ -53,6 +54,10 @@ ConfigGpsInjectViewModel::~ConfigGpsInjectViewModel()
 {
     if (m_statisticsTimer) {
         m_statisticsTimer->stop();
+    }
+    if (m_ubloxService) {
+        disconnect(m_ubloxService, nullptr, this, nullptr);
+        m_ubloxService->shutdown();
     }
     if (m_source) {
         disconnect(m_source, nullptr, this, nullptr);
@@ -76,7 +81,44 @@ QString ConfigGpsInjectViewModel::Title() const
 
 QString ConfigGpsInjectViewModel::ConnectLabel() const
 {
+    if (m_pendingUbloxAuthorization != 0) {
+        return tr("Awaiting Confirmation");
+    }
     return m_active ? tr("Disconnect") : tr("Connect");
+}
+
+bool ConfigGpsInjectViewModel::CanEditSource() const
+{
+    return !m_active && m_pendingUbloxAuthorization == 0
+        && !(m_ubloxService && m_ubloxService->busy());
+}
+
+bool ConfigGpsInjectViewModel::CanToggleConnect() const
+{
+    if (m_active) {
+        return true;
+    }
+    return m_pendingUbloxAuthorization == 0
+        && !(m_ubloxService && m_ubloxService->busy());
+}
+
+bool ConfigGpsInjectViewModel::ReceiverBusy() const
+{
+    return m_pendingUbloxAuthorization != 0
+        || (m_ubloxService && m_ubloxService->busy());
+}
+
+bool ConfigGpsInjectViewModel::CanRestartSurveyIn() const
+{
+    return m_connected && IsSerial()
+        && m_selectedReceiverType == QLatin1String("UBlox M8P/F9P")
+        && m_ubloxService && m_ubloxService->available()
+        && !ReceiverBusy();
+}
+
+bool ConfigGpsInjectViewModel::CanUseBasePosition() const
+{
+    return !ReceiverBusy();
 }
 
 void ConfigGpsInjectViewModel::initialize()
@@ -116,12 +158,39 @@ void ConfigGpsInjectViewModel::initialize()
         setStatus(tr("Warning: NTRIP credentials are being sent without TLS."));
     });
     connect(m_source, &QObject::destroyed, this, [this]() {
+        const QPointer<ConfigGpsInjectViewModel> guard(this);
+        m_pendingUbloxAuthorization = 0;
+        m_ownedUbloxOperation = 0;
+        m_ubloxConnectAuthorized = false;
         m_active = false;
         m_connected = false;
         m_receiverActionsRequested = false;
         emit stateChanged();
-        notifyProperties();
+        if (guard) {
+            notifyProperties();
+        }
     });
+
+    if (m_ubloxService) {
+        connect(m_ubloxService, &UbloxBaseStationService::stateChanged,
+                this, &ConfigGpsInjectViewModel::ubloxStateChanged);
+        connect(m_ubloxService,
+                &UbloxBaseStationService::operationFinished,
+                this, &ConfigGpsInjectViewModel::ubloxOperationFinished);
+        connect(m_ubloxService, &QObject::destroyed, this, [this]() {
+            const QPointer<ConfigGpsInjectViewModel> guard(this);
+            m_ownedUbloxOperation = 0;
+            m_ubloxService.clear();
+            setStatus(tr("u-blox receiver configuration service is unavailable; RTCM injection remains available."));
+            if (!guard) {
+                return;
+            }
+            emit stateChanged();
+            if (guard) {
+                notifyProperties();
+            }
+        });
+    }
 
     m_active = m_source->active();
     m_connected = m_source->connected();
@@ -610,11 +679,13 @@ void ConfigGpsInjectViewModel::SetCurrentBasePosition(
 void ConfigGpsInjectViewModel::SetSurveyInStatus(
     const QString &status, bool valid)
 {
-    if (m_surveyInStatus == status && m_surveyInValid == valid) {
+    const QString previousStatus = m_surveyInStatus;
+    const bool previousValid = m_surveyInValid;
+    setSurveyInPresentation(status, valid);
+    if (m_surveyInStatus == previousStatus
+        && m_surveyInValid == previousValid) {
         return;
     }
-    m_surveyInStatus = status;
-    m_surveyInValid = valid;
     notifyProperties();
 }
 
@@ -663,33 +734,186 @@ GpsCorrectionSourceSettings ConfigGpsInjectViewModel::sourceSettings() const
 
 bool ConfigGpsInjectViewModel::ToggleConnect()
 {
-    if (!m_source) {
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
+    const QPointer<GpsCorrectionSource> source(m_source);
+    if (!source) {
         setStatus(tr("Connect failed: correction source is unavailable."));
         return false;
     }
-    if (m_source->active() || m_active) {
-        m_source->stop();
+    if (m_pendingUbloxAuthorization != 0) {
+        setStatus(tr("Respond to the u-blox configuration confirmation first."));
+        return false;
+    }
+    if (source->active() || m_active) {
+        const QPointer<UbloxBaseStationService> service(m_ubloxService);
+        if (service && m_ownedUbloxOperation != 0
+            && service->currentOperationId()
+                == m_ownedUbloxOperation) {
+            QString cancelError;
+            (void) service->cancel(m_ownedUbloxOperation, &cancelError);
+            if (!guard || !source || m_source != source) {
+                return false;
+            }
+        }
+        m_ownedUbloxOperation = 0;
+        m_ubloxConnectAuthorized = false;
+        source->stop();
+        if (!guard || !source || m_source != source) {
+            return false;
+        }
         m_active = false;
         m_connected = false;
         m_receiverActionsRequested = false;
         setStatus(tr("Disconnected."));
+        if (!guard) {
+            return false;
+        }
         emit stateChanged();
-        notifyProperties();
+        if (guard) {
+            notifyProperties();
+        }
         return true;
     }
 
     saveConnectSettings();
     saveSeptentrioSettings();
+    const GpsCorrectionSourceSettings settings = sourceSettings();
+    const QString settingsError = settings.validationError();
+    if (!settingsError.isEmpty()) {
+        setStatus(tr("Connect failed: %1").arg(settingsError));
+        return false;
+    }
+
+    const bool authorizeUblox = m_autoConfig && settings.isNtrip() == false
+        && m_selectedReceiverType == QLatin1String("UBlox M8P/F9P");
+    if (!authorizeUblox) {
+        return beginSource(settings);
+    }
+
+    UbloxBaseStationService::FixedPosition fixed;
+    bool useFixed = false;
+    if (m_hasActiveBasePosition) {
+        useFixed = parsePosition(m_activeBasePosition, &fixed.latitude,
+                                 &fixed.longitude,
+                                 &fixed.altitudeMeters);
+        if (!useFixed || !fixed.isValid()) {
+            setStatus(tr("Cannot configure u-blox receiver: the saved active base position is invalid."));
+            return false;
+        }
+    }
+    if (m_nextUbloxAuthorization == 0) {
+        setStatus(tr("u-blox authorization identifiers are exhausted."));
+        return false;
+    }
+    const quint64 authorizationId = m_nextUbloxAuthorization++;
+    m_pendingUbloxAuthorization = authorizationId;
+    m_pendingSourceSettings = settings;
+    m_pendingM8p130Plus = m_m8p130Plus;
+    m_pendingFixedPosition = useFixed;
+    m_pendingFixed = fixed;
+    const QString mode = useFixed
+        ? tr("Fixed base: latitude %1, longitude %2, altitude %3 m.")
+              .arg(QString::number(fixed.latitude, 'g', 15),
+                   QString::number(fixed.longitude, 'g', 15),
+                   QString::number(fixed.altitudeMeters, 'g', 15))
+        : tr("Receiver setup only. Survey In will not start until you press Restart.");
+    const QString confirmation =
+        tr("Connect and automatically configure u-blox receiver\n\n"
+           "Serial source: %1 at %2 baud.\n"
+           "%3\n\n"
+           "This authorization opens that serial source and sends the Mission Planner u-blox M8P/F9P setup sequence%4. "
+           "It changes receiver baud, port protocols, navigation mode and RTCM message outputs; it may interrupt receiver output while configuration is in progress.\n\n"
+           "The reference sequence uses timed serial writes and does not prove each setting with an acknowledgement. "
+           "A Submitted result means all bytes entered the local serial queue, not that the receiver applied them. Continue?")
+            .arg(settings.selectedPort,
+                 QString::number(settings.baudRate), mode,
+                 useFixed
+                     ? tr(", then disables the previous base mode and applies the displayed fixed base")
+                     : QString());
+    setStatus(tr("Waiting for authorization before opening %1 and configuring the u-blox receiver.")
+                  .arg(settings.selectedPort));
+    if (!guard) {
+        return false;
+    }
+    emit stateChanged();
+    if (!guard) {
+        return false;
+    }
+    notifyProperties();
+    if (!guard) {
+        return false;
+    }
+    emit ubloxAuthorizationRequested(authorizationId, confirmation);
+    return !guard.isNull();
+}
+
+bool ConfigGpsInjectViewModel::ResolveUbloxAuthorization(
+    quint64 authorizationId, bool accepted)
+{
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
+    if (authorizationId == 0
+        || authorizationId != m_pendingUbloxAuthorization) {
+        return false;
+    }
+    const GpsCorrectionSourceSettings settings = m_pendingSourceSettings;
+    m_pendingUbloxAuthorization = 0;
+    if (!accepted) {
+        m_ubloxConnectAuthorized = false;
+        setStatus(tr("u-blox auto-configuration cancelled; the serial source was not opened."));
+        if (!guard) {
+            return false;
+        }
+        emit stateChanged();
+        if (guard) {
+            notifyProperties();
+        }
+        return true;
+    }
+    m_ubloxConnectAuthorized = true;
+    const bool started = beginSource(settings);
+    if (!guard) {
+        return false;
+    }
+    if (!started) {
+        m_ubloxConnectAuthorized = false;
+        return false;
+    }
+    return true;
+}
+
+bool ConfigGpsInjectViewModel::beginSource(
+    const GpsCorrectionSourceSettings &settings)
+{
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
+    const QPointer<GpsCorrectionSource> source(m_source);
+    if (!source) {
+        setStatus(tr("Connect failed: correction source is unavailable."));
+        return false;
+    }
     resetStatistics();
+    if (!guard || !source || m_source != source) {
+        return false;
+    }
     m_receiverActionsRequested = false;
-    m_source->setGgaPosition(m_vehicleLatitude, m_vehicleLongitude,
-                             m_vehicleAltitudeMsl,
-                             m_vehiclePositionValid);
+    source->setGgaPosition(m_vehicleLatitude, m_vehicleLongitude,
+                           m_vehicleAltitudeMsl, m_vehiclePositionValid);
+    if (!guard || !source || m_source != source) {
+        return false;
+    }
     const QString previousStatus = m_status;
-    const bool started = m_source->start(sourceSettings());
-    sourceStateChanged(m_source->active(), m_source->connected());
+    const bool started = source->start(settings);
+    if (!guard || !source || m_source != source) {
+        return false;
+    }
+    sourceStateChanged(source->active(), source->connected());
+    if (!guard || !source || m_source != source) {
+        return false;
+    }
     if (!started && m_status == previousStatus) {
         setStatus(tr("Connect failed."));
+    }
+    if (!started) {
+        m_ubloxConnectAuthorized = false;
     }
     return started;
 }
@@ -697,25 +921,42 @@ bool ConfigGpsInjectViewModel::ToggleConnect()
 void ConfigGpsInjectViewModel::sourceStateChanged(
     bool active, bool connected)
 {
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
     const bool connectionBecameReady = connected && !m_connected;
     const bool changed = m_active != active || m_connected != connected;
     m_active = active;
     m_connected = connected;
     if (!m_active) {
         m_receiverActionsRequested = false;
+        m_ubloxConnectAuthorized = false;
+        m_ownedUbloxOperation = 0;
+        m_hasCurrentBasePosition = false;
+        m_currentBasePosition = {};
+        setSurveyInPresentation(tr("Survey In: not started"), false);
     }
     if (connectionBecameReady) {
         setStatus(connectedStatus());
+        if (!guard) {
+            return;
+        }
         requestAutoConfiguration();
+        if (!guard) {
+            return;
+        }
     }
     if (changed) {
         emit stateChanged();
-        notifyProperties();
+        if (guard) {
+            notifyProperties();
+        }
     }
 }
 
 void ConfigGpsInjectViewModel::sourceStatusChanged(const QString &status)
 {
+    if (m_ubloxService && m_ubloxService->busy()) {
+        return;
+    }
     if (m_connected && status == kConnectedStatus) {
         // setState() is emitted before this neutral source status. Preserve a
         // receiver driver's synchronous result (or our honest "requested"
@@ -741,47 +982,287 @@ QString ConfigGpsInjectViewModel::connectedStatus() const
             .arg(m_selectedReceiverType);
     }
     if (m_autoConfig && IsSerial()
-        && (m_selectedReceiverType == QLatin1String("UBlox M8P/F9P")
-            || m_selectedReceiverType == QLatin1String("Septentrio"))) {
+        && m_selectedReceiverType == QLatin1String("UBlox M8P/F9P")) {
         return tr("Connected — receiving RTCM correction data. Receiver configuration requested.");
+    }
+    if (m_autoConfig && IsSerial()
+        && m_selectedReceiverType == QLatin1String("Septentrio")) {
+        return tr("Connected — receiving RTCM. Septentrio receiver auto-configuration is not implemented yet.");
     }
     return tr("Connected — receiving RTCM correction data.");
 }
 
 void ConfigGpsInjectViewModel::requestAutoConfiguration()
 {
-    if (m_receiverActionsRequested || !m_connected
-        || !m_autoConfig || !IsSerial()) {
+    if (m_receiverActionsRequested || !m_connected) {
         return;
     }
-    m_receiverActionsRequested = true;
-    if (m_selectedReceiverType == QLatin1String("UBlox M8P/F9P")) {
-        emit ubloxConfigureRequested(m_m8p130Plus);
-        if (m_hasActiveBasePosition) {
-            double latitude = 0.0;
-            double longitude = 0.0;
-            double altitude = 0.0;
-            if (parsePosition(m_activeBasePosition, &latitude,
-                              &longitude, &altitude)) {
-                emit ubloxBasePositionRequested(
-                    latitude, longitude, altitude,
-                    parseInt(m_surveyInTime), parseDouble(m_surveyInAcc));
+    if (m_ubloxConnectAuthorized) {
+        m_receiverActionsRequested = true;
+        m_ubloxConnectAuthorized = false;
+        const QPointer<ConfigGpsInjectViewModel> guard(this);
+        const QPointer<UbloxBaseStationService> service(m_ubloxService);
+        if (!service || !service->available()) {
+            setStatus(tr("Connected for RTCM injection, but the u-blox receiver configuration service is unavailable."));
+            return;
+        }
+        QString error;
+        quint64 operationId = 0;
+        const bool started = m_pendingFixedPosition
+            ? service->configureFixed(m_pendingFixed,
+                                      m_pendingM8p130Plus,
+                                      &operationId, &error)
+            : service->configureReceiver(
+                  m_pendingM8p130Plus, &operationId, &error);
+        if (!guard || !service || m_ubloxService != service) {
+            return;
+        }
+        if (!started || operationId == 0) {
+            setStatus(tr("Connected for RTCM injection; u-blox auto-configuration did not start: %1")
+                          .arg(error));
+        } else {
+            m_ownedUbloxOperation = operationId;
+            if (m_pendingFixedPosition) {
+                setSurveyInPresentation(
+                    tr("Fixed base: submitting receiver configuration"),
+                    false);
+            }
+            if (!service->busy()
+                && service->lastReport().operationId == operationId) {
+                ubloxOperationFinished(service->lastReport());
+            } else {
+                setStatus(service->status());
             }
         }
         return;
     }
+    if (!m_autoConfig || !IsSerial()) {
+        return;
+    }
+    m_receiverActionsRequested = true;
+    if (m_selectedReceiverType == QLatin1String("UBlox M8P/F9P")) {
+        setStatus(tr("Connected for RTCM injection, but u-blox auto-configuration was not authorized."));
+        return;
+    }
     if (m_selectedReceiverType == QLatin1String("Septentrio")) {
+        const QPointer<ConfigGpsInjectViewModel> guard(this);
         emit septentrioConfigureRequested();
+        if (!guard) {
+            return;
+        }
         emit septentrioPositionRequested(
             m_septentrioFixedPosition,
             parseDouble(m_septentrioLat),
             parseDouble(m_septentrioLng),
             parseDouble(m_septentrioAlt));
+        if (!guard) {
+            return;
+        }
         emit septentrioRtcmRequested(
             m_selectedSeptentrioRtcmLevel,
             parseDouble(m_septentrioRtcmInterval),
             m_septentrioGps, m_septentrioGlonass,
             m_septentrioGalileo, m_septentrioBeidou);
+        if (!guard) {
+            return;
+        }
+        setStatus(tr("Connected — receiving RTCM. Septentrio receiver auto-configuration is not implemented yet."));
+    }
+}
+
+bool ConfigGpsInjectViewModel::validateSurveySettings(
+    quint32 *durationSeconds, double *accuracyMeters, QString *error) const
+{
+    if (error) {
+        error->clear();
+    }
+    bool durationOk = false;
+    const qulonglong parsedDuration =
+        m_surveyInTime.trimmed().toULongLong(&durationOk);
+    if (!durationOk || parsedDuration == 0
+        || parsedDuration
+            > UbloxBaseStationService::MaximumSurveyDurationSeconds) {
+        if (error) {
+            *error = tr("Survey In time must be a whole number from 1 to %1 seconds.")
+                         .arg(UbloxBaseStationService::MaximumSurveyDurationSeconds);
+        }
+        return false;
+    }
+    bool accuracyOk = false;
+    const double parsedAccuracy =
+        m_surveyInAcc.trimmed().toDouble(&accuracyOk);
+    if (!accuracyOk || !std::isfinite(parsedAccuracy)
+        || parsedAccuracy
+            < UbloxBaseStationService::MinimumSurveyAccuracyMeters
+        || parsedAccuracy
+            > UbloxBaseStationService::MaximumSurveyAccuracyMeters) {
+        if (error) {
+            *error = tr("Survey In accuracy must be between %1 and %2 metres.")
+                         .arg(UbloxBaseStationService::MinimumSurveyAccuracyMeters,
+                              0, 'g', 15)
+                         .arg(UbloxBaseStationService::MaximumSurveyAccuracyMeters,
+                              0, 'g', 15);
+        }
+        return false;
+    }
+    if (durationSeconds) {
+        *durationSeconds = static_cast<quint32>(parsedDuration);
+    }
+    if (accuracyMeters) {
+        *accuracyMeters = parsedAccuracy;
+    }
+    return true;
+}
+
+void ConfigGpsInjectViewModel::refreshUbloxObservations()
+{
+    if (!m_ubloxService) {
+        return;
+    }
+    const UbloxBaseStationProtocol::SurveyIn survey =
+        m_ubloxService->surveyStatus();
+    if (survey.valid && survey.hasPosition
+        && std::isfinite(survey.latitude)
+        && std::isfinite(survey.longitude)
+        && std::isfinite(survey.altitudeMeters)
+        && survey.latitude >= -90.0 && survey.latitude <= 90.0
+        && survey.longitude >= -180.0 && survey.longitude <= 180.0) {
+        m_hasCurrentBasePosition = true;
+        m_currentBasePosition.Lat = numberForSetting(survey.latitude);
+        m_currentBasePosition.Long = numberForSetting(survey.longitude);
+        m_currentBasePosition.Alt = numberForSetting(
+            survey.altitudeMeters);
+        m_currentBasePosition.Name.clear();
+    } else {
+        const UbloxBaseStationProtocol::Position position =
+            m_ubloxService->currentPosition();
+        if (position.fixOk && position.fixType >= 3
+            && std::isfinite(position.latitude)
+            && std::isfinite(position.longitude)
+            && std::isfinite(position.altitudeMeters)
+            && position.latitude >= -90.0 && position.latitude <= 90.0
+            && position.longitude >= -180.0
+            && position.longitude <= 180.0) {
+            m_hasCurrentBasePosition = true;
+            m_currentBasePosition.Lat = numberForSetting(position.latitude);
+            m_currentBasePosition.Long = numberForSetting(
+                position.longitude);
+            m_currentBasePosition.Alt = numberForSetting(
+                position.altitudeMeters);
+            m_currentBasePosition.Name.clear();
+        }
+    }
+
+    QString baseStatus = m_surveyInBaseStatus;
+    bool surveyValid = m_surveyInValid;
+    if (survey.valid) {
+        baseStatus = survey.hasPosition
+            ? tr("Survey In: valid  Lat %1 Lng %2 Alt %3  Acc %4 m")
+                  .arg(survey.latitude, 0, 'f', 7)
+                  .arg(survey.longitude, 0, 'f', 7)
+                  .arg(survey.altitudeMeters, 0, 'f', 2)
+                  .arg(survey.accuracyMeters, 0, 'f', 2)
+            : tr("Survey In: valid; position was not decoded.");
+        surveyValid = true;
+    } else if (survey.active || survey.durationSeconds != 0
+               || survey.observations != 0) {
+        baseStatus = tr("Survey In: %1  Dur %2 s  Obs %3  Acc %4 m")
+            .arg(survey.active ? tr("in progress") : tr("complete"))
+            .arg(survey.durationSeconds)
+            .arg(survey.observations)
+            .arg(survey.accuracyMeters, 0, 'f', 2);
+        surveyValid = false;
+    }
+    setSurveyInPresentation(baseStatus, surveyValid);
+}
+
+void ConfigGpsInjectViewModel::setSurveyInPresentation(
+    const QString &baseStatus, bool valid)
+{
+    m_surveyInBaseStatus = baseStatus;
+    m_surveyInValid = valid;
+    rebuildSurveyInPresentation();
+}
+
+void ConfigGpsInjectViewModel::rebuildSurveyInPresentation()
+{
+    m_surveyInStatus = m_surveyInBaseStatus;
+    const QString acknowledgement = m_ubloxService
+        ? m_ubloxService->acknowledgementStatus() : QString();
+    if (!acknowledgement.isEmpty()) {
+        m_surveyInStatus += QStringLiteral("  ") + acknowledgement;
+    }
+}
+
+void ConfigGpsInjectViewModel::ubloxStateChanged()
+{
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
+    const QPointer<UbloxBaseStationService> service(m_ubloxService);
+    if (!service) {
+        return;
+    }
+    refreshUbloxObservations();
+    if (!guard || !service || m_ubloxService != service) {
+        return;
+    }
+    if (service->busy()) {
+        setStatus(service->status());
+        if (!guard) {
+            return;
+        }
+    }
+    emit stateChanged();
+    if (guard) {
+        notifyProperties();
+    }
+}
+
+void ConfigGpsInjectViewModel::ubloxOperationFinished(
+    const UbloxBaseStationService::Report &report)
+{
+    if (m_ownedUbloxOperation == 0
+        || report.operationId != m_ownedUbloxOperation) {
+        return;
+    }
+    m_ownedUbloxOperation = 0;
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
+    QString mode;
+    switch (report.mode) {
+    case UbloxBaseStationService::Mode::Receiver:
+        mode = tr("Receiver setup");
+        break;
+    case UbloxBaseStationService::Mode::SurveyIn:
+        mode = tr("Survey In configuration");
+        break;
+    case UbloxBaseStationService::Mode::Fixed:
+        mode = tr("Fixed base configuration");
+        break;
+    }
+    switch (report.outcome) {
+    case UbloxBaseStationService::Outcome::Submitted:
+        setStatus(tr("%1 submitted: %2 This confirms local serial queueing, not that every receiver setting was applied.")
+                      .arg(mode, report.description));
+        break;
+    case UbloxBaseStationService::Outcome::Cancelled:
+        setStatus(tr("%1 cancelled: %2 Some earlier receiver writes may already have been submitted.")
+                      .arg(mode, report.description));
+        break;
+    case UbloxBaseStationService::Outcome::Rejected:
+        setStatus(tr("%1 failed before all commands were submitted: %2")
+                      .arg(mode, report.description));
+        break;
+    case UbloxBaseStationService::Outcome::SourceLost:
+        setStatus(tr("%1 stopped because the exact serial receiver session was lost: %2")
+                      .arg(mode, report.description));
+        break;
+    }
+    if (!guard) {
+        return;
+    }
+    refreshUbloxObservations();
+    emit stateChanged();
+    if (guard) {
+        notifyProperties();
     }
 }
 
@@ -972,14 +1453,55 @@ bool ConfigGpsInjectViewModel::RestartSurveyIn()
         setStatus(tr("Connect to a UBlox M8P/F9P receiver on a serial port first."));
         return false;
     }
-    m_surveyInStatus = tr("Survey In: restarting");
-    m_surveyInValid = false;
-    notifyProperties();
+    if (!m_ubloxService || !m_ubloxService->available()) {
+        setStatus(tr("Restart failed: the writable u-blox receiver session is unavailable."));
+        return false;
+    }
+    if (ReceiverBusy()) {
+        setStatus(tr("Restart failed: another receiver configuration is active."));
+        return false;
+    }
+    quint32 durationSeconds = 0;
+    double accuracyMeters = 0.0;
+    QString error;
+    if (!validateSurveySettings(&durationSeconds, &accuracyMeters, &error)) {
+        setStatus(tr("Restart failed: %1").arg(error));
+        return false;
+    }
+
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
+    const QPointer<UbloxBaseStationService> service(m_ubloxService);
+    quint64 operationId = 0;
+    const bool started = service->configureSurveyIn(
+        durationSeconds, accuracyMeters, m_m8p130Plus,
+        &operationId, &error);
+    if (!guard || !service || m_ubloxService != service) {
+        return false;
+    }
+    if (!started || operationId == 0) {
+        setStatus(tr("Restart failed: %1").arg(error));
+        return false;
+    }
+    m_ownedUbloxOperation = operationId;
     m_hasActiveBasePosition = false;
-    emit ubloxSurveyInRequested(parseInt(m_surveyInTime),
-                                parseDouble(m_surveyInAcc),
-                                m_m8p130Plus);
-    setStatus(tr("Survey In: restart requested."));
+    m_activeBasePosition = {};
+    m_settings->remove(QStringLiteral("base_pos"));
+    setSurveyInPresentation(
+        tr("Survey In: restarting — waiting for receiver NAV-SVIN status"),
+        false);
+    if (!service->busy()
+        && service->lastReport().operationId == operationId) {
+        ubloxOperationFinished(service->lastReport());
+    } else {
+        setStatus(service->status());
+    }
+    if (!guard) {
+        return false;
+    }
+    emit stateChanged();
+    if (guard) {
+        notifyProperties();
+    }
     return true;
 }
 
@@ -1002,6 +1524,7 @@ bool ConfigGpsInjectViewModel::SaveCurrentPosition()
 
 bool ConfigGpsInjectViewModel::UseBasePos(const BasePosRow &row)
 {
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
     double latitude = 0.0;
     double longitude = 0.0;
     double altitude = 0.0;
@@ -1009,17 +1532,67 @@ bool ConfigGpsInjectViewModel::UseBasePos(const BasePosRow &row)
         setStatus(tr("Base position row has invalid numbers."));
         return false;
     }
+    UbloxBaseStationService::FixedPosition position;
+    position.latitude = latitude;
+    position.longitude = longitude;
+    position.altitudeMeters = altitude;
+    if (!position.isValid()) {
+        setStatus(tr("Base position is outside the receiver's supported range."));
+        return false;
+    }
+    const bool writableUblox = m_connected && IsSerial()
+        && m_selectedReceiverType == QLatin1String("UBlox M8P/F9P");
+    if (writableUblox && ReceiverBusy()) {
+        setStatus(tr("Fixed base position was not changed: another receiver configuration is active."));
+        return false;
+    }
     m_activeBasePosition = row;
     m_hasActiveBasePosition = true;
     saveActiveBasePosition();
-    setStatus(tr("Using fixed base position: %1").arg(row.Name));
     notifyProperties();
+    if (!guard) {
+        return false;
+    }
 
-    if (m_connected && IsSerial()
-        && m_selectedReceiverType == QLatin1String("UBlox M8P/F9P")) {
-        emit ubloxBasePositionRequested(
-            latitude, longitude, altitude,
-            parseInt(m_surveyInTime), parseDouble(m_surveyInAcc));
+    if (!writableUblox) {
+        setStatus(tr("Saved fixed base position %1 for the next authorized u-blox connection; it was not sent to the current receiver.")
+                      .arg(row.Name));
+        return true;
+    }
+    if (!m_ubloxService || !m_ubloxService->available()) {
+        setStatus(tr("Saved fixed base position %1, but the writable u-blox receiver session is unavailable.")
+                      .arg(row.Name));
+        return false;
+    }
+
+    const QPointer<UbloxBaseStationService> service(m_ubloxService);
+    QString error;
+    quint64 operationId = 0;
+    const bool started = service->applyFixed(
+        position, &operationId, &error);
+    if (!guard || !service || m_ubloxService != service) {
+        return false;
+    }
+    if (!started || operationId == 0) {
+        setStatus(tr("Saved fixed base position %1, but receiver configuration did not start: %2")
+                      .arg(row.Name, error));
+        return false;
+    }
+    m_ownedUbloxOperation = operationId;
+    setSurveyInPresentation(
+        tr("Fixed base: submitting receiver configuration"), false);
+    if (!service->busy()
+        && service->lastReport().operationId == operationId) {
+        ubloxOperationFinished(service->lastReport());
+    } else {
+        setStatus(service->status());
+    }
+    if (!guard) {
+        return false;
+    }
+    emit stateChanged();
+    if (guard) {
+        notifyProperties();
     }
     return true;
 }
@@ -1045,13 +1618,17 @@ bool ConfigGpsInjectViewModel::ApplySeptentrioRtcm()
         return false;
     }
     saveSeptentrioSettings();
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
     emit septentrioRtcmRequested(
         m_selectedSeptentrioRtcmLevel,
         parseDouble(m_septentrioRtcmInterval),
         m_septentrioGps, m_septentrioGlonass,
         m_septentrioGalileo, m_septentrioBeidou);
-    setStatus(tr("Septentrio RTCM settings requested."));
-    return true;
+    if (!guard) {
+        return false;
+    }
+    setStatus(tr("Septentrio receiver configuration is not implemented yet; RTCM injection remains available."));
+    return false;
 }
 
 bool ConfigGpsInjectViewModel::ApplySeptentrioPosition()
@@ -1062,13 +1639,17 @@ bool ConfigGpsInjectViewModel::ApplySeptentrioPosition()
         return false;
     }
     saveSeptentrioSettings();
+    const QPointer<ConfigGpsInjectViewModel> guard(this);
     emit septentrioPositionRequested(
         m_septentrioFixedPosition,
         parseDouble(m_septentrioLat),
         parseDouble(m_septentrioLng),
         parseDouble(m_septentrioAlt));
-    setStatus(tr("Septentrio base position update requested."));
-    return true;
+    if (!guard) {
+        return false;
+    }
+    setStatus(tr("Septentrio receiver configuration is not implemented yet; RTCM injection remains available."));
+    return false;
 }
 
 void ConfigGpsInjectViewModel::saveBasePositions()

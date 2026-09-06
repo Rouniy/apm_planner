@@ -14,6 +14,18 @@ Advanced/Developer и настройки оборудования. Telemetry Log
 экспорты/исследования редких случаев отложены. Рабочая форма важнее очередного
 аудита уже работающего экспортёра. Settings далее; Swarm последний.
 
+RTK/GPS Inject теперь имеет настоящий u-blox driver: настройка при Connect,
+явный Restart Survey In, сохранённая база и короткий connected Use, live NAV
+и отмена по точной serial session. Исправлен разрыв через30s во время Survey In
+без RTCM и накопление ACK-текста. Production X11/private PTY проходит, детали
+проверок и оставшиеся ограничения — `CURRENT_STATE.md`/`RTK_UBLOX_PORT.md`.
+Inventory129 =81 in-progress/33 partial/15 not-started, deviations160;
+SETUP46/eight missing без заявления полной готовности. Следом **Radio
+Calibration: Spektrum Bind, RCn_REVERSED и подтверждённая запись калибровки**,
+затем firmware/реальные остатки Advanced/Developer, Settings; Swarm последний.
+
+Предыдущий checkpoint (Calibrate Level):
+
 Calibrate Level добавлен в реальную страницу SETUP между Full и Simple.
 Level p5=2 и Simple p5=4 теперь имеют exact-target ACK-завершение; Simple
 больше не оставляет вечное busy-состояние. Full/Legacy сохранены, форма

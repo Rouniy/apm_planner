@@ -4,6 +4,7 @@
 #include "ConfigGpsInjectViewModel.h"
 
 #include <QList>
+#include <QPointer>
 #include <QWidget>
 
 class QCheckBox;
@@ -11,6 +12,7 @@ class QComboBox;
 class QFrame;
 class QLabel;
 class QLineEdit;
+class QMessageBox;
 class QPaintEvent;
 class QPushButton;
 class QSpinBox;
@@ -24,7 +26,7 @@ public:
     explicit ConfigGpsInjectView(QWidget *parent = nullptr);
     ConfigGpsInjectView(GpsCorrectionSource *source, QSettings *settings,
                         QWidget *parent = nullptr);
-    ~ConfigGpsInjectView() override = default;
+    ~ConfigGpsInjectView() override;
 
     QSize sizeHint() const override;
     ConfigGpsInjectViewModel *viewModel() const { return m_viewModel; }
@@ -34,6 +36,8 @@ protected:
 
 private slots:
     void syncFromModel();
+    void showUbloxAuthorization(quint64 authorizationId,
+                                const QString &confirmationText);
 
 private:
     void rebuildBasePositions();
@@ -96,6 +100,8 @@ private:
 
     QTableWidget *m_basePositionsTable = nullptr;
     QList<BasePosRow> m_renderedBasePositions;
+    QPointer<QMessageBox> m_ubloxAuthorizationDialog;
+    quint64 m_ubloxAuthorizationId = 0;
 };
 
 #endif // CONFIGGPSINJECTVIEW_H
