@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,262/262 тестов; Developer25/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,267/267 тестов; Developer27/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -83,7 +83,17 @@ delete и настоящее открытие выбранного файла в
 BIN и два независимых oracle выявили ошибку часов и подтвердили исправление:
 242.800341s/552.7791954304238m, исходный SHA256 сохранён; неполный40-byte хвост
 честно предупреждается. Ожидание Search удалено из реестра: в active MP10 его нет.
-Следующий кандидат — Download/Cancel Firmware Archive, затем остальные
+Download/Cancel Firmware Archive теперь реализован: настоящие offline-диалоги,
+точное default-Cancel подтверждение, четыре bounded worker, HTTPS-first,
+SHA256/UTF8 manifest/report, partial publication и owned Cancel. Полный набор
+267/267 (47.78s), focused9/9, десять повторов каждого из4 suites и production
+X11 проходят. Root просмотрел полное предупреждение и страницу. Официальный
+многогигабайтный архив и сетевой SITL не затрагивались. Исправлены IPv6 naming,
+корневой url по XDocument.Descendants и декларация кодировки после UTF8 rewrite.
+Отдельная строка Serial TCP Bridge в реестре ошибочно оставалась not-started;
+она приведена к уже проверенной реализации. Inventory129:74 in-progress,
+36 partial,19 not-started; ни одна поверхность не strict-complete.
+Следующий кандидат — Convert Shapefile to POLY, затем остальные
 однодроновые инструменты. Claude c260 проверил SFTP/Camera Probe: SFTP требует
 portable SSH dependency/host-key policy; в MP10 Camera Probe есть две скрытые
 изменяющие состояние команды, их нельзя выдавать за безвредную диагностику.
@@ -91,7 +101,7 @@ Settings после Tools, Swarm в конце. Подробности: `TLOG_RE
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
 `APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`,
-`LOG_INDEX_PORT.md`,
+`LOG_INDEX_PORT.md`, `FIRMWARE_ARCHIVE_PORT.md`,
 `PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`, `REMOTE_DATAFLASH_LOG_PORT.md`,
 `MAVLINK_SERIAL_TCP_BRIDGE_PORT.md`.
 
@@ -394,7 +404,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Serial TCP Bridge работают24/32; заменить оставшиеся8
+- Developer Tools: после Firmware Archive работают27/32; заменить оставшиеся5
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.

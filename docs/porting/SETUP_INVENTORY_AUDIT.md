@@ -33,7 +33,19 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-Flight Log Index brings the exact Developer catalogue to25/32 working,
+Download/Cancel Firmware Archive brings the exact Developer catalogue to27/32
+working, with5 explicitly unavailable: MicroDrone Downlink, Probe MAVLink
+Camera, Convert Shapefile to POLY, Translation/RESX Editor and SFTP logs. The two
+existing buttons now use real offline-visible parent/default-Cancel/progress
+dialogs, bounded background downloads, checked partial publication and owned
+cancellation. Full267 tests and production X11 verify exact8-byte two-file
+archive, one unavailable URL, early/streaming Cancel and the shared operation
+gate. No Setup page or fixed Tools item was added. See `FIRMWARE_ARCHIVE_PORT.md`.
+The separate Serial TCP Bridge parity row was also corrected from not-started
+to in-progress to reflect the already verified earlier slice; this is an
+inventory correction, not a new navigation entry.
+
+The preceding Flight Log Index slice brought the exact Developer catalogue to25/32 working,
 with7 explicitly unavailable. It opens a real offline13-column window shared
 with the retained Log Browser and Logfile Plot Index entries. Background
 BIN/LOG/TLOG indexing, cache-only previews, sorting/summary, actual browser

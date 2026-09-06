@@ -24,7 +24,75 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Flight Log Index**. Its existing Developer action
+Latest slice (2026-09-06): **Download / Cancel Firmware Archive**. The two
+existing Developer actions now open actual asynchronous parent/confirmation/
+progress dialogs offline. Default/Escape Cancel protects an exact frozen fresh
+destination. First-success HTTPS manifest mirrors, all url* fields, deduplication,
+four bounded Qt workers, HTTPS-first/network-only legacy HTTP fallback and
+saved-byte SHA256 produce firmware2.xml/checksums.sha256/archive-report.txt.
+Only a completed set of attempts with at least one success is published through
+one fresh sibling-directory rename; unavailable URLs remain network references.
+
+Owned Cancel and page closure stop this workflow. Cleanup removes only exact
+registered still-matching files and empty owned directories; foreign additions
+are preserved. An unsafe result reports the last known staging path, which may
+have moved. No flashing, source authenticity or exclusive filesystem-lock claim;
+concurrent writers and mutation-capable injected callbacks remain outside the
+trusted contract. Local I/O/path failures abort the whole archive, unlike MP10's
+broader per-file partial handling. See `FIRMWARE_ARCHIVE_PORT.md` for bounds,
+handshake/full-rehash costs and remaining native/live-network/GUI gates.
+
+Final Qt5/audio configure/build pass; focused9/9 (36.74s), full267/267 (47.78s),
+ten repeats of each of4 archive suites (22.63s) and production X11 exit0/zero
+audit failures pass. Actual Tools navigation proves both early Cancel paths,
+partial archive with two exact binary files/8 bytes and one unavailable URL,
+HTTPS preference/fallback/deduplication, streaming Cancel, unchanged previous
+archive and restored Developer operation gate. Root inspected the readable
+full warning/buttons and page/log screenshots in `/tmp/apm-firmware-archive.UOhP7w/`:
+`consent.png`, `consent.png.page.png`; final logs `configure.log`, `build7.log`,
+`focused4.log`, `full2.log`, `repeat2.log`, `x11-final.log`. No official multi-gigabyte
+archive download, network SITL subscription or vehicle mutation was performed.
+The complete controller suite also passed on X11 (14 cases including fixtures,
+4.206s), covering actual Cancel, Escape and explicit reject outside offscreen;
+see `controller-x11.log`.
+
+Three Codex streams implemented manifest/service/controller with independent
+cross-review. Claude TCP c264–c266 reference/HTTP/UI reports were read and hashed.
+His UI review found an unhandled dialog-reject path and timer updates overwriting/
+reviving the Cancel state. Tests exposed Qt5's string-connected internal Cancel
+handler and its Escape shortcut: Escape may stay visibly waiting, while explicit
+reject hides. Both now cancel without timer revival, with actual button/key/reject
+regressions and guarded progress updates before final verification.
+Root fixed Qt5 QCharRef/helper-name compile issues, IPv6 host naming, the test-only
+directory selection and two independently confirmed reference/XML defects:
+XDocument.Descendants includes the root, and rewritten UTF8 must not retain an
+input Latin1/UTF16 declaration. Regression tests cover both. The one misplaced
+initial test archive was preserved at the evidence directory's
+`initial-test-artifact`; no user files were deleted.
+
+Developer is now **27/32 working,5 unavailable**: MicroDrone Downlink, Probe
+MAVLink Camera, Convert Shapefile to POLY, Translation/RESX Editor and SFTP logs.
+Next candidate is **Convert Shapefile to POLY**, then remaining single-drone
+Tools, then Settings; Swarm stays last. SETUP46/eight absent reference routes,
+Advanced14 complete+partial Signing/disabled Support Proxy, fixedTools24 plus
+Signing, CONFIG15/15 factories and Planner21/64 remain unchanged. The standalone
+Serial TCP Bridge ledger row was still incorrectly not-started despite its
+earlier verified implementation; it is now in-progress, matching the Developer
+row. Inventory129 is therefore74 in-progress/36 partial/19 not-started, none
+strict-complete. The full Mission Planner port remains incomplete.
+
+Claude's next-reference report c271 was read/hash-verified:19181 bytes,
+SHA256 `bb04bc4d0f108c773bc38cea798bd34b83c286ecba28317858bab75022b3cc97`,
+`/home/alex/SRC/claude-reports/c271-shapefile-poly-reference.md`. MP10 writes one
+poly-N.poly per non-empty valid feature, CRLF/tab/shortest invariant coordinates,
+flattened geometry including closing vertices and case-insensitive PRJ reprojection;
+default-Cancel consent authorizes atomic replacement, not deletion of stale outputs.
+Before implementing, independently settle projection support (existing GDAL/PROJ
+versus bounded native transforms), datum accuracy, strict ring ordering and DBF
+failure semantics. Claude's proposed limited/zero-shift contract is an alternative
+opinion, not an accepted exact-parity decision.
+
+Previous slice (2026-09-06): **Flight Log Index**. Its existing Developer action
 now opens a real shared modeless window offline, as do the retained Logfile Plot
 toolbar and Log Browser Index button. Double-click actually loads the selected
 file in a new working LogAnalysis browser. All13 columns, numeric sorting,
