@@ -33,7 +33,16 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-Remote DataFlash Log brings the exact Developer catalogue to23/32 working,
+MAVLink Serial TCP Bridge brings the exact Developer catalogue to24/32 working,
+with8 explicitly unavailable. The existing action opens a real modeless window
+offline through the shared MainWindow route; all15 UARTs and10 baud choices,
+exact consent, bounded single-client TCP and private SERIAL_CONTROL are wired.
+Full257 tests, ten repeats of3 bridge suites and production X11 verify binary
+traffic, Cancel, singleton/immediate reopen, armed release and readable UI.
+No Setup page or fixed Tools item was added. See
+`MAVLINK_SERIAL_TCP_BRIDGE_PORT.md` for UART/cleanup/native-platform limits.
+
+The preceding Remote DataFlash Log slice brought the exact Developer catalogue to23/32 working,
 with9 explicitly unavailable. The existing Start and Stop actions now use
 real consent, exact application-owned streaming and explicit local Save;
 closing/recreating the page preserves the recording. Full254 tests and

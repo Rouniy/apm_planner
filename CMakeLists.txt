@@ -630,6 +630,12 @@ set(SOURCES
     src/comm/RemoteDataFlashLogWriter.h
     src/comm/RemoteDataFlashLogService.cpp
     src/comm/RemoteDataFlashLogService.h
+    src/comm/SerialBridgeTcpServer.cpp
+    src/comm/SerialBridgeTcpServer.h
+    src/comm/MavlinkSerialTcpBridgeService.cpp
+    src/comm/MavlinkSerialTcpBridgeService.h
+    src/ui/MavlinkSerialTcpBridgeWindow.cpp
+    src/ui/MavlinkSerialTcpBridgeWindow.h
     src/ui/OfflineMagFitWindow.cpp
     src/ui/OfflineMagFitWindow.h
     src/services/WarningTelemetrySource.cpp
@@ -3955,6 +3961,32 @@ if(BUILD_TESTING)
     foreach(remote_log_test IN ITEMS remotedataflashlogwriter_tests remotedataflashlogservice_tests)
         add_test(NAME ${remote_log_test} COMMAND ${remote_log_test})
         set_tests_properties(${remote_log_test} PROPERTIES TIMEOUT 60)
+    endforeach()
+
+    add_library(serial_bridge_tcp_test_support STATIC
+        src/comm/SerialBridgeTcpServer.cpp src/comm/SerialBridgeTcpServer.h)
+    target_include_directories(serial_bridge_tcp_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(serial_bridge_tcp_test_support PUBLIC Qt::Core Qt::Network)
+    add_library(serial_bridge_service_test_support STATIC
+        src/comm/MavlinkSerialTcpBridgeService.cpp src/comm/MavlinkSerialTcpBridgeService.h)
+    target_link_libraries(serial_bridge_service_test_support PUBLIC
+        serial_bridge_tcp_test_support developer_vehicle_tool_test_support)
+    add_library(serial_bridge_window_test_support STATIC
+        src/ui/MavlinkSerialTcpBridgeWindow.cpp src/ui/MavlinkSerialTcpBridgeWindow.h)
+    target_link_libraries(serial_bridge_window_test_support PUBLIC
+        serial_bridge_service_test_support Qt::Widgets)
+    add_executable(serialbridgetcpserver_tests tests/test_serialbridgetcpserver.cpp)
+    target_link_libraries(serialbridgetcpserver_tests PRIVATE serial_bridge_tcp_test_support Qt::Test)
+    add_executable(mavlinkserialtcpbridgeservice_tests tests/test_mavlinkserialtcpbridgeservice.cpp)
+    target_link_libraries(mavlinkserialtcpbridgeservice_tests PRIVATE serial_bridge_service_test_support Qt::Test)
+    add_executable(mavlinkserialtcpbridgewindow_tests tests/test_mavlinkserialtcpbridgewindow.cpp)
+    target_link_libraries(mavlinkserialtcpbridgewindow_tests PRIVATE serial_bridge_window_test_support Qt::Test)
+    foreach(serial_bridge_test IN ITEMS serialbridgetcpserver_tests
+            mavlinkserialtcpbridgeservice_tests mavlinkserialtcpbridgewindow_tests)
+        add_test(NAME ${serial_bridge_test} COMMAND ${serial_bridge_test})
+        set_tests_properties(${serial_bridge_test} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
     endforeach()
 
     add_library(gps_correction_test_support STATIC

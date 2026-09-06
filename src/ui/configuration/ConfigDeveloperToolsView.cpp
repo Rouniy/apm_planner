@@ -124,8 +124,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
                   QStringLiteral("actionTerrain3D"));
     AddUnavailableAction(tr("MicroDrone Downlink"),
                          QStringLiteral("MicroDroneDownlinkButton"), notPorted);
-    AddUnavailableAction(tr("MAVLink Serial TCP Bridge"),
-                         QStringLiteral("MavlinkSerialTcpBridgeButton"), notPorted);
+    AddToolAction(tr("MAVLink Serial TCP Bridge"),
+                  QStringLiteral("MavlinkSerialTcpBridgeButton"),
+                  QStringLiteral("actionMavlinkSerialTcpBridge"));
     AddUnavailableAction(tr("Download Firmware Archive"),
                          QStringLiteral("DownloadFirmwareArchiveButton"), notPorted);
     AddUnavailableAction(tr("Cancel Firmware Archive"),

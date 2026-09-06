@@ -81,6 +81,7 @@ class HelpView;
 class SetupView;
 class ParameterMetaDataRegenerationService;
 class OfflineMagFitWindow;
+class MavlinkSerialTcpBridgeWindow;
 class LogAnonymizeService;
 class WarningEngine;
 class WarningTelemetrySource;
@@ -575,6 +576,8 @@ private:
     void closeLogDownloadWindows();
     void closeFftAnalysisWindows();
     void closeOfflineMagFit();
+    void showMavlinkSerialTcpBridge();
+    void closeMavlinkSerialTcpBridge();
     void showParameterMetaDataRegeneration();
     void closeParameterMetaDataRegeneration();
     void showAnonLog();
@@ -589,6 +592,7 @@ private:
     QPointer<LogAnonymizeService> m_logAnonymizeService;
     QPointer<ParameterMetaDataRegenerationService> m_parameterMetaDataRegeneration;
     QPointer<OfflineMagFitWindow> m_offlineMagFitWindow;
+    QPointer<MavlinkSerialTcpBridgeWindow> m_mavlinkSerialTcpBridgeWindow;
     void pruneMavlinkInspectorWindows();
 
     bool m_heartbeatEnabled;

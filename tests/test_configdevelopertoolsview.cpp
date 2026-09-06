@@ -387,6 +387,7 @@ class ConfigDeveloperToolsViewTest final : public QObject
 private slots:
     void mirrorsMissionPlannerInventory();
     void sharedApplicationActionsOpenTools();
+    void serialBridgeSharedActionTracksAvailability();
     void decodersAppendResultsAndErrors();
     void actionGridAdaptsToAvailableWidth();
     void wiredInventoryAndEligibility();
@@ -570,6 +571,24 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
     QCOMPARE(view.ImplementedActionCount(), 18);
     view.setVehicleToolService(nullptr);
     QCOMPARE(view.ImplementedActionCount(), 11);
+}
+
+void ConfigDeveloperToolsViewTest::serialBridgeSharedActionTracksAvailability()
+{
+    QObject source;
+    QAction bridge(&source);
+    bridge.setObjectName(QStringLiteral("actionMavlinkSerialTcpBridge"));
+    QSignalSpy triggered(&bridge, &QAction::triggered);
+    ConfigDeveloperToolsView view(&source);
+    auto *button = tool(view, "MavlinkSerialTcpBridgeButton");
+    QVERIFY(button && button->isEnabled());
+    QCOMPARE(view.ActionCount(), 32);
+    button->click();
+    QCOMPARE(triggered.count(), 1);
+    bridge.setEnabled(false);
+    QVERIFY(!button->isEnabled());
+    bridge.setEnabled(true);
+    QVERIFY(button->isEnabled());
 }
 
 void ConfigDeveloperToolsViewTest::decodersAppendResultsAndErrors()

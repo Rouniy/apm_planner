@@ -24,7 +24,70 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Start/Stop Remote DataFlash Log**. The two existing
+Latest slice (2026-09-06): **MAVLink Serial TCP Bridge**. Its existing Developer
+action now opens a real shared modeless window, including offline. All15 UART
+devices and10 baud choices match MP10; defaults remain GPS1/keep-baud/TCP500/
+loopback-only. Default/Escape-Cancel consent freezes exact vehicle/link/options
+before listening; a TCP client is required before any UART claim. Closing the
+window stops only its own operation. Immediate close/reopen creates a fresh
+window instead of reusing a deletion-pending instance.
+
+One application-owned service sends private SERIAL_CONTROL frames through the
+shared exact transmitter. Ordinary traffic requires a fresh disarmed autopilot,
+original target/instance/physical epoch and one known system on a dedicated
+trusted route. Non-ArduPilot autopilots are not excluded; ArduPilot's missing
+SHELL support and telemetry/GPS self-lock risks are disclosed. OPEN/poll follow
+MP10; data chunks are at most70 bytes with actual final-chunk RESPOND and a
+monotonic minimum10ms interval, including reentrant validation/write callbacks.
+Replies match link/epoch/sys/autopilot component/device/REPLY and materialize
+MAVLink2 zero tails. TCP has32KiB input backpressure and64KiB bounded output.
+
+Graceful FIN preserves already accepted input and the exclusive client slot,
+drains paced data, then attempts one pure UART release. Stop, arming, target
+loss or fatal TCP failure cancel pending bytes. Stale heartbeat alone does not
+block cleanup while the original registry instance/epoch and physical route
+remain valid; a replacement/retired instance or newly shared route never gets
+the release. Status reports actual submitted/refused/uncertain cleanup. There
+is no UART claim/release ACK, stream reliability, baud/flow-control restoration
+or authentication guarantee. Normal window close performs guarded release;
+LinkManager shutdown-only route closure and abrupt service destruction cannot
+bypass guards and may leave remote UART state unknown.
+
+Qt5/audio configure and final build pass; focused7/7 (35.08s), full257/257
+(46.54s), ten repeats of each of the3 bridge suites (3.44s) and production X11
+exit0/zero audit failures pass. Actual Tools navigation verifies offline open,
+singleton/reopen, Cancel/Yes, untouched UART while listening without a client,
+281 binary bytes to UART,74 reply bytes including70 trailing zeros, foreign
+reply rejection, counters and one release after arming. Root inspected both
+readable screenshots in `/tmp/apm-serial-bridge.tOnvpg/serial-consent.png` and
+`.window.png`; configure/build-final/focused-final/full-final/repeat-final/
+x11-final logs are in that directory. No network SITL or physical UART was
+modified; all UART frames target the isolated in-process sys234/link910110.
+
+Three Codex streams implemented TCP/core/window, root integrated and scheduled
+all build/test work, and Claude TCP c245–c253 supplied independent reference,
+core/UI/lifetime reviews with verified full-file hashes. Initial verification
+found a real QtNetwork sender-lifetime crash: detaching socket/listener before
+deleteLater now prevents parent teardown inside a signal stack. Its regression
+is preserved. The production fixture also now waits for the queued disarmed
+heartbeat after the preceding armed RemoteLog scenario instead of clicking
+Start against the correctly rejected old state. See
+`MAVLINK_SERIAL_TCP_BRIDGE_PORT.md` for protocol, hardware and GUI limits.
+
+Developer is now **24/32 working,8 unavailable**. SETUP46/eight absent reference
+routes, Advanced14 complete+partial Signing/disabled Support Proxy, fixedTools24
+plus Signing, CONFIG15/15 factories and Planner21/64 remain unchanged. The129
+surface distribution stays72 in-progress/36 partial/21 not-started: one existing
+Developer action was filled, not a new Setup page. Next: **Flight Log Index**,
+then other single-drone tools, then Settings. Swarm remains last; the full port
+is incomplete. Claude c250/c251 audited both reference Index routes,13 columns,
+flight metrics, JPEG sidecars and exact-companion deletion. Use the canonical
+shared tile-cache reader with an explicit root, not the initially suggested
+OPMap singleton/private cache; no thumbnail network downloads. Qt's separate
+DataFlash/TLOG roots, bounded parsing/cancel, JPEG packaging, immutable delete
+consent and opening the actual Log Browser remain implementation decisions.
+
+Previous slice (2026-09-06): **Start/Stop Remote DataFlash Log**. The two existing
 Developer actions now open real named asynchronous default/Escape-Cancel
 confirmations with exact vehicle/link/destination and protocol limitations.
 Start requires already-enabled LOG_BACKEND_TYPE bit2, complete exact parameters,

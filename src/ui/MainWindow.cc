@@ -115,6 +115,7 @@ This file is part of the QGROUNDCONTROL project
 #include "LogDownloadWindow.h"
 #include "ConfigFFTWindow.h"
 #include "OfflineMagFitWindow.h"
+#include "MavlinkSerialTcpBridgeWindow.h"
 #include "AppPaths.h"
 #include "configuration/ParameterMetaDataRegenerationWindow.h"
 #include "AnonLogWindow.h"
@@ -635,6 +636,7 @@ MainWindow::~MainWindow()
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
     closeOfflineMagFit();
+    closeMavlinkSerialTcpBridge();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
@@ -740,6 +742,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
     auto *magFitAction = new QAction(tr("Offline Magnetometer Calibration (MagFit)"), this);
     magFitAction->setObjectName(QStringLiteral("actionOfflineMagFit"));
     connect(magFitAction, &QAction::triggered, this, &MainWindow::showOfflineMagFit);
+    auto *serialBridgeAction = new QAction(tr("MAVLink Serial TCP Bridge"), this);
+    serialBridgeAction->setObjectName(QStringLiteral("actionMavlinkSerialTcpBridge"));
+    connect(serialBridgeAction, &QAction::triggered,
+            this, &MainWindow::showMavlinkSerialTcpBridge);
     auto *paramGenAction = new QAction(tr("Param gen"), this);
     paramGenAction->setObjectName(QStringLiteral("actionParameterMetaDataRegeneration"));
     connect(paramGenAction, &QAction::triggered, this,
@@ -2253,6 +2259,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     closeMavlinkInspectorWindows();
     closeFftAnalysisWindows();
     closeOfflineMagFit();
+    closeMavlinkSerialTcpBridge();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
@@ -3180,6 +3187,31 @@ void MainWindow::showOfflineMagFit()
     m_offlineMagFitWindow->show();
     m_offlineMagFitWindow->raise();
     m_offlineMagFitWindow->activateWindow();
+}
+
+void MainWindow::showMavlinkSerialTcpBridge()
+{
+    if (aboutToCloseFlag) return;
+    // WA_DeleteOnClose may still be queued when the action is clicked again.
+    // Never reuse that terminal window for a new UART operation.
+    if (m_mavlinkSerialTcpBridgeWindow && m_mavlinkSerialTcpBridgeWindow->isClosing())
+        closeMavlinkSerialTcpBridge();
+    if (!m_mavlinkSerialTcpBridgeWindow) {
+        m_mavlinkSerialTcpBridgeWindow = new MavlinkSerialTcpBridgeWindow(this);
+        m_mavlinkSerialTcpBridgeWindow->setService(
+            LinkManager::instance()->mavlinkSerialTcpBridgeService());
+    }
+    m_mavlinkSerialTcpBridgeWindow->show();
+    m_mavlinkSerialTcpBridgeWindow->raise();
+    m_mavlinkSerialTcpBridgeWindow->activateWindow();
+}
+
+void MainWindow::closeMavlinkSerialTcpBridge()
+{
+    if (m_mavlinkSerialTcpBridgeWindow) {
+        delete m_mavlinkSerialTcpBridgeWindow.data();
+        m_mavlinkSerialTcpBridgeWindow.clear();
+    }
 }
 
 void MainWindow::closeOfflineMagFit()

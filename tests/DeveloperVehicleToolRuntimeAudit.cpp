@@ -21,9 +21,12 @@
 #include <QAction>
 #include "comm/RemoteDataFlashLogService.h"
 #include "comm/ExactLogTransferService.h"
+#include "comm/MavlinkSerialTcpBridgeService.h"
+#include "ui/MavlinkSerialTcpBridgeWindow.h"
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -42,6 +45,9 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSet>
+#include <QSpinBox>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QThread>
 #include <QTemporaryDir>
 #include <QTableWidget>
@@ -538,10 +544,43 @@ public:
         mavlink_msg_remote_log_data_block_encode(system, component, &message, &data);
         inject(message);
     }
+
+    void serialReply(const QByteArray &bytes, quint8 system = FixtureSystem,
+                     quint8 component = 1, quint8 device = SERIAL_CONTROL_DEV_GPS1,
+                     quint8 flags = SERIAL_CONTROL_FLAG_REPLY)
+    {
+        mavlink_serial_control_t payload{};
+        payload.device = device;
+        payload.flags = flags;
+        payload.count = static_cast<quint8>(qMin(bytes.size(), 70));
+        std::memcpy(payload.data, bytes.constData(), payload.count);
+        mavlink_message_t message{};
+        mavlink_msg_serial_control_encode(system, component, &message, &payload);
+        inject(message);
+    }
     void writeBytes(const char *bytes, qint64 size) override {
         mavlink_message_t message{};
         for (qint64 i = 0; i < size; ++i) {
             if (parser.parseByte(quint8(bytes[i]), &message) != MAVLINK_FRAMING_OK) continue;
+            if (message.msgid == MAVLINK_MSG_ID_SERIAL_CONTROL) {
+                mavlink_serial_control_t control{};
+                mavlink_msg_serial_control_decode(&message, &control);
+                serialControls.append(control);
+                if (control.flags == 0) serialReplySent = false;
+                else if (!serialReplySent) {
+                    serialReplySent = true;
+                    QTimer::singleShot(0, this, [this] {
+                        const auto bytes = QByteArray::fromHex("0042ff7e");
+                        serialReply("wrong-system", FixtureSystem - 1);
+                        serialReply("wrong-component", FixtureSystem, 42);
+                        serialReply("wrong-device", FixtureSystem, 1, SERIAL_CONTROL_DEV_GPS2);
+                        serialReply("not-reply", FixtureSystem, 1, SERIAL_CONTROL_DEV_GPS1, 0);
+                        serialReply(bytes);
+                        serialReply(QByteArray(70, '\0')); // MAVLink2 zero-tail trimming.
+                    });
+                }
+                continue;
+            }
             if (message.msgid == MAVLINK_MSG_ID_REMOTE_LOG_BLOCK_STATUS) {
                 mavlink_remote_log_block_status_t status{};
                 mavlink_msg_remote_log_block_status_decode(&message, &status);
@@ -654,6 +693,8 @@ public:
     bool suppressRecoveryWriteEcho = false;
     bool magFitMode = false;
     QVector<mavlink_remote_log_block_status_t> remoteControls;
+    QVector<mavlink_serial_control_t> serialControls;
+    bool serialReplySent = false;
     bool remoteDuplicateSent = false;
     quint8 remoteGcsSystem = 0, remoteGcsComponent = 0;
     QMap<QString, float> magFitValues = magFitParameters();
@@ -690,9 +731,31 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 23 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 24 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
+    auto *offlineSerialBridge = page->findChild<QPushButton *>(
+        QStringLiteral("MavlinkSerialTcpBridgeButton"));
+    expect(offlineSerialBridge && offlineSerialBridge->isEnabled(),
+           "offline Serial TCP Bridge window route is unavailable");
+    if (offlineSerialBridge) {
+        offlineSerialBridge->click();
+        QCoreApplication::processEvents();
+        auto *bridgeWindow = window->findChild<MavlinkSerialTcpBridgeWindow *>();
+        expect(bridgeWindow && bridgeWindow->isVisible(),
+               "Serial TCP Bridge did not open a real offline window");
+        if (bridgeWindow) {
+            QPointer<MavlinkSerialTcpBridgeWindow> closing(bridgeWindow);
+            bridgeWindow->close();
+            offlineSerialBridge->click(); // Before the deferred-delete event.
+            auto *replacement = window->findChild<MavlinkSerialTcpBridgeWindow *>();
+            expect(!closing && replacement && replacement->isVisible()
+                       && !replacement->isClosing(),
+                   "Immediate Serial bridge reopen reused a deletion-pending window");
+            if (replacement) replacement->close();
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
     auto *offlineMagFit = page->findChild<QPushButton *>(QStringLiteral("OfflineMagFitButton"));
     expect(offlineMagFit && offlineMagFit->isEnabled(), "offline MagFit route is unavailable");
     if (offlineMagFit) {
@@ -2481,6 +2544,149 @@ int RunDeveloperVehicleToolRuntimeAudit()
                        "remote capture evidence copy failed");
             fixtureArmed = false;
             fixture->heartbeat(false);
+        }
+    }
+    // Actual Developer -> shared window -> TCP socket -> SERIAL_CONTROL route.
+    // TCP traffic stays on loopback; every UART packet goes only to the in-process fixture.
+    {
+        // heartbeat(false) above enters the production parser asynchronously.
+        // Do not click Start while its preceding armed snapshot is still live.
+        expect(waitFor([&] {
+            auto *targets = links->vehicleTargetManager();
+            const auto selected = targets->acquireTarget();
+            SwarmTelemetrySnapshot snapshot;
+            return selected.isValid() && selected.endpoint.linkId == FixtureLinkId
+                && selected.endpoint.systemId == FixtureSystem
+                && selected.endpoint.componentId == MAV_COMP_ID_AUTOPILOT1
+                && targets->hasFreshHeartbeat(selected, 3000)
+                && !targets->heartbeatArmed(selected)
+                && links->swarmTelemetryRegistry()->acquireSnapshot(
+                    selected.endpoint, &snapshot, 3000) && !snapshot.armed;
+        }), "Serial bridge fixture disarmed heartbeat was not observed");
+        auto *bridge = links->mavlinkSerialTcpBridgeService();
+        page = window->findChild<ConfigDeveloperToolsView *>();
+        auto *open = page ? page->findChild<QPushButton *>(
+            QStringLiteral("MavlinkSerialTcpBridgeButton")) : nullptr;
+        expect(bridge && open && open->isEnabled(), "Serial TCP Bridge action/service missing");
+        if (open) open->click();
+        QPointer<MavlinkSerialTcpBridgeWindow> bridgeWindow(
+            window->findChild<MavlinkSerialTcpBridgeWindow *>());
+        expect(bridgeWindow && bridgeWindow->isVisible(), "Serial TCP Bridge window not visible");
+        if (bridge && bridgeWindow) {
+            if (open) open->click();
+            expect(window->findChildren<MavlinkSerialTcpBridgeWindow *>().size() == 1,
+                   "Serial TCP Bridge route created competing windows");
+            auto *device = bridgeWindow->findChild<QComboBox *>(
+                QStringLiteral("MavlinkSerialTcpBridgeDeviceComboBox"));
+            auto *baud = bridgeWindow->findChild<QComboBox *>(
+                QStringLiteral("MavlinkSerialTcpBridgeBaudComboBox"));
+            auto *port = bridgeWindow->findChild<QSpinBox *>(
+                QStringLiteral("MavlinkSerialTcpBridgeListenPortSpinBox"));
+            auto *remote = bridgeWindow->findChild<QCheckBox *>(
+                QStringLiteral("AllowRemoteSerialBridgeClientsCheckBox"));
+            auto *toggle = bridgeWindow->findChild<QPushButton *>(
+                QStringLiteral("ToggleMavlinkSerialTcpBridgeButton"));
+            expect(device && baud && port && remote && toggle, "Serial bridge controls missing");
+            if (device && baud && port && remote && toggle) {
+                expect(device->count() == 15 && device->currentData().toInt() == SERIAL_CONTROL_DEV_GPS1
+                           && baud->count() == 10 && baud->currentData().toUInt() == 0
+                           && port->value() == 500 && !remote->isChecked(),
+                       "Serial bridge inventory/defaults differ from MP10");
+                QTcpServer portProbe;
+                expect(portProbe.listen(QHostAddress::LocalHost, 0), "Cannot reserve local fixture port");
+                const quint16 fixturePort = portProbe.serverPort();
+                portProbe.close();
+                port->setValue(fixturePort);
+                baud->setCurrentIndex(baud->findData(57600));
+                const auto consent = [&]() -> QMessageBox * {
+                    if (!bridgeWindow) return nullptr;
+                    for (auto *dialog : bridgeWindow->findChildren<QMessageBox *>(
+                             QStringLiteral("MavlinkSerialTcpBridgeStartConfirmation")))
+                        if (dialog->isVisible()) return dialog;
+                    return nullptr;
+                };
+                for (bool accept : {false, true}) {
+                    expect(waitFor([&] { return toggle->isEnabled(); }), "Bridge Start stays disabled");
+                    toggle->click();
+                    expect(waitFor([&] { return consent(); }), "Bridge Start confirmation not visible");
+                    auto *dialog = consent();
+                    expect(dialog && dialog->defaultButton() == dialog->button(QMessageBox::Cancel)
+                               && dialog->escapeButton() == dialog->button(QMessageBox::Cancel),
+                           "Bridge consent does not default/Escape to Cancel");
+                    expect(!bridge->busy() && fixture->serialControls.isEmpty(),
+                           "Bridge bound listener or touched UART before consent");
+                    if (!dialog) continue;
+                    expect(dialog->text().contains(QString::number(FixtureSystem))
+                               && dialog->text().contains(QString::number(FixtureLinkId))
+                               && dialog->text().contains(QString::number(fixturePort)),
+                           "Bridge consent does not identify exact target and listener");
+                    const QString evidence = qEnvironmentVariable("APM_SERIAL_BRIDGE_AUDIT_SCREENSHOT");
+                    if (accept && !evidence.isEmpty()) {
+                        expect(dialog->grab().save(evidence), "Bridge consent screenshot failed");
+                        expect(bridgeWindow->grab().save(evidence + QStringLiteral(".window.png")),
+                               "Bridge window screenshot failed");
+                    }
+                    dialog->button(accept ? QMessageBox::Yes : QMessageBox::Cancel)->click();
+                    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+                }
+                expect(waitFor([&] { return bridge->busy() && bridge->boundPort() == fixturePort; }),
+                       "Bridge did not bind confirmed listener");
+                expect(!bridge->hasClient() && fixture->serialControls.isEmpty(),
+                       "Listening without a TCP client touched the UART");
+                const quint64 operation = bridge->operationId();
+                QTcpSocket client;
+                client.connectToHost(QHostAddress::LocalHost, fixturePort);
+                expect(waitFor([&] { return bridge->hasClient() && !fixture->serialControls.isEmpty(); }),
+                       "TCP connection did not open SERIAL_CONTROL");
+                if (!fixture->serialControls.isEmpty()) {
+                    const auto control = fixture->serialControls.first();
+                    expect(control.device == SERIAL_CONTROL_DEV_GPS1 && control.baudrate == 57600
+                               && control.timeout == 100 && control.count == 0
+                               && control.flags == (SERIAL_CONTROL_FLAG_EXCLUSIVE
+                                                    | SERIAL_CONTROL_FLAG_RESPOND | SERIAL_CONTROL_FLAG_MULTI),
+                           "UART OPEN payload differs from MP10");
+                }
+                const QByteArray expectedReply = QByteArray::fromHex("0042ff7e") + QByteArray(70, '\0');
+                QByteArray received;
+                expect(waitFor([&] {
+                    received += client.readAll();
+                    return received.size() >= expectedReply.size();
+                }), "UART binary reply did not reach TCP");
+                expect(received == expectedReply, "UART reply leaked wrong-source/device/non-REPLY bytes");
+                QByteArray outbound(281, '\0');
+                for (int i = 0; i < outbound.size(); ++i) outbound[i] = char(i);
+                expect(client.write(outbound) == outbound.size(), "TCP binary write rejected");
+                const auto written = [&] {
+                    QByteArray data;
+                    for (const auto &control : fixture->serialControls) {
+                        if (control.count <= 70)
+                            data.append(reinterpret_cast<const char *>(control.data), control.count);
+                    }
+                    return data;
+                };
+                expect(waitFor([&] { return written().size() >= outbound.size(); }),
+                       "TCP bytes did not reach UART in paced chunks");
+                expect(written() == outbound && bridge->bytesFromTcp() == 281
+                           && bridge->bytesToTcp() == quint64(expectedReply.size())
+                           && bridge->droppedBytes() == 0,
+                       "Bridge bytes/counters differ from binary fixture");
+                for (const auto &control : fixture->serialControls)
+                    expect(control.count <= 70 && !(control.flags & SERIAL_CONTROL_FLAG_BLOCKING),
+                           "Bridge emitted oversized or BLOCKING UART request");
+                fixtureArmed = true;
+                fixture->heartbeat(true);
+                expect(waitFor([&] { return !bridge->busy(); }), "Arming failed to stop UART bridge");
+                int releases = 0;
+                for (const auto &control : fixture->serialControls)
+                    if (control.flags == 0 && control.count == 0
+                        && control.timeout == 0 && control.baudrate == 0) ++releases;
+                expect(releases == 1, "Arming did not attempt exactly one original-route UART release");
+                expect(bridge->operationId() == 0 && operation != 0, "Bridge retained stale ownership");
+                bridgeWindow->close();
+                fixtureArmed = false;
+                fixture->heartbeat(false);
+                qInfo() << "Serial TCP Bridge production binary/cancel/armed-release audit passed";
+            }
         }
     }
     heartbeat.stop();

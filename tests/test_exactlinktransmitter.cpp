@@ -110,6 +110,7 @@ private slots:
     void signedSubmissionContainsActualWireSignature();
     void setupSigningNeverPublishesKeyMaterial();
     void remoteLogControlRequiresExactSessionOwner();
+    void serialControlRequiresDedicatedSessionOwner();
     void reentrantSignerChangesAbortBeforeWrite_data();
     void reentrantSignerChangesAbortBeforeWrite();
     void reentrantSignerDestructionIsSafe();
@@ -616,6 +617,24 @@ void ExactLinkTransmitterTest::remoteLogControlRequiresExactSessionOwner()
                  commandMessage(MAV_CMD_NAV_RETURN_TO_LAUNCH)),
              ExactLinkTransmitter::SendResult::Sent);
     QCOMPARE(decodeFrame(frames.first().bytes).seq, quint8(0));
+}
+
+void ExactLinkTransmitterTest::serialControlRequiresDedicatedSessionOwner()
+{
+    int writes = 0;
+    ExactLinkTransmitter transmitter([&](int, const QByteArray &) {
+        ++writes;
+        return true;
+    });
+    transmitter.setLinkSessionEpoch(11, 7);
+    mavlink_message_t message{};
+    message.msgid = MAVLINK_MSG_ID_SERIAL_CONTROL;
+    message.len = MAVLINK_MSG_ID_SERIAL_CONTROL_LEN;
+    bool attempted = true;
+    QCOMPARE(transmitter.sendMessage(11, 250, 190, message, &attempted),
+             ExactLinkTransmitter::SendResult::RestrictedMessage);
+    QVERIFY(!attempted);
+    QCOMPARE(writes, 0);
 }
 
 void ExactLinkTransmitterTest::setupSigningNeverPublishesKeyMaterial()

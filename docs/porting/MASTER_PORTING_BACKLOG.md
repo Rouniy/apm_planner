@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,254/254 теста; Developer23/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,257/257 тестов; Developer24/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -66,13 +66,26 @@ application-owned запись после закрытия страницы, bou
 явное сохранение BIN/partial.BIN и unpublished .part при обрыве. Production X11
 проверяет ровно600 байт, чужие пакеты, armed Stop и оба log-protocol interlock.
 Протокол не даёт nonce/EOF/STOP ACK; отправленный STOP не доказывает остановку.
-Следующий кандидат — MAVLink Serial TCP Bridge (SERIAL_CONTROL, не Mirror),
-затем Flight Log Index и остальные однодроновые инструменты.
+MAVLink Serial TCP Bridge теперь реализован: отдельное общее окно, все15 UART/
+10 baud, точное default-Cancel подтверждение, один TCP-клиент, bounded binary
+SERIAL_CONTROL и monotonic10ms pacing. Штатный FIN допередаёт принятый хвост;
+Stop/arming/loss отменяют очередь. Освобождение UART только исходному ещё
+известному instance/epoch через прежний маршрут, с честным статусом без ACK.
+Full257/257 (46.54s), focused7/7,10 повторов каждого из3 bridge suites и X11
+с281/74 binary bytes/Cancel/armed release/читаемыми окнами проходят. Реальных
+SITL/UART записей не было. Shutdown-only, новый второй system на маршруте и
+потеря исходного instance могут запретить release; baud/flow control не восстановлены.
+Следующий кандидат — Flight Log Index: обе reference routes,13-column table,
+метрики, JPEG sidecars, immutable exact-companion delete и открытие Log Browser.
+Claude c250/c251 выполнил независимый аудит; thumbnails читают canonical shared
+tile cache с явным root, не private OPMap cache и не сеть. Затем остальные
+однодроновые инструменты.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
 `APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`,
-`PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`, `REMOTE_DATAFLASH_LOG_PORT.md`.
+`PARAMETER_RECOVERY_PORT.md`, `OFFLINE_MAGFIT_PORT.md`, `REMOTE_DATAFLASH_LOG_PORT.md`,
+`MAVLINK_SERIAL_TCP_BRIDGE_PORT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
@@ -373,7 +386,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Remote DataFlash Log работают23/32; заменить оставшиеся9
+- Developer Tools: после Serial TCP Bridge работают24/32; заменить оставшиеся8
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.
@@ -535,10 +548,8 @@ dirty state никогда не переносится на новый target.
 #### Отсутствующие инструменты P2
 
 - SFTP Log Download и Log Index;
-- Offline Mag Fit;
 - Photo/video GeoRef;
 - Terrain Maker;
-- MAVLink Serial/TCP Bridge;
 - Microdrone Downlink;
 - Translation Editor;
 - Tracker Home Module.

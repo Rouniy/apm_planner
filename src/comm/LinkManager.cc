@@ -40,6 +40,7 @@ This file is part of the APM_PLANNER project
 #include "services/ParameterRecoveryService.h"
 #include "services/OfflineMagFitApplyService.h"
 #include "RemoteDataFlashLogService.h"
+#include "MavlinkSerialTcpBridgeService.h"
 #include "services/SwarmWaypointLeaderExecutor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
@@ -277,6 +278,29 @@ LinkManager::LinkManager(QObject *parent) :
             return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
         });
     Q_ASSERT(singleCommandsConfigured);
+    m_mavlinkSerialTcpBridgeService = new MavlinkSerialTcpBridgeService(
+        m_vehicleTargetManager, m_swarmTelemetryRegistry,
+        m_exactLinkTransmitter, QGC::MavlinkID(), QGC::ComponentID(),
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            if (!singleEndpointRouteIsEligible(
+                    lease.endpoint, lease.linkSessionEpoch, error)) return false;
+            auto *link = getLink(lease.endpoint.linkId);
+            if (link && link->getLinkType() == LinkInterface::SERIAL_LINK) return true;
+            if (qobject_cast<UDPLink *>(link)) return true; // Exact one-peer revision pinned above.
+            if (auto *tcp = qobject_cast<TCPLink *>(link)) {
+                if (!tcp->isServer()) return true;
+            }
+            if (auto *udp = qobject_cast<UDPClientLink *>(link)) {
+                const auto address = udp->getHostAddress();
+                if (!address.isNull() && !address.isMulticast()
+                    && address != QHostAddress::Broadcast
+                    && address != QHostAddress::Any
+                    && address != QHostAddress::AnyIPv4
+                    && address != QHostAddress::AnyIPv6) return true;
+            }
+            if (error) *error = tr("The UART bridge requires a dedicated trusted single-peer connection; shared or fan-out links are not supported.");
+            return false;
+        }, this);
     connect(m_swarmTelemetryRegistry,
             &SwarmTelemetryRegistry::endpointRetired,
             m_vehicleCommandService,
@@ -466,6 +490,8 @@ LinkManager::LinkManager(QObject *parent) :
         // Remote logger packets originate from MAV_COMP_ID_LOG rather than
         // the autopilot component and must not depend on legacy UAS discovery.
         m_remoteDataFlashLogService->observeMessage(id, epoch, message);
+        if (!current()) return;
+        m_mavlinkSerialTcpBridgeService->observeMessage(id, epoch, message);
         if (!current()) return;
         emit mavlinkMessageObserved(id, epoch, message);
     });
@@ -741,6 +767,7 @@ void LinkManager::shutdown()
     m_parameterRecoveryService->shutdown();
     m_offlineMagFitApplyService->shutdown();
     m_remoteDataFlashLogService->shutdown();
+    m_mavlinkSerialTcpBridgeService->shutdown();
     m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
     m_exactLogTransferService->shutdown();
@@ -1192,6 +1219,11 @@ OfflineMagFitApplyService *LinkManager::offlineMagFitApplyService() const
 RemoteDataFlashLogService *LinkManager::remoteDataFlashLogService() const
 {
     return m_remoteDataFlashLogService;
+}
+
+MavlinkSerialTcpBridgeService *LinkManager::mavlinkSerialTcpBridgeService() const
+{
+    return m_mavlinkSerialTcpBridgeService;
 }
 
 ParameterService *LinkManager::parameterService() const

@@ -67,6 +67,13 @@ signals:
 private:
     friend class LinkManager;
     friend class RemoteDataFlashLogService;
+    friend class MavlinkSerialTcpBridgeService;
+    // SERIAL_CONTROL has no destination fields. Only the dedicated-route
+    // session owner may submit UART requests, data or its bounded release.
+    SendResult sendSerialControl(int linkId, quint64 expectedEpoch,
+        quint8 localSystemId, quint8 localComponentId, quint8 device,
+        quint8 flags, quint16 timeout, quint32 baudRate, const QByteArray &data,
+        bool *frameWriterInvoked = nullptr);
     // REMOTE_LOG has no transaction nonce and its backend does not verify
     // session ownership. Only the reviewed exact-session service sends it.
     SendResult sendRemoteLogBlockStatus(int linkId, quint64 expectedEpoch,

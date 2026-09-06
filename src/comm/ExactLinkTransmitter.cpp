@@ -45,8 +45,44 @@ ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendMessage(
 {
     if (frameWriterInvoked) *frameWriterInvoked = false;
     if (message.msgid == MAVLINK_MSG_ID_SETUP_SIGNING
-        || message.msgid == MAVLINK_MSG_ID_REMOTE_LOG_BLOCK_STATUS)
+        || message.msgid == MAVLINK_MSG_ID_REMOTE_LOG_BLOCK_STATUS
+        || message.msgid == MAVLINK_MSG_ID_SERIAL_CONTROL)
         return SendResult::RestrictedMessage;
+    return sendMessageImpl(linkId, localSystemId, localComponentId,
+                           message, frameWriterInvoked);
+}
+
+ExactLinkTransmitter::SendResult ExactLinkTransmitter::sendSerialControl(
+    int linkId, quint64 expectedEpoch, quint8 localSystemId,
+    quint8 localComponentId, quint8 device, quint8 flags, quint16 timeout,
+    quint32 baudRate, const QByteArray &data, bool *frameWriterInvoked)
+{
+    if (frameWriterInvoked) *frameWriterInvoked = false;
+    if (linkId < 0 || !expectedEpoch
+        || m_linkSessionEpochs.value(linkId, 0) != expectedEpoch)
+        return SendResult::InvalidLink;
+    const bool deviceValid = device <= SERIAL_CONTROL_DEV_GPS2
+        || device == SERIAL_CONTROL_DEV_SHELL
+        || (device >= SERIAL_CONTROL_SERIAL0 && device <= SERIAL_CONTROL_SERIAL9);
+    const quint8 allowed = SERIAL_CONTROL_FLAG_EXCLUSIVE
+        | SERIAL_CONTROL_FLAG_RESPOND | SERIAL_CONTROL_FLAG_MULTI;
+    if (!localSystemId || !localComponentId || !deviceValid
+        || data.size() > MAVLINK_MSG_SERIAL_CONTROL_FIELD_DATA_LEN
+        || timeout > 100 || (flags & ~allowed)
+        || (flags && !(flags & SERIAL_CONTROL_FLAG_EXCLUSIVE))
+        || ((flags & SERIAL_CONTROL_FLAG_MULTI) && !(flags & SERIAL_CONTROL_FLAG_RESPOND))
+        || (!flags && (!data.isEmpty() || timeout || baudRate)))
+        return SendResult::InvalidMessage;
+    mavlink_message_t message{};
+    message.msgid = MAVLINK_MSG_ID_SERIAL_CONTROL;
+    message.len = MAVLINK_MSG_ID_SERIAL_CONTROL_LEN;
+    char *payload = _MAV_PAYLOAD_NON_CONST(&message);
+    _mav_put_uint32_t(payload, 0, baudRate);
+    _mav_put_uint16_t(payload, 4, timeout);
+    _mav_put_uint8_t(payload, 6, device);
+    _mav_put_uint8_t(payload, 7, flags);
+    _mav_put_uint8_t(payload, 8, static_cast<quint8>(data.size()));
+    if (!data.isEmpty()) std::memcpy(payload + 9, data.constData(), data.size());
     return sendMessageImpl(linkId, localSystemId, localComponentId,
                            message, frameWriterInvoked);
 }
