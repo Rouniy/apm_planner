@@ -98,6 +98,9 @@ Convert Shapefile to POLY теперь реализован: offline-выбор 
 default-Cancel Create/Replace план, атомарные файлы и честные частичные итоги.
 Тест выявил потерю семантики нулевого TOWGS84 при промежуточном WKT2;
 исходный проверенный WKT сохраняется без ослабления strict/no-ballpark policy.
+Дополнение NTF Paris: только уникальное100% EPSG-сопоставление с полной
+эквивалентностью CRS и сохранением осей/единиц; явные bindings/grids/epochs
+не заменяются. Все32 projection cases проходят по10 раз без пропусков.
 Developer28/32; SETUP/Tools route counts и inventory129 не изменились.
 Следующий кандидат — MicroDrone Downlink, затем остальные однодроновые
 инструменты. Claude c276 подтвердил working encoder+serial output в MP10;

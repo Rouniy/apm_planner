@@ -41,6 +41,14 @@ strict policy. UTM33N/55S, Web Mercator, Lambert, Albers, angular units, explici
 100 m datum shift, invalid coordinates and missing-grid rejection are tested.
 Shared GDAL runtime candidates keep ElevationSourceService behavior unchanged.
 
+Projection follow-up: standard ESRI GCS_NTF_Paris now resolves its unique 100%
+EPSG:4807 identity only after full normalized equivalence plus axis/unit-scale
+checks. Explicit bindings/grids/epochs are never overridden and no approximate
+match is used. Independent EPSG:8094 goldens, grads/feet and explicit zero/100 m
+overrides pass: all32 projection cases, repeated ten times without skips.
+Evidence is in `/tmp/apm-microdrone.5ewMlI/repeat.log`; Claude TCP c279 supplied
+the independently reproduced alias case. Original strict flags remain unchanged.
+
 Immutable output bytes and exact stamps are reviewed before publication;
 source SHA is rechecked before the first write. QSaveFile with fallback=false
 and repeated type/path/stamp checks refuse linked/changed outputs. Cancellation

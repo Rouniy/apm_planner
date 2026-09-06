@@ -70,6 +70,16 @@ avoids serialization rather than adding a permissive fallback. Tests cover
 ambiguous-frame rejection and explicit Paris/Rome/Lisbon transformations, plus
 UTM north/south, Web Mercator, Lambert, Albers, angular units and a 100 m datum shift.
 
+The standard ESRI GCS_NTF_Paris alias needs a separate correction: PROJ can
+identify EPSG:4807 exactly but otherwise offer only ballpark composites for the
+alias. Ordinary geographic/projected CRS may now use a unique 100% EPSG match
+only after full normalized CRS equivalence and independent axis/unit-scale
+checks. The original display name remains and a warning reports the authority.
+Explicit TOWGS84/bound/grid/extension/dynamic/epoch definitions are never
+replaced. There is no 70% match or approximate fallback. The NTF Paris fixture
+uses registered EPSG:8094; grads/feet and explicit zero/100 m bindings retain
+their own coordinate semantics.
+
 The private context disables network and grid cache. No process-global
 `OSRSetPROJEnableNetwork`, environment, default context or global error handler
 is changed. Missing required grids or unavailable datum operations fail;
@@ -150,6 +160,11 @@ automatic rollback claim is made.
   final pixel matching and native-platform verification are not complete.
 
 ## Verification checkpoint
+
+The exact NTF Paris follow-up passes all32 projection cases ten times with no
+skips; see `/tmp/apm-microdrone.5ewMlI/repeat.log`. Registered EPSG:8094 agrees
+with independent native PROJ diagnostics. Explicit bindings, missing grids and
+grads/feet regressions remain green. The initial slice's evidence follows.
 
 Qt5/audio configure and final build pass. Focused11/11 (28.92s), full272/272
 (48.42s), ten repeats of each of4 suites (15.76s) and production X11 exit0/

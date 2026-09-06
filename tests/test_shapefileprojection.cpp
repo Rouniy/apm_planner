@@ -13,6 +13,9 @@ using namespace Shapefile;
 QString geographic() {
     return QStringLiteral("GEOGCS[\"GCS_WGS_1984\",DATUM[\"D_WGS_1984\",SPHEROID[\"WGS_1984\",6378137,298.257223563]],PRIMEM[\"Greenwich\",0],UNIT[\"Degree\",0.017453292519943295]]");
 }
+QString ntfParis() {
+    return QStringLiteral("GEOGCS[\"GCS_NTF_Paris\",DATUM[\"D_NTF\",SPHEROID[\"Clarke_1880_IGN\",6378249.2,293.4660212936265]],PRIMEM[\"Paris\",2.337229166667],UNIT[\"Grad\",0.01570796326794897]]");
+}
 QString projected(const QString &name, const QString &method, const QString &parameters,
                   const QString &units = QStringLiteral("UNIT[\"Meter\",1]")) {
     return QStringLiteral("PROJCS[\"%1\",%2,PROJECTION[\"%3\"],%4,%5]")
@@ -104,6 +107,80 @@ private slots:
         const auto result = ShapefileProjection::transform(unknown, points({{10,20,0}}));
         if (runtimeMissing(result)) QSKIP(qPrintable(result.error));
         QVERIFY(!result.success); QVERIFY(!result.error.isEmpty()); QVERIFY(result.features.isEmpty());
+    }
+
+    void authoritativeNtfParis_data() {
+        QTest::addColumn<bool>("latitudeFirst");
+        QTest::newRow("ESRI-default-axes") << false;
+        QTest::newRow("explicit-latitude-first-GIS-input") << true;
+    }
+    void authoritativeNtfParis() {
+        QFETCH(bool, latitudeFirst);
+        QString wkt = ntfParis();
+        if (latitudeFirst) {
+            wkt.chop(1);
+            wkt += QStringLiteral(",AXIS[\"Latitude\",NORTH],AXIS[\"Longitude\",EAST]]");
+        }
+        // Shapefile input remains GIS x/y, in the declared grad units, even
+        // when the authoritative CRS or input WKT has latitude-first axes.
+        const auto result = ShapefileProjection::transform(wkt, points({{0,54,0}}));
+        if (runtimeMissing(result)) QSKIP(qPrintable(result.error));
+        QVERIFY2(result.success, qPrintable(result.error));
+        QCOMPARE(result.features.first().points.size(), 1);
+        const auto p = result.features.first().points.first();
+        // Independent registered EPSG:8094 / Helmert(-168,-60,320) oracle.
+        QVERIFY(std::abs(p.x - 2.3365092457618197) < 1e-8);
+        QVERIFY(std::abs(p.y - 48.59993223903158) < 1e-8);
+        QVERIFY(result.projectionName.contains("NTF"));
+        QVERIFY(!result.projectionName.startsWith("EPSG:"));
+        QVERIFY(result.warnings.join(' ').contains("identified exactly as EPSG:4807"));
+    }
+
+    void identificationPreservesCoordinateUnits() {
+        QString grads = geographic();
+        grads.replace("\"Degree\",0.017453292519943295", "\"grad\",0.015707963267948967");
+        const auto angular = ShapefileProjection::transform(grads, points({{100,50,0}}));
+        if (runtimeMissing(angular)) QSKIP(qPrintable(angular.error));
+        QVERIFY2(angular.success, qPrintable(angular.error));
+        QVERIFY(std::abs(angular.features.first().points.first().x - 90) < 1e-8);
+        QVERIFY(std::abs(angular.features.first().points.first().y - 45) < 1e-8);
+        QVERIFY(!angular.warnings.join(' ').contains("identified exactly"));
+        QString feet = utm(33, false);
+        feet.replace("\"False_Easting\",500000", "\"False_Easting\",1640419.9475065617");
+        feet.replace("UNIT[\"Meter\",1]", "UNIT[\"Foot\",0.3048]");
+        const auto linear = ShapefileProjection::transform(feet,
+            points({{515176.7201 / 0.3048, 5216296.2492 / 0.3048, 0}}));
+        QVERIFY2(linear.success, qPrintable(linear.error));
+        const auto p = linear.features.first().points.first();
+        QVERIFY(std::abs(p.x - 15.2) < 1e-6); QVERIFY(std::abs(p.y - 47.1) < 1e-6);
+        QVERIFY(!linear.warnings.join(' ').contains("identified exactly as EPSG:32633"));
+    }
+
+    void identificationNeverOverridesExplicitDatumBinding_data() {
+        QTest::addColumn<int>("shift"); QTest::addColumn<double>("longitude"); QTest::addColumn<double>("latitude");
+        QTest::newRow("explicit-zero-binding") << 0 << 2.3372291666666665 << 48.596880373274985;
+        QTest::newRow("explicit-100m-binding") << 100 << 2.3371738787884015 << 48.59620641615212;
+    }
+    void identificationNeverOverridesExplicitDatumBinding() {
+        QFETCH(int, shift); QFETCH(double, longitude); QFETCH(double, latitude);
+        QString wkt = ntfParis();
+        wkt.replace("293.4660212936265]]", QStringLiteral("293.4660212936265],TOWGS84[%1,0,0,0,0,0,0]]").arg(shift));
+        const auto result = ShapefileProjection::transform(wkt, points({{0,54,0}}));
+        if (runtimeMissing(result)) QSKIP(qPrintable(result.error));
+        QVERIFY2(result.success, qPrintable(result.error));
+        const auto p = result.features.first().points.first();
+        QVERIFY(std::abs(p.x - longitude) < 1e-8); QVERIFY(std::abs(p.y - latitude) < 1e-8);
+        QVERIFY(std::abs(p.y - 48.59993223903158) > 0.001);
+        QVERIFY(!result.warnings.join(' ').contains("identified exactly"));
+    }
+
+    void identificationNeverOverridesExplicitGrid() {
+        QString wkt = ntfParis();
+        wkt.replace("293.4660212936265]]", "293.4660212936265],EXTENSION[\"PROJ4_GRIDS\",\"apm_ntf_missing_grid_790c1e.gsb\"]]");
+        const auto result = ShapefileProjection::transform(wkt, points({{0,54,0}}));
+        if (runtimeMissing(result)) QSKIP(qPrintable(result.error));
+        QVERIFY(!result.success); QVERIFY(!result.error.isEmpty()); QVERIFY(result.features.isEmpty());
+        QVERIFY(!result.warnings.join(' ').contains("identified exactly"));
     }
 
     void projectedInvalidCoordinatesAndAmbiguousPrimeMeridian() {

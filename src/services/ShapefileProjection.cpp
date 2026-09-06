@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <memory>
 
 namespace {
@@ -44,6 +45,19 @@ struct Api {
     void *(*destroy)(void *) = nullptr;
     void *(*createTransform)(void *, const void *, const void *, void *, const char *const *) = nullptr;
     void *(*normalize)(void *, const void *) = nullptr;
+    int (*type)(const void *) = nullptr;
+    void *(*identify)(void *, const void *, const char *, const char *const *, int **) = nullptr;
+    int (*listCount)(const void *) = nullptr;
+    void *(*listGet)(void *, const void *, int) = nullptr;
+    void (*listDestroy)(void *) = nullptr;
+    void (*confidenceDestroy)(int *) = nullptr;
+    const char *(*idAuthority)(const void *, int) = nullptr;
+    const char *(*idCode)(const void *, int) = nullptr;
+    int (*equivalent)(void *, const void *, const void *, int) = nullptr;
+    void *(*coordinateSystem)(void *, const void *) = nullptr;
+    int (*axisCount)(void *, const void *) = nullptr;
+    int (*axisInfo)(void *, const void *, int, const char **, const char **,
+                    const char **, double *, const char **, const char **, const char **) = nullptr;
     size_t (*transform)(void *, int, double *, size_t, size_t, double *, size_t, size_t,
                         double *, size_t, size_t, double *, size_t, size_t) = nullptr;
     int (*error)(const void *) = nullptr;
@@ -88,6 +102,18 @@ struct Api {
                 && symbol(*lib, &destroy, "proj_destroy")
                 && symbol(*lib, &createTransform, "proj_create_crs_to_crs_from_pj")
                 && symbol(*lib, &normalize, "proj_normalize_for_visualization")
+                && symbol(*lib, &type, "proj_get_type")
+                && symbol(*lib, &identify, "proj_identify")
+                && symbol(*lib, &listCount, "proj_list_get_count")
+                && symbol(*lib, &listGet, "proj_list_get")
+                && symbol(*lib, &listDestroy, "proj_list_destroy")
+                && symbol(*lib, &confidenceDestroy, "proj_int_list_destroy")
+                && symbol(*lib, &idAuthority, "proj_get_id_auth_name")
+                && symbol(*lib, &idCode, "proj_get_id_code")
+                && symbol(*lib, &equivalent, "proj_is_equivalent_to_with_ctx")
+                && symbol(*lib, &coordinateSystem, "proj_crs_get_coordinate_system")
+                && symbol(*lib, &axisCount, "proj_cs_get_axis_count")
+                && symbol(*lib, &axisInfo, "proj_cs_get_axis_info")
                 && symbol(*lib, &transform, "proj_trans_generic")
                 && symbol(*lib, &error, "proj_errno")
                 && symbol(*lib, &reset, "proj_errno_reset")
@@ -104,7 +130,7 @@ struct Api {
 struct Conversion {
     Api api;
     void *srs = nullptr, *context = nullptr, *source = nullptr, *target = nullptr, *operation = nullptr;
-    QString detail;
+    QString detail, identifiedAuthority;
     ~Conversion() {
         if (operation) api.destroy(operation);
         if (source) api.destroy(source);
@@ -117,6 +143,70 @@ struct Conversion {
         if (!code && context) code = api.contextError(context);
         const char *message = context ? api.errorString(context, code) : api.lastError();
         return message && *message ? QString::fromUtf8(message).left(2048) : QStringLiteral("No usable coordinate operation or required local grid is available.");
+    }
+    bool sameCoordinateDomain(const void *candidate) {
+        void *originalCs = api.coordinateSystem(context, source);
+        void *candidateCs = api.coordinateSystem(context, candidate);
+        bool same = originalCs && candidateCs;
+        const int count = same ? api.axisCount(context, originalCs) : 0;
+        same = same && count >= 2 && count <= 3 && count == api.axisCount(context, candidateCs);
+        for (int i = 0; same && i < count; ++i) {
+            const char *originalDirection = nullptr, *candidateDirection = nullptr;
+            double originalUnit = 0, candidateUnit = 0;
+            same = api.axisInfo(context, originalCs, i, nullptr, nullptr, &originalDirection,
+                &originalUnit, nullptr, nullptr, nullptr)
+                && api.axisInfo(context, candidateCs, i, nullptr, nullptr, &candidateDirection,
+                    &candidateUnit, nullptr, nullptr, nullptr)
+                && originalDirection && candidateDirection
+                && QByteArray(originalDirection) == QByteArray(candidateDirection)
+                && std::isfinite(originalUnit) && std::isfinite(candidateUnit)
+                && originalUnit > 0 && candidateUnit > 0
+                && std::abs(originalUnit - candidateUnit) <= 8 * std::numeric_limits<double>::epsilon()
+                    * std::max(originalUnit, candidateUnit);
+        }
+        if (originalCs) api.destroy(originalCs);
+        if (candidateCs) api.destroy(candidateCs);
+        return same;
+    }
+    void identifyExactSource(const QByteArray &wkt, const void *original) {
+        // Never replace an explicitly bound, grid-constrained, dynamic or
+        // epoch-bearing CRS, even if PROJ collapses a no-op binding on import.
+        // Conservatively skipping a token occurring in a quoted name is safe.
+        const QByteArray upper = wkt.toUpper();
+        for (const char *token : {"TOWGS84", "BOUNDCRS", "EXTENSION", "PARAMETERFILE",
+                                 "GEOIDMODEL", "COORDINATEMETADATA", "EPOCH", "DYNAMIC"})
+            if (upper.contains(token)) return;
+        const int sourceType = api.type(original);
+        // PJ_TYPE_GEOGRAPHIC_2D_CRS=12, GEOGRAPHIC_3D_CRS=13, PROJECTED_CRS=15.
+        // In particular do not identify a BoundCRS through its base CRS.
+        if (sourceType != 12 && sourceType != 13 && sourceType != 15) return;
+        int *confidences = nullptr;
+        void *matches = api.identify(context, original, "EPSG", nullptr, &confidences);
+        int exactIndex = -1, exactCount = 0;
+        const int count = matches ? api.listCount(matches) : 0;
+        if (confidences && count > 0 && count <= 256) {
+            for (int i = 0; i < count; ++i) {
+                if (confidences[i] == 100) { exactIndex = i; ++exactCount; }
+            }
+        }
+        void *candidate = exactCount == 1 ? api.listGet(context, matches, exactIndex) : nullptr;
+        if (matches) api.listDestroy(matches);
+        if (confidences) api.confidenceDestroy(confidences);
+        if (!candidate) return;
+        const char *authority = api.idAuthority(candidate, 0);
+        const char *code = api.idCode(candidate, 0);
+        const QString identifier = authority && code && QByteArray(authority) == "EPSG"
+            ? QStringLiteral("EPSG:") + QString::fromLatin1(code) : QString();
+        void *normalized = api.type(candidate) == sourceType && !identifier.isEmpty()
+            ? api.normalize(context, candidate) : nullptr;
+        api.destroy(candidate);
+        // PJ_COMP_EQUIVALENT=1 checks the complete CRS, not just its datum.
+        // Check after GIS axis normalization, then independently require the
+        // same axis directions and units: grads/feet must not become degrees/metres.
+        if (normalized && api.equivalent(context, source, normalized, 1)
+            && sameCoordinateDomain(normalized)) {
+            api.destroy(source); source = normalized; identifiedAuthority = identifier;
+        } else if (normalized) api.destroy(normalized);
     }
     bool initialize(QByteArray wkt, QString *name, QString *errorText) {
         if (!api.load(errorText)) return false;
@@ -143,11 +233,18 @@ struct Conversion {
         // for a non-Greenwich prime meridian and lose its strict operation.
         // PROJ's native WKT parser supports ESRI aliases directly; no hand
         // rewriting, datum guessing or alternate ballpark operation is used.
+        // A separately proven exact authority identification may repair an ESRI
+        // alias without changing the normalized coordinate domain below.
         void *rawSource = api.create(context, wkt.constData());
         void *rawTarget = api.create(context, "EPSG:4326");
-        if (rawSource) { source = api.normalize(context, rawSource); api.destroy(rawSource); }
+        if (rawSource) {
+            source = api.normalize(context, rawSource);
+            if (source) identifyExactSource(wkt, rawSource);
+            api.destroy(rawSource);
+        }
         if (rawTarget) { target = api.normalize(context, rawTarget); api.destroy(rawTarget); }
         if (!source || !target) { *errorText = QStringLiteral("Cannot initialize source/WGS84 CRS; check local proj.db: ") + failure(); return false; }
+        detail.clear(); // Optional identification diagnostics must not mask operation failures.
         const char *options[] = {"ALLOW_BALLPARK=NO", "ONLY_BEST=YES", nullptr};
         // Normalize CRS axes BEFORE constructing the operation. This also
         // leaves all strict operation-selection options on the original PJ.
@@ -191,6 +288,9 @@ Shapefile::ProjectionResult ShapefileProjection::transform(const QString &reques
     text = text.trimmed();
     const bool projected = !text.isEmpty();
     if (projected && !conversion.initialize(text.toUtf8(), &result.projectionName, &result.error)) return result;
+    if (!conversion.identifiedAuthority.isEmpty())
+        result.warnings.append(QStringLiteral("Source CRS identified exactly as %1 (100% confidence; coordinate axes and units preserved).")
+            .arg(conversion.identifiedAuthority));
     if (projected) result.warnings.append(QStringLiteral("Offline GDAL/PROJ reprojection uses local CRS/grid data with ballpark transformations disabled. Numerical datum accuracy depends on the source CRS, available grids and coordinate epoch; this is not proof of survey accuracy."));
     else result.warnings.append(QStringLiteral("No PRJ: coordinates are treated as WGS84 longitude/latitude, matching Mission Planner. Their actual datum is not verified."));
     qint64 completed = 0;
