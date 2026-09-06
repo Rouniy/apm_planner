@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/translations">
+    <file>dotnet10-cultures.json</file>
+  </qresource>
+</RCC>

@@ -1,0 +1,4 @@
+#ifndef TRANSLATIONEDITORRUNTIMEAUDIT_H
+#define TRANSLATIONEDITORRUNTIMEAUDIT_H
+int RunTranslationEditorRuntimeAudit();
+#endif

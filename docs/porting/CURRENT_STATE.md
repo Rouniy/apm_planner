@@ -24,7 +24,46 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Probe MAVLink Camera**. Its existing Developer action
+Latest slice (2026-09-06): **Translation / RESX Editor**. Its existing Developer
+action opens one real modeless offline window with source/culture load, editable
+five-column table, filters, revert, all-row CSV, resume HTML import and confirmed
+sparse RESX/HTML export. Every existing target is backed up before replacement;
+per-file atomic publication, bounded workers, cancellation and truthful partial
+receipts are wired. Unsaved/busy application Close waits for the editor; Cancel
+does not leak a pending application-close request into later standalone Close.
+
+The embedded858-culture .NET snapshot includes seven confirmed Chinese aliases.
+This deliberately fixes Linux MP10's45 localized files/924 Chinese rows wrongly
+recognized as neutral. The resulting89 files/2264 entries, including order and
+all fields, match the actual .NET service after excluding only that source bug.
+Two RESX files plus HTML are byte-identical to actual .NET export goldens.
+ASCII underscore ordering and literal XML-encoding text regressions are fixed;
+non-ASCII .NET path casing remains an explicit gap. This tool edits .NET RESX,
+not the running Qt application's .ts/.qm language resources.
+
+Qt5/audio configure/build4 pass; full **285/285 (49.71s)**, all three new suites
+pass ten repeats (8.84s), complete window suite passes X11. Actual production
+X11 route exits0/zero failures, proving source picker, default-Cancel export,
+backups, filter-independent CSV, pinned loaded culture, close cancellation and
+reopen. Root inspected readable consent/window screenshots. Three Codex streams
+and Claude TCP c291/c293/c295 independent reviews contributed; reports/hashes checked.
+Evidence: `/tmp/apm-resx-editor.7ctTCg/`; actual primary-service .NET oracle:
+`/tmp/apm-resx-oracle.F6cI2I/`. See `RESX_TRANSLATION_EDITOR_PORT.md` for bounds,
+known Unicode/culture/visual/native-platform differences and reproducibility.
+
+Developer now **31/32 working,1 unavailable: SFTP logs**. SETUP46/eight absent
+reference routes, Advanced14 complete+partial Signing/disabled Support Proxy,
+fixedTools24 plus Signing, CONFIG15/15 factories and Planner21/64 are unchanged.
+Inventory129 is76 in-progress/36 partial/17 not-started, none strict-complete;
+deviations144. Next: SFTP requires a portable SSH implementation and pre-auth
+SHA256 host-key pinning, then Settings. Read-only audit found no SSH dependency
+or standalone BIN-to-LOG converter in Qt; libssh2 is a candidate, not integrated.
+SFTP must freeze exact remote paths in delete consent and never persist passwords.
+Swarm remains last; the complete port remains incomplete.
+
+### Previous checkpoint: Probe MAVLink Camera
+
+Previous slice (2026-09-06): **Probe MAVLink Camera**. Its existing Developer action
 now opens a real default/Escape-Cancel confirmation and modeless owned progress.
 It selects the first heartbeat-known component100 on the selected physical link,
 including external cameras with autopilotINVALID and a different system id.

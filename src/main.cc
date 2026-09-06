@@ -52,6 +52,7 @@ This file is part of the QGROUNDCONTROL project
 #include "FirmwareArchiveRuntimeAudit.h"
 #include "ShapefilePolyRuntimeAudit.h"
 #include "MicrodroneDownlinkRuntimeAudit.h"
+#include "TranslationEditorRuntimeAudit.h"
 
 #include <QSettings>
 #include <QStandardPaths>
@@ -143,6 +144,7 @@ int main(int argc, char *argv[])
     bool firmwareArchiveAuditRequested = false;
     bool shapefilePolyAuditRequested = false;
     bool microdroneDownlinkAuditRequested = false;
+    bool translationEditorAuditRequested = false;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--setup-route-audit") == 0) {
             setupRouteAuditRequested = true;
@@ -159,10 +161,13 @@ int main(int argc, char *argv[])
             shapefilePolyAuditRequested = true;
         if (std::strcmp(argv[index], "--microdrone-downlink-audit") == 0)
             microdroneDownlinkAuditRequested = true;
+        if (std::strcmp(argv[index], "--translation-editor-audit") == 0)
+            translationEditorAuditRequested = true;
     }
     // Keep the audit's directory picker introspectable under desktop platform
     // themes as well as offscreen. Normal launches retain native file dialogs.
-    if (logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested)
+    if (logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
+        || translationEditorAuditRequested)
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
 
     // Construct before application singletons so their static destructors
@@ -170,7 +175,7 @@ int main(int argc, char *argv[])
     static std::unique_ptr<QTemporaryDir> setupRouteAuditSettings;
     if (setupRouteAuditRequested || signingTransportAuditRequested || developerVehicleAuditRequested
         || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
-        || microdroneDownlinkAuditRequested) {
+        || microdroneDownlinkAuditRequested || translationEditorAuditRequested) {
         // The audit constructs production pages but must not observe or mutate
         // the operator's settings and writable application-data directories.
         QStandardPaths::setTestModeEnabled(true);
@@ -213,13 +218,14 @@ int main(int argc, char *argv[])
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
     if (signingTransportAuditRequested || developerVehicleAuditRequested
         || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
-        || microdroneDownlinkAuditRequested) {
+        || microdroneDownlinkAuditRequested || translationEditorAuditRequested) {
         // Synthetic security fixtures must not subscribe to the operator's
         // network SITL before the explicit listener-restoration test cases.
         QSettings auditSettings;
         auditSettings.setValue(QStringLiteral("startup_udp_listeners_enabled"), false);
         auditSettings.setValue(QStringLiteral("AUTO_UPDATE/ENABLED"), false);
         auditSettings.sync();
+        if (translationEditorAuditRequested) return RunTranslationEditorRuntimeAudit();
         if (microdroneDownlinkAuditRequested) return RunMicrodroneDownlinkRuntimeAudit();
         if (shapefilePolyAuditRequested) return RunShapefilePolyRuntimeAudit();
         if (firmwareArchiveAuditRequested) return RunFirmwareArchiveRuntimeAudit();

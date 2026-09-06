@@ -639,6 +639,7 @@ MainWindow::~MainWindow()
     closeOfflineMagFit();
     closeMavlinkSerialTcpBridge();
     closeLogIndex();
+    closeTranslationEditor();
     closeParameterMetaDataRegeneration();
     closeAnonLog();
     closeWarningManager();
@@ -751,6 +752,10 @@ void MainWindow::buildMissionPlannerToolsMenu()
     auto *logIndexAction = new QAction(tr("Flight Log Index"), this);
     logIndexAction->setObjectName(QStringLiteral("actionFlightLogIndex"));
     connect(logIndexAction, &QAction::triggered, this, &MainWindow::showLogIndex);
+    auto *translationAction = new QAction(tr("Translation / RESX Editor"), this);
+    translationAction->setObjectName(QStringLiteral("actionTranslationResxEditor"));
+    translationAction->setToolTip(tr("Edit and export Mission Planner .NET RESX resources; this does not change the Qt application's language."));
+    connect(translationAction, &QAction::triggered, this, &MainWindow::showTranslationEditor);
     auto *microdroneAction = new QAction(tr("MicroDrone Downlink"), this);
     microdroneAction->setObjectName(QStringLiteral("actionMicrodroneDownlink"));
     connect(microdroneAction, &QAction::triggered, this, [this] {
@@ -2264,6 +2269,10 @@ void MainWindow::showHILConfigurationWidget(UASInterface* uas)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (!requestTranslationEditorClose()) {
+        event->ignore();
+        return;
+    }
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;
     closeMavlinkInspectorWindows();

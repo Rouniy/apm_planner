@@ -251,8 +251,8 @@ int RunShapefilePolyRuntimeAudit()
     auto *start = find<QPushButton>(page, "ConvertShapefileToPolyButton");
     auto *split = find<QPushButton>(page, "SplitDataFlashLogButton");
     expect(page && page->ActionCount() == 32
-               && page->ImplementedActionCount() == 30,
-           "Developer inventory is not 30 of 32");
+               && page->ImplementedActionCount() == 31,
+           "Developer inventory is not 31 of 32");
     expect(controller && start && split && start->isEnabled(),
            "Shapefile POLY action/controller is unavailable offline");
     if (!controller || !start || !split)

@@ -647,6 +647,7 @@ set(SOURCES
     src/ui/LogIndexWindow.cpp
     src/ui/LogIndexWindow.h
     src/ui/LogIndexWindowIntegration.cpp
+    src/ui/TranslationEditorWindowIntegration.cpp
     src/ui/Loghandling/LogIndexTypes.h
     src/ui/Loghandling/LogIndexService.cpp
     src/ui/Loghandling/LogIndexService.h
@@ -1593,6 +1594,16 @@ target_include_directories(${APM_PLANNER_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/output
 )
 
+add_library(apm_resx_core STATIC
+    src/services/ResxTranslationService.h src/services/ResxTranslationService.cpp
+    files/resx/resx-cultures.qrc)
+target_include_directories(apm_resx_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(apm_resx_core PUBLIC Qt::Core)
+add_library(apm_resx_editor STATIC
+    src/ui/TranslationEditorModel.h src/ui/TranslationEditorModel.cpp
+    src/ui/TranslationEditorWindow.h src/ui/TranslationEditorWindow.cpp)
+target_link_libraries(apm_resx_editor PUBLIC apm_resx_core Qt::Widgets Qt::Concurrent)
+
 add_library(apm_shapefile_poly STATIC
     src/services/NativeGdalLibrary.h src/services/ShapefileTypes.h
     src/services/ShapefileGeometryReader.h src/services/ShapefileGeometryReader.cpp
@@ -1619,6 +1630,7 @@ target_link_libraries(apm_firmware_archive_ui PUBLIC apm_firmware_archive Qt::Wi
 
 # Link Qt and additional libs
 target_link_libraries(${APM_PLANNER_TARGET}
+    apm_resx_editor
     apm_firmware_archive_ui
     apm_shapefile_poly_ui
     Threads::Threads
@@ -1798,6 +1810,8 @@ if(BUILD_TESTING)
         tests/ShapefilePolyRuntimeAudit.h
         tests/MicrodroneDownlinkRuntimeAudit.cpp
         tests/MicrodroneDownlinkRuntimeAudit.h
+        tests/TranslationEditorRuntimeAudit.cpp
+        tests/TranslationEditorRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1832,6 +1846,20 @@ if(BUILD_TESTING)
     set_tests_properties(developer_vehicle_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 30)
+    add_test(NAME translation_editor_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --translation-editor-audit)
+    set_tests_properties(translation_editor_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 45)
+    foreach(resx_suite resxtranslationservice translationeditormodel translationeditorwindow)
+        add_executable(${resx_suite}_tests tests/test_${resx_suite}.cpp)
+        target_link_libraries(${resx_suite}_tests PRIVATE apm_resx_editor Qt::Test)
+        add_test(NAME ${resx_suite}_tests COMMAND ${resx_suite}_tests)
+        set_tests_properties(${resx_suite}_tests PROPERTIES TIMEOUT 60
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
+    add_executable(resx_translation_probe tests/ResxTranslationProbe.cpp)
+    target_link_libraries(resx_translation_probe PRIVATE apm_resx_core)
     add_test(NAME log_index_runtime_tests
         COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --log-index-audit)
     set_tests_properties(log_index_runtime_tests PROPERTIES

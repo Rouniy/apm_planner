@@ -33,6 +33,18 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
+Translation/RESX Editor brings the catalogue to **31/32 working**, with only
+SFTP logs unavailable. The existing action opens a real modeless offline editor
+with load/edit/filter/export/backup/resume and all-row CSV,858 cultures and
+cancel-safe worker/application lifetime. Full285/285, ten repeats of all three
+new suites, actual production X11 and inspected consent/window pass. Actual
+.NET comparison matches2264 ordered neutral entries and RESX/HTML export bytes;
+the45 Chinese-localized files misclassified by Linux MP10 are intentionally
+excluded. See `RESX_TRANSLATION_EDITOR_PORT.md` for remaining bounds/Unicode/
+native-platform/visual differences. The53-versus46 SETUP count is unchanged.
+
+Previous checkpoint:
+
 Probe MAVLink Camera now brings the catalogue to **30/32 working**, with two
 unavailable: Translation/RESX Editor and SFTP logs. The existing button opens
 real default-Cancel consent and modeless progress for a frozen first-known

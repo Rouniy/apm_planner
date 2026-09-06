@@ -191,8 +191,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
             this, [this](const QString &message) {
         if (!m_fileToolsClosing) AppendLog(message);
     });
-    AddUnavailableAction(tr("Translation / RESX Editor"),
-                         QStringLiteral("TranslationResxEditorButton"), notPorted);
+    AddToolAction(tr("Translation / RESX Editor"),
+                  QStringLiteral("TranslationResxEditorButton"),
+                  QStringLiteral("actionTranslationResxEditor"));
     AddToolAction(tr("OSD Video — Telemetry Overlay"),
                   QStringLiteral("OsdVideoTelemetryOverlayButton"),
                   QStringLiteral("actionOsdVideoOverlay"));
