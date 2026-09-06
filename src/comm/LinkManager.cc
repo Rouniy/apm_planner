@@ -37,6 +37,7 @@ This file is part of the APM_PLANNER project
 #include "SwarmTelemetryRegistry.h"
 #include "services/SwarmSequenceExecutor.h"
 #include "services/DeveloperVehicleToolService.h"
+#include "services/ParameterRecoveryService.h"
 #include "services/SwarmWaypointLeaderExecutor.h"
 #include "PxQuadMAV.h"
 #include "SlugsMAV.h"
@@ -322,6 +323,18 @@ LinkManager::LinkManager(QObject *parent) :
                 return false;
             }
             return singleEndpointRouteIsEligible(lease.endpoint, lease.linkSessionEpoch, error);
+        }, this);
+    m_parameterRecoveryService = new ParameterRecoveryService(
+        m_vehicleTargetManager, m_swarmTelemetryRegistry, m_parameterService,
+        m_vehicleCommandService,
+        [this](const SwarmVehicleInstanceLease &lease, QString *error) {
+            if (m_compassCalibrationService->blocksDeveloperTools(
+                    m_vehicleTargetManager->acquireTarget())) {
+                if (error) *error = tr("Compass calibration is active or its outcome is uncertain. Resolve it in the calibration page first.");
+                return false;
+            }
+            return singleEndpointRouteIsEligible(
+                lease.endpoint, lease.linkSessionEpoch, error);
         }, this);
     connect(m_swarmTelemetryRegistry,
             &SwarmTelemetryRegistry::endpointRetired,
@@ -669,6 +682,7 @@ void LinkManager::shutdown()
     // transport are still available. No terminal signal is needed during
     // application shutdown.
     m_developerVehicleToolService->shutdown();
+    m_parameterRecoveryService->shutdown();
     m_compassCalibrationService->shutdown();
     m_mavFtpService->shutdown();
     m_exactLogTransferService->shutdown();
@@ -1105,6 +1119,11 @@ CompassCalibrationService *LinkManager::compassCalibrationService() const
 DeveloperVehicleToolService *LinkManager::developerVehicleToolService() const
 {
     return m_developerVehicleToolService;
+}
+
+ParameterRecoveryService *LinkManager::parameterRecoveryService() const
+{
+    return m_parameterRecoveryService;
 }
 
 ParameterService *LinkManager::parameterService() const

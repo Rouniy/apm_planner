@@ -12,6 +12,7 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -176,10 +177,16 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
         QStringLiteral("DownloadMavftpFileButton"),
         [this]() { StartMavFtpDownload(); }, false,
         tr("The MAVFTP download service is unavailable."));
-    AddUnavailableAction(tr("Restore Parameters (Recovery)"),
-                         QStringLiteral("RestoreParametersButton"), notPorted);
-    AddUnavailableAction(tr("Cancel Parameter Restore"),
-                         QStringLiteral("CancelParameterRestoreButton"), notPorted);
+    m_restoreParametersButton = AddAction(
+        tr("Restore Parameters (Recovery)"),
+        QStringLiteral("RestoreParametersButton"),
+        [this]() { PickParameterRecoveryFile(); }, false,
+        tr("The guarded parameter recovery service is unavailable."));
+    m_cancelParameterRestoreButton = AddAction(
+        tr("Cancel Parameter Restore"),
+        QStringLiteral("CancelParameterRestoreButton"),
+        [this]() { CancelOwnedParameterRecovery(); }, false,
+        tr("No parameter recovery started by this page is active."));
     AddVehicleAction(tr("Set QNH"), QStringLiteral("SetQnhButton"), VehicleAction::SetQnh);
     AddVehicleAction(tr("Adjust Barometer Altitude"),
                      QStringLiteral("AdjustBarometerAltitudeButton"), VehicleAction::AdjustBarometerAltitude);
@@ -212,12 +219,14 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
 int ConfigDeveloperToolsView::ImplementedActionCount() const
 {
     return m_implementedActionCount + (m_vehicleTools ? m_vehicleButtons.size() : 0)
-        + (m_mavFtpService && m_mavFtpTargets ? 1 : 0);
+        + (m_mavFtpService && m_mavFtpTargets ? 1 : 0)
+        + (m_parameterRecoveryService ? 2 : 0);
 }
 
 bool ConfigDeveloperToolsView::MavFtpDownloadBusy() const
 {
-    return m_mavFtpDownload && m_mavFtpDownload->busy();
+    return (m_mavFtpDownload && m_mavFtpDownload->busy())
+        || (m_mavFtpService && m_mavFtpService->isBusy());
 }
 
 bool ConfigDeveloperToolsView::ApjEmbeddingBusy() const
@@ -228,6 +237,12 @@ bool ConfigDeveloperToolsView::ApjEmbeddingBusy() const
 bool ConfigDeveloperToolsView::LogOrganizerBusy() const
 {
     return m_logOrganizerState || m_logOrganizerPrompt;
+}
+
+bool ConfigDeveloperToolsView::ParameterRecoveryBusy() const
+{
+    return m_parameterRecoveryPrompt
+        || (m_parameterRecoveryService && m_parameterRecoveryService->busy());
 }
 
 void ConfigDeveloperToolsView::setMavFtpDownloadServices(
@@ -266,6 +281,503 @@ void ConfigDeveloperToolsView::setMavFtpDownloadServices(
     RefreshVehicleActions();
 }
 
+void ConfigDeveloperToolsView::setParameterRecoveryService(
+    ParameterRecoveryService *service)
+{
+    if (m_parameterRecoveryService == service) {
+        RefreshVehicleActions();
+        return;
+    }
+
+    const quint64 bindingRevision = ++m_parameterRecoveryBindingRevision;
+    const QPointer<ParameterRecoveryService> incomingService(service);
+    CancelParameterRecoveryPrompt();
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<ParameterRecoveryService> oldService(
+        m_parameterRecoveryService);
+    const quint64 oldOperationId = m_ownedParameterRecoveryOperationId;
+    if (oldService && oldOperationId != 0
+        && oldService->currentOperationId() == oldOperationId) {
+        oldService->cancel(oldOperationId);
+    }
+    if (!guard || bindingRevision != m_parameterRecoveryBindingRevision)
+        return;
+    if (oldService)
+        disconnect(oldService, nullptr, this, nullptr);
+
+    m_parameterRecoveryService = incomingService;
+    m_ownedParameterRecoveryOperationId = 0;
+    m_seenParameterRecoveryHistory.clear();
+    m_seenParameterRecoveryStatus.clear();
+    if (m_parameterRecoveryProgress) {
+        const QPointer<QProgressDialog> progress(m_parameterRecoveryProgress);
+        m_parameterRecoveryProgress.clear();
+        if (progress) {
+            const QSignalBlocker blocker(progress);
+            progress->cancel();
+            progress->deleteLater();
+        }
+    }
+
+    if (incomingService) {
+        connect(incomingService, &ParameterRecoveryService::stateChanged, this,
+                &ConfigDeveloperToolsView::RefreshVehicleActions);
+        connect(incomingService, &ParameterRecoveryService::operationFinished, this,
+                &ConfigDeveloperToolsView::HandleParameterRecoveryFinished);
+        connect(incomingService, &QObject::destroyed, this, [this]() {
+            const QPointer<ConfigDeveloperToolsView> guard(this);
+            ++m_parameterRecoveryBindingRevision;
+            ++m_parameterRecoveryPromptRevision;
+            const QPointer<QDialog> prompt(m_parameterRecoveryPrompt);
+            m_parameterRecoveryPrompt.clear();
+            const QPointer<QProgressDialog> progress(
+                m_parameterRecoveryProgress);
+            m_parameterRecoveryProgress.clear();
+            m_ownedParameterRecoveryOperationId = 0;
+            // Static application services can outlive QApplication.  Neither
+            // text layout nor dialog hide/cancel may touch GUI infrastructure
+            // after that teardown has started.
+            if (m_fileToolsClosing || QCoreApplication::closingDown())
+                return;
+            if (prompt) {
+                const QSignalBlocker blocker(prompt);
+                prompt->reject();
+            }
+            if (!guard)
+                return;
+            if (progress) {
+                const QSignalBlocker blocker(progress);
+                progress->cancel();
+                progress->deleteLater();
+            }
+            if (guard && !m_fileToolsClosing && !QCoreApplication::closingDown()) {
+                AppendLog(tr("Parameter recovery service became unavailable."));
+                if (guard)
+                    RefreshVehicleActions();
+            }
+        });
+    }
+
+    AppendLog(tr("%1 of %2 Mission Planner Developer tools are available.")
+                  .arg(ImplementedActionCount()).arg(ActionCount()));
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::CancelParameterRecoveryPrompt()
+{
+    ++m_parameterRecoveryPromptRevision;
+    const QPointer<QDialog> prompt(m_parameterRecoveryPrompt);
+    m_parameterRecoveryPrompt.clear();
+    if (prompt) {
+        const QSignalBlocker blocker(prompt);
+        prompt->reject();
+    }
+}
+
+void ConfigDeveloperToolsView::CancelOwnedParameterRecovery()
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<ParameterRecoveryService> service(
+        m_parameterRecoveryService);
+    const quint64 operationId = m_ownedParameterRecoveryOperationId;
+    if (!service || operationId == 0
+        || service->currentOperationId() != operationId) {
+        if (!m_fileToolsClosing)
+            AppendLog(tr("No parameter recovery started by this page is active."));
+        RefreshVehicleActions();
+        return;
+    }
+
+    const bool accepted = service->cancel(operationId);
+    if (!guard)
+        return;
+    if (!accepted && !m_fileToolsClosing) {
+        AppendLog(tr("Parameter recovery cancellation was not accepted; "
+                     "the terminal service report remains authoritative."));
+    }
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::PickParameterRecoveryFile()
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<ParameterRecoveryService> service(
+        m_parameterRecoveryService);
+    if (m_fileToolsClosing || !service || ParameterRecoveryBusy()
+        || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
+        || m_splitPrompt || m_dashWareState || m_dashWarePrompt
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || MavFtpDownloadBusy()
+        || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+
+    const quint64 revision = ++m_parameterRecoveryPromptRevision;
+    QString error;
+    const bool available = service->canPrepare(&error);
+    if (!guard || !service || m_fileToolsClosing
+        || m_parameterRecoveryService != service
+        || revision != m_parameterRecoveryPromptRevision
+        || ParameterRecoveryBusy() || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    if (!available) {
+        AppendLog(tr("Parameter recovery is unavailable: %1").arg(error));
+        RefreshVehicleActions();
+        return;
+    }
+
+    auto *dialog = new QFileDialog(this, tr("Select parameter recovery file"));
+    dialog->setObjectName(
+        QStringLiteral("DeveloperParameterRecoveryFileDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setOption(QFileDialog::DontUseNativeDialog);
+    dialog->setFileMode(QFileDialog::ExistingFile);
+    dialog->setNameFilters({
+        tr("Parameter files (*.param *.parm *.PARAM *.PARM)"),
+        tr("All files (*)")});
+    m_parameterRecoveryPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, service, dialog, revision](int result) {
+        if (!service || m_fileToolsClosing
+            || revision != m_parameterRecoveryPromptRevision
+            || m_parameterRecoveryService != service) {
+            return;
+        }
+        m_parameterRecoveryPrompt.clear();
+        const QStringList files = dialog->selectedFiles();
+        if (result != QDialog::Accepted || files.size() != 1) {
+            RefreshVehicleActions();
+            return;
+        }
+
+        const QPointer<ConfigDeveloperToolsView> guard(this);
+        ParameterRecoveryService::Plan plan;
+        QString error;
+        const bool prepared = service->prepare(files.first(), &plan, &error);
+        if (!guard || !service || m_fileToolsClosing
+            || revision != m_parameterRecoveryPromptRevision
+            || m_parameterRecoveryService != service) {
+            return;
+        }
+        if (!prepared || !plan.isValid()) {
+            AppendLog(tr("Cannot prepare parameter recovery: %1")
+                          .arg(error.isEmpty()
+                                   ? tr("the service returned an invalid plan")
+                                   : error));
+            RefreshVehicleActions();
+            return;
+        }
+        ConfirmParameterRecovery(plan, revision);
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ConfirmParameterRecovery(
+    const ParameterRecoveryService::Plan &plan, quint64 revision)
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<ParameterRecoveryService> service(
+        m_parameterRecoveryService);
+    if (m_fileToolsClosing || !service || !plan.isValid()
+        || revision != m_parameterRecoveryPromptRevision
+        || m_parameterRecoveryPrompt || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+
+    QString error;
+    const bool valid = service->validate(plan, &error);
+    if (!guard || !service || m_fileToolsClosing
+        || m_parameterRecoveryService != service
+        || revision != m_parameterRecoveryPromptRevision
+        || m_parameterRecoveryPrompt || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    if (!valid) {
+        AppendLog(tr("Parameter recovery cancelled before confirmation: %1")
+                      .arg(error));
+        RefreshVehicleActions();
+        return;
+    }
+
+    const VehicleEndpoint endpoint = plan.target().endpoint;
+    const QString warning = tr(
+        "Restore %1 parameter entries from:\n%2\n\n"
+        "Exact target: %3\n"
+        "link %4, system %5, component %6.\n\n"
+        "Writes are ordered deliberately: ENABLE parameters are applied in a "
+        "first pass, then all parameters are processed in source-file order. "
+        "Each changed *_ID parameter is reset to zero immediately before its "
+        "own target value. Identity, serial-port, "
+        "or link parameters can interrupt the recovery connection.\n\n"
+        "The vehicle must remain disarmed. A failure, cancellation, target "
+        "change, or lost link can leave a partial recovery; completed writes are "
+        "not rolled back. Continue with this exact file and vehicle?")
+        .arg(QString::number(plan.entries().size()),
+             plan.sourcePath(), endpoint.displayName(),
+             QString::number(endpoint.linkId),
+             QString::number(endpoint.systemId),
+             QString::number(endpoint.componentId));
+    auto *dialog = new QMessageBox(
+        QMessageBox::Critical, tr("Confirm Parameter Recovery"), warning,
+        QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(
+        QStringLiteral("DeveloperParameterRecoveryConfirmation"));
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_parameterRecoveryPrompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, guard, service, plan, revision](int result) {
+        if (!guard || m_fileToolsClosing
+            || revision != m_parameterRecoveryPromptRevision
+            || m_parameterRecoveryService != service) {
+            return;
+        }
+        m_parameterRecoveryPrompt.clear();
+        if (result != QMessageBox::Yes || !service) {
+            RefreshVehicleActions();
+            return;
+        }
+        StartParameterRecovery(plan, revision);
+    });
+    dialog->open();
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::StartParameterRecovery(
+    const ParameterRecoveryService::Plan &plan, quint64 revision)
+{
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<ParameterRecoveryService> service(
+        m_parameterRecoveryService);
+    if (m_fileToolsClosing || !service || !plan.isValid()
+        || revision != m_parameterRecoveryPromptRevision
+        || m_parameterRecoveryPrompt || m_ownedParameterRecoveryOperationId
+        || m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
+        || m_splitPrompt || m_dashWareState || m_dashWarePrompt
+        || ApjEmbeddingBusy() || LogOrganizerBusy() || MavFtpDownloadBusy()
+        || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+
+    QString error;
+    const bool valid = service->validate(plan, &error);
+    if (!guard || !service || m_fileToolsClosing
+        || m_parameterRecoveryService != service
+        || revision != m_parameterRecoveryPromptRevision
+        || m_parameterRecoveryPrompt || m_gpsExtractionState
+        || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
+        || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
+        || LogOrganizerBusy() || MavFtpDownloadBusy() || m_vehiclePrompt
+        || (m_vehicleTools && m_vehicleTools->busy())) {
+        return;
+    }
+    if (!valid) {
+        AppendLog(tr("Parameter recovery cancelled: %1").arg(error));
+        RefreshVehicleActions();
+        return;
+    }
+
+    m_ownedParameterRecoveryOperationId = 0;
+    const auto result = service->execute(
+        plan, &m_ownedParameterRecoveryOperationId, &error);
+    if (!guard || !service || m_parameterRecoveryService != service
+        || revision != m_parameterRecoveryPromptRevision) {
+        return;
+    }
+    if (result != ParameterRecoveryService::SubmitResult::Started) {
+        m_ownedParameterRecoveryOperationId = 0;
+        AppendLog(tr("Parameter recovery was not started: %1").arg(error));
+        RefreshVehicleActions();
+        return;
+    }
+
+    const quint64 operationId = m_ownedParameterRecoveryOperationId;
+    if (operationId != 0 && service->busy()
+        && service->currentOperationId() == operationId) {
+        AppendLog(tr("Parameter recovery started for %1 from %2. Completed "
+                     "writes are not rolled back on cancellation or failure.")
+                      .arg(plan.target().endpoint.displayName(),
+                           plan.sourcePath()));
+        ShowParameterRecoveryProgress(operationId);
+    }
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::ShowParameterRecoveryProgress(
+    quint64 operationId)
+{
+    const QPointer<ParameterRecoveryService> service(
+        m_parameterRecoveryService);
+    if (!service || operationId == 0
+        || m_ownedParameterRecoveryOperationId != operationId
+        || service->currentOperationId() != operationId || !service->busy()) {
+        return;
+    }
+    if (m_parameterRecoveryProgress)
+        return;
+
+    const int total = qMax(1, service->progressTotal());
+    auto *progress = new QProgressDialog(
+        tr("Restoring parameters to the exact selected vehicle…"),
+        tr("Cancel Recovery"), 0, total, this);
+    progress->setObjectName(
+        QStringLiteral("DeveloperParameterRecoveryProgressDialog"));
+    progress->setWindowTitle(tr("Parameter Recovery"));
+    progress->setWindowModality(Qt::NonModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(qBound(0, service->progressCompleted(), total));
+    m_parameterRecoveryProgress = progress;
+    connect(progress, &QProgressDialog::canceled, this,
+            [this, operationId]() {
+        if (m_ownedParameterRecoveryOperationId == operationId)
+            CancelOwnedParameterRecovery();
+    });
+    progress->show();
+}
+
+void ConfigDeveloperToolsView::HandleParameterRecoveryFinished(
+    const ParameterRecoveryService::Report &report)
+{
+    if (report.operationId == 0
+        || report.operationId != m_ownedParameterRecoveryOperationId) {
+        RefreshVehicleActions();
+        return;
+    }
+
+    m_ownedParameterRecoveryOperationId = 0;
+    const QPointer<QProgressDialog> progress(m_parameterRecoveryProgress);
+    m_parameterRecoveryProgress.clear();
+    if (progress) {
+        const QSignalBlocker blocker(progress);
+        progress->cancel();
+        progress->deleteLater();
+    }
+
+    int enableWrites = 0;
+    int identifierResets = 0;
+    int parameterWrites = 0;
+    for (const ParameterRecoveryService::Receipt &receipt : report.receipts) {
+        switch (receipt.kind) {
+        case ParameterRecoveryService::Receipt::Kind::EnableWrite:
+            ++enableWrites;
+            break;
+        case ParameterRecoveryService::Receipt::Kind::IdentifierReset:
+            ++identifierResets;
+            break;
+        case ParameterRecoveryService::Receipt::Kind::ParameterWrite:
+            ++parameterWrites;
+            break;
+        }
+    }
+
+    QString outcome;
+    switch (report.outcome) {
+    case ParameterRecoveryService::Outcome::Completed:
+        outcome = tr("completed");
+        break;
+    case ParameterRecoveryService::Outcome::Cancelled:
+        outcome = tr("cancelled with a possibly partial result");
+        break;
+    case ParameterRecoveryService::Outcome::Rejected:
+        outcome = tr("rejected");
+        break;
+    case ParameterRecoveryService::Outcome::OutcomeUncertain:
+        outcome = tr("stopped with an uncertain partial outcome");
+        break;
+    }
+    AppendLog(tr("Parameter recovery %1: %2 total entries; %3 set, %4 "
+                 "unchanged, %5 failed; %6 source entries completed and %7 "
+                 "remain. Confirmed writes: %8 ENABLE, %9 identifier resets "
+                 "to zero, %10 parameter values. %11")
+                  .arg(outcome)
+                  .arg(report.totalEntries)
+                  .arg(report.setCount)
+                  .arg(report.unchangedCount)
+                  .arg(report.failedCount)
+                  .arg(report.completedEntries)
+                  .arg(report.remainingEntries)
+                  .arg(enableWrites)
+                  .arg(identifierResets)
+                  .arg(parameterWrites)
+                  .arg(report.description));
+    if (!report.failedParameters.isEmpty()) {
+        AppendLog(tr("Parameter recovery failed parameters: %1")
+                      .arg(report.failedParameters.join(
+                          QStringLiteral(", "))));
+    }
+    if (report.outcome != ParameterRecoveryService::Outcome::Completed) {
+        AppendLog(tr("Parameter recovery did not roll back completed writes. "
+                     "Review the exact terminal report before retrying."));
+    }
+    RefreshVehicleActions();
+}
+
+void ConfigDeveloperToolsView::RefreshParameterRecoveryActions()
+{
+    if (m_refreshingParameterRecovery)
+        return;
+    m_refreshingParameterRecovery = true;
+
+    const QPointer<ConfigDeveloperToolsView> guard(this);
+    const QPointer<ParameterRecoveryService> service(
+        m_parameterRecoveryService);
+    if (service) {
+        const QStringList history = service->history();
+        int overlap = qMin(m_seenParameterRecoveryHistory.size(),
+                           history.size());
+        while (overlap > 0
+               && m_seenParameterRecoveryHistory.mid(
+                      m_seenParameterRecoveryHistory.size() - overlap)
+                   != history.mid(0, overlap)) {
+            --overlap;
+        }
+        for (int index = overlap; index < history.size(); ++index)
+            AppendLog(history.at(index));
+        if (!guard)
+            return;
+        m_seenParameterRecoveryHistory = history;
+        const QString status = service->status();
+        if (!status.isEmpty() && status != m_seenParameterRecoveryStatus
+            && !history.contains(status)) {
+            AppendLog(status);
+        }
+        if (!guard)
+            return;
+        m_seenParameterRecoveryStatus = status;
+    }
+
+    if (!guard)
+        return;
+    if (m_parameterRecoveryProgress && service
+        && m_ownedParameterRecoveryOperationId != 0
+        && service->currentOperationId()
+            == m_ownedParameterRecoveryOperationId
+        && service->busy()) {
+        const int total = qMax(1, service->progressTotal());
+        m_parameterRecoveryProgress->setRange(0, total);
+        m_parameterRecoveryProgress->setValue(
+            qBound(0, service->progressCompleted(), total));
+    }
+    m_refreshingParameterRecovery = false;
+}
+
 void ConfigDeveloperToolsView::StartMavFtpDownload()
 {
     if (m_fileToolsClosing || !m_mavFtpDownload)
@@ -273,7 +785,7 @@ void ConfigDeveloperToolsView::StartMavFtpDownload()
     if (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
         || m_splitPrompt || m_dashWareState || m_dashWarePrompt
         || ApjEmbeddingBusy() || LogOrganizerBusy()
-        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("MAVFTP download: finish or cancel the current Developer operation first."));
         return;
@@ -328,7 +840,7 @@ void ConfigDeveloperToolsView::RefreshVehicleActions()
                  || m_splitState || m_splitPrompt
                  || m_dashWareState || m_dashWarePrompt
                  || ApjEmbeddingBusy() || LogOrganizerBusy()
-                 || MavFtpDownloadBusy())
+                 || MavFtpDownloadBusy() || ParameterRecoveryBusy())
             reason = tr("Finish or cancel the current offline file operation first.");
         else if (m_vehiclePrompt)
             reason = tr("Finish or cancel the current confirmation first.");
@@ -379,8 +891,25 @@ void ConfigDeveloperToolsView::CancelVehiclePrompt()
 
 void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
 {
-    CancelVehiclePrompt();
+    const QPointer<ConfigDeveloperToolsView> guard(this);
     m_fileToolsClosing = true;
+    CancelVehiclePrompt();
+    if (!guard)
+        return;
+    CancelParameterRecoveryPrompt();
+    CancelOwnedParameterRecovery();
+    if (!guard)
+        return;
+    if (m_parameterRecoveryProgress) {
+        const QPointer<QProgressDialog> progress(
+            m_parameterRecoveryProgress);
+        m_parameterRecoveryProgress.clear();
+        if (progress) {
+            const QSignalBlocker blocker(progress);
+            progress->cancel();
+            progress->deleteLater();
+        }
+    }
     CancelGpsExtraction();
     CancelSplit();
     CancelDashWareExport();
@@ -394,6 +923,18 @@ void ConfigDeveloperToolsView::closeEvent(QCloseEvent *event)
 ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
 {
     m_fileToolsClosing = true;
+    CancelParameterRecoveryPrompt();
+    const QPointer<ParameterRecoveryService> recovery(
+        m_parameterRecoveryService);
+    const quint64 recoveryOperationId =
+        m_ownedParameterRecoveryOperationId;
+    if (recovery)
+        disconnect(recovery, nullptr, this, nullptr);
+    if (recovery && recoveryOperationId != 0
+        && recovery->currentOperationId() == recoveryOperationId) {
+        recovery->cancel(recoveryOperationId);
+    }
+    m_ownedParameterRecoveryOperationId = 0;
     if (m_mavFtpDownload) {
         disconnect(m_mavFtpDownload, nullptr, this, nullptr);
         delete m_mavFtpDownload;
@@ -420,6 +961,14 @@ ConfigDeveloperToolsView::~ConfigDeveloperToolsView()
 void ConfigDeveloperToolsView::showEvent(QShowEvent *event)
 {
     m_fileToolsClosing = false;
+    if (m_parameterRecoveryService
+        && m_ownedParameterRecoveryOperationId != 0
+        && m_parameterRecoveryService->currentOperationId()
+            == m_ownedParameterRecoveryOperationId
+        && m_parameterRecoveryService->busy()) {
+        ShowParameterRecoveryProgress(
+            m_ownedParameterRecoveryOperationId);
+    }
     RefreshOfflineFileActions();
     ActionPageView::showEvent(event);
 }
@@ -443,7 +992,7 @@ void ConfigDeveloperToolsView::PickGpsCorrectionInput()
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
         || LogOrganizerBusy()
-        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy()))
         return;
     const quint64 revision = ++m_gpsPromptRevision;
@@ -502,11 +1051,13 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
 {
     if (m_fileToolsClosing)
         return;
+    const QPointer<ConfigDeveloperToolsView> guard(this);
     const bool idle = !m_gpsExtractionState && !m_gpsExtractionPrompt
         && !m_splitState && !m_splitPrompt
         && !m_dashWareState && !m_dashWarePrompt && !ApjEmbeddingBusy()
         && !LogOrganizerBusy()
-        && !MavFtpDownloadBusy() && !m_vehiclePrompt
+        && !MavFtpDownloadBusy() && !ParameterRecoveryBusy()
+        && !m_vehiclePrompt
         && (!m_vehicleTools || !m_vehicleTools->busy());
     m_gpsExtractionButton->setEnabled(idle);
     m_splitButton->setEnabled(idle);
@@ -521,6 +1072,51 @@ void ConfigDeveloperToolsView::RefreshOfflineFileActions()
         : (!idle || ftpBusy)
             ? tr("Finish or cancel the active Developer or MAVFTP operation first.")
             : tr("Download a remote file by path from the selected vehicle; requires a MAVLink connection."));
+
+    const QPointer<ParameterRecoveryService> recovery(
+        m_parameterRecoveryService);
+    const quint64 recoveryBindingRevision =
+        m_parameterRecoveryBindingRevision;
+    QString recoveryReason;
+    bool recoveryReady = false;
+    if (!recovery) {
+        recoveryReason = tr("The guarded parameter recovery service is unavailable.");
+    } else if (!idle) {
+        recoveryReason = tr("Finish or cancel the active Developer operation first.");
+    } else {
+        recoveryReady = recovery->canPrepare(&recoveryReason);
+    }
+    if (!guard || m_fileToolsClosing
+        || recovery != m_parameterRecoveryService
+        || recoveryBindingRevision != m_parameterRecoveryBindingRevision) {
+        return;
+    }
+    if (recoveryReady
+        && (m_gpsExtractionState || m_gpsExtractionPrompt || m_splitState
+            || m_splitPrompt || m_dashWareState || m_dashWarePrompt
+            || ApjEmbeddingBusy() || LogOrganizerBusy()
+            || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+            || m_vehiclePrompt
+            || (m_vehicleTools && m_vehicleTools->busy()))) {
+        recoveryReady = false;
+        recoveryReason = tr("Finish or cancel the active Developer operation first.");
+    }
+    if (!m_restoreParametersButton || !m_cancelParameterRestoreButton)
+        return;
+    m_restoreParametersButton->setEnabled(recoveryReady);
+    m_restoreParametersButton->setToolTip(recoveryReady
+        ? tr("Restore a reviewed .param or .parm file to the exact selected disarmed vehicle.")
+        : recoveryReason);
+    const bool ownsRecovery = recovery
+        && m_ownedParameterRecoveryOperationId != 0
+        && recovery->busy()
+        && recovery->currentOperationId()
+            == m_ownedParameterRecoveryOperationId;
+    m_cancelParameterRestoreButton->setEnabled(ownsRecovery);
+    m_cancelParameterRestoreButton->setToolTip(ownsRecovery
+        ? tr("Request cancellation of this page's active parameter recovery. Completed writes are not rolled back.")
+        : tr("No parameter recovery started by this page is active."));
+    RefreshParameterRecoveryActions();
 }
 
 void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const QString &output)
@@ -531,7 +1127,7 @@ void ConfigDeveloperToolsView::ExtractGpsCorrections(const QString &input, const
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
         || LogOrganizerBusy()
-        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("GPS correction extraction: another extraction, file selection, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -649,7 +1245,7 @@ void ConfigDeveloperToolsView::PickSplitInput()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
         || LogOrganizerBusy()
-        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         return;
     }
@@ -759,7 +1355,7 @@ void ConfigDeveloperToolsView::SplitDataFlashLog(const QString &input,
     if (m_splitState || m_splitPrompt || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_dashWareState || m_dashWarePrompt
         || ApjEmbeddingBusy() || LogOrganizerBusy()
-        || MavFtpDownloadBusy() || m_vehiclePrompt
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy() || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DataFlash log split: another file selection, offline operation, or vehicle operation is already active."));
         RefreshOfflineFileActions();
@@ -894,7 +1490,7 @@ void ConfigDeveloperToolsView::PickDashWareInput()
 {
     if (m_fileToolsClosing || m_dashWareState || m_dashWarePrompt
         || ApjEmbeddingBusy() || LogOrganizerBusy()
-        || MavFtpDownloadBusy()
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -995,7 +1591,8 @@ void ConfigDeveloperToolsView::ExportDashWareCsv(
         return;
     if (m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
         || LogOrganizerBusy()
-        || MavFtpDownloadBusy() || m_gpsExtractionState
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+        || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_vehiclePrompt || (m_vehicleTools && m_vehicleTools->busy())) {
         AppendLog(tr("DashWare CSV export: another file selection, offline operation, or vehicle operation is already active."));
@@ -1122,7 +1719,7 @@ void ConfigDeveloperToolsView::CancelApjEmbedding()
 void ConfigDeveloperToolsView::PickApjFirmware()
 {
     if (m_fileToolsClosing || ApjEmbeddingBusy() || LogOrganizerBusy()
-        || MavFtpDownloadBusy()
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
@@ -1230,7 +1827,7 @@ void ConfigDeveloperToolsView::EmbedDefaultsInApj(
     if (m_fileToolsClosing)
         return;
     if (ApjEmbeddingBusy() || LogOrganizerBusy()
-        || MavFtpDownloadBusy()
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
@@ -1374,7 +1971,8 @@ void ConfigDeveloperToolsView::CancelLogOrganizer()
 void ConfigDeveloperToolsView::PickLogOrganizerDirectory()
 {
     if (m_fileToolsClosing || LogOrganizerBusy() || ApjEmbeddingBusy()
-        || MavFtpDownloadBusy() || m_gpsExtractionState
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy()
+        || m_gpsExtractionState
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
         || (m_vehicleTools && m_vehicleTools->busy())) {
@@ -1410,6 +2008,7 @@ void ConfigDeveloperToolsView::AnalyzeLogDirectory(QString root)
     if (m_fileToolsClosing)
         return;
     if (LogOrganizerBusy() || ApjEmbeddingBusy() || MavFtpDownloadBusy()
+        || ParameterRecoveryBusy()
         || m_gpsExtractionState || m_gpsExtractionPrompt
         || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || m_vehiclePrompt
@@ -1768,7 +2367,7 @@ void ConfigDeveloperToolsView::StartVehicleAction(VehicleAction action)
         || m_gpsExtractionPrompt || m_splitState || m_splitPrompt
         || m_dashWareState || m_dashWarePrompt || ApjEmbeddingBusy()
         || LogOrganizerBusy()
-        || MavFtpDownloadBusy())
+        || MavFtpDownloadBusy() || ParameterRecoveryBusy())
         return;
     const quint64 revision = ++m_promptRevision;
     VehiclePlan plan;

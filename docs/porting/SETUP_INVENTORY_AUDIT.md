@@ -33,13 +33,15 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
-The Upgrade Bootloader slice brings the exact Developer action catalogue to18/32
-working actions, with14 explicitly unavailable. It fills the existing
-`UpgradeBootloaderButton`; it does not add a Setup page or top-level Tools item.
-Two actual default-Cancel exact-target confirmations admit one command only;
-callback/target-lifetime tests, full246/246 (30.41s) and production X11 pass.
-Real boards and network SITL were not modified. See `UPGRADE_BOOTLOADER_PORT.md`
-and the preceding `LOG_DIRECTORY_ORGANIZER.md` and `APJ_DEFAULTS_PORT.md`.
+The Parameter Recovery slice brings the exact Developer action catalogue to20/32
+working actions, with12 explicitly unavailable. It fills the existing
+`RestoreParametersButton` and `CancelParameterRestoreButton`; it does not add a
+Setup page or top-level Tools item. Actual file/target consent, ENABLE-first
+source-order recovery, typed `_ID` reset, owned cancellation and partial receipts
+are tested. Full249/249 (33.24s), production X11 and clean exit pass; root inspected
+the readable default-Cancel consent. Real boards and network SITL were not
+modified. See `PARAMETER_RECOVERY_PORT.md` and the preceding
+`UPGRADE_BOOTLOADER_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md` and `APJ_DEFAULTS_PORT.md`.
 The46 registered Setup pages, three groups and eight
 absent reference routes remain unchanged. Useful legacy routes remain present;
 navigation/factory counts are not claims of complete functional parity.

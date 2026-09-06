@@ -3,6 +3,7 @@
 
 #include "ActionPageView.h"
 #include "services/DeveloperVehicleToolService.h"
+#include "services/ParameterRecoveryService.h"
 #include "ui/Loghandling/FlightLogOrganizer.h"
 
 #include <QMap>
@@ -33,6 +34,7 @@ public:
     void setVehicleToolService(DeveloperVehicleToolService *service);
     void setMavFtpDownloadServices(MavFtpServiceInterface *service,
                                    VehicleTargetManager *targets);
+    void setParameterRecoveryService(ParameterRecoveryService *service);
 
 public slots:
     void DecodeMavlinkInput(const QString &input);
@@ -99,6 +101,18 @@ private:
     void RefreshOfflineFileActions();
     void StartMavFtpDownload();
     bool MavFtpDownloadBusy() const;
+    void PickParameterRecoveryFile();
+    void ConfirmParameterRecovery(const ParameterRecoveryService::Plan &plan,
+                                  quint64 revision);
+    void StartParameterRecovery(const ParameterRecoveryService::Plan &plan,
+                                quint64 revision);
+    void CancelParameterRecoveryPrompt();
+    void CancelOwnedParameterRecovery();
+    void ShowParameterRecoveryProgress(quint64 operationId);
+    void HandleParameterRecoveryFinished(
+        const ParameterRecoveryService::Report &report);
+    void RefreshParameterRecoveryActions();
+    bool ParameterRecoveryBusy() const;
     struct GpsExtractionState;
     struct SplitState;
     struct DashWareState;
@@ -143,6 +157,17 @@ private:
     QPointer<VehicleTargetManager> m_mavFtpTargets;
     QPointer<MavFtpFileDownload> m_mavFtpDownload;
     QPushButton *m_mavFtpButton = nullptr;
+    QPointer<ParameterRecoveryService> m_parameterRecoveryService;
+    QPushButton *m_restoreParametersButton = nullptr;
+    QPushButton *m_cancelParameterRestoreButton = nullptr;
+    QPointer<QDialog> m_parameterRecoveryPrompt;
+    QPointer<QProgressDialog> m_parameterRecoveryProgress;
+    QStringList m_seenParameterRecoveryHistory;
+    QString m_seenParameterRecoveryStatus;
+    quint64 m_parameterRecoveryBindingRevision = 0;
+    quint64 m_parameterRecoveryPromptRevision = 0;
+    quint64 m_ownedParameterRecoveryOperationId = 0;
+    bool m_refreshingParameterRecovery = false;
     bool m_fileToolsClosing = false;
 };
 

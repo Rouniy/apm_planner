@@ -41,6 +41,11 @@ class DeveloperFtpStub final : public MavFtpServiceInterface
 public:
     bool sharedBusy = false;
     bool isBusy() const override { return sharedBusy; }
+    void setSharedBusy(bool busy)
+    {
+        sharedBusy = busy;
+        emit stateChanged();
+    }
     Operation operation() const override { return Operation::None; }
     quint64 activeTargetGeneration() const override { return 0; }
     QString lastError() const override { return {}; }
@@ -129,13 +134,43 @@ struct VehicleFixture
 
     mavlink_message_t lastMessage() const
     {
+        return messageAt(frames.size() - 1);
+    }
+
+    mavlink_message_t messageAt(int index) const
+    {
         MAVLinkFrameParser parser;
         mavlink_message_t message{};
-        for (const auto byte : frames.last())
+        for (const auto byte : frames.at(index))
             parser.parseByte(static_cast<quint8>(byte), &message);
         return message;
     }
+
+    void parameterReply(const QString &name, float value,
+                        MAV_PARAM_TYPE type = MAV_PARAM_TYPE_REAL32,
+                        int index = 0, int count = 4)
+    {
+        mavlink_param_value_t payload{};
+        payload.param_value = value;
+        payload.param_type = type;
+        payload.param_count = static_cast<quint16>(count);
+        payload.param_index = static_cast<quint16>(index);
+        const QByteArray encodedName = name.toLatin1();
+        std::memcpy(payload.param_id, encodedName.constData(),
+                    qMin<int>(encodedName.size(), sizeof payload.param_id));
+        mavlink_message_t response{};
+        mavlink_msg_param_value_encode(42, 1, &response, &payload);
+        parameters.observePhysicalMessage(endpoint.linkId, session, response);
+    }
 };
+
+QString mavlinkParameterName(const char *name, int size)
+{
+    int length = 0;
+    while (length < size && name[length] != '\0')
+        ++length;
+    return QString::fromLatin1(name, length);
+}
 
 QPushButton *tool(ConfigDeveloperToolsView &view, const char *name)
 {
@@ -353,6 +388,10 @@ private slots:
     void logOrganizerDialogsAreDefaultCancelAndReadOnly();
     void logOrganizerExecutesExactPlanAndNeverClobbers();
     void logOrganizerCancellationLifetimeAndInterlocks();
+    void parameterRecoveryBindingAndDefaultCancel();
+    void parameterRecoveryRejectsChangedOrArmedTarget();
+    void parameterRecoveryExecutesOrderedPlanAndReports();
+    void parameterRecoveryCancellationIsOwnedAndRetained();
 };
 
 void ConfigDeveloperToolsViewTest::mirrorsMissionPlannerInventory()
@@ -451,6 +490,14 @@ void ConfigDeveloperToolsViewTest::sharedApplicationActionsOpenTools()
     QCOMPARE(view.ImplementedActionCount(), 17);
     DeveloperFtpStub ftp;
     view.setMavFtpDownloadServices(&ftp, &fixture.targets);
+    QCOMPARE(view.ImplementedActionCount(), 18);
+    ParameterRecoveryService recovery(
+        &fixture.targets, &fixture.registry, &fixture.parameters,
+        &fixture.commands,
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; });
+    view.setParameterRecoveryService(&recovery);
+    QCOMPARE(view.ImplementedActionCount(), 20);
+    view.setParameterRecoveryService(nullptr);
     QCOMPARE(view.ImplementedActionCount(), 18);
     view.setMavFtpDownloadServices(nullptr, nullptr);
     QCOMPARE(view.ImplementedActionCount(), 17);
@@ -1640,10 +1687,9 @@ void ConfigDeveloperToolsViewTest::mavFtpInjectionAndSharedOperationGate()
     }
     QTRY_VERIFY(button->isEnabled());
     QVERIFY(!QFile::exists(output));
-    ftp.sharedBusy = true;
-    emit ftp.stateChanged();
+    ftp.setSharedBusy(true);
     QVERIFY(!button->isEnabled());
-    QVERIFY(tool(view, "CreateDashWareCsvButton")->isEnabled());
+    QVERIFY(!tool(view, "CreateDashWareCsvButton")->isEnabled());
     view.setMavFtpDownloadServices(nullptr, nullptr);
     QCOMPARE(view.ImplementedActionCount(), 14);
     QVERIFY(!button->isEnabled());
@@ -2111,6 +2157,366 @@ void ConfigDeveloperToolsViewTest::logOrganizerCancellationLifetimeAndInterlocks
     }
     QVERIFY(QFile::exists(source));
     QVERIFY(!QFile::exists(destination));
+}
+
+void ConfigDeveloperToolsViewTest::parameterRecoveryBindingAndDefaultCancel()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString parameters = dir.filePath(
+        QStringLiteral("%4 recovery.param"));
+    QVERIFY(writeFixture(parameters,
+        QByteArrayLiteral("TEST_ENABLE,1\nDEVICE_ID,202\nGAIN,12.5\n")));
+
+    VehicleFixture fixture;
+    ParameterRecoveryService recovery(
+        &fixture.targets, &fixture.registry, &fixture.parameters,
+        &fixture.commands,
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; });
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    QCOMPARE(view.ImplementedActionCount(), 14);
+    QVERIFY(!tool(view, "RestoreParametersButton")->isEnabled());
+    QVERIFY(!tool(view, "CancelParameterRestoreButton")->isEnabled());
+
+    view.setParameterRecoveryService(&recovery);
+    QCOMPARE(view.ImplementedActionCount(), 16);
+    view.show();
+    QTRY_VERIFY(tool(view, "RestoreParametersButton")->isEnabled());
+    QVERIFY(!tool(view, "CancelParameterRestoreButton")->isEnabled());
+
+    tool(view, "RestoreParametersButton")->click();
+    auto *picker = visibleNamed<QFileDialog>(
+        &view, "DeveloperParameterRecoveryFileDialog");
+    QVERIFY(picker);
+    const QString filters = picker->nameFilters().join(QLatin1Char(';'));
+    QVERIFY(filters.contains(QStringLiteral("*.param")));
+    QVERIFY(filters.contains(QStringLiteral("*.parm")));
+    picker->reject();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    QVERIFY(fixture.frames.isEmpty());
+    QTRY_VERIFY(tool(view, "RestoreParametersButton")->isEnabled());
+
+    tool(view, "RestoreParametersButton")->click();
+    picker = visibleNamed<QFileDialog>(
+        &view, "DeveloperParameterRecoveryFileDialog");
+    QVERIFY(picker);
+    picker->selectFile(parameters);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection));
+    auto *confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperParameterRecoveryConfirmation");
+    QVERIFY(confirm);
+    QCOMPARE(confirm->defaultButton(), confirm->button(QMessageBox::Cancel));
+    QCOMPARE(confirm->escapeButton(), confirm->button(QMessageBox::Cancel));
+    QVERIFY(confirm->text().contains(parameters));
+    QVERIFY(confirm->text().contains(QStringLiteral("Bench vehicle")));
+    QVERIFY(confirm->text().contains(QStringLiteral("link 7, system 42, component 1")));
+    QVERIFY(confirm->text().contains(
+        QStringLiteral("ENABLE parameters are applied")));
+    QVERIFY(confirm->text().contains(QStringLiteral("*_ID")));
+    QVERIFY(confirm->text().contains(QStringLiteral("reset to zero")));
+    QVERIFY(confirm->text().contains(QStringLiteral("not rolled back")));
+    confirm->button(QMessageBox::Cancel)->click();
+    QVERIFY(fixture.frames.isEmpty());
+    QVERIFY(!recovery.busy());
+
+    ParameterRecoveryService::Plan foreignPlan;
+    QString error;
+    QVERIFY(recovery.prepare(parameters, &foreignPlan, &error));
+    quint64 foreignOperation = 0;
+    QCOMPARE(recovery.execute(foreignPlan, &foreignOperation, &error),
+             ParameterRecoveryService::SubmitResult::Started);
+    QVERIFY(foreignOperation != 0);
+    QVERIFY(recovery.busy());
+    QVERIFY(!tool(view, "CancelParameterRestoreButton")->isEnabled());
+    tool(view, "CancelParameterRestoreButton")->click();
+    QVERIFY(recovery.busy());
+    QVERIFY(recovery.cancel(foreignOperation));
+    QTRY_VERIFY_WITH_TIMEOUT(!recovery.busy(), 2000);
+
+    view.setParameterRecoveryService(nullptr);
+    QCOMPARE(view.ImplementedActionCount(), 14);
+    QVERIFY(!tool(view, "RestoreParametersButton")->isEnabled());
+}
+
+void ConfigDeveloperToolsViewTest::parameterRecoveryRejectsChangedOrArmedTarget()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString parameters = dir.filePath(QStringLiteral("stale.param"));
+    QVERIFY(writeFixture(parameters, QByteArrayLiteral("GAIN,12.5\n")));
+    VehicleFixture fixture;
+    std::function<void()> recoveryHook;
+    ParameterRecoveryService recovery(
+        &fixture.targets, &fixture.registry, &fixture.parameters,
+        &fixture.commands,
+        [&recoveryHook](const SwarmVehicleInstanceLease &, QString *) {
+            const auto hook = recoveryHook;
+            if (hook)
+                hook();
+            return true;
+        });
+    ConfigDeveloperToolsView view;
+    view.setParameterRecoveryService(&recovery);
+    view.show();
+
+    const auto openConfirmation = [&]() -> QMessageBox * {
+        tool(view, "RestoreParametersButton")->click();
+        auto *picker = visibleNamed<QFileDialog>(
+            &view, "DeveloperParameterRecoveryFileDialog");
+        if (!picker)
+            return nullptr;
+        picker->selectFile(parameters);
+        if (!QMetaObject::invokeMethod(
+                picker, "accept", Qt::DirectConnection)) {
+            return nullptr;
+        }
+        return visibleNamed<QMessageBox>(
+            &view, "DeveloperParameterRecoveryConfirmation");
+    };
+
+    auto *confirm = openConfirmation();
+    QVERIFY(confirm);
+    VehicleEndpoint other = fixture.endpoint;
+    other.linkId = 8;
+    QVERIFY(fixture.targets.observeEndpoint(other));
+    QVERIFY(fixture.targets.selectTarget(8, 42, 1));
+    QVERIFY(fixture.targets.selectTarget(7, 42, 1));
+    fixture.heartbeat(false);
+    confirm->button(QMessageBox::Yes)->click();
+    QVERIFY(fixture.frames.isEmpty());
+    QVERIFY(!recovery.busy());
+    QVERIFY(view.Log().contains(QStringLiteral("cancelled")));
+
+    QTRY_VERIFY(tool(view, "RestoreParametersButton")->isEnabled());
+    confirm = openConfirmation();
+    QVERIFY(confirm);
+    fixture.heartbeat(true);
+    confirm->button(QMessageBox::Yes)->click();
+    QVERIFY(fixture.frames.isEmpty());
+    QVERIFY(!recovery.busy());
+    fixture.heartbeat(false);
+
+    // The service publishes its exact operation token before the final route
+    // validator. Closing from that callback cancels this operation and cannot
+    // leave a write running without page ownership.
+    QTRY_VERIFY(tool(view, "RestoreParametersButton")->isEnabled());
+    int admittedRouteCalls = 0;
+    recoveryHook = [&view, &recovery, &admittedRouteCalls]() {
+        // canPrepare(), prepare() and both UI validations legitimately invoke
+        // the same policy before admission.  Close only after execute() has
+        // published the owned operation token and busy state.
+        if (recovery.busy() && ++admittedRouteCalls == 1)
+            view.close();
+    };
+    confirm = openConfirmation();
+    QVERIFY(confirm);
+    confirm->button(QMessageBox::Yes)->click();
+    QCOMPARE(admittedRouteCalls, 1);
+    QVERIFY(fixture.frames.isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!recovery.busy(), 2000);
+    QCOMPARE(recovery.lastReport().outcome,
+             ParameterRecoveryService::Outcome::Cancelled);
+    view.show();
+    QVERIFY(view.Log().contains(QStringLiteral("cancelled")));
+}
+
+void ConfigDeveloperToolsViewTest::parameterRecoveryExecutesOrderedPlanAndReports()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString parameters = dir.filePath(QStringLiteral("ordered.parm"));
+    QVERIFY(writeFixture(parameters,
+        QByteArrayLiteral("TEST_ENABLE,1\nGAIN,12.5\nDEVICE_ID,202\nSAME,3\n")));
+    VehicleFixture fixture;
+    ParameterRecoveryService recovery(
+        &fixture.targets, &fixture.registry, &fixture.parameters,
+        &fixture.commands,
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; });
+    DeveloperFtpStub ftp;
+    ConfigDeveloperToolsView view;
+    view.setVehicleToolService(&fixture.service);
+    view.setMavFtpDownloadServices(&ftp, &fixture.targets);
+    view.setParameterRecoveryService(&recovery);
+    QCOMPARE(view.ImplementedActionCount(), 17);
+    view.show();
+
+    ftp.setSharedBusy(true);
+    QTRY_VERIFY(!tool(view, "RestoreParametersButton")->isEnabled());
+    ftp.setSharedBusy(false);
+    QTRY_VERIFY(tool(view, "RestoreParametersButton")->isEnabled());
+
+    tool(view, "RestoreParametersButton")->click();
+    auto *picker = visibleNamed<QFileDialog>(
+        &view, "DeveloperParameterRecoveryFileDialog");
+    QVERIFY(picker);
+    picker->selectFile(parameters);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection));
+    auto *confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperParameterRecoveryConfirmation");
+    QVERIFY(confirm);
+    confirm->button(QMessageBox::Yes)->click();
+    QVERIFY(recovery.busy());
+    QVERIFY(visibleNamed<QProgressDialog>(
+        &view, "DeveloperParameterRecoveryProgressDialog"));
+    QVERIFY(tool(view, "CancelParameterRestoreButton")->isEnabled());
+    QVERIFY(!tool(view, "ExtractGpsCorrectionsButton")->isEnabled());
+    QVERIFY(!tool(view, "DownloadMavftpFileButton")->isEnabled());
+    QVERIFY(!tool(view, "RebootVehicleButton")->isEnabled());
+
+    QMap<QString, float> current{
+        {QStringLiteral("TEST_ENABLE"), 0.0f},
+        {QStringLiteral("GAIN"), 1.0f},
+        {QStringLiteral("DEVICE_ID"), 100.0f},
+        {QStringLiteral("SAME"), 3.0f}};
+    const QMap<QString, int> indexes{
+        {QStringLiteral("TEST_ENABLE"), 0},
+        {QStringLiteral("GAIN"), 1},
+        {QStringLiteral("DEVICE_ID"), 2},
+        {QStringLiteral("SAME"), 3}};
+    QStringList writes;
+    QList<float> writeValues;
+    int handled = 0;
+    int guard = 0;
+    while (recovery.busy() && guard++ < 40) {
+        // The queued exact terminal report for the preceding reply can finish
+        // the recovery without producing another frame.  Wait for either
+        // outcome instead of requiring a nonexistent post-terminal request.
+        QTRY_VERIFY_WITH_TIMEOUT(!recovery.busy()
+                                 || fixture.frames.size() > handled, 2000);
+        if (!recovery.busy())
+            break;
+        const mavlink_message_t message = fixture.messageAt(handled++);
+        if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) {
+            mavlink_param_request_read_t request{};
+            mavlink_msg_param_request_read_decode(&message, &request);
+            const QString name = mavlinkParameterName(
+                request.param_id, sizeof request.param_id);
+            QVERIFY2(current.contains(name), qPrintable(name));
+            fixture.parameterReply(name, current.value(name),
+                                   MAV_PARAM_TYPE_REAL32,
+                                   indexes.value(name));
+        } else if (message.msgid == MAVLINK_MSG_ID_PARAM_SET) {
+            mavlink_param_set_t request{};
+            mavlink_msg_param_set_decode(&message, &request);
+            const QString name = mavlinkParameterName(
+                request.param_id, sizeof request.param_id);
+            QVERIFY2(current.contains(name), qPrintable(name));
+            writes.append(name);
+            writeValues.append(request.param_value);
+            current.insert(name, request.param_value);
+            fixture.parameterReply(name, request.param_value,
+                                   static_cast<MAV_PARAM_TYPE>(request.param_type),
+                                   indexes.value(name));
+        } else {
+            QFAIL("Unexpected frame during parameter recovery");
+        }
+        QCoreApplication::processEvents();
+    }
+    QVERIFY2(!recovery.busy(), "parameter recovery did not reach a terminal report");
+    QCOMPARE(writes, QStringList({QStringLiteral("TEST_ENABLE"),
+                                  QStringLiteral("GAIN"),
+                                  QStringLiteral("DEVICE_ID"),
+                                  QStringLiteral("DEVICE_ID")}));
+    QCOMPARE(writeValues.size(), 4);
+    QCOMPARE(writeValues.at(0), 1.0f);
+    QCOMPARE(writeValues.at(1), 12.5f);
+    QCOMPARE(writeValues.at(2), 0.0f);
+    QCOMPARE(writeValues.at(3), 202.0f);
+    const auto report = recovery.lastReport();
+    QCOMPARE(report.outcome, ParameterRecoveryService::Outcome::Completed);
+    QCOMPARE(report.setCount, 2);
+    QCOMPARE(report.unchangedCount, 2);
+    QCOMPARE(report.failedCount, 0);
+    int enableReceipts = 0;
+    int resetReceipts = 0;
+    for (const auto &receipt : report.receipts) {
+        enableReceipts += receipt.kind
+            == ParameterRecoveryService::Receipt::Kind::EnableWrite;
+        resetReceipts += receipt.kind
+            == ParameterRecoveryService::Receipt::Kind::IdentifierReset;
+    }
+    QCOMPARE(enableReceipts, 1);
+    QCOMPARE(resetReceipts, 1);
+    QVERIFY(view.Log().contains(QStringLiteral("2 set, 2 unchanged, 0 failed")));
+    QVERIFY(view.Log().contains(QStringLiteral("1 identifier resets to zero")));
+    QVERIFY(!tool(view, "CancelParameterRestoreButton")->isEnabled());
+    QTRY_VERIFY(tool(view, "RestoreParametersButton")->isEnabled());
+}
+
+void ConfigDeveloperToolsViewTest::parameterRecoveryCancellationIsOwnedAndRetained()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString parameters = dir.filePath(QStringLiteral("partial.param"));
+    QVERIFY(writeFixture(parameters,
+        QByteArrayLiteral("TEST_ENABLE,1\nGAIN,12.5\n")));
+    VehicleFixture fixture;
+    ParameterRecoveryService recovery(
+        &fixture.targets, &fixture.registry, &fixture.parameters,
+        &fixture.commands,
+        [](const SwarmVehicleInstanceLease &, QString *) { return true; });
+    ConfigDeveloperToolsView view;
+    view.setParameterRecoveryService(&recovery);
+    view.show();
+    tool(view, "RestoreParametersButton")->click();
+    auto *picker = visibleNamed<QFileDialog>(
+        &view, "DeveloperParameterRecoveryFileDialog");
+    QVERIFY(picker);
+    picker->selectFile(parameters);
+    QVERIFY(QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection));
+    auto *confirm = visibleNamed<QMessageBox>(
+        &view, "DeveloperParameterRecoveryConfirmation");
+    QVERIFY(confirm);
+    confirm->button(QMessageBox::Yes)->click();
+
+    QMap<QString, float> current{
+        {QStringLiteral("TEST_ENABLE"), 0.0f},
+        {QStringLiteral("GAIN"), 1.0f}};
+    int handled = 0;
+    bool acknowledgedEnable = false;
+    while (recovery.busy() && !acknowledgedEnable) {
+        QTRY_VERIFY_WITH_TIMEOUT(fixture.frames.size() > handled, 2000);
+        const mavlink_message_t message = fixture.messageAt(handled++);
+        if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) {
+            mavlink_param_request_read_t request{};
+            mavlink_msg_param_request_read_decode(&message, &request);
+            const QString name = mavlinkParameterName(
+                request.param_id, sizeof request.param_id);
+            fixture.parameterReply(name, current.value(name),
+                                   MAV_PARAM_TYPE_REAL32,
+                                   name == QStringLiteral("TEST_ENABLE") ? 0 : 1,
+                                   2);
+        } else {
+            mavlink_param_set_t request{};
+            mavlink_msg_param_set_decode(&message, &request);
+            const QString name = mavlinkParameterName(
+                request.param_id, sizeof request.param_id);
+            QCOMPARE(name, QStringLiteral("TEST_ENABLE"));
+            current.insert(name, request.param_value);
+            fixture.parameterReply(name, request.param_value,
+                                   MAV_PARAM_TYPE_REAL32, 0, 2);
+            acknowledgedEnable = true;
+        }
+    }
+    QVERIFY(acknowledgedEnable);
+    QVERIFY(recovery.busy());
+    view.close(); // Cancels exactly this page's token, not a foreign operation.
+    QTRY_VERIFY_WITH_TIMEOUT(!recovery.busy(), 2000);
+    QCOMPARE(recovery.lastReport().outcome,
+             ParameterRecoveryService::Outcome::Cancelled);
+    QCOMPARE(recovery.lastReport().receipts.size(), 1);
+    QCOMPARE(recovery.lastReport().receipts.first().kind,
+             ParameterRecoveryService::Receipt::Kind::EnableWrite);
+    view.show();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view.Log().contains(QStringLiteral("possibly partial")), 2000);
+    QVERIFY(view.Log().contains(QStringLiteral("1 ENABLE")));
+    QVERIFY(view.Log().contains(QStringLiteral("not roll back")));
+
+    ConfigDeveloperToolsView reopened;
+    reopened.setParameterRecoveryService(&recovery);
+    QVERIFY(reopened.Log().contains(recovery.lastReport().description));
 }
 
 QTEST_MAIN(ConfigDeveloperToolsViewTest)

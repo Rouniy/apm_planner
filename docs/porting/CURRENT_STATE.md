@@ -24,7 +24,60 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Upgrade Bootloader**. The existing Developer action
+Latest slice (2026-09-06): **Restore Parameters (Recovery)** and its owned
+**Cancel Parameter Restore** action. Actual asynchronous file selection and
+default/Escape-Cancel consent show the exact file, target and entry count.
+The application-owned service freezes parsed source order and vehicle lifetime,
+prefetches names, applies ENABLE entries first, then restores all entries in
+source order. Changed `_ID` parameters are reset to zero immediately before
+their desired value. The existing 15 file exclusions and duplicate ordering
+are retained; no additional identity/serial parameters are silently excluded.
+
+Fresh typed reads, exact target/instance and disarmed checks, dual command/
+parameter reservations and per-attempt gates protect the sequence. Desired IDs
+must fit the endpoint's actual encoding before zero-reset. Confirmed ENABLE,
+reset and final writes have separate receipts; cancel, target loss and lost
+acknowledgement stop later work without pretending to undo earlier writes.
+Page closure cancels only its own operation; service reports survive reopening.
+The 30-minute deadline is checked by monotonic clock as well as timer. Sources
+are buffered with a 1MiB limit, at most10000 entries, and validated MAVLink names.
+
+The shared ParameterService now preserves the transmission-attempt flag across
+synchronous writer/notification cancellation, deletion and replacement. Early
+admission IDs, immutable Plan lifetime, nested callback ownership and receipts
+after queued ACK/cancel are regression-tested. Claude TCP c222–c227 independently
+reviewed reference semantics and code and found a foreign-terminal queue-cap
+defect: exact correlation before buffering now prevents six foreign reports
+from displacing the real nested reply. The real production audit also exposed
+GUI text layout after QApplication teardown; the service-destruction callback
+now clears ownership without touching the GUI during shutdown.
+
+Qt5/audio configure and final build pass; final **249/249 (33.24s)** and production
+X11 exit0/zero audit failures pass. The actual Tools route exercises both Cancel
+boundaries, dynamic ENABLE-first recovery, exact ENABLE1 → GAIN12.5 →
+COMPASS_DEV_ID0 → COMPASS_DEV_ID202, four receipts and cancellation after an
+attempted unacknowledged write with no retry. Source files remain unchanged.
+Root inspected the readable consent, target and buttons in
+`/tmp/apm-parameter-recovery.N3ZG4M/recovery-consent.png`; build/test/X11/GDB
+evidence is in that directory. Initial failures included a misplaced UI local,
+two asynchronous widget fixture assumptions and an immediate-before-pump test
+assertion; these were corrected without weakening production checks.
+No network SITL or real vehicle was modified.
+
+Developer is now **20/32 working,12 unavailable**. SETUP46/eight absent reference
+routes, Advanced14 complete+1 partial Signing/disabled Support Proxy, fixedTools24
+plus Signing extension and CONFIG15/15 factories/Planner21/64 are unchanged.
+See `PARAMETER_RECOVERY_PORT.md`: prefetch latency, main-pass-only progress,
+durable history, arbitrary-late-ACK ambiguity, hardware and native/reference
+visual evidence remain explicit limits. Next: **Offline MagFit**, including its
+shared Developer/Compass window, bounded sphere/ellipsoid analysis and separately
+confirmed exact-target apply. Reference has no file-export action; export-only
+must not be called full parity. Existing ALGLIB/log readers are reusable; avoid
+mixing TLOG senders and preserve the additive offset/radius conventions. Then
+remaining single-drone tools and Settings; Swarm stays last. The full port is
+still incomplete.
+
+Previous slice (2026-09-06): **Upgrade Bootloader**. The existing Developer action
 now uses two named asynchronous default/Escape-Cancel confirmations, both showing
 the exact selected target. One immutable plan is revalidated between prompts and
 immediately before one COMMAND_LONG42650, confirmation0, parameters

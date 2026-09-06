@@ -2,6 +2,7 @@
 #define CONFIGRAWPARAMS_H
 
 #include "core/parameters/ParameterMetaData.h"
+#include "core/parameters/ParameterFileCodec.h"
 #include "core/parameters/ParameterStore.h"
 
 #include <QHash>
@@ -24,17 +25,6 @@ class QTableView;
 class QTimer;
 class QToolButton;
 class QTreeWidget;
-
-class ConfigRawParamsFileCodec
-{
-public:
-    static bool load(QIODevice *device, QMap<QString, double> *values,
-                     QString *error = nullptr, int *errorLine = nullptr);
-    static bool save(QIODevice *device,
-                     const QMap<QString, QVariant> &values,
-                     QString *error = nullptr);
-    static bool isExcluded(const QString &name);
-};
 
 /**
  * Mission Planner-compatible Full Parameter List.

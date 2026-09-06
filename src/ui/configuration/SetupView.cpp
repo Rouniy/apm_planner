@@ -800,6 +800,7 @@ void SetupView::buildPages()
     developerTools.factory = [this](QWidget *parent) {
         auto *page = new ConfigDeveloperToolsView(window(), parent);
         page->setVehicleToolService(LinkManager::instance()->developerVehicleToolService());
+        page->setParameterRecoveryService(LinkManager::instance()->parameterRecoveryService());
         page->setMavFtpDownloadServices(LinkManager::instance()->mavFtpService(),
                                         LinkManager::instance()->vehicleTargetManager());
         return page;

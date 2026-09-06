@@ -616,7 +616,7 @@ bool ParameterService::cancelExactOperation(
 
     const bool write = m_exactOperation.token.kind
         == ExactOperationKind::Write;
-    const bool outcomeUncertain = write && m_exactOperation.frameAttempted;
+    const bool outcomeUncertain = write && m_exactOperation.wasFrameAttempted();
     QString description = reason.trimmed();
     if (description.isEmpty()) {
         if (!write) {
@@ -780,7 +780,7 @@ void ParameterService::retireExactInstance(
             QVariant(), ParameterType::Unknown,
             QStringLiteral(
                 "The exact vehicle instance retired during the parameter operation."),
-            write && m_exactOperation.frameAttempted);
+            write && m_exactOperation.wasFrameAttempted());
         if (guard.isNull()) {
             return;
         }
@@ -1598,7 +1598,7 @@ void ParameterService::forgetLink(int linkId)
             QVariant(), ParameterType::Unknown,
             QStringLiteral(
                 "The exact parameter link was forgotten during the operation."),
-            write && m_exactOperation.frameAttempted);
+            write && m_exactOperation.wasFrameAttempted());
         if (guard.isNull()) {
             return;
         }
@@ -1802,6 +1802,27 @@ bool ParameterService::validateParameterWrite(
     }
     if (nameBytes) {
         *nameBytes = encodedName;
+    }
+    return true;
+}
+
+bool ParameterService::normalizeExactValue(
+    const SwarmVehicleInstanceLease &lease, const QVariant &value,
+    ParameterType type, QVariant *normalized, QString *error) const
+{
+    if (normalized) *normalized = {};
+    if (error) error->clear();
+    if (!lease.isValid()) {
+        if (error) *error = QStringLiteral("The exact vehicle lease is invalid.");
+        return false;
+    }
+    VehicleTargetLease conversionTarget;
+    conversionTarget.endpoint = lease.endpoint;
+    if (!normalizeParameterWrite(conversionTarget, value, type,
+                                 normalized, nullptr, nullptr)) {
+        if (error) *error = QStringLiteral(
+            "The parameter value cannot be represented in the current exact-link encoding.");
+        return false;
     }
     return true;
 }
@@ -2631,7 +2652,7 @@ ParameterService::transmitExactOperation()
 
     if (write
         && m_exactClock.elapsed() >= m_exactOperation.absoluteDeadlineMs) {
-        const bool frameAttempted = m_exactOperation.frameAttempted;
+        const bool frameAttempted = m_exactOperation.wasFrameAttempted();
         finishExactOperation(
             frameAttempted
                 ? ExactTerminalResult::WriteTimedOutOutcomeUncertain
@@ -2664,7 +2685,7 @@ ParameterService::transmitExactOperation()
         if (!allowed || reservation == m_exactReservations.cend()
             || reservation->closing || reservation->owner.isNull()
             || !exactReservationTargetIsCurrent(*reservation)) {
-            const bool uncertain = m_exactOperation.frameAttempted;
+            const bool uncertain = m_exactOperation.wasFrameAttempted();
             finishExactOperation(uncertain
                     ? ExactTerminalResult::WriteCancelledOutcomeUncertain
                     : ExactTerminalResult::Rejected,
@@ -2676,17 +2697,18 @@ ParameterService::transmitExactOperation()
         }
     }
     ++m_exactOperation.attempts;
-    const bool priorFrameAttempted = m_exactOperation.frameAttempted;
-    bool frameWriterInvoked = false;
+    const bool priorFrameAttempted = m_exactOperation.wasFrameAttempted();
+    const auto attempt = std::make_shared<bool>(false);
+    m_exactOperation.inFlightAttempt = attempt;
     QPointer<ParameterService> guard(this);
     const ExactLinkTransmitter::SendResult sent =
         m_transmitter->sendMessage(
             operationLease.endpoint.linkId,
             m_exactOperation.localSystemId,
             m_exactOperation.localComponentId, message,
-            &frameWriterInvoked);
+            attempt.get());
     if (guard.isNull()) {
-        return write && (priorFrameAttempted || frameWriterInvoked)
+        return write && (priorFrameAttempted || *attempt)
             ? ExactSubmitResult::TransportOutcomeUncertain
             : ExactSubmitResult::TransportUnavailable;
     }
@@ -2697,12 +2719,13 @@ ParameterService::transmitExactOperation()
         return ExactSubmitResult::Started;
     }
     m_exactOperation.frameAttempted =
-        priorFrameAttempted || frameWriterInvoked;
+        priorFrameAttempted || *attempt;
+    m_exactOperation.inFlightAttempt.reset();
     if (sent != ExactLinkTransmitter::SendResult::Sent) {
         const bool rejectedBeforeTransmission =
             write
             && sent == ExactLinkTransmitter::SendResult::SigningUnavailable
-            && !m_exactOperation.frameAttempted;
+            && !m_exactOperation.wasFrameAttempted();
         finishExactOperation(
             rejectedBeforeTransmission
                 ? ExactTerminalResult::Rejected
@@ -2715,7 +2738,7 @@ ParameterService::transmitExactOperation()
                     "Signing was unavailable; the exact parameter write was rejected before transmission.")
                 : QStringLiteral(
                     "The frame writer did not confirm exact parameter transport."),
-            write && m_exactOperation.frameAttempted);
+            write && m_exactOperation.wasFrameAttempted());
         return write && !rejectedBeforeTransmission
             ? ExactSubmitResult::TransportOutcomeUncertain
             : ExactSubmitResult::TransportUnavailable;
@@ -2762,7 +2785,7 @@ void ParameterService::handleExactRetryTimeout()
             QVariant(), ParameterType::Unknown,
             QStringLiteral(
                 "The exact parameter write maximum lifetime expired; outcome is uncertain."),
-            m_exactOperation.frameAttempted);
+            m_exactOperation.wasFrameAttempted());
         return;
     }
     if (m_exactOperation.attempts >= m_exactOperation.maximumAttempts) {
@@ -2776,7 +2799,7 @@ void ParameterService::handleExactRetryTimeout()
                     "The exact parameter write exhausted bounded retries; outcome is uncertain.")
                 : QStringLiteral(
                     "The exact parameter read exhausted bounded retries."),
-            write && m_exactOperation.frameAttempted);
+            write && m_exactOperation.wasFrameAttempted());
         return;
     }
     const bool initialLeaseCurrent = exactLeaseIsCurrent(lease);
@@ -2816,7 +2839,7 @@ void ParameterService::handleExactRetryTimeout()
                     ? QStringLiteral(
                         "The exact parameter route became unavailable.")
                     : routeError,
-                write && m_exactOperation.frameAttempted);
+                write && m_exactOperation.wasFrameAttempted());
         }
         return;
     }
@@ -2876,7 +2899,7 @@ void ParameterService::finishExactOperation(
     m_exactRetryTimer.stop();
     m_exactOperationActive = false;
     m_exactOperation = PendingExactOperation();
-    if (quarantine && completed.frameAttempted
+    if (quarantine && completed.wasFrameAttempted()
         && completed.token.kind == ExactOperationKind::Write) {
         addExactWriteQuarantine(completed);
     }
@@ -2895,7 +2918,7 @@ void ParameterService::finishExactOperation(
     report.type = type != ParameterType::Unknown
         ? type : completed.token.type;
     report.attempts = completed.attempts;
-    report.frameAttempted = completed.frameAttempted;
+    report.frameAttempted = completed.wasFrameAttempted();
     report.ownerDetached = ownerDetached;
     report.description = description;
 
@@ -2942,7 +2965,7 @@ bool ParameterService::observeExactParameterValue(
             QVariant(), ParameterType::Unknown,
             QStringLiteral(
                 "The exact parameter write maximum lifetime expired; outcome is uncertain."),
-            m_exactOperation.frameAttempted);
+            m_exactOperation.wasFrameAttempted());
         return true;
     }
     QPointer<ParameterService> guard(this);
@@ -3025,7 +3048,7 @@ bool ParameterService::observeExactParameterValue(
                 ? QStringLiteral(
                     "The exact parameter route changed while publishing the response.")
                 : routeError,
-            write && m_exactOperation.frameAttempted);
+            write && m_exactOperation.wasFrameAttempted());
         return true;
     }
     const bool finalLeaseCurrent = exactLeaseIsCurrent(operationLease);

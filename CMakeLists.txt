@@ -208,6 +208,8 @@ option(APM_USE_QML_PFD
     "Use the legacy Qt Quick primary flight display instead of the QtWidgets display" OFF)
 
 add_library(apm_parameter_core STATIC
+    src/core/parameters/ParameterFileCodec.cpp
+    src/core/parameters/ParameterFileCodec.h
     src/core/VehicleTarget.h
     src/core/parameters/ParameterCodec.cpp
     src/core/parameters/ParameterCodec.h
@@ -618,6 +620,8 @@ set(SOURCES
     src/services/WarningEngine.cpp
     src/services/DeveloperVehicleToolService.cpp
     src/services/DeveloperVehicleToolService.h
+    src/services/ParameterRecoveryService.cpp
+    src/services/ParameterRecoveryService.h
     src/services/WarningTelemetrySource.cpp
     src/ui/WarningManagerWindow.cpp
     src/ui/MavlinkSigningWindow.cpp
@@ -3843,6 +3847,8 @@ if(BUILD_TESTING)
         COMMAND developertoolparsers_tests)
 
     add_library(developer_vehicle_tool_test_support STATIC
+        src/services/ParameterRecoveryService.cpp
+        src/services/ParameterRecoveryService.h
         src/services/DeveloperVehicleToolService.cpp
         src/services/DeveloperVehicleToolService.h
         src/comm/ParameterService.cpp
@@ -3862,6 +3868,23 @@ if(BUILD_TESTING)
         developer_vehicle_tool_test_support Qt::Test)
     add_test(NAME developervehicletoolservice_tests COMMAND developervehicletoolservice_tests)
     set_tests_properties(developervehicletoolservice_tests PROPERTIES TIMEOUT 60)
+
+    add_executable(parameterrecoveryservice_tests tests/test_parameterrecoveryservice.cpp)
+    target_link_libraries(parameterrecoveryservice_tests PRIVATE
+        developer_vehicle_tool_test_support Qt::Test)
+    add_test(NAME parameterrecoveryservice_tests COMMAND parameterrecoveryservice_tests)
+    set_tests_properties(parameterrecoveryservice_tests PROPERTIES TIMEOUT 60)
+
+    add_executable(parameterrecovery_admission_tests tests/test_parameterrecovery_admission.cpp)
+    target_link_libraries(parameterrecovery_admission_tests PRIVATE
+        developer_vehicle_tool_test_support Qt::Test)
+    add_test(NAME parameterrecovery_admission_tests COMMAND parameterrecovery_admission_tests)
+    set_tests_properties(parameterrecovery_admission_tests PROPERTIES TIMEOUT 60)
+
+    add_executable(parameterfilecodec_tests tests/test_parameterfilecodec.cpp)
+    target_link_libraries(parameterfilecodec_tests PRIVATE apm_parameter_core Qt::Test)
+    add_test(NAME parameterfilecodec_tests COMMAND parameterfilecodec_tests)
+    set_tests_properties(parameterfilecodec_tests PROPERTIES TIMEOUT 60)
 
     add_library(gps_correction_test_support STATIC
         src/comm/GpsCorrectionExtractor.cpp

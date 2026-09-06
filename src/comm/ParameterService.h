@@ -19,6 +19,7 @@
 #include <QVariantList>
 
 #include <functional>
+#include <memory>
 
 #include <mavlink.h>
 
@@ -121,6 +122,16 @@ public:
         // initial/retry write. False cancels without an additional frame.
         std::function<bool(QString *)> validateBeforeWrite;
     };
+
+    /** Pure conversion using this endpoint's current classic-wire encoding.
+     * Checks only syntactic lease validity; does not authorize any operation
+     * or invoke application route/registry validators. Callers must validate
+     * raw input types/ranges and obtain fresh write authorization separately.
+     */
+    bool normalizeExactValue(
+        const SwarmVehicleInstanceLease &lease, const QVariant &value,
+        ParameterType type, QVariant *normalized,
+        QString *error = nullptr) const;
 
     struct ExactOperationToken
     {
@@ -498,6 +509,14 @@ private:
         int maximumAttempts = 1 + DefaultExactReadMaximumRetries;
         qint64 absoluteDeadlineMs = 0;
         bool frameAttempted = false;
+        // The transmitter sets this immediately before its writer callback.
+        // A local shared owner pins the flag even if that callback completes,
+        // cancels, replaces or destroys the active operation synchronously.
+        std::shared_ptr<bool> inFlightAttempt;
+        bool wasFrameAttempted() const noexcept
+        {
+            return frameAttempted || (inFlightAttempt && *inFlightAttempt);
+        }
         std::function<bool(QString *)> validateBeforeWrite;
     };
 

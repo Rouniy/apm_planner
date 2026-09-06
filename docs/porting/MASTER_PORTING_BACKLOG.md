@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,246/246 тестов; Developer18/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,249/249 тестов; Developer20/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -46,12 +46,21 @@ Upgrade Bootloader перенесён: два target-bound default-Cancel под
 deadline и честный неопределённый результат при потере ACK. Исправлены callback
 lifetime-дефекты общих сервисов и закрытия страницы во время prepare. Полный
 набор246/246 (30.41s), production X11 и просмотр финального диалога проходят;
-сетевой SITL и реальные платы не изменялись. Следующие single-drone инструменты —
-Parameter Recovery и MagFit.
+сетевой SITL и реальные платы не изменялись.
+Restore Parameters и собственная Cancel теперь работают: file/target consent,
+ENABLE-first и весь файл в исходном порядке, typed reads, проверка представимости
+`_ID` до сброса в0, две reservations и честные partial/uncertain receipts.
+Исправлены reentrant transmission-attempt accounting, вытеснение собственного
+ответа чужими terminal reports и GUI callback после завершения QApplication.
+Full249/249 (33.24s), production X11 и просмотр диалога проходят; реальные борта
+и сетевой SITL не изменялись. Следующий single-drone инструмент — Offline MagFit:
+анализ sphere/ellipsoid плюс отдельно подтверждённое exact-target применение.
+Экспорта файла в MP10 окне нет; анализ/экспорт без Apply был бы частичным переносом.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и
 `MAVFTP_DEVELOPER_DOWNLOAD.md`, `MAVFTP_BROWSER_TARGET_CONSENT.md`,
-`APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`.
+`APJ_DEFAULTS_PORT.md`, `LOG_DIRECTORY_ORGANIZER.md`, `UPGRADE_BOOTLOADER_PORT.md`,
+`PARAMETER_RECOVERY_PORT.md`.
 
 Ниже — историческая исходная Linux-точка после DataFlash Spectrogram, 3D Terrain, External Guided, Follow Me, Moving Base, RF Propagation, OSD Video, offline Swarm Sequence, Formation, Follow Path, Follow Leader и production Waypoint Leader:
 
@@ -349,7 +358,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Upgrade Bootloader работают18/32; заменить оставшиеся14
+- Developer Tools: после Parameter Recovery работают20/32; заменить оставшиеся12
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.

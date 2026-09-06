@@ -7,6 +7,7 @@
 #include "comm/TCPLink.h"
 #include "comm/VehicleTargetManager.h"
 #include "services/DeveloperVehicleToolService.h"
+#include "services/ParameterRecoveryService.h"
 #include "ui/BackstageView.h"
 #include "ui/MainWindow.h"
 #include "ui/configuration/ConfigDeveloperToolsView.h"
@@ -274,6 +275,24 @@ public:
         mavlink_msg_param_value_encode(FixtureSystem, 1, &message, &value);
         inject(message);
     }
+    void recoveryReply(const QString &name) {
+        if (!recoveryValues.contains(name)
+            || (name == QStringLiteral("RECOVERY_GAIN")
+                && recoveryValues.value(QStringLiteral("RECOVERY_ENABLE")) == 0))
+            return;
+        mavlink_param_value_t value{};
+        const QByteArray bytes = name.toLatin1();
+        std::memcpy(value.param_id, bytes.constData(), size_t(qMin(16, bytes.size())));
+        // Production ArduPilot heartbeats select C-style parameter encoding.
+        value.param_value = recoveryValues.value(name);
+        value.param_type = name == QStringLiteral("COMPASS_DEV_ID")
+            ? MAV_PARAM_TYPE_UINT32 : MAV_PARAM_TYPE_REAL32;
+        value.param_count = 5;
+        value.param_index = UINT16_MAX;
+        mavlink_message_t message{};
+        mavlink_msg_param_value_encode(FixtureSystem, 1, &message, &value);
+        inject(message);
+    }
     mavlink_message_t ftpResponse(
         const MavFtpProtocol::PayloadHeader &request,
         int sourceSystem, int sourceComponent,
@@ -428,12 +447,35 @@ public:
                 handleFtpRequest(message);
                 continue;
             }
-            if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST
-                || message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) pressureReply();
+            if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_LIST) pressureReply();
+            if (message.msgid == MAVLINK_MSG_ID_PARAM_REQUEST_READ) {
+                mavlink_param_request_read_t request{};
+                mavlink_msg_param_request_read_decode(&message, &request);
+                if (request.target_system != FixtureSystem
+                    || request.target_component != 1) continue;
+                const QByteArray raw(request.param_id, 16);
+                const QString name = QString::fromLatin1(
+                    raw.constData(), raw.indexOf('\0') < 0 ? 16 : raw.indexOf('\0'));
+                if (name == QStringLiteral("GND_ABS_PRESS")) pressureReply();
+                else {
+                    ++recoveryReads;
+                    recoveryReply(name);
+                }
+            }
             if (message.msgid == MAVLINK_MSG_ID_PARAM_SET) {
                 mavlink_param_set_t value{};
                 mavlink_msg_param_set_decode(&message, &value);
                 if (value.target_system != FixtureSystem || value.target_component != 1) continue;
+                const QByteArray raw(value.param_id, 16);
+                const QString name = QString::fromLatin1(
+                    raw.constData(), raw.indexOf('\0') < 0 ? 16 : raw.indexOf('\0'));
+                if (recoveryValues.contains(name)) {
+                    recoveryWrites.append(qMakePair(name, value.param_value));
+                    recoveryValues[name] = value.param_value;
+                    if (!suppressRecoveryWriteEcho) recoveryReply(name);
+                    if (recoveryWriteHook) recoveryWriteHook();
+                    continue;
+                }
                 if (std::memcmp(value.param_id, "GND_ABS_PRESS", 13) != 0) continue;
                 ++parameterWrites;
                 pressure = value.param_value;
@@ -461,6 +503,16 @@ public:
     int parameterWrites = 0;
     float pressure = 101325.0f;
     QVector<mavlink_command_long_t> commands;
+    QMap<QString, float> recoveryValues{
+        {QStringLiteral("RECOVERY_ENABLE"), 0.0f},
+        {QStringLiteral("RECOVERY_GAIN"), 7.0f},
+        {QStringLiteral("COMPASS_DEV_ID"), 101.0f},
+        {QStringLiteral("UNCHANGED"), 9.0f},
+        {QStringLiteral("CANCEL_VALUE"), 0.0f}};
+    QVector<QPair<QString, float>> recoveryWrites;
+    int recoveryReads = 0;
+    bool suppressRecoveryWriteEcho = false;
+    std::function<void()> recoveryWriteHook;
     QByteArray ftpFileData;
     QString ftpRemotePath;
     QVector<MavFtpProtocol::Opcode> ftpOpcodes;
@@ -492,7 +544,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 18 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 20 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *reboot = page->findChild<QPushButton *>(QStringLiteral("RebootVehicleButton"));
@@ -1160,8 +1212,10 @@ int RunDeveloperVehicleToolRuntimeAudit()
     const QByteArray untouchedBytes("not a log or matching companion\n");
     const auto writeOrganizerFixture = [&](const QString &path, const QByteArray &bytes) {
         QFile file(path);
-        expect(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size(),
-               "organizer fixture file could not be written");
+        const bool written = file.open(QIODevice::WriteOnly)
+            && file.write(bytes) == bytes.size();
+        expect(written, "runtime fixture file could not be written");
+        return written;
     };
     writeOrganizerFixture(smallLog, smallBytes);
     writeOrganizerFixture(companion, companionBytes);
@@ -1793,6 +1847,132 @@ int RunDeveloperVehicleToolRuntimeAudit()
             QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         }
         qInfo() << "Developer runtime bootloader two-consent audit passed";
+    }
+    if (page && fixture) {
+        auto *recovery = links->parameterRecoveryService();
+        QPointer<QPushButton> restore = page->findChild<QPushButton *>(
+            QStringLiteral("RestoreParametersButton"));
+        QPointer<QPushButton> cancelRestore = page->findChild<QPushButton *>(
+            QStringLiteral("CancelParameterRestoreButton"));
+        expect(recovery && restore && cancelRestore,
+               "production recovery service/actions missing");
+        QTemporaryDir files;
+        const QString path = files.filePath(QStringLiteral("recovery sample.param"));
+        const QString cancelPath = files.filePath(QStringLiteral("cancel.param"));
+        const QByteArray contents(
+            "RECOVERY_GAIN,12.5\nCOMPASS_DEV_ID,202\n"
+            "RECOVERY_ENABLE,1\nUNCHANGED,9\n");
+        expect(files.isValid() && writeOrganizerFixture(path, contents)
+                   && writeOrganizerFixture(cancelPath, "CANCEL_VALUE,1\n"),
+               "recovery parameter fixtures could not be written");
+        const auto picker = [&]() -> QFileDialog * {
+            if (!page) return nullptr;
+            for (auto *dialog : page->findChildren<QFileDialog *>(
+                     QStringLiteral("DeveloperParameterRecoveryFileDialog"))) {
+                if (dialog->isVisible()) return dialog;
+            }
+            return nullptr;
+        };
+        const auto consent = [&]() -> QMessageBox * {
+            if (!page) return nullptr;
+            for (auto *dialog : page->findChildren<QMessageBox *>(
+                     QStringLiteral("DeveloperParameterRecoveryConfirmation"))) {
+                if (dialog->isVisible()) return dialog;
+            }
+            return nullptr;
+        };
+        const auto openConsent = [&](const QString &selected) -> QMessageBox * {
+            if (!restore || !waitFor([&] { return restore && restore->isEnabled(); })) return nullptr;
+            restore->click();
+            QCoreApplication::processEvents();
+            auto *dialog = picker();
+            if (!dialog) return nullptr;
+            auto *filename = dialog->findChild<QLineEdit *>(QStringLiteral("fileNameEdit"));
+            if (!filename) return nullptr;
+            filename->setText(selected);
+            expect(dialog->selectedFiles() == QStringList{selected},
+                   "recovery file picker selected a different file");
+            QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+            if (!waitFor([&] { return consent() != nullptr; })) return nullptr;
+            return consent();
+        };
+        if (recovery && restore && cancelRestore) {
+            expect(waitFor([&] { return restore && restore->isEnabled(); }),
+                   "connected recovery action disabled");
+            restore->click();
+            QCoreApplication::processEvents();
+            auto *fileDialog = picker();
+            expect(fileDialog != nullptr, "recovery file picker did not open");
+            if (fileDialog) fileDialog->reject();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            expect(fixture->recoveryReads == 0 && fixture->recoveryWrites.isEmpty(),
+                   "recovery file Cancel touched vehicle parameters");
+            for (bool execute : {false, true}) {
+                auto *dialog = openConsent(path);
+                expect(dialog && dialog->defaultButton() == dialog->button(QMessageBox::Cancel)
+                           && dialog->escapeButton() == dialog->button(QMessageBox::Cancel),
+                       "recovery default/Escape Cancel consent missing");
+                expect(dialog && dialog->text().contains(path)
+                           && dialog->text().contains(QString::number(FixtureLinkId))
+                           && dialog->text().contains(QString::number(FixtureSystem)),
+                       "recovery consent did not display exact file and target");
+                expect(fixture->recoveryReads == 0 && fixture->recoveryWrites.isEmpty(),
+                       "recovery transmitted before consent");
+                if (!dialog) continue;
+                const QString screenshot = qEnvironmentVariable("APM_RECOVERY_AUDIT_SCREENSHOT");
+                if (execute && !screenshot.isEmpty())
+                    expect(dialog->grab().save(screenshot), "recovery consent screenshot failed");
+                const quint64 prior = recovery->lastReport().operationId;
+                dialog->button(execute ? QMessageBox::Yes : QMessageBox::Cancel)->click();
+                if (execute) {
+                    expect(waitFor([&] {
+                        return !recovery->busy() && recovery->lastReport().operationId != prior;
+                    }, 12000), "recovery did not reach its terminal result");
+                    const auto report = recovery->lastReport();
+                    expect(report.outcome == ParameterRecoveryService::Outcome::Completed
+                               && report.setCount == 2 && report.unchangedCount == 2
+                               && report.failedCount == 0 && report.receipts.size() == 4,
+                           "recovery report did not account for ENABLE/reset/final writes");
+                    const QVector<QPair<QString, float>> expected{
+                        {QStringLiteral("RECOVERY_ENABLE"), 1.0f},
+                        {QStringLiteral("RECOVERY_GAIN"), 12.5f},
+                        {QStringLiteral("COMPASS_DEV_ID"), 0.0f},
+                        {QStringLiteral("COMPASS_DEV_ID"), 202.0f}};
+                    expect(fixture->recoveryWrites == expected,
+                           "recovery ENABLE-first or identifier zero/value wire order mismatch");
+                    expect(report.receipts.size() == 4
+                               && report.receipts[0].kind == ParameterRecoveryService::Receipt::Kind::EnableWrite
+                               && report.receipts[2].kind == ParameterRecoveryService::Receipt::Kind::IdentifierReset,
+                           "recovery lost separate ENABLE/reset receipts");
+                }
+                QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            }
+            auto *dialog = openConsent(cancelPath);
+            expect(dialog != nullptr, "recovery cancel fixture consent missing");
+            if (dialog) {
+                const auto before = fixture->recoveryWrites.size();
+                const quint64 prior = recovery->lastReport().operationId;
+                fixture->suppressRecoveryWriteEcho = true;
+                fixture->recoveryWriteHook = [cancelRestore] {
+                    QTimer::singleShot(0, cancelRestore.data(), [cancelRestore] {
+                        if (cancelRestore) cancelRestore->click();
+                    });
+                };
+                dialog->button(QMessageBox::Yes)->click();
+                expect(waitFor([&] {
+                    return !recovery->busy() && recovery->lastReport().operationId != prior;
+                }, 8000), "Cancel Parameter Restore did not stop an unacknowledged write");
+                expect(recovery->lastReport().outcome
+                           == ParameterRecoveryService::Outcome::OutcomeUncertain
+                           && fixture->recoveryWrites.size() == before + 1,
+                       "recovery Cancel retried or falsely claimed an unsent write");
+                fixture->recoveryWriteHook = {};
+                fixture->suppressRecoveryWriteEcho = false;
+            }
+            expect(readFileBytes(path) == contents,
+                   "parameter recovery changed the source file");
+            qInfo() << "Developer runtime parameter recovery audit passed";
+        }
     }
     heartbeat.stop();
     links->removeLink(FixtureLinkId);
