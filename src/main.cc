@@ -51,6 +51,7 @@ This file is part of the QGROUNDCONTROL project
 #include "LogIndexRuntimeAudit.h"
 #include "FirmwareArchiveRuntimeAudit.h"
 #include "ShapefilePolyRuntimeAudit.h"
+#include "MicrodroneDownlinkRuntimeAudit.h"
 
 #include <QSettings>
 #include <QStandardPaths>
@@ -141,6 +142,7 @@ int main(int argc, char *argv[])
     bool logIndexAuditRequested = false;
     bool firmwareArchiveAuditRequested = false;
     bool shapefilePolyAuditRequested = false;
+    bool microdroneDownlinkAuditRequested = false;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--setup-route-audit") == 0) {
             setupRouteAuditRequested = true;
@@ -155,6 +157,8 @@ int main(int argc, char *argv[])
             firmwareArchiveAuditRequested = true;
         if (std::strcmp(argv[index], "--shapefile-poly-audit") == 0)
             shapefilePolyAuditRequested = true;
+        if (std::strcmp(argv[index], "--microdrone-downlink-audit") == 0)
+            microdroneDownlinkAuditRequested = true;
     }
     // Keep the audit's directory picker introspectable under desktop platform
     // themes as well as offscreen. Normal launches retain native file dialogs.
@@ -165,7 +169,8 @@ int main(int argc, char *argv[])
     // release signing/file locks before the isolated directory is removed.
     static std::unique_ptr<QTemporaryDir> setupRouteAuditSettings;
     if (setupRouteAuditRequested || signingTransportAuditRequested || developerVehicleAuditRequested
-        || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested) {
+        || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
+        || microdroneDownlinkAuditRequested) {
         // The audit constructs production pages but must not observe or mutate
         // the operator's settings and writable application-data directories.
         QStandardPaths::setTestModeEnabled(true);
@@ -207,13 +212,15 @@ int main(int argc, char *argv[])
 
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
     if (signingTransportAuditRequested || developerVehicleAuditRequested
-        || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested) {
+        || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
+        || microdroneDownlinkAuditRequested) {
         // Synthetic security fixtures must not subscribe to the operator's
         // network SITL before the explicit listener-restoration test cases.
         QSettings auditSettings;
         auditSettings.setValue(QStringLiteral("startup_udp_listeners_enabled"), false);
         auditSettings.setValue(QStringLiteral("AUTO_UPDATE/ENABLED"), false);
         auditSettings.sync();
+        if (microdroneDownlinkAuditRequested) return RunMicrodroneDownlinkRuntimeAudit();
         if (shapefilePolyAuditRequested) return RunShapefilePolyRuntimeAudit();
         if (firmwareArchiveAuditRequested) return RunFirmwareArchiveRuntimeAudit();
         if (logIndexAuditRequested) return RunLogIndexRuntimeAudit();

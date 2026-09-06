@@ -124,8 +124,9 @@ ConfigDeveloperToolsView::ConfigDeveloperToolsView(QObject *actionSource,
     AddToolAction(tr("3D Terrain View"),
                   QStringLiteral("Terrain3dViewButton"),
                   QStringLiteral("actionTerrain3D"));
-    AddUnavailableAction(tr("MicroDrone Downlink"),
-                         QStringLiteral("MicroDroneDownlinkButton"), notPorted);
+    AddToolAction(tr("MicroDrone Downlink"),
+                  QStringLiteral("MicroDroneDownlinkButton"),
+                  QStringLiteral("actionMicrodroneDownlink"));
     AddToolAction(tr("MAVLink Serial TCP Bridge"),
                   QStringLiteral("MavlinkSerialTcpBridgeButton"),
                   QStringLiteral("actionMavlinkSerialTcpBridge"));

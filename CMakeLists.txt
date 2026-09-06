@@ -353,6 +353,12 @@ set(SOURCES
     src/comm/NmeaSentenceBuilder.h
     src/comm/NmeaOutputService.cpp
     src/comm/NmeaOutputService.h
+    src/comm/MicrodroneDownlinkEncoder.cpp
+    src/comm/MicrodroneDownlinkEncoder.h
+    src/comm/MicrodroneTelemetryState.cpp
+    src/comm/MicrodroneTelemetryState.h
+    src/comm/MicrodroneDownlinkService.cpp
+    src/comm/MicrodroneDownlinkService.h
     src/comm/ParameterService.cpp
     src/comm/MavlinkComponentInstanceLease.h
     src/comm/MavlinkComponentRegistry.cpp
@@ -772,6 +778,11 @@ set(SOURCES
     src/ui/SerialOutputNMEAWindow.cpp
     src/ui/SerialOutputNMEAWindow.h
     src/ui/SerialOutputNMEAWindowIntegration.cpp
+    src/ui/MicrodroneDownlinkViewModel.cpp
+    src/ui/MicrodroneDownlinkViewModel.h
+    src/ui/MicrodroneDownlinkWindow.cpp
+    src/ui/MicrodroneDownlinkWindow.h
+    src/ui/MicrodroneDownlinkWindowIntegration.cpp
     src/ui/CotIdentityModel.cpp
     src/ui/CotIdentityModel.h
     src/ui/SerialOutputCotViewModel.cpp
@@ -1781,6 +1792,8 @@ if(BUILD_TESTING)
         tests/FirmwareArchiveRuntimeAudit.h
         tests/ShapefilePolyRuntimeAudit.cpp
         tests/ShapefilePolyRuntimeAudit.h
+        tests/MicrodroneDownlinkRuntimeAudit.cpp
+        tests/MicrodroneDownlinkRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1831,6 +1844,12 @@ if(BUILD_TESTING)
     set_tests_properties(shapefile_poly_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 45)
+
+    add_test(NAME microdrone_downlink_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --microdrone-downlink-audit)
+    set_tests_properties(microdrone_downlink_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 30)
 
     # Explicit desktop diagnostic, not an automatic/noisy CTest. The default
     # invocation only probes readiness; --speak exercises actual synthesis.
@@ -5471,6 +5490,34 @@ if(BUILD_TESTING)
     set_tests_properties(serialoutputnmeawindow_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+
+    add_library(microdrone_test_support STATIC
+        src/comm/MicrodroneDownlinkEncoder.cpp
+        src/comm/MicrodroneDownlinkEncoder.h
+        src/comm/MicrodroneTelemetryState.cpp
+        src/comm/MicrodroneTelemetryState.h
+        src/comm/MicrodroneDownlinkService.cpp
+        src/comm/MicrodroneDownlinkService.h
+        src/comm/MavlinkMirrorOutput.cpp
+        src/comm/MavlinkMirrorOutput.h
+        src/comm/VehicleEndpoint.cpp
+        src/comm/VehicleEndpoint.h
+        src/ui/MicrodroneDownlinkViewModel.cpp
+        src/ui/MicrodroneDownlinkViewModel.h
+        src/ui/MicrodroneDownlinkWindow.cpp
+        src/ui/MicrodroneDownlinkWindow.h)
+    target_include_directories(microdrone_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(microdrone_test_support PUBLIC
+        Qt::Core Qt::Network Qt::SerialPort Qt::Widgets)
+    foreach(microdrone_suite microdronedownlinkencoder microdronetelemetrystate
+            microdronedownlinkservice microdronedownlinkviewmodel microdronedownlinkwindow)
+        add_executable(${microdrone_suite}_tests tests/test_${microdrone_suite}.cpp)
+        target_link_libraries(${microdrone_suite}_tests PRIVATE microdrone_test_support Qt::Test)
+        add_test(NAME ${microdrone_suite}_tests COMMAND ${microdrone_suite}_tests)
+        set_tests_properties(${microdrone_suite}_tests PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    endforeach()
 
     add_executable(coteventserializer_tests
         tests/test_coteventserializer.cpp

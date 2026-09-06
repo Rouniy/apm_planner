@@ -24,7 +24,67 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
-Latest slice (2026-09-06): **Convert Shapefile to POLY**. Its existing Developer
+Latest slice (2026-09-06): **MicroDrone Downlink**. The existing Developer Tools
+button now opens a real 580x440 modeless serial-output window offline or online.
+It has the eight MP10 baud choices/default57600, Refresh, Connect/Stop, source,
+status and last complete #9 record. It encodes all seven reference records,
+retaining decimal checksums/CRLF, UTC GPS week/time, counter/10, legacy ECEF and
+widened-float semantics. HOME_POSITION, GLOBAL/GPS/VFR, HIGH_LATENCY variants,
+attitude, pressure and all primary IMU paths are represented.
+
+Each window owns one bounded serial service pinned to selection generation,
+exact component, discovered instance and physical epoch. Source changes/loss,
+Stop, Close and shutdown release the output. Partial/zero writes resume one
+frame; busy ports skip new ticks without a stale backlog. Production ingress
+pre-filters unrelated components. Initial unknown telemetry stays zero, while
+registry retirement after ten seconds of silence intentionally stops output.
+SI units/no display offset, receipt-time EMA/replay timing, synchronous serial
+open, partial wire delivery and physical/native-platform gates remain explicit
+in `MICRODRONE_DOWNLINK_PORT.md`; no hardware compatibility claim is made.
+
+Final Qt5/audio build3 passes, full **278/278 (48.68s)**. Ten repeats of all five
+new unit suites plus projection pass (3.08s), with21/8/40/6/7 and32 cases,
+zero failures/skips. Production X11 exits0/zero audit failures; root inspected
+offline and emitting screenshots. The actual application ingress is additionally
+tested through an isolated physical-link fixture: selected primary IMU accepted,
+foreign component ignored, exact epoch acquired and old cache cleared on deselect.
+No network SITL, real vehicle command or physical output port was used.
+
+Evidence: `/tmp/apm-microdrone.5ewMlI/` (`configure.log`, `build3.log`, `full.log`,
+`repeat.log`, `x11.log`, `window.png`, `window.png.running.png`, `oracle.json`,
+`oracle-build.log`). A separate .NET10.0.11 console linked the actual MP10 encoder
+and confirmed two complete frames,13 formatting cases and saturating float-to-int
+conversion. This caught the old exponent15 assumption; the reference uses17.
+Initial Qt5 QStringList test initializers and a test's literal0.4f expectation
+were corrected; production retains the reference's40*0.01f arithmetic.
+
+Three Codex streams implemented/tested UI, encoder/state and service regressions.
+Claude TCP c281/c282 independently reviewed transport and lifetime; root checked
+the full report/hash. Primary source inspection corrected the RAW_IMU-only
+assumption. Regressions cover settings mutation and nested idle-cache source
+changes. The separate NTF Paris fix is committed as `9432f16d`.
+
+Developer is now **29/32 working,3 unavailable**: Probe MAVLink Camera,
+Translation/RESX Editor and SFTP logs. SETUP46/eight absent reference routes,
+Advanced14 complete+partial Signing/disabled Support Proxy, fixedTools24 plus
+Signing, CONFIG15/15 factories and Planner21/64 remain unchanged. Inventory129:
+75 in-progress/36 partial/18 not-started; deviations140; none strict-complete.
+Next: assess actual **Probe MAVLink Camera** workflow (Claude TCP c285 read-only
+task), then remaining single-drone Tools and Settings. Swarm stays last. The full
+Mission Planner port is incomplete.
+
+Claude c284's suggestion to retire Probe merely because an ArduPilot-only link
+lacks component100 was not accepted: external camera components remain in scope.
+Root read `ProbeCameraAsync`/`Camera.test`: consent explicitly names mode/stream
+changes, and six zero-parameter commands call `doCommand(requireack=true)` by
+default (MAVLinkInterface2790), so the review's no-ACK claim is also incorrect.
+The probe ignores returned success values, which is different from not waiting
+for ACK. Settle discovery, exact consent/ownership and truthful outcomes before
+implementation; do not silently replace it with autopilot capture or retire it.
+
+### Previous checkpoint: Shapefile to POLY
+
+Previous slice (2026-09-06): **Convert Shapefile to POLY**. Its existing Developer
 action now opens a real offline picker, bounded background read/transform,
 scrollable exact Create/Replace confirmation (default/Escape Cancel) and owned
 export progress. SHP Point/MultiPoint/PolyLine/Polygon XY/M/Z, reference DBF

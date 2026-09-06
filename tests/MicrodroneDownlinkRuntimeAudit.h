@@ -1,0 +1,4 @@
+#ifndef MICRODRONEDOWNLINKRUNTIMEAUDIT_H
+#define MICRODRONEDOWNLINKRUNTIMEAUDIT_H
+int RunMicrodroneDownlinkRuntimeAudit();
+#endif

@@ -33,6 +33,16 @@ Planner widgets rather than the corresponding MP10 implementation.
 
 ## Developer actions are counted separately
 
+MicroDrone Downlink now brings the catalogue to **29/32 working**, with three
+unavailable: Probe MAVLink Camera, Translation/RESX Editor and SFTP logs. Its
+existing button opens a modeless serial-output window even offline; seven-record
+encoding, exact source binding, partial writes, source-change stop and Close are
+wired and tested. The full278/278 suite and inspected X11 route/window pass;
+hardware/native limitations remain in `MICRODRONE_DOWNLINK_PORT.md`.
+This adds neither a SETUP page nor an extra fixed Tools item.
+
+Previous checkpoint:
+
 Convert Shapefile to POLY brings the exact Developer catalogue to28/32 working,
 with4 explicitly unavailable: MicroDrone Downlink, Probe MAVLink Camera,
 Translation/RESX Editor and SFTP logs. The existing button now opens a real

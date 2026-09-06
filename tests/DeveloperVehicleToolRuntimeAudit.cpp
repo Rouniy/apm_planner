@@ -23,6 +23,7 @@
 #include "comm/ExactLogTransferService.h"
 #include "comm/MavlinkSerialTcpBridgeService.h"
 #include "ui/MavlinkSerialTcpBridgeWindow.h"
+#include "ui/MicrodroneDownlinkWindow.h"
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QCheckBox>
@@ -731,7 +732,7 @@ int RunDeveloperVehicleToolRuntimeAudit()
     action->trigger();
     QCoreApplication::processEvents();
     QPointer<ConfigDeveloperToolsView> page(window->findChild<ConfigDeveloperToolsView *>());
-    expect(page && page->ImplementedActionCount() == 28 && page->ActionCount() == 32,
+    expect(page && page->ImplementedActionCount() == 29 && page->ActionCount() == 32,
            "production Developer route did not bind offline and vehicle tools");
     if (!page) return 1;
     auto *offlineSerialBridge = page->findChild<QPushButton *>(
@@ -1562,6 +1563,44 @@ int RunDeveloperVehicleToolRuntimeAudit()
     expect(waitFor([&] { return links->vehicleTargetManager()->contains(FixtureLinkId, FixtureSystem, 1); }),
            "heartbeat did not discover exact fixture");
     links->vehicleTargetManager()->selectTarget(FixtureLinkId, FixtureSystem, 1);
+    // Exercise MicroDrone's real epoch-tagged application subscription without
+    // opening a hardware port. The dedicated runtime audit tests owned output.
+    {
+        auto *microdroneAction = window->findChild<QAction *>(
+            QStringLiteral("actionMicrodroneDownlink"));
+        expect(microdroneAction, "MicroDrone production action missing");
+        if (microdroneAction) microdroneAction->trigger();
+        QPointer<MicrodroneDownlinkWindow> microdrone =
+            window->findChild<MicrodroneDownlinkWindow *>();
+        expect(microdrone && microdrone->isVisible(), "MicroDrone connected window missing");
+        if (microdrone) {
+            mavlink_message_t packet{};
+            mavlink_raw_imu_t imu{};
+            imu.xmag = 135; imu.ymag = -246; imu.zmag = 357;
+            mavlink_msg_raw_imu_encode(FixtureSystem, 1, &packet, &imu);
+            fixture->inject(packet);
+            expect(waitFor([&] {
+                return microdrone->service()->telemetry().magnetometerX == 135;
+            }), "MicroDrone production ingress did not cache selected primary IMU");
+            imu.xmag = 999;
+            mavlink_msg_raw_imu_encode(FixtureSystem, 2, &packet, &imu);
+            fixture->inject(packet);
+            QCoreApplication::processEvents();
+            expect(microdrone->service()->telemetry().magnetometerX == 135,
+                   "MicroDrone secondary component polluted primary cache");
+            const quint64 epoch = links->currentPhysicalLinkSession(FixtureLinkId);
+            expect(microdrone->service()->source().instance.linkSessionEpoch == epoch,
+                   "MicroDrone source has no physical-session lease");
+            links->vehicleTargetManager()->clearTarget();
+            expect(microdrone->service()->telemetry().magnetometerX == 0
+                       && !microdrone->service()->source().isValid(),
+                   "MicroDrone source invalidation left old cache attached");
+            links->vehicleTargetManager()->selectTarget(FixtureLinkId, FixtureSystem, 1);
+            microdrone->close();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            expect(microdrone.isNull(), "MicroDrone connected close did not release window");
+        }
+    }
     bool fixtureArmed = false;
     QTimer heartbeat;
     QObject::connect(&heartbeat, &QTimer::timeout, fixture, [fixture, &fixtureArmed] {

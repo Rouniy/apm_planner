@@ -49,6 +49,7 @@ This file is part of the QGROUNDCONTROL project
 #include "Terrain3DWindow.h"
 #include "SerialPassThroughWindow.h"
 #include "SerialOutputNMEAWindow.h"
+#include "MicrodroneDownlinkWindow.h"
 #include "SerialOutputCotWindow.h"
 #include "DeviceOperationsWindow.h"
 #include "ExternalGuidedWindow.h"
@@ -750,6 +751,11 @@ void MainWindow::buildMissionPlannerToolsMenu()
     auto *logIndexAction = new QAction(tr("Flight Log Index"), this);
     logIndexAction->setObjectName(QStringLiteral("actionFlightLogIndex"));
     connect(logIndexAction, &QAction::triggered, this, &MainWindow::showLogIndex);
+    auto *microdroneAction = new QAction(tr("MicroDrone Downlink"), this);
+    microdroneAction->setObjectName(QStringLiteral("actionMicrodroneDownlink"));
+    connect(microdroneAction, &QAction::triggered, this, [this] {
+        MicrodroneDownlinkWindow::OpenWindow(this);
+    });
     auto *paramGenAction = new QAction(tr("Param gen"), this);
     paramGenAction->setObjectName(QStringLiteral("actionParameterMetaDataRegeneration"));
     connect(paramGenAction, &QAction::triggered, this,

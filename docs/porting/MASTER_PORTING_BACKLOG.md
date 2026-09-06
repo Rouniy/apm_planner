@@ -9,7 +9,7 @@
 ## 1. Текущее состояние и честная мера готовности
 
 Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,272/272 тестов; Developer28/32,
+`CURRENT_STATE.md`: 2026-09-06, Qt5/audio,278/278 тестов; Developer29/32,
 Advanced14 complete+1 partial. Исходящие typed MAVLink пакеты теперь записываются
 в TLOG при активном журнале, с полным исключением SETUP_SIGNING; Anon Log
 консервативно удаляет пять opaque/secret классов и неоднозначные команды.
@@ -102,13 +102,18 @@ default-Cancel Create/Replace план, атомарные файлы и чес�
 эквивалентностью CRS и сохранением осей/единиц; явные bindings/grids/epochs
 не заменяются. Все32 projection cases проходят по10 раз без пропусков.
 Developer28/32; SETUP/Tools route counts и inventory129 не изменились.
-Следующий кандидат — MicroDrone Downlink, затем остальные однодроновые
-инструменты. Claude c276 подтвердил working encoder+serial output в MP10;
-Это не decoder/diagnostics: ошибочная отдельная строка реестра исправлена
-после чтения первичных Encoder.cs и View.axaml, статус остаётся not-started.
-Перед реализацией сверить поля CurrentState/числа/serial conflict guard с
-первичными исходниками; никакой протокольной совместимости по одному ревью
-не заявлено. Claude c260 проверил SFTP/Camera Probe: SFTP требует
+MicroDrone Downlink теперь реализован: modeless serial-окно,8 baud/default57600,
+семь записей и bounded exact-source service. HOME_POSITION/IMU variants/EMA
+сверены с первичным CurrentState; .NET10.0.11 oracle подтверждает два полных
+кадра и13 числовых случаев. Full278/278 (48.68s),10 повторов пяти новых suites
+и NTF projection, production X11 и просмотр двух screenshots проходят.
+Developer29/32; inventory129:75 in-progress/36 partial/18 not-started,
+ни одна поверхность не strict-complete. См. MICRODRONE_DOWNLINK_PORT.md:
+SI вместо display units, точные epochs/retirement, bounded backpressure и
+непроверенное физическое оборудование остаются явными границами.
+Следующий кандидат — Probe MAVLink Camera (Claude TCP c284), затем остальные
+однодроновые инструменты и Settings. Swarm в конце. Claude c260 проверил
+SFTP/Camera Probe: SFTP требует
 portable SSH dependency/host-key policy; в MP10 Camera Probe есть две скрытые
 изменяющие состояние команды, их нельзя выдавать за безвредную диагностику.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
@@ -227,7 +232,8 @@ Qt Widgets и доверенный QML API можно сочетать по на
 - SFTP logs, mag fit, georeference, terrain maker;
 - Follow Me и external guided имеют основные безопасные срезы; moving base и formation/swarm отсутствуют как завершённые workflow;
 - NMEA/CoT output, MAVLink serial/TCP bridge и serial pass-through;
-- OSD video overlay, Microdrone и translation editor; Device Operations уже
+- OSD video overlay и translation editor; MicroDrone имеет основной рабочий
+  serial-срез, но ждёт hardware/native evidence; Device Operations уже
   имеет основной modeless/exact-target workflow, но ещё ждёт hardware/native
   evidence для strict-complete;
 - полная Simulation и signed updater.
@@ -418,7 +424,7 @@ Rally; после cancel/target switch нет поздних изменений;
 - Serial, Servo Output, ESC Calibration, Motor Test, GPS Order, HW CAN,
   Bluetooth, Parachute, ESP8266, Battery Monitor 2: live devices, target switch,
   native serial/USB, screenshots.
-- Developer Tools: после Shapefile to POLY работают28/32; заменить оставшиеся4
+- Developer Tools: после MicroDrone Downlink работают29/32; заменить оставшиеся3
   disabled операций законченными пакетами, не включая кнопки заранее.
   Advanced отдельно:14 complete, Signing partial, Support Proxy unavailable.
 - Elevation Sources и Mission Command List: native/package evidence.
@@ -579,10 +585,10 @@ dirty state никогда не переносится на новый target.
 
 #### Отсутствующие инструменты P2
 
-- SFTP Log Download и Log Index;
+- SFTP Log Download; Log Index реализован, остаются native/filesystem gates;
 - Photo/video GeoRef;
 - Terrain Maker;
-- Microdrone Downlink;
+- Microdrone Downlink реализован; физическая совместимость/native gates остаются;
 - Translation Editor;
 - Tracker Home Module.
 

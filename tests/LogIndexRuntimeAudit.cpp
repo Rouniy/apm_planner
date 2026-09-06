@@ -132,7 +132,7 @@ int RunLogIndexRuntimeAudit()
     QApplication::processEvents();
     auto *page = main->findChild<ConfigDeveloperToolsView *>();
     auto *open = control<QPushButton>(page, "FlightLogIndexButton");
-    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 28
+    expect(page && page->ActionCount() == 32 && page->ImplementedActionCount() == 29
                && open && open->isEnabled(), "Developer Index action not bound offline");
     if (!open) return 1;
     open->click();
