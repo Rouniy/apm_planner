@@ -275,6 +275,8 @@ struct DataFlashLogToolsController::WorkerResult
     Work work = Work::None;
     DataFlashBinToLogConverter::Result converted;
     DataFlashLogAnalyzer::Result analysis;
+    DataFlashMatlabExporter::PlanResult matlabPreparation;
+    DataFlashMatlabExporter::Result matlabExport;
     FlightLogOrganizer::Analysis organizerAnalysis;
     FlightLogOrganizer::Result organizerResult;
 };
@@ -304,6 +306,17 @@ DataFlashLogToolsController::defaultOperations()
         const QString &input, DataFlashLogAnalyzer::Cancel cancel,
         DataFlashLogAnalyzer::Progress progress) {
         return DataFlashLogAnalyzer::Analyze(input, std::move(cancel), std::move(progress));
+    };
+    operations.prepareMatlab = [](
+        const QString &input, const DataFlashMatlabExporter::CancelCheck &cancel,
+        const DataFlashMatlabExporter::Progress &progress) {
+        return DataFlashMatlabExporter::Prepare(input, cancel, progress);
+    };
+    operations.exportMatlab = [](
+        const DataFlashMatlabExporter::Plan &plan,
+        const DataFlashMatlabExporter::CancelCheck &cancel,
+        const DataFlashMatlabExporter::Progress &progress) {
+        return DataFlashMatlabExporter::Export(plan, cancel, progress);
     };
     operations.analyzeDirectory = [](
         const QString &root, const FlightLogOrganizer::Cancel &cancel,
@@ -340,6 +353,8 @@ DataFlashLogToolsController::DataFlashLogToolsController(
                 this, &DataFlashLogToolsController::startKmlGpx);
         connect(widget, &DataFlashLogsWidget::binToLogRequested,
                 this, &DataFlashLogToolsController::startBinToLog);
+        connect(widget, &DataFlashLogsWidget::matlabRequested,
+                this, &DataFlashLogToolsController::startMatlab);
         connect(widget, &DataFlashLogsWidget::organizeRequested,
                 this, &DataFlashLogToolsController::startOrganize);
     }
@@ -426,6 +441,11 @@ void DataFlashLogToolsController::startBinToLog()
     begin(Intent::BinToLog);
 }
 
+void DataFlashLogToolsController::startMatlab()
+{
+    begin(Intent::Matlab);
+}
+
 void DataFlashLogToolsController::startOrganize()
 {
     begin(Intent::Organize);
@@ -469,6 +489,8 @@ void DataFlashLogToolsController::begin(Intent intent)
     m_mapParentCanonical.clear();
     m_organizerRoot.clear();
     m_organizerPlan = FlightLogOrganizer::Plan();
+    m_matlabPlan.reset();
+    m_matlabWarnings.clear();
     m_phase = intent == Intent::Organize
         ? Phase::DirectoryPrompt : Phase::InputPrompt;
     const QPointer<DataFlashLogToolsController> guard(this);
@@ -568,6 +590,8 @@ void DataFlashLogToolsController::acceptInput(
         showKmlGpxConsent(flow);
     } else if (intent == Intent::BinToLog) {
         showBinOutputPrompt(flow);
+    } else if (intent == Intent::Matlab) {
+        startWorker(flow, Work::MatlabPrepare);
     }
 }
 
@@ -696,6 +720,92 @@ void DataFlashLogToolsController::showKmlGpxConsent(quint64 flow)
             }
         }
         startWorker(flow, Work::KmlGpx);
+    });
+    const QPointer<DataFlashLogToolsController> guard(this);
+    const QPointer<QDialog> dialogGuard(dialog);
+    dialog->show();
+    if (!guard || !dialogGuard)
+        return;
+    dialog->raise();
+    if (!guard || !dialogGuard)
+        return;
+    dialog->activateWindow();
+}
+
+void DataFlashLogToolsController::showMatlabConsent(quint64 flow)
+{
+    if (m_destroying || m_shutdownPending || flow != m_flow
+        || m_phase != Phase::Consent || !m_dialogParent
+        || !m_matlabPlan || !m_matlabPlan->isValid()) {
+        return;
+    }
+    const std::shared_ptr<const DataFlashMatlabExporter::Plan> plan = m_matlabPlan;
+    auto *dialog = new QDialog(m_dialogParent);
+    dialog->setObjectName(QStringLiteral("DataFlashMatlabConfirmationDialog"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Create Matlab File"));
+    dialog->resize(760, 430);
+    auto *layout = new QVBoxLayout(dialog);
+    auto *summary = new QLabel(dialog);
+    summary->setObjectName(QStringLiteral("DataFlashMatlabSummary"));
+    summary->setTextFormat(Qt::PlainText);
+    summary->setWordWrap(true);
+    summary->setText(tr(
+        "Export the frozen DataFlash schema and records to a MATLAB Level-5 file.\n\n"
+        "Source: %1\nExact new output: %2\nRecords: %3\nVariables: %4\nEstimated output bytes: %5\n\n"
+        "The record count is part of the filename. The exact target must remain absent and will never be replaced. Preparation and export revalidate the immutable source plan. Cancellation before publication leaves no output. This offline conversion does not contact or change a vehicle.")
+        .arg(plan->sourcePath(), plan->outputPath(),
+             QString::number(plan->recordCount()),
+             QString::number(plan->variableCount()),
+             QString::number(plan->estimatedBytes())));
+    layout->addWidget(summary);
+    QStringList warnings = m_matlabWarnings;
+    for (const QString &warning : plan->warnings()) {
+        if (!warnings.contains(warning))
+            warnings.append(warning);
+    }
+    if (!warnings.isEmpty()) {
+        auto *warningView = new QPlainTextEdit(dialog);
+        warningView->setObjectName(QStringLiteral("DataFlashMatlabWarnings"));
+        warningView->setReadOnly(true);
+        warningView->setMaximumHeight(120);
+        warningView->setPlainText(warnings.join(QLatin1Char('\n')));
+        layout->addWidget(warningView);
+    }
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Yes | QDialogButtonBox::Cancel, dialog);
+    auto *exportButton = buttons->button(QDialogButtonBox::Yes);
+    exportButton->setObjectName(QStringLiteral("DataFlashMatlabExportButton"));
+    exportButton->setText(tr("Create new MATLAB file"));
+    exportButton->setAutoDefault(false);
+    auto *cancelButton = buttons->button(QDialogButtonBox::Cancel);
+    cancelButton->setObjectName(QStringLiteral("DataFlashMatlabCancelButton"));
+    cancelButton->setDefault(true);
+    cancelButton->setAutoDefault(true);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    m_prompt = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, dialog, flow, plan](int result) {
+        if (m_destroying || flow != m_flow || m_phase != Phase::Consent
+            || m_prompt != dialog || m_matlabPlan != plan) {
+            return;
+        }
+        m_prompt.clear();
+        if (result != QDialog::Accepted) {
+            finishFlow(flow, {tr(
+                "MATLAB export cancelled after read-only preparation; no output was written.")});
+            return;
+        }
+        const QFileInfo output(plan->outputPath());
+        if (output.exists() || output.isSymLink()) {
+            finishFlow(flow, {tr(
+                "MATLAB export refused because the exact output appeared after confirmation: %1")
+                    .arg(plan->outputPath())});
+            return;
+        }
+        startWorker(flow, Work::MatlabExport);
     });
     const QPointer<DataFlashLogToolsController> guard(this);
     const QPointer<QDialog> dialogGuard(dialog);
@@ -865,6 +975,7 @@ void DataFlashLogToolsController::startWorker(quint64 flow, Work work)
     const Operations operations = m_operations;
     if (!operations.convertBinToLog || !operations.exportKml
         || !operations.exportGpx || !operations.analyze
+        || !operations.prepareMatlab || !operations.exportMatlab
         || !operations.analyzeDirectory || !operations.executeOrganizer) {
         finishFlow(flow, {tr("DataFlash Logs: an offline operation backend is unavailable.")});
         return;
@@ -878,6 +989,8 @@ void DataFlashLogToolsController::startWorker(quint64 flow, Work work)
     case Work::Analyze: label = tr("Analyzing the DataFlash log…"); break;
     case Work::KmlGpx: label = tr("Freezing the source and creating KML + GPX…"); break;
     case Work::BinToLog: label = tr("Converting BIN to text LOG…"); break;
+    case Work::MatlabPrepare: label = tr("Preparing an immutable MATLAB export plan…"); break;
+    case Work::MatlabExport: label = tr("Writing the confirmed MATLAB Level-5 file…"); break;
     case Work::OrganizeAnalyze: label = tr("Analyzing the log directory without changing files…"); break;
     case Work::OrganizeExecute: label = tr("Executing the confirmed log organization plan…"); break;
     default: break;
@@ -898,6 +1011,8 @@ void DataFlashLogToolsController::startWorker(quint64 flow, Work work)
     const QString mapParentCanonical = m_mapParentCanonical;
     const QString organizerRoot = m_organizerRoot;
     const FlightLogOrganizer::Plan organizerPlan = m_organizerPlan;
+    const std::shared_ptr<const DataFlashMatlabExporter::Plan> matlabPlan =
+        m_matlabPlan;
     auto *watcher = new QFutureWatcher<WorkerResult>(this);
     m_watcher = watcher;
     connect(watcher, &QFutureWatcher<WorkerResult>::finished,
@@ -908,7 +1023,7 @@ void DataFlashLogToolsController::startWorker(quint64 flow, Work work)
     });
     watcher->setFuture(QtConcurrent::run(
         [operations, input, output, mapOutputs, mapParentCanonical, organizerRoot,
-         organizerPlan, state, work]() {
+         organizerPlan, matlabPlan, state, work]() {
         WorkerResult result;
         result.work = work;
         if (work == Work::KmlGpx)
@@ -925,6 +1040,17 @@ void DataFlashLogToolsController::startWorker(quint64 flow, Work work)
                 result.analysis = operations.analyze(input, cancel, progress);
             } else if (work == Work::BinToLog) {
                 result.converted = operations.convertBinToLog(input, output, cancel, progress);
+            } else if (work == Work::MatlabPrepare) {
+                result.matlabPreparation = operations.prepareMatlab(
+                    input, cancel, progress);
+            } else if (work == Work::MatlabExport) {
+                if (!matlabPlan || !matlabPlan->isValid()) {
+                    result.matlabExport.error = QObject::tr(
+                        "The immutable MATLAB export plan is unavailable.");
+                } else {
+                    result.matlabExport = operations.exportMatlab(
+                        *matlabPlan, cancel, progress);
+                }
             } else if (work == Work::OrganizeAnalyze) {
                 result.organizerAnalysis = operations.analyzeDirectory(
                     organizerRoot, cancel, progress);
@@ -1020,6 +1146,8 @@ void DataFlashLogToolsController::startWorker(quint64 flow, Work work)
                 .arg(QString::fromLocal8Bit(exception.what()));
             if (work == Work::Analyze) result.analysis.error = message;
             else if (work == Work::BinToLog) result.converted.error = message;
+            else if (work == Work::MatlabPrepare) result.matlabPreparation.error = message;
+            else if (work == Work::MatlabExport) result.matlabExport.error = message;
             else if (work == Work::OrganizeAnalyze) result.organizerAnalysis.error = message;
             else if (work == Work::OrganizeExecute) result.organizerResult.error = message;
             else result.map.error = message;
@@ -1027,6 +1155,8 @@ void DataFlashLogToolsController::startWorker(quint64 flow, Work work)
             const QString message = QObject::tr("Unexpected worker failure.");
             if (work == Work::Analyze) result.analysis.error = message;
             else if (work == Work::BinToLog) result.converted.error = message;
+            else if (work == Work::MatlabPrepare) result.matlabPreparation.error = message;
+            else if (work == Work::MatlabExport) result.matlabExport.error = message;
             else if (work == Work::OrganizeAnalyze) result.organizerAnalysis.error = message;
             else if (work == Work::OrganizeExecute) result.organizerResult.error = message;
             else result.map.error = message;
@@ -1072,6 +1202,23 @@ QStringList DataFlashLogToolsController::workerMessages(
             .arg(result.map.published.join(QStringLiteral(", ")));
         const QString warnings = shortWarnings(result.map.warnings);
         if (!warnings.isEmpty()) message += QLatin1Char(' ') + warnings;
+        return {message};
+    }
+    if (result.work == Work::MatlabExport) {
+        const DataFlashMatlabExporter::Result &value = result.matlabExport;
+        if (value.cancelled)
+            return {tr("MATLAB export cancelled; no output was published.")};
+        if (!value.success) {
+            return {tr("MATLAB export failed; no output was published: %1")
+                        .arg(value.error)};
+        }
+        QString message = tr(
+            "Created MATLAB Level-5 file with %1 record(s), %2 variable(s), and %3 byte(s): %4")
+            .arg(value.recordCount).arg(value.variableCount)
+            .arg(value.bytesWritten).arg(value.outputPath);
+        const QString warnings = shortWarnings(value.warnings);
+        if (!warnings.isEmpty())
+            message += QLatin1Char(' ') + warnings;
         return {message};
     }
     if (result.work == Work::OrganizeExecute) {
@@ -1120,6 +1267,29 @@ void DataFlashLogToolsController::finishWorker(
                 return;
             finishFlow(flow, {tr("Auto Analysis completed %1 test(s); this is an offline advisory report.")
                                   .arg(result.analysis.tests.size())});
+        }
+        return;
+    }
+    if (result.work == Work::MatlabPrepare) {
+        const DataFlashMatlabExporter::PlanResult &value =
+            result.matlabPreparation;
+        if (state->cancelled.load(std::memory_order_acquire)
+            || value.cancelled) {
+            finishFlow(flow, {tr(
+                "MATLAB export preparation cancelled; no output was written.")});
+        } else if (!value.success || !value.plan || !value.plan->isValid()) {
+            finishFlow(flow, {tr("MATLAB export preparation failed: %1")
+                                  .arg(value.error.isEmpty()
+                                      ? tr("the exporter returned an invalid plan")
+                                      : value.error)});
+        } else if (!m_dialogParent) {
+            finishFlow(flow, {tr(
+                "MATLAB export stopped because the confirmation window owner disappeared; no output was written.")});
+        } else {
+            m_matlabPlan = value.plan;
+            m_matlabWarnings = value.warnings;
+            m_phase = Phase::Consent;
+            showMatlabConsent(flow);
         }
         return;
     }
@@ -1350,6 +1520,8 @@ void DataFlashLogToolsController::finishFlow(
     m_mapParentCanonical.clear();
     m_organizerRoot.clear();
     m_organizerPlan = FlightLogOrganizer::Plan();
+    m_matlabPlan.reset();
+    m_matlabWarnings.clear();
     if (m_widget)
         m_widget->setOperationBusy(false);
     if (!guard)

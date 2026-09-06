@@ -1,0 +1,12 @@
+FMT,128,89,FMT,BBnNZ,Type,Length,Name,Format,Columns
+FMT,150,24,ATT,QBfff,TimeUS,I,Roll,Pitch,Yaw
+FMT,151,31,PARM,QNf,TimeUS,Name,Value
+FMT,152,75,MSG,QZ,TimeUS,Message
+ATT,1000000,0,1.25,-2.675,359.9
+PARM,1000001,Z_LAST,10
+MSG,1000002,ArduCopter V4.5.7
+ATT,1200000,1,-0,0.1,1e-12
+PARM,1200001,A_FIRST,-5.5
+PARM,1200002,Z_LAST,11
+MSG,1200003,Unicode Ελληνικά привет
+MSG,1200004,A colon: this row is skipped by MP

@@ -1,0 +1,20 @@
+FMT,128,89,FMT,BBnNZ,Type,Length,Name,Format,Columns
+FMT,156,75,TST,QZ,TimeUS,Value
+FMT,152,75,MSG,QZ,TimeUS,Message
+TST,1,12-
+TST,2,(3.25)
+TST,3,12+
+TST,4,NaN
+TST,5,nan
+TST,6,+NaN
+TST,7,-NaN
+TST,8,Infinity
+TST,9,infinity
+TST,10,+Infinity
+TST,11,-Infinity
+TST,12,1e999
+TST,13,1e-999
+TST,14, -0
+MSG,15,12-
+MSG,16,(3.25)
+MSG,17,1e999

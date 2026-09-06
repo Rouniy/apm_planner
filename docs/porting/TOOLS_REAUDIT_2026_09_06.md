@@ -20,8 +20,10 @@ Highest-priority concrete gaps in existing Tools windows:
    bounded Level5 writer, named consent/Save As, progress/cancel and no-overwrite.
    Actual MP10 oracle plus SciPy proves283 real-log and160 extended synthetic
    variables bit-exact. See `MATLAB_TLOG_EXPORT_PORT.md` for remaining dialect,
-   filesystem and visual limits. The separate BIN/LOG `MatLab.ProcessLog` and
-   its DATA routes remain missing; enabling this button does not cover them.
+   filesystem and visual limits. The separate BIN/LOG `MatLab.ProcessLog`
+   now has its own verified DATA slice: build 5/full 305 and production X11 pass,
+   with all 16 actual Release-reference cases matching. TLOG verification is
+   separate. See `DATAFLASH_MATLAB_PORT.md`.
 2. `Terrain3DWindow`: guided clicks and the missing shared altitude producer are
    now implemented. DATA/PLAN/Simulation share the actual altitude/coordinate
    dialogs, while Terrain freezes rendered camera, point and physical instance
@@ -53,16 +55,17 @@ Drone ID, Gauges, Transponder, Servo/Relay, Aux Function, Scripts, Payload Contr
 Telemetry Logs. The initial independent audit missed Drone ID
 because its x:Name precedes Header; root corrected this against the full source.
 
-DataFlash Logs now shows all eight reference actions, with six functional
-workflows: MAVLink Download, Review, Auto Analysis, KML+GPX, BIN→LOG and Organize.
-BIN/LOG MATLAB and Geo Reference Images remain visibly disabled; Telemetry Logs
+DataFlash Logs now shows all eight reference actions, with seven implemented
+workflows: MAVLink Download, Review, Auto Analysis, KML+GPX, BIN→LOG, MATLAB and
+Organize. Only Geo Reference Images remains visibly disabled; Telemetry Logs
 still lacks its DATA presentation/replay route. Review opens the useful retained
 LogAnalysis; that does not claim a complete MP10 LogBrowse replacement.
 The real asynchronous controller, frozen source, no-overwrite KML→GPX pair,
 explicit partial receipts and all17 analysis checks are documented in
 `DATAFLASH_LOG_TOOLS_PORT.md`. Actual .NET matches1377 model results,17 real-BIN
 checks and1210 ReadTrack-derived GPX points/timestamps. The broken reference GPX
-namespace is intentionally corrected. Qt5/audio build4 and full304/304 pass;
+namespace is intentionally corrected. For the prior six-action hub, Qt5/audio
+build4 and full304/304 pass;
 production X11 and inspected minimum-width/dialog screenshots pass. No-anchor
 year0001 historical timezone differences remain explicit. Route counts are not completion.
 
@@ -74,8 +77,18 @@ does not itself implement a terminal. Do not delete retained modules for counts.
 
 ## Queue discipline
 
-SFTP, TLOG MATLAB, guided Terrain and six DataFlash hub actions are implemented;
-next port BIN/LOG MATLAB, then GeoRef and other single-vehicle dialogs, including
+SFTP, TLOG MATLAB, guided Terrain and seven DataFlash hub actions are implemented;
+BIN/LOG MATLAB build 5/full 305/305 (53.53 s) and production X11 pass; four suites
+each pass ten repeats (6.65 s). All 16 actual Release-reference cases match:
+14 small, real and large. Real 292 legitimate variables use explicit 138 bogus
+FMTU-label exclusions and raw-source-proven 246 numeric/one MSG duplicate
+recovery corrections, not arbitrary deduplication. The oracle now requires the
+shipped overlay (Auto 3/Turtle 28 and reference bin path and overlay SHA256). c331 exposed a
+stale Debug reference; no Copter 28 exception remains. The valid 100001 MSG/PARM
+firmware prepass and unchanged shared snapshot are retained. Four independent
+comparison negative/proof tests pass. Next port GeoRef (real EXIF image copies,
+CAM/TRIG/time matching, offset estimation and exact partial publication receipts)
+and other single-vehicle dialogs, including
 Telemetry Logs and Signing transitions. Then resume Settings/CONFIG
 (15 route factories is not full functionality;
 Planner still21/64 controls). Swarm remains last. SETUP46 pages/eight absent

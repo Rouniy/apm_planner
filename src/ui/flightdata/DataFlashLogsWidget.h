@@ -23,6 +23,7 @@ signals:
     void autoAnalysisRequested();
     void kmlGpxRequested();
     void binToLogRequested();
+    void matlabRequested();
     void organizeRequested();
 
 private:

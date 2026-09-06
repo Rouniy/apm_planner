@@ -1,5 +1,6 @@
 #include "ui/Loghandling/DataFlashLogAnalyzer.h"
 #include "ui/Loghandling/DataFlashGpxExporter.h"
+#include "ui/Loghandling/DataFlashMatlabExporter.h"
 #include <QCoreApplication>
 #include <QFile>
 #include <QJsonArray>
@@ -38,8 +39,23 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     const QStringList args = app.arguments();
     if (args.size() != 4) {
-        qCritical() << "Usage: dataflash_tools_probe analyze|gpx INPUT NEW_OUTPUT";
+        qCritical() << "Usage: dataflash_tools_probe analyze|gpx|models INPUT NEW_OUTPUT, or matlab INPUT --derived";
         return 2;
+    }
+    if (args[1] == QStringLiteral("matlab")) {
+        if (args[3] != QStringLiteral("--derived")) return 2;
+        const auto prepared = DataFlashMatlabExporter::Prepare(args[2]);
+        if (!prepared.success || !prepared.plan) {
+            qCritical() << "MATLAB preparation failed:" << prepared.error;
+            return 1;
+        }
+        qInfo() << "MATLAB prepared" << prepared.plan->outputPath()
+                << prepared.plan->recordCount() << prepared.plan->variableCount()
+                << prepared.plan->estimatedBytes() << prepared.warnings;
+        const auto result = DataFlashMatlabExporter::Export(*prepared.plan);
+        qInfo() << "MATLAB exported" << result.success << result.error
+                << result.outputPath << result.bytesWritten << result.warnings;
+        return result.success ? 0 : 1;
     }
     if (args[1] == QStringLiteral("gpx")) {
         const auto result = DataFlashGpxExporter::Export(args[2], args[3]);

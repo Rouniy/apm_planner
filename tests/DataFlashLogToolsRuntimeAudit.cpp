@@ -17,6 +17,7 @@
 #include <QFileInfo>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QLabel>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
@@ -150,13 +151,13 @@ int RunDataFlashLogToolsRuntimeAudit()
     const QString screenshots = qEnvironmentVariable("APM_DATAFLASH_TOOLS_AUDIT_SCREENSHOT");
     const char *working[] = {"DataFlashDownloadButton", "DataFlashReviewButton",
         "DataFlashAutoAnalysisButton", "DataFlashKmlGpxButton",
-        "DataFlashBinToLogButton", "DataFlashOrganizeButton"};
+        "DataFlashBinToLogButton", "DataFlashOrganizeButton", "DataFlashMatlabButton"};
     for (const char *name : working) {
         auto *button = find<QPushButton>(page, name);
         check(button && button->isVisible() && button->isEnabled(), "implemented offline tool unavailable");
         if (!button) return 1;
     }
-    for (const char *name : {"DataFlashMatlabButton", "DataFlashGeoReferenceButton"}) {
+    for (const char *name : {"DataFlashGeoReferenceButton"}) {
         auto *button = find<QPushButton>(page, name);
         check(button && button->isVisible() && !button->isEnabled()
               && button->toolTip().contains("not yet ported"), "missing workflow falsely presented as working");
@@ -231,6 +232,32 @@ int RunDataFlashLogToolsRuntimeAudit()
     }
     stage("Auto Analysis displayed");
 
+    const QString matlab = input + QStringLiteral("-1002.mat");
+    const auto openMatlab = [&]() {
+        find<QPushButton>(page, "DataFlashMatlabButton")->click();
+        return wait([&] { return visible<QDialog>(main, "DataFlashMatlabConfirmationDialog"); });
+    };
+    check(openMatlab(), "MATLAB preparation/confirmation missing");
+    auto *matlabConsent = visible<QDialog>(main, "DataFlashMatlabConfirmationDialog");
+    check(defaultCancel(matlabConsent), "MATLAB consent not default-Cancel");
+    auto *matlabSummary = find<QLabel>(matlabConsent, "DataFlashMatlabSummary");
+    check(matlabSummary && matlabSummary->text().contains(input)
+          && matlabSummary->text().contains(matlab), "MATLAB consent omits exact source/output");
+    if (!screenshots.isEmpty() && matlabConsent)
+        check(matlabConsent->grab().save(screenshots + ".matlab.png"), "MATLAB screenshot failed");
+    if (matlabConsent) matlabConsent->reject();
+    check(wait([&] { return !controller->busy(); }) && !QFile::exists(matlab),
+          "MATLAB Cancel published output");
+    check(openMatlab() && confirm(visible<QDialog>(main, "DataFlashMatlabConfirmationDialog")),
+          "MATLAB consent cannot execute");
+    check(wait([&] { return !controller->busy(); }) && bytes(matlab).startsWith("MATLAB 5.0 MAT-file"),
+          "MATLAB did not publish a real Level-5 file under exact reference name");
+    const QByteArray oldMatlab = bytes(matlab);
+    find<QPushButton>(page, "DataFlashMatlabButton")->click();
+    check(wait([&] { return !controller->busy(); }) && bytes(matlab) == oldMatlab,
+          "MATLAB replaced an existing file");
+    stage("MATLAB completed and existing output preserved");
+
     const QString organizeRoot = directory.filePath("organize");
     QDir().mkpath(organizeRoot);
     QFile empty(organizeRoot + "/empty.log");
@@ -273,13 +300,14 @@ int RunDataFlashLogToolsRuntimeAudit()
           && !QFile::exists(directory.filePath("cancel.gpx")),
           "early cancellation did not drain or published outputs");
     stage("explicit cancellation drained");
-    check(openConsent() && confirm(visible<QDialog>(main, "DataFlashKmlGpxConfirmationDialog")),
-          "shutdown conversion could not start");
+    check(openMatlab() && confirm(visible<QDialog>(main, "DataFlashMatlabConfirmationDialog")),
+          "shutdown MATLAB conversion could not start");
     main->close();
     check(controller->shutdownPending(), "MainWindow Close did not request controller shutdown");
     check(wait([&] { return !controller->busy() && !main->isVisible(); })
           && !QFile::exists(directory.filePath("cancel.kml"))
-          && !QFile::exists(directory.filePath("cancel.gpx")),
+          && !QFile::exists(directory.filePath("cancel.gpx"))
+          && !QFile::exists(cancelInput + QStringLiteral("-100002.mat")),
           "MainWindow Close did not drain cancellation before closing");
     stage("shutdown cancellation drained");
     qInfo() << "DataFlash runtime audit failures:" << failures

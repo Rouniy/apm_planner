@@ -24,6 +24,63 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
+Latest implementation (2026-09-06): **BIN/LOG MATLAB — verified**.
+DATA DataFlash Logs wires **seven of eight** reference actions; only Geo
+Reference Images remains disabled. Create Matlab File performs read-only
+preparation, exact source/output/count default-Cancel consent, background
+streaming and new-file-only publication with cancellation and close/drain.
+Output is `<input path>-<logical record count>.mat`, not renamed CSV.
+
+The shared Level-5 writer streams labels, numeric matrices, nested MSG1/ISBD1
+cells, sorted last-value PARM and Seen. Cells preserve UTF16 code units;
+empty strings have csmatio's 0x0 dimensions. Source decoding retains .NET
+ASCII's one-question-mark-per-non-ASCII-byte behavior. Source ordering, skipped
+logical line indices and resolved-mode numeric zeros are preserved. Late FMTU
+instance metadata applies to earlier records, but bogus reference label
+variables are omitted; FMTU is not a numeric matrix or Seen entry.
+Seen uses deterministic first-seen order instead of Hashtable iteration order.
+
+Build 5 and **305/305 tests pass (53.53 s)**; production X11 reports zero audit
+failures. Four related suites each pass ten repeats (6.65 s), and the native
+controller passes 15/15 (2067 ms). All **16 actual Release-reference cases pass**:
+14 small fixtures, a real BIN and a large log. Four independent comparison
+negative/proof tests pass. Evidence includes `compare-current-all.log`.
+
+The oracle now requires the shipped overlay, asserts Auto for Copter 3 and
+Turtle for Copter 28, and records the reference bin path and overlay SHA256. Claude c331 exposed
+a stale Debug reference without that overlay; the erroneous Copter 28 exception
+was removed, leaving the shared snapshot unchanged. The stale oracle now fails
+before creating output. The valid firmware prepass of the first 100001 MSG/PARM
+candidates remains. c329 contributed F1/F3 fixes but missed later errors;
+review verdicts do not replace actual validation.
+
+The 129,851-record real BIN passes for **292 legitimate variables: 94 numeric
+and 198 cells**. This explicitly excludes 138 bogus reference FMTU labels and
+removes 246 duplicated numeric rows plus one duplicated MSG cell from the
+reference only, after an independent raw-BIN check proves each empty-Z
+record/next-type/bit-identical-payload recovery artifact. MP10's empty-string
+Aggregate failure scans the next record then rereads it at its indexed position,
+fabricating flight rows under FILE/UNIT line ids. Qt skips invalid records and
+preserves genuine source ids; this is an intentional correction, not raw parity.
+
+The prior Qt build 4 Debug benchmark exports 2,000,003 records to one MAT in
+7.69 s / 12,932 KiB peak memory, with all five variables matching without
+exceptions. Build 5 revalidates the large output. The separate .NET baseline
+is about 8 s / 695,916 KiB. Staging retains an owned handle (Linux linkat
+publication), preserving foreign path replacements. No filesystem lock or
+authentication claim is made. Evidence: `/tmp/apm-dataflash-matlab.fBPe1Y/`;
+see `DATAFLASH_MATLAB_PORT.md`.
+
+DATA remains 8 tabs / 7 mapped + Quick Legacy / eight missing reference tabs.
+Other route and 129-row parity counts are unchanged, with no strict-complete
+surface. There are 152 deviations: one new functional MATLAB row and the
+updated existing hub GUI row. Next: **GeoRef, Telemetry Logs and other non-swarm
+dialogs/Signing transitions**, then Settings/CONFIG; Swarm remains last.
+GeoRef must provide actual EXIF image copies, CAM/TRIG/time matching, offset
+estimation and explicit partial receipts, not substitute ordinary flight KML.
+
+### Previous checkpoint: DATA DataFlash Logs six-action hub
+
 Latest slice (2026-09-06): **DATA DataFlash Logs tools**. The new hub shows all
 eight MP10 actions and implements six: MAVLink Download, Review a Log, Auto
 Analysis, Create KML + GPX, BIN to LOG and Organize tlog/rlog/bin/log. Review

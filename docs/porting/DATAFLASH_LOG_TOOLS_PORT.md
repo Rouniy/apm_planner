@@ -3,16 +3,16 @@
 ## Scope and reference
 
 MP10 `GCSViews/FlightDataView.axaml:678–705` has eight DataFlash actions. The
-new Qt DATA tab retains that inventory and connects six actual workflows:
+new Qt DATA tab retains that inventory and connects seven actual workflows:
 Download DataFlash Log Via Mavlink, Review a Log, Auto Analysis, Create KML + gpx,
-Convert Bin to Log and Organize tlog/rlog/bin/log. MATLAB for BIN/LOG and Geo
-Reference Images remain explicitly unavailable, not redirected to unrelated
-tools. Telemetry Logs is a separate still-missing tab. The existing useful
+Convert Bin to Log, Create Matlab File and Organize tlog/rlog/bin/log. Only Geo
+Reference Images remains explicitly unavailable, not redirected to an unrelated
+tool. Telemetry Logs is a separate still-missing tab. The existing useful
 Quick (Legacy) and standalone LogAnalysis are retained.
 
 DATA now has eight tabs: seven mapped MP10 surfaces plus Quick (Legacy).
 Eight reference tabs remain absent: Drone ID, Gauges, Transponder, Servo/Relay,
-Aux Function, Scripts, Payload Control and Telemetry Logs. Six working hub
+Aux Function, Scripts, Payload Control and Telemetry Logs. Seven implemented hub
 actions do not make this screen or the overall Tools inventory strict-complete.
 
 Review opens the existing modeless LogAnalysis with the selected file; this
@@ -31,6 +31,26 @@ first timestamp-bearing FMT was not activated until a later FMT arrived, so a
 valid GPS-only log could be treated as corrupt. Timestamp-schema activation
 now occurs before the active-schema check; the fixture retains the minimal
 valid log rather than adding a dummy FMT to conceal the problem.
+
+## BIN/LOG MATLAB addition — verified
+
+Create Matlab File prepares an immutable read-only source/schema plan, shows
+the exact `<input>-<record count>.mat` in default-Cancel consent, and streams
+actual Level-5 numeric matrices and nested cell/string content. It never
+replaces existing output. Cancellation and source/output revalidation guard
+publication; application close drains the worker.
+See `DATAFLASH_MATLAB_PORT.md` for ASCII/UTF16 semantics, reference defects
+and bounds. Build 5/full 305/305 pass (53.53 s); production X11 has zero audit
+failures, and four suites each pass ten repeats (6.65 s). All 16 actual Release
+oracles pass, including 14 small fixtures, real 292 legitimate variables and
+the 2,000,003-record case. The oracle requires the shipped overlay with
+Auto 3/Turtle 28 assertions and reference bin path and overlay SHA256: c331 exposed a stale
+Debug reference, not a valid Copter 28 exception. That exception was removed;
+the shared mode snapshot remains unchanged. The 100001 MSG/PARM firmware
+prepass remains. Real-log exceptions are explicitly raw-source-validated.
+Four independent comparison negative/proof tests pass.
+The prior build 4 Debug large case took 7.69 s / 12,932 KiB with matching output.
+The 304-test evidence below belongs to the prior six-action hub and is history.
 
 ## KML and GPX
 
@@ -144,9 +164,9 @@ evaluated by all17 actual reference checks (1377 results). Actual .NET numeric
 probing confirms saturating .NET10 unchecked integer conversion and the
 different custom-format versus standard-percent rounding rules.
 
-Remaining whole-port gates include the two unavailable DataFlash actions,
+Remaining whole-port gates include the unavailable Geo Reference Images action,
 Telemetry Logs replay/presentation, Signing transitions, native Windows/macOS
 filesystem/UI evidence, HiDPI/reference screenshot comparison and the broader
 SETUP/Settings inventory. This tab does not close the Tools port. Next are
-BIN/LOG MATLAB, then GeoRef and other non-swarm dialogs. Settings follows the
+GeoRef, Telemetry Logs and other non-swarm dialogs/Signing. Settings follows the
 remaining single-vehicle tools; Swarm remains last.

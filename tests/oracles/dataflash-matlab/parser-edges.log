@@ -1,0 +1,13 @@
+FMT,128,89,FMT,BBnNZ,Type,Length,Name,Format,Columns
+FMT,150,67,MSG,Z,Message
+FMT,151,23,PARM,Nf,Name,Value
+MSG,inf
+MSG,+inf
+MSG,-INF
+MSG,Infinity
+MSG,-infinity
+PARM,PLAIN,12
+PARM,TRAILING,12-
+PARM,PARENS,(12)
+PARM,EXPONENT,1e999
+PARM,ZERO,-0

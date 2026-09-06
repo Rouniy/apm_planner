@@ -43,8 +43,6 @@ DataFlashLogsWidget::DataFlashLogsWidget(QWidget *parent)
                             tr("Organize tlog/rlog/\nbin/log"));
 
     const QString unavailable = tr("This Mission Planner workflow is not yet ported.");
-    m_matlab->setEnabled(false);
-    m_matlab->setToolTip(unavailable);
     m_geoReference->setEnabled(false);
     m_geoReference->setToolTip(unavailable);
 
@@ -83,6 +81,8 @@ DataFlashLogsWidget::DataFlashLogsWidget(QWidget *parent)
             this, &DataFlashLogsWidget::kmlGpxRequested);
     connect(m_binToLog, &QPushButton::clicked,
             this, &DataFlashLogsWidget::binToLogRequested);
+    connect(m_matlab, &QPushButton::clicked,
+            this, &DataFlashLogsWidget::matlabRequested);
     connect(m_organize, &QPushButton::clicked,
             this, &DataFlashLogsWidget::organizeRequested);
 }
@@ -95,8 +95,8 @@ void DataFlashLogsWidget::setOperationBusy(bool busy)
     m_kmlGpx->setEnabled(!busy);
     m_binToLog->setEnabled(!busy);
     m_organize->setEnabled(!busy);
-    // These two are intentionally unavailable even while idle.
-    m_matlab->setEnabled(false);
+    m_matlab->setEnabled(!busy);
+    // Geo-reference remains intentionally unavailable even while idle.
     m_geoReference->setEnabled(false);
 }
 

@@ -8,9 +8,34 @@
 
 ## 1. Текущее состояние и честная мера готовности
 
-Актуальная проверенная точка и конкретная ближайшая очередь находятся в
-`CURRENT_STATE.md`: 2026-09-06, новый DATA DataFlash Logs hub:6 из8 действий
-работают; BIN/LOG MATLAB и GeoRef остаются явно недоступны. Qt build и focused
+BIN/LOG MATLAB проверен: DATA DataFlash Logs имеет 7/8 рабочих действий,
+недоступен только GeoRef. Полный Level-5 output содержит labels, числовые
+матрицы, вложенные MSG1/ISBD1, PARM и Seen; immutable plan, default-Cancel
+и new-only publication заменяют молчаливую перезапись MP10.
+Build 5 и full 305/305 проходят (53.53 s), production X11 — без ошибок;
+четыре связанных suites прошли по 10 повторов (6.65 s). Все 16 actual Release
+оракулов проходят: 14 малых fixtures, реальный BIN и большой лог.
+Оракул теперь требует shipped overlay, проверяет Auto 3/Turtle 28 и сохраняет
+путь к reference bin и SHA256 overlay. Claude c331 выявил устаревший Debug reference без
+overlay; ошибочное исключение Copter 28 удалено, shared snapshot не менялся.
+Корректный firmware prepass первых 100001 MSG/PARM candidates сохранён.
+Реальный BIN с 129,851 records совпал по 292 законным переменным
+(94 numeric / 198 cells), после явного исключения 138 ошибочных FMTU labels и
+строго raw-BIN-подтверждённых 246 numeric + 1 MSG дубликатов только из reference.
+Qt не воспроизводит empty-Z recovery corruption. Четыре независимых
+negative/proof теста правил сравнения проходят. Предыдущий Qt Debug build 4:
+2,000,003 records, один MAT, 7.69 s / 12,932 KiB, все 5 variables совпадают.
+Owned staging handle/Linux linkat сохраняет чужие подменённые файлы;
+это не filesystem lock. Deviations 152; DATA 8 tabs / 7 mapped + Quick Legacy /
+8 отсутствующих reference tabs и inventory 129 без strict-complete не изменились.
+См. `DATAFLASH_MATLAB_PORT.md`. Далее GeoRef: настоящее EXIF-geotagging,
+CAM/TRIG/time matching, Estimate Offset, отчёты и точные partial receipts,
+а не подмена обычным KML. Затем Telemetry Logs/Signing и другие non-swarm
+диалоги, Settings; Swarm остаётся последним.
+
+Предыдущая проверенная точка сохранена в `CURRENT_STATE.md`: 2026-09-06,
+DATA DataFlash Logs hub с6 из8 действий. На том checkpoint MATLAB и GeoRef
+ещё были недоступны; новый MATLAB-срез проверен отдельно выше. Qt build и focused
 тесты проходят; actual MP10 .NET подтверждает1377 результатов81 модели,17
 проверок реального BIN и1210 GPX точек/времён через ReadTrack. В исходном GPX
 writer исправлена ошибка XML namespace; побайтовое совпадение с неработающим
@@ -28,14 +53,15 @@ Tlog Convert теперь имеет рабочий MATLAB Level5 export: нас
 Все283 переменные реального TLOG и160 переменных synthetic совпадают побитно
 с actual MP10 .NET;24 scalar extensions добавлены только в offline schema.
 Full293/293 (52.13s),10 повторов4 suites и просмотренный production X11 проходят.
-Это не закрывает74 отсутствующих MAVLink message types, отдельный BIN/LOG
-ProcessLog и отсутствующий DATA Telemetry Logs. Общий guided-altitude editor теперь
+Это не закрывает74 отсутствующих MAVLink message types и отсутствующий DATA
+Telemetry Logs; отдельный BIN/LOG ProcessLog проверен в новом checkpoint выше.
+Общий guided-altitude editor теперь
 подключён к DATA/PLAN/Simulation и Terrain3D: реальные диалоги, frozen exact
 instance/point, default-Cancel и общий COMMAND_INT ACK/retry/quarantine.
 Terrain сохраняет frame3/p2=0 без смены режима; исходный 100m UAS sender удалён.
 Full300/300 (51.93s), десять повторов шести suites и production X11 DATA/Terrain
 проходят. См. `GUIDED_NAVIGATION_PORT.md`; imagery и native/reference gaps
-остаются. Далее BIN/LOG MATLAB, GeoRef/Signing/прочие Tools, затем Settings; Swarm
+остаются. Далее GeoRef/Telemetry Logs/Signing/прочие Tools, затем Settings; Swarm
 последний. См. также `MATLAB_TLOG_EXPORT_PORT.md`.
 Split DataFlash Log теперь работает с BIN/LOG, целыми записями, метаданными,
 отменой и честным описанием публикации нескольких файлов без перезаписи.
@@ -156,13 +182,14 @@ pinning, BIN→LOG/KML, safe publication и полноценное modeless ок
 (50.93s), localhost SSH, production X11 и побайтовый oracle реального BIN проходят.
 См. SFTP_LOG_DOWNLOAD_PORT.md. Число32/32 относится только к Developer: внутри
 Tools остаются Signing rekey/recovery; вне меню — отсутствующий DATA Telemetry
-Logs, BIN/LOG MATLAB, GeoRef и другие диалоги. TLOG MATLAB и guided Terrain уже имеют
+Logs, GeoRef и другие диалоги. BIN/LOG MATLAB проверен в build 5; TLOG MATLAB и guided Terrain уже имеют
 отдельные проверенные срезы. TOOLS_REAUDIT_2026_09_06.md уточняет полный
 аудит, включая15 MP10 DATA tabs против7 mapped+Quick Legacy. DataFlash Logs
-теперь имеет6 рабочих действий из8: Download, Review, Auto Analysis, KML+GPX,
-BIN→LOG и Organize. Сохранены старый LogAnalysis и Quick Legacy; no-overwrite,
+теперь имеет7 реализованных действий из8: Download, Review, Auto Analysis,
+KML+GPX, BIN→LOG, MATLAB и Organize. MATLAB проверен отдельно в build 5. Сохранены
+старый LogAnalysis и Quick Legacy; no-overwrite,
 частичный результат KML→GPX и эвристические ограничения описаны в
-`DATAFLASH_LOG_TOOLS_PORT.md`. Далее BIN/LOG MATLAB и GeoRef, затем Settings;
+`DATAFLASH_LOG_TOOLS_PORT.md`. Далее GeoRef/Telemetry Logs/Signing, затем Settings;
 Swarm остаётся в конце.
 Settings после Tools, Swarm в конце. Подробности: `TLOG_RECORDING.md` и
 `DATAFLASH_LOG_SPLIT.md`, `DATAFLASH_DASHWARE_CSV.md` и

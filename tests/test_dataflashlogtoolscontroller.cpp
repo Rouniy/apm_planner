@@ -18,6 +18,7 @@
 #include <QPointer>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QThread>
@@ -128,6 +129,8 @@ struct FakeState {
     std::atomic_int kmlCalls{0};
     std::atomic_int gpxCalls{0};
     std::atomic_int analyzeCalls{0};
+    std::atomic_int matlabPrepareCalls{0};
+    std::atomic_int matlabExportCalls{0};
     bool failGpx = false;
     QString kmlInput;
     QByteArray frozenBytes;
@@ -207,6 +210,20 @@ DataFlashLogToolsController::Operations fakeOperations(
         result.warnings.append(QStringLiteral("Advisory only"));
         return result;
     };
+    operations.prepareMatlab = [state](
+        const QString &input,
+        const DataFlashMatlabExporter::CancelCheck &cancel,
+        const DataFlashMatlabExporter::Progress &progress) {
+        ++state->matlabPrepareCalls;
+        return DataFlashMatlabExporter::Prepare(input, cancel, progress);
+    };
+    operations.exportMatlab = [state](
+        const DataFlashMatlabExporter::Plan &plan,
+        const DataFlashMatlabExporter::CancelCheck &cancel,
+        const DataFlashMatlabExporter::Progress &progress) {
+        ++state->matlabExportCalls;
+        return DataFlashMatlabExporter::Export(plan, cancel, progress);
+    };
     operations.analyzeDirectory = [](
         const QString &root, const FlightLogOrganizer::Cancel &cancel,
         const FlightLogOrganizer::Progress &progress) {
@@ -227,6 +244,15 @@ struct HeldAnalysis {
     std::atomic_bool release{false};
     ~HeldAnalysis() { release.store(true, std::memory_order_release); }
 };
+
+struct ReleaseHeldAnalysis {
+    std::shared_ptr<HeldAnalysis> state;
+    ~ReleaseHeldAnalysis()
+    {
+        if (state)
+            state->release.store(true, std::memory_order_release);
+    }
+};
 } // namespace
 
 class DataFlashLogToolsControllerTest final : public QObject
@@ -238,11 +264,14 @@ private slots:
     void reviewPickerFreezesAndSharesInput();
     void kmlGpxRequiresConsentAndReportsPartial();
     void binToLogIsSaveAsAndNewOnly();
+    void matlabPlanIsExactDefaultCancelAndNewOnly();
+    void matlabPreparationCancelStaysNonPublishing();
     void autoAnalysisIsReadableAndModeless();
     void organizerShowsEveryEntryAndRequiresConsent();
     void shutdownCancelsAndWaitsForWorker();
     void callbacksMayDeleteController();
     void disappearingDialogParentDoesNotStrandFlow();
+    void matlabPreparationOwnerLossDoesNotStrandFlow();
     void reviewCompletionCannotOutrunShutdown();
 };
 
@@ -263,6 +292,48 @@ void DataFlashLogToolsControllerTest::disappearingDialogParentDoesNotStrandFlow(
     QSignalSpy ready(&controller, &DataFlashLogToolsController::shutdownReady);
     controller.shutdown();
     QCOMPARE(ready.size(), 1);
+}
+
+void DataFlashLogToolsControllerTest::matlabPreparationOwnerLossDoesNotStrandFlow()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("owner-loss.log"));
+    QVERIFY(writeFile(input, QByteArrayLiteral(
+        "FMT,150,19,GPS,Qff,TimeUS,Lat,Lng\n"
+        "GPS,1000,47.5,8.5\n")));
+    DataFlashLogsWidget widget;
+    QPointer<QWidget> owner = new QWidget;
+    owner->show();
+    DataFlashLogToolsController controller(&widget, owner);
+    const auto fake = std::make_shared<FakeState>();
+    auto operations = fakeOperations(fake);
+    const auto held = std::make_shared<HeldAnalysis>();
+    const ReleaseHeldAnalysis releaseOnExit{held};
+    operations.prepareMatlab = [held](
+        const QString &path, const DataFlashMatlabExporter::CancelCheck &cancel,
+        const DataFlashMatlabExporter::Progress &progress) {
+        DataFlashMatlabExporter::PlanResult result =
+            DataFlashMatlabExporter::Prepare(path, cancel, progress);
+        held->entered.store(true, std::memory_order_release);
+        QElapsedTimer deadline;
+        deadline.start();
+        while (!held->release.load(std::memory_order_acquire)
+               && deadline.elapsed() < 10000) {
+            QThread::msleep(2);
+        }
+        return result;
+    };
+    controller.setOperationsForTesting(operations);
+    controller.setSelectedLogPath(input);
+
+    controller.startMatlab();
+    QTRY_VERIFY_WITH_TIMEOUT(held->entered.load(std::memory_order_acquire), 10000);
+    delete owner.data();
+    QVERIFY(owner.isNull());
+    held->release.store(true, std::memory_order_release);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.busy(), 5000);
+    QVERIFY(!QFileInfo::exists(input + QStringLiteral("-2.mat")));
 }
 
 void DataFlashLogToolsControllerTest::reviewCompletionCannotOutrunShutdown()
@@ -291,14 +362,15 @@ void DataFlashLogToolsControllerTest::widgetHasEightFaithfulActions()
     const char *working[] = {
         "DataFlashDownloadButton", "DataFlashReviewButton",
         "DataFlashAutoAnalysisButton", "DataFlashKmlGpxButton",
-        "DataFlashBinToLogButton", "DataFlashOrganizeButton"};
+        "DataFlashBinToLogButton", "DataFlashMatlabButton",
+        "DataFlashOrganizeButton"};
     for (const char *name : working) {
         QPushButton *button = widget.findChild<QPushButton *>(QString::fromLatin1(name));
         QVERIFY(button);
         QVERIFY(button->isEnabled());
         QCOMPARE(button->minimumWidth(), 0);
     }
-    for (const char *name : {"DataFlashMatlabButton", "DataFlashGeoReferenceButton"}) {
+    for (const char *name : {"DataFlashGeoReferenceButton"}) {
         QPushButton *button = widget.findChild<QPushButton *>(QString::fromLatin1(name));
         QVERIFY(button);
         QVERIFY(!button->isEnabled());
@@ -428,6 +500,120 @@ void DataFlashLogToolsControllerTest::binToLogIsSaveAsAndNewOnly()
     QTRY_VERIFY_WITH_TIMEOUT(!controller->busy(), 3000);
     QCOMPARE(state->convertCalls.load(), 1);
     QVERIFY(readFile(output).contains("GPS"));
+}
+
+void DataFlashLogToolsControllerTest::matlabPlanIsExactDefaultCancelAndNewOnly()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("matlab.log"));
+    QVERIFY(writeFile(input, QByteArrayLiteral(
+        "FMT,150,19,GPS,Qff,TimeUS,Lat,Lng\n"
+        "GPS,1000,47.5,8.5\n")));
+    QWidget owner;
+    owner.show();
+    auto *widget = new DataFlashLogsWidget(&owner);
+    auto *controller = new DataFlashLogToolsController(widget, &owner);
+    const auto state = std::make_shared<FakeState>();
+    controller->setOperationsForTesting(fakeOperations(state));
+    controller->setSelectedLogPath(input);
+    QSignalSpy logSpy(controller, &DataFlashLogToolsController::logMessage);
+
+    controller->startMatlab();
+    QDialog *consent = waitVisible<QDialog>(
+        &owner, "DataFlashMatlabConfirmationDialog", 10000);
+    QVERIFY(consent);
+    QCOMPARE(state->matlabPrepareCalls.load(), 1);
+    QPushButton *cancelButton = defaultButton(consent);
+    QVERIFY(cancelButton);
+    QVERIFY(cancelButton->text().contains(QStringLiteral("Cancel"), Qt::CaseInsensitive));
+    QLabel *summary = consent->findChild<QLabel *>(
+        QStringLiteral("DataFlashMatlabSummary"));
+    QVERIFY(summary);
+    QVERIFY(summary->text().contains(input));
+    const QRegularExpression expression(
+        QStringLiteral("Exact new output: ([^\\n]+)"));
+    const QRegularExpressionMatch match = expression.match(summary->text());
+    QVERIFY(match.hasMatch());
+    const QString output = match.captured(1).trimmed();
+    QCOMPARE(output, input + QStringLiteral("-2.mat"));
+    consent->reject();
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->busy(), 3000);
+    QVERIFY(!QFileInfo::exists(output));
+    QCOMPARE(state->matlabExportCalls.load(), 0);
+
+    controller->startMatlab();
+    consent = waitVisible<QDialog>(
+        &owner, "DataFlashMatlabConfirmationDialog", 10000);
+    QVERIFY(clickAccept(consent));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->busy(), 10000);
+    QCOMPARE(state->matlabPrepareCalls.load(), 2);
+    QCOMPARE(state->matlabExportCalls.load(), 1);
+    QVERIFY(QFileInfo::exists(output));
+    QVERIFY(readFile(output).startsWith("MATLAB 5.0 MAT-file"));
+    const QByteArray originalOutput = readFile(output);
+
+    controller->startMatlab();
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->busy(), 10000);
+    QVERIFY(!visible<QDialog>(&owner, "DataFlashMatlabConfirmationDialog"));
+    QCOMPARE(state->matlabExportCalls.load(), 1);
+    QCOMPARE(readFile(output), originalOutput);
+    QVERIFY(logsContain(logSpy, QStringLiteral("exists"))
+            || logsContain(logSpy, QStringLiteral("already")));
+}
+
+void DataFlashLogToolsControllerTest::matlabPreparationCancelStaysNonPublishing()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("cancel.log"));
+    QVERIFY(writeFile(input, QByteArrayLiteral(
+        "FMT,150,19,GPS,Qff,TimeUS,Lat,Lng\n"
+        "GPS,1000,47.5,8.5\n")));
+    QWidget owner;
+    owner.show();
+    auto *widget = new DataFlashLogsWidget(&owner);
+    auto *controller = new DataFlashLogToolsController(widget, &owner);
+    const auto state = std::make_shared<FakeState>();
+    auto operations = fakeOperations(state);
+    const auto held = std::make_shared<HeldAnalysis>();
+    const ReleaseHeldAnalysis releaseOnExit{held};
+    operations.prepareMatlab = [held](
+        const QString &, const DataFlashMatlabExporter::CancelCheck &cancel,
+        const DataFlashMatlabExporter::Progress &progress) {
+        DataFlashMatlabExporter::PlanResult result;
+        held->entered.store(true, std::memory_order_release);
+        if (progress)
+            progress(1, 2);
+        QElapsedTimer deadline;
+        deadline.start();
+        while (!held->release.load(std::memory_order_acquire)
+               && deadline.elapsed() < 10000) {
+            if (cancel && cancel())
+                held->sawCancel.store(true, std::memory_order_release);
+            QThread::msleep(2);
+        }
+        result.cancelled = cancel && cancel();
+        return result;
+    };
+    controller->setOperationsForTesting(operations);
+    controller->setSelectedLogPath(input);
+
+    controller->startMatlab();
+    QTRY_VERIFY_WITH_TIMEOUT(held->entered.load(std::memory_order_acquire), 3000);
+    QProgressDialog *progress = waitVisible<QProgressDialog>(
+        &owner, "DataFlashLogProgressDialog");
+    QVERIFY(progress);
+    QPushButton *cancelButton = progress->findChild<QPushButton *>();
+    QVERIFY(cancelButton);
+    cancelButton->click();
+    QTRY_VERIFY_WITH_TIMEOUT(held->sawCancel.load(std::memory_order_acquire), 3000);
+    QVERIFY(controller->busy());
+    held->release.store(true, std::memory_order_release);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller->busy(), 5000);
+    QVERIFY(!visible<QDialog>(&owner, "DataFlashMatlabConfirmationDialog"));
+    QCOMPARE(state->matlabExportCalls.load(), 0);
+    QVERIFY(!QFileInfo::exists(input + QStringLiteral("-2.mat")));
 }
 
 void DataFlashLogToolsControllerTest::autoAnalysisIsReadableAndModeless()

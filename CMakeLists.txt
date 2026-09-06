@@ -1614,6 +1614,7 @@ target_include_directories(${APM_PLANNER_TARGET} PRIVATE
 
 add_library(apm_matlab_core STATIC
     src/comm/MatFileWriter.h src/comm/MatFileWriter.cpp
+    src/ui/Loghandling/DataFlashMatlabExporter.h src/ui/Loghandling/DataFlashMatlabExporter.cpp
     src/comm/TlogMatlabExporter.h src/comm/TlogMatlabExporter.cpp)
 target_include_directories(apm_matlab_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
@@ -4364,8 +4365,8 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Loghandling
         ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
     target_link_libraries(dataflash_tools_test_support PUBLIC
-        flight_log_organizer_test_support apm_sftp_core Qt::Widgets Qt::Concurrent)
-    foreach(dataflash_suite dataflashgpxexporter dataflashloganalyzer dataflashlogtoolscontroller)
+        flight_log_organizer_test_support apm_sftp_core apm_matlab_core Qt::Widgets Qt::Concurrent)
+    foreach(dataflash_suite dataflashgpxexporter dataflashloganalyzer dataflashlogtoolscontroller dataflashmatlabexporter)
         add_executable(${dataflash_suite}_tests tests/test_${dataflash_suite}.cpp)
         target_link_libraries(${dataflash_suite}_tests PRIVATE dataflash_tools_test_support Qt::Test)
         add_test(NAME ${dataflash_suite}_tests COMMAND ${dataflash_suite}_tests)
