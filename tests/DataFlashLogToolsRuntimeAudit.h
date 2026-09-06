@@ -1,0 +1,4 @@
+#ifndef DATAFLASHLOGTOOLSRUNTIMEAUDIT_H
+#define DATAFLASHLOGTOOLSRUNTIMEAUDIT_H
+int RunDataFlashLogToolsRuntimeAudit();
+#endif

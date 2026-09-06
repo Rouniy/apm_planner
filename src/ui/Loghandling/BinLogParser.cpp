@@ -117,6 +117,12 @@ AP2DataPlotStatus BinLogParser::parse(QFile &logfile)
                 {
                     // do some special handling if needed
                     specialDescriptorHandling(descriptor);
+                    // Admit the first timestamp-bearing descriptor now. Waiting
+                    // for a later FMT loses valid data that immediately follows it.
+                    if (!m_activeTimestamp.valid())
+                    {
+                        checkForValidTimestamp(descriptor);
+                    }
                     if(m_activeTimestamp.valid())
                     {
                         descriptor.finalize(m_activeTimestamp);
@@ -127,7 +133,6 @@ AP2DataPlotStatus BinLogParser::parse(QFile &logfile)
                     }
                     else
                     {
-                        checkForValidTimestamp(descriptor);
                         m_descriptorForDeferredStorage.push_back(descriptor);
                     }
                 }
@@ -510,5 +515,4 @@ bool BinLogParser::extendedStoreDescriptor(const binDescriptor &desc)
     }
     return rc;
 }
-
 

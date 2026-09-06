@@ -56,6 +56,7 @@ This file is part of the QGROUNDCONTROL project
 #include "SftpLogDownloadRuntimeAudit.h"
 #include "TlogMatlabRuntimeAudit.h"
 #include "GuidedNavigationRuntimeAudit.h"
+#include "DataFlashLogToolsRuntimeAudit.h"
 
 #include <QSettings>
 #include <QStandardPaths>
@@ -151,6 +152,7 @@ int main(int argc, char *argv[])
     bool sftpLogDownloadAuditRequested = false;
     bool tlogMatlabAuditRequested = false;
     bool guidedNavigationAuditRequested = false;
+    bool dataFlashToolsAuditRequested = false;
     for (int index = 1; index < argc; ++index) {
         if (std::strcmp(argv[index], "--setup-route-audit") == 0) {
             setupRouteAuditRequested = true;
@@ -175,11 +177,13 @@ int main(int argc, char *argv[])
             tlogMatlabAuditRequested = true;
         if (std::strcmp(argv[index], "--guided-navigation-audit") == 0)
             guidedNavigationAuditRequested = true;
+        if (std::strcmp(argv[index], "--dataflash-tools-audit") == 0)
+            dataFlashToolsAuditRequested = true;
     }
     // Keep the audit's directory picker introspectable under desktop platform
     // themes as well as offscreen. Normal launches retain native file dialogs.
     if (logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
-        || translationEditorAuditRequested || sftpLogDownloadAuditRequested || tlogMatlabAuditRequested)
+        || translationEditorAuditRequested || sftpLogDownloadAuditRequested || tlogMatlabAuditRequested || dataFlashToolsAuditRequested)
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
 
     // Construct before application singletons so their static destructors
@@ -187,7 +191,7 @@ int main(int argc, char *argv[])
     static std::unique_ptr<QTemporaryDir> setupRouteAuditSettings;
     if (setupRouteAuditRequested || signingTransportAuditRequested || developerVehicleAuditRequested
         || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
-        || microdroneDownlinkAuditRequested || translationEditorAuditRequested || sftpLogDownloadAuditRequested || tlogMatlabAuditRequested || guidedNavigationAuditRequested) {
+        || microdroneDownlinkAuditRequested || translationEditorAuditRequested || sftpLogDownloadAuditRequested || tlogMatlabAuditRequested || guidedNavigationAuditRequested || dataFlashToolsAuditRequested) {
         // The audit constructs production pages but must not observe or mutate
         // the operator's settings and writable application-data directories.
         QStandardPaths::setTestModeEnabled(true);
@@ -230,7 +234,7 @@ int main(int argc, char *argv[])
 #ifdef APM_SETUP_ROUTE_RUNTIME_AUDIT
     if (signingTransportAuditRequested || developerVehicleAuditRequested
         || logIndexAuditRequested || firmwareArchiveAuditRequested || shapefilePolyAuditRequested
-        || microdroneDownlinkAuditRequested || translationEditorAuditRequested || sftpLogDownloadAuditRequested || tlogMatlabAuditRequested || guidedNavigationAuditRequested) {
+        || microdroneDownlinkAuditRequested || translationEditorAuditRequested || sftpLogDownloadAuditRequested || tlogMatlabAuditRequested || guidedNavigationAuditRequested || dataFlashToolsAuditRequested) {
         // Synthetic security fixtures must not subscribe to the operator's
         // network SITL before the explicit listener-restoration test cases.
         QSettings auditSettings;
@@ -241,6 +245,7 @@ int main(int argc, char *argv[])
         if (sftpLogDownloadAuditRequested) return RunSftpLogDownloadRuntimeAudit();
         if (tlogMatlabAuditRequested) return RunTlogMatlabRuntimeAudit();
         if (guidedNavigationAuditRequested) return RunGuidedNavigationRuntimeAudit();
+        if (dataFlashToolsAuditRequested) return RunDataFlashLogToolsRuntimeAudit();
         if (microdroneDownlinkAuditRequested) return RunMicrodroneDownlinkRuntimeAudit();
         if (shapefilePolyAuditRequested) return RunShapefilePolyRuntimeAudit();
         if (firmwareArchiveAuditRequested) return RunFirmwareArchiveRuntimeAudit();

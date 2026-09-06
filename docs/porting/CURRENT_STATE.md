@@ -24,6 +24,51 @@ The immediate user-directed order is:
 
 ## Verified checkpoint
 
+Latest slice (2026-09-06): **DATA DataFlash Logs tools**. The new hub shows all
+eight MP10 actions and implements six: MAVLink Download, Review a Log, Auto
+Analysis, Create KML + GPX, BIN to LOG and Organize tlog/rlog/bin/log. Review
+retains the useful LogAnalysis window. BIN/LOG MATLAB and Geo Reference Images
+remain visibly unavailable; neither is disguised as an unrelated tool.
+
+Offline work uses real asynchronous pickers, default-Cancel publication and
+organization consent, bounded workers/progress/cancel and close/drain. KML and
+GPX share one verified source snapshot; no existing output is replaced, and a
+completed KML is reported and retained if GPX fails or is cancelled. Auto
+Analysis implements all17 reference heuristics without vehicle writes or
+flight-readiness claims. Explicit input/state caps fail rather than sample logs.
+
+The Qt build and focused tests pass. Actual MP10 .NET comparison matches all
+**1377 status/message results across81 model scenarios** and all **17 checks on
+a real BIN**. All **1210 GPX points** match actual MP10 ReadTrack coordinates
+and formatted timestamps. The actual MP10 GPX writer throws an XML namespace
+exception; Qt deliberately emits valid namespaced GPX, not purported byte parity
+with a successful reference export. Evidence: `/tmp/apm-dataflash-tools.PEZxmw/`.
+Qt5/audio build4 and full **304/304 tests pass (52.38s)**. Four related suites
+pass ten repeats (3.59s). Production X11 reports zero failures; root inspected
+the DATA minimum-width page, publication consent, analysis and organization windows.
+See `DATAFLASH_LOG_TOOLS_PORT.md` for safety, heuristic and native-platform gaps.
+The production Review fixture also exposed and fixed retained BinLogParser's
+deferred first timestamp-bearing FMT activation; no dummy schema workaround is
+kept. Actual GPX clock precedence and year-one/Int64/year9999 boundaries have
+additional regressions in the verified rebuild. The no-GPS-date fallback retains
+a known historical timezone difference: America/New_York year0001 is04:57 in
+.NET versus05:00 in Qt. Real anchored fixture matches are not universal date parity.
+Claude TCP c317/c319/c321/c322 independent reports were read and hash-verified;
+his same-platform fallback-equality assumption was rejected by the actual oracle.
+
+DATA now has **eight tabs: seven mapped plus Quick (Legacy)**. Eight reference
+tabs remain absent: Drone ID, Gauges, Transponder, Servo/Relay, Aux Function,
+Scripts, Payload Control and Telemetry Logs. Developer32/32 routes, SETUP46
+pages/eight absent routes, Advanced14 working+partial Signing+Support Proxy
+gap, CONFIG15 factories/Planner21of64 and inventory129 status counts are
+unchanged. No surface is strict-complete; deviations now151.
+
+Next: **BIN/LOG MATLAB**, then GeoRef and other non-swarm dialogs, including
+Telemetry Logs and Signing transitions/recovery. Settings/CONFIG follows the
+single-vehicle Tools stream; Swarm remains last.
+
+### Previous checkpoint: Shared guided-altitude dialogs and Terrain navigation
+
 Latest slice (2026-09-06): **Shared guided-altitude dialogs and Terrain navigation**.
 DATA, PLAN and Simulation maps now share Fly To Here, Alt… and Fly To Coords;
 the old direct-UAS sender/private100m prompt is removed. The standalone Terrain

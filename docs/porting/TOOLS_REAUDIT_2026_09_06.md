@@ -47,16 +47,24 @@ incomplete developer build can leave its action unavailable.
 ## Other missing tool entry points, not covered by Developer count
 
 MP10 `GCSViews/FlightDataView.axaml` has **15 TabItems**, including Drone ID.
-Qt `QGCTabbedInfoView` has six mapped tabs plus the useful Quick (Legacy)
-extension after `installQuickView`, seven total. Nine reference tabs are absent:
+Qt `QGCTabbedInfoView` now has seven mapped tabs plus the useful Quick (Legacy)
+extension after `installQuickView`, eight total. Eight reference tabs are absent:
 Drone ID, Gauges, Transponder, Servo/Relay, Aux Function, Scripts, Payload Control,
-Telemetry Logs and DataFlash Logs. The initial independent audit missed Drone ID
+Telemetry Logs. The initial independent audit missed Drone ID
 because its x:Name precedes Header; root corrected this against the full source.
 
-The missing log tabs contain Review a Log, Auto Analysis, BIN→LOG, KML/GPX and
-MATLAB entry points. Some backend functionality already exists elsewhere, but
-the DATA route does not. Retain the useful legacy LogAnalysis window until a
-full LogBrowse replacement is wired; naming an old widget does not close that gap.
+DataFlash Logs now shows all eight reference actions, with six functional
+workflows: MAVLink Download, Review, Auto Analysis, KML+GPX, BIN→LOG and Organize.
+BIN/LOG MATLAB and Geo Reference Images remain visibly disabled; Telemetry Logs
+still lacks its DATA presentation/replay route. Review opens the useful retained
+LogAnalysis; that does not claim a complete MP10 LogBrowse replacement.
+The real asynchronous controller, frozen source, no-overwrite KML→GPX pair,
+explicit partial receipts and all17 analysis checks are documented in
+`DATAFLASH_LOG_TOOLS_PORT.md`. Actual .NET matches1377 model results,17 real-BIN
+checks and1210 ReadTrack-derived GPX points/timestamps. The broken reference GPX
+namespace is intentionally corrected. Qt5/audio build4 and full304/304 pass;
+production X11 and inspected minimum-width/dialog screenshots pass. No-anchor
+year0001 historical timezone differences remain explicit. Route counts are not completion.
 
 Additional separate backlog items: header Readonly/Connection List and log-tool
 shortcuts; PLAN Terrain Maker, Tracker Home and map-overlay loading; DATA GeoRef.
@@ -66,9 +74,10 @@ does not itself implement a terminal. Do not delete retained modules for counts.
 
 ## Queue discipline
 
-SFTP, TLOG MATLAB and guided Terrain dialogs are implemented; continue other single-vehicle
-Tools gaps. Restore missing log-tool routes as complete UI/service
-slices, then resume Settings/CONFIG (15 route factories is not full functionality;
+SFTP, TLOG MATLAB, guided Terrain and six DataFlash hub actions are implemented;
+next port BIN/LOG MATLAB, then GeoRef and other single-vehicle dialogs, including
+Telemetry Logs and Signing transitions. Then resume Settings/CONFIG
+(15 route factories is not full functionality;
 Planner still21/64 controls). Swarm remains last. SETUP46 pages/eight absent
 reference routes and its disconnected/profile visibility gates remain explicit.
 

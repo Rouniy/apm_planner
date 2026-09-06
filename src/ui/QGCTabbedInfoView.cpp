@@ -72,6 +72,12 @@ void QGCTabbedInfoView::installQuickView(QWidget *view)
     }
 }
 
+void QGCTabbedInfoView::installDataFlashLogs(QWidget *view)
+{
+    if (view && ui.tabWidget->indexOf(view) < 0)
+        ui.tabWidget->addTab(view, tr("DataFlash Logs"));
+}
+
 void QGCTabbedInfoView::setFlightDataViewModel(
     FlightDataViewModel *viewModel)
 {

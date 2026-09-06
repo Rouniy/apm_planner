@@ -622,6 +622,14 @@ set(SOURCES
     src/ui/Loghandling/DataFlashSpectrogramService.h
     src/ui/Loghandling/DataFlashKmlExporter.cpp
     src/ui/Loghandling/DataFlashKmlExporter.h
+    src/ui/Loghandling/DataFlashGpxExporter.cpp
+    src/ui/Loghandling/DataFlashGpxExporter.h
+    src/ui/Loghandling/DataFlashLogAnalyzer.cpp
+    src/ui/Loghandling/DataFlashLogAnalyzer.h
+    src/ui/flightdata/DataFlashLogsWidget.cpp
+    src/ui/flightdata/DataFlashLogsWidget.h
+    src/ui/flightdata/DataFlashLogToolsController.cpp
+    src/ui/flightdata/DataFlashLogToolsController.h
     src/ui/Loghandling/DataFlashFftCore.cpp
     src/ui/Loghandling/DataFlashFftCore.h
     src/ui/Loghandling/DataFlashFftAnalyzer.cpp
@@ -1848,6 +1856,8 @@ if(BUILD_TESTING)
         tests/TlogMatlabRuntimeAudit.h
         tests/GuidedNavigationRuntimeAudit.cpp
         tests/GuidedNavigationRuntimeAudit.h
+        tests/DataFlashLogToolsRuntimeAudit.cpp
+        tests/DataFlashLogToolsRuntimeAudit.h
         tests/InspectorRuntimeAudit.cpp
         tests/InspectorRuntimeAudit.h
         tests/LogDownloadRuntimeAudit.cpp
@@ -1904,6 +1914,11 @@ if(BUILD_TESTING)
     set_tests_properties(guided_navigation_runtime_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
         RUN_SERIAL TRUE TIMEOUT 60)
+    add_test(NAME dataflash_tools_runtime_tests
+        COMMAND $<TARGET_FILE:${APM_PLANNER_TARGET}> --dataflash-tools-audit)
+    set_tests_properties(dataflash_tools_runtime_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software"
+        RUN_SERIAL TRUE TIMEOUT 90)
     foreach(resx_suite resxtranslationservice translationeditormodel translationeditorwindow)
         add_executable(${resx_suite}_tests tests/test_${resx_suite}.cpp)
         target_link_libraries(${resx_suite}_tests PRIVATE apm_resx_editor Qt::Test)
@@ -4333,6 +4348,32 @@ if(BUILD_TESTING)
     add_executable(flight_log_organizer_probe tests/FlightLogOrganizerProbe.cpp)
     target_link_libraries(flight_log_organizer_probe PRIVATE
         flight_log_organizer_test_support)
+
+    add_library(dataflash_tools_test_support STATIC
+        src/ui/Loghandling/DataFlashGpxExporter.cpp
+        src/ui/Loghandling/DataFlashGpxExporter.h
+        src/ui/Loghandling/DataFlashLogAnalyzer.cpp
+        src/ui/Loghandling/DataFlashLogAnalyzer.h
+        src/ui/flightdata/DataFlashLogsWidget.cpp
+        src/ui/flightdata/DataFlashLogsWidget.h
+        src/ui/flightdata/DataFlashLogToolsController.cpp
+        src/ui/flightdata/DataFlashLogToolsController.h
+        ${DATAFLASH_KML_SOURCES})
+    target_include_directories(dataflash_tools_test_support PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/Loghandling
+        ${MAVLINKPATH} ${MAVLINKPATH}/${MAVLINK_CONF})
+    target_link_libraries(dataflash_tools_test_support PUBLIC
+        flight_log_organizer_test_support apm_sftp_core Qt::Widgets Qt::Concurrent)
+    foreach(dataflash_suite dataflashgpxexporter dataflashloganalyzer dataflashlogtoolscontroller)
+        add_executable(${dataflash_suite}_tests tests/test_${dataflash_suite}.cpp)
+        target_link_libraries(${dataflash_suite}_tests PRIVATE dataflash_tools_test_support Qt::Test)
+        add_test(NAME ${dataflash_suite}_tests COMMAND ${dataflash_suite}_tests)
+        set_tests_properties(${dataflash_suite}_tests PROPERTIES
+            TIMEOUT 60 ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
+    add_executable(dataflash_tools_probe tests/DataFlashToolsProbe.cpp)
+    target_link_libraries(dataflash_tools_probe PRIVATE dataflash_tools_test_support)
 
     foreach(shapefile_test IN ITEMS shapefilegeometryreader shapefileprojection
             shapefileimportservice shapefilepolycontroller)

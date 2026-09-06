@@ -38,6 +38,9 @@ This file is part of the QGROUNDCONTROL project
 #include "QGCToolWidget.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "QGCTabbedInfoView.h"
+#include "flightdata/DataFlashLogsWidget.h"
+#include "flightdata/DataFlashLogToolsController.h"
+#include "Loghandling/LogAnalysis.h"
 #include "QGCMAVLinkLogPlayer.h"
 #include "MAVLinkInspectorView.h"
 #include "MAVLinkInspectorTrafficSource.h"
@@ -1891,6 +1894,31 @@ void MainWindow::buildCommonWidgets()
         WarningTelemetrySource::fieldNames(), infoview);
     quick->setUnits(&WarningTelemetrySource::fieldUnits);
     infoview->installQuickView(quick);
+    auto *dataFlashLogs = new DataFlashLogsWidget(infoview);
+    auto *dataFlashTools = new DataFlashLogToolsController(dataFlashLogs, this);
+    m_dataFlashLogTools = dataFlashTools;
+    infoview->installDataFlashLogs(dataFlashLogs);
+    connect(dataFlashLogs, &DataFlashLogsWidget::downloadRequested,
+            this, &MainWindow::showLogDownload);
+    connect(dataFlashTools, &DataFlashLogToolsController::reviewLogRequested,
+            this, [this](const QString &path) {
+        if (aboutToCloseFlag) return;
+        auto *browser = new LogAnalysis(this);
+        browser->setObjectName(QStringLiteral("DataFlashLogReviewWindow"));
+        browser->setWindowFlags(Qt::Window);
+        browser->setAttribute(Qt::WA_DeleteOnClose);
+        connect(browser, &LogAnalysis::logIndexRequested,
+                this, &MainWindow::showLogIndex);
+        browser->show();
+        browser->raise();
+        browser->activateWindow();
+        browser->loadLog(path);
+    });
+    connect(dataFlashTools, &DataFlashLogToolsController::shutdownReady,
+            this, [this]() {
+        if (!aboutToCloseFlag && m_dataFlashLogTools && m_dataFlashLogTools->shutdownPending())
+            close();
+    }, Qt::QueuedConnection);
     const QPointer<WarningEngine> warningEngine = m_warningEngine;
     const auto refreshQuick = [quick, warningSource, warningEngine]() {
         quick->setValues(warningSource ? warningSource->values() : QuickViewWidget::Values());
@@ -2301,6 +2329,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
     if (!requestTranslationEditorClose() || !requestSftpLogDownloadClose()) {
         event->ignore();
         return;
+    }
+    if (m_dataFlashLogTools) {
+        if (!m_dataFlashLogTools->shutdownPending())
+            m_dataFlashLogTools->shutdown();
+        if (m_dataFlashLogTools->busy()) {
+            event->ignore();
+            return;
+        }
     }
     if (isVisible()) storeViewState();
     aboutToCloseFlag = true;
