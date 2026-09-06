@@ -24,10 +24,33 @@ This file is part of the APM_PLANNER project
 #include "GAudioOutput.h"
 #include "MainWindow.h"
 
+#include <QMessageBox>
+#include <QPointer>
+
 
 const char* COUNTDOWN_STRING = "<h3>Calibrate MAV%03d<br>Time remaining until timeout: <b>%d</b><h3>";
 const char* CALIBRATE_BUTTON_TEXT = "Full\nAccel Calibration";
 const char* CONTINUE_BUTTON_TEXT = "Continue\nPress SpaceBar";
+const char* LEVEL_CALIBRATE_BUTTON_TEXT = "Calibrate Level";
+
+namespace {
+
+using VehicleAction = DeveloperVehicleToolService::Action;
+
+bool isOneShotAccelAction(VehicleAction action)
+{
+    return action == VehicleAction::CalibrateLevel
+        || action == VehicleAction::SimpleAccelCalibration;
+}
+
+QString oneShotActionName(VehicleAction action)
+{
+    return action == VehicleAction::CalibrateLevel
+        ? QObject::tr("Level calibration")
+        : QObject::tr("Simple accelerometer calibration");
+}
+
+} // namespace
 
 
 AccelCalibrationConfig::AccelCalibrationConfig(QWidget *parent) : AP2ConfigWidget(parent),
@@ -36,15 +59,83 @@ AccelCalibrationConfig::AccelCalibrationConfig(QWidget *parent) : AP2ConfigWidge
 {
     ui.setupUi(this);
     connect(ui.calibrateAccelButton,SIGNAL(clicked()),this,SLOT(calibrateButtonClicked()));
+    connect(ui.calibrateAccelLevelButton, SIGNAL(clicked()),
+            this, SLOT(calibrateLevelButtonClicked()));
     connect(ui.calibrateAccelSimpleButton,SIGNAL(clicked()),this,SLOT(calibrateSimpleButtonClicked()));
 
     initConnections();
     //coutdownLabel
     connect(&m_countdownTimer,SIGNAL(timeout()),this,SLOT(countdownTimerTick()));
+    refreshCalibrationControls();
 }
 
 AccelCalibrationConfig::~AccelCalibrationConfig()
 {
+    ++m_oneShotFlowRevision;
+    dismissOneShotConsent();
+    if (m_vehicleToolService) {
+        disconnect(m_vehicleToolService, nullptr, this, nullptr);
+    }
+}
+
+void AccelCalibrationConfig::setVehicleToolService(
+    DeveloperVehicleToolService *service)
+{
+    if (m_vehicleToolService == service) {
+        refreshCalibrationControls();
+        return;
+    }
+
+    const QPointer<AccelCalibrationConfig> guard(this);
+    const QPointer<DeveloperVehicleToolService> incoming(service);
+    const quint64 serviceRevision = ++m_vehicleToolServiceRevision;
+    ++m_oneShotFlowRevision;
+    dismissOneShotConsent();
+    if (!guard || serviceRevision != m_vehicleToolServiceRevision) {
+        return;
+    }
+    if (m_vehicleToolService) {
+        disconnect(m_vehicleToolService, nullptr, this, nullptr);
+    }
+
+    m_vehicleToolService = incoming;
+    m_oneShotPlan = {};
+    m_oneShotOperationId = 0;
+    m_oneShotPreparing = false;
+    m_oneShotSubmitting = false;
+    m_oneShotTerminalDuringSubmit = false;
+
+    if (incoming) {
+        connect(incoming, &DeveloperVehicleToolService::stateChanged,
+                this,
+                &AccelCalibrationConfig::handleVehicleToolServiceStateChanged);
+        connect(incoming, &DeveloperVehicleToolService::operationFinished,
+                this,
+                &AccelCalibrationConfig::handleVehicleToolOperationFinished);
+        connect(incoming, &QObject::destroyed, this,
+                [this, serviceRevision]() {
+            if (serviceRevision != m_vehicleToolServiceRevision) {
+                return;
+            }
+            const QPointer<AccelCalibrationConfig> pageGuard(this);
+            ++m_oneShotFlowRevision;
+            dismissOneShotConsent();
+            if (!pageGuard) {
+                return;
+            }
+            m_vehicleToolService.clear();
+            m_oneShotPlan = {};
+            m_oneShotOperationId = 0;
+            m_oneShotPreparing = false;
+            m_oneShotSubmitting = false;
+            ui.calibrateAccelLevelButton->setText(
+                tr(LEVEL_CALIBRATE_BUTTON_TEXT));
+            ui.levelOutputLabel->setText(
+                tr("Level and Simple calibration service is unavailable."));
+            refreshCalibrationControls();
+        });
+    }
+    refreshCalibrationControls();
 }
 
 void AccelCalibrationConfig::countdownTimerTick()
@@ -74,6 +165,7 @@ void AccelCalibrationConfig::activeUASSet(UASInterface *uas)
     AP2ConfigWidget::activeUASSet(uas);
 
     if (!uas) {
+        refreshCalibrationControls();
         return;
     }
 
@@ -90,22 +182,424 @@ void AccelCalibrationConfig::activeUASSet(UASInterface *uas)
 void AccelCalibrationConfig::uasConnected()
 {
     cancelCalibration();
+    refreshCalibrationControls();
 }
 
 void AccelCalibrationConfig::uasDisconnected()
 {
+    refreshCalibrationControls();
 }
 
 
-void AccelCalibrationConfig::calibrateSimpleButtonClicked() {
-    m_calibrationType = CalibrationType::Simple_Calibration;
-    startCalibration();
+void AccelCalibrationConfig::calibrateSimpleButtonClicked()
+{
+    startOneShotCalibration(VehicleAction::SimpleAccelCalibration);
+}
+
+void AccelCalibrationConfig::calibrateLevelButtonClicked()
+{
+    startOneShotCalibration(VehicleAction::CalibrateLevel);
 }
 
 void AccelCalibrationConfig::calibrateButtonClicked() {
-    m_calibrationType = ui.legacyCheckBox->checkState() ?
-                            CalibrationType::Legacy_Calibration : CalibrationType::Full_Calibration;
+    const CalibrationType requested = ui.legacyCheckBox->checkState()
+        ? CalibrationType::Legacy_Calibration
+        : CalibrationType::Full_Calibration;
+    if (isInCalibration && m_calibrationType != requested) {
+        ui.outputLabel->setText(
+            tr("Finish the active accelerometer calibration first."));
+        return;
+    }
+    if (!isInCalibration && oneShotInteractionBusy()) {
+        ui.outputLabel->setText(
+            tr("Finish the active Level or Simple calibration first."));
+        return;
+    }
+    m_calibrationType = requested;
     startCalibration();
+}
+
+bool AccelCalibrationConfig::oneShotInteractionBusy() const
+{
+    return m_oneShotPreparing || m_oneShotConsent || m_oneShotSubmitting
+        || m_oneShotOperationId != 0
+        || (m_vehicleToolService && m_vehicleToolService->busy());
+}
+
+void AccelCalibrationConfig::startOneShotCalibration(VehicleAction action)
+{
+    if (!isOneShotAccelAction(action)) {
+        return;
+    }
+    if (isInCalibration) {
+        ui.levelOutputLabel->setText(
+            tr("Finish the active Full or Legacy calibration first."));
+        return;
+    }
+    const QPointer<AccelCalibrationConfig> guard(this);
+    const QPointer<DeveloperVehicleToolService> service(m_vehicleToolService);
+    if (!service) {
+        ui.levelOutputLabel->setText(
+            tr("The exact-target calibration service is unavailable."));
+        refreshCalibrationControls();
+        return;
+    }
+    if (oneShotInteractionBusy()) {
+        ui.levelOutputLabel->setText(
+            tr("Finish the active vehicle operation or confirmation first."));
+        refreshCalibrationControls();
+        return;
+    }
+
+    const quint64 flow = ++m_oneShotFlowRevision;
+    const quint64 serviceRevision = m_vehicleToolServiceRevision;
+    m_oneShotPreparing = true;
+    m_oneShotPlan = {};
+    m_oneShotOperationId = 0;
+    m_oneShotTerminalDuringSubmit = false;
+    if (action == VehicleAction::CalibrateLevel) {
+        ui.calibrateAccelLevelButton->setText(
+            tr(LEVEL_CALIBRATE_BUTTON_TEXT));
+    }
+    ui.levelOutputLabel->setText(
+        tr("Checking the selected vehicle for %1...")
+            .arg(oneShotActionName(action).toLower()));
+    refreshCalibrationControls();
+    if (!guard || serviceRevision != m_vehicleToolServiceRevision
+        || m_vehicleToolService != service || flow != m_oneShotFlowRevision) {
+        return;
+    }
+
+    DeveloperVehicleToolService::Plan plan;
+    QString error;
+    const bool prepared = service->prepare(action, &plan, &error);
+    if (!guard || !service || serviceRevision != m_vehicleToolServiceRevision
+        || m_vehicleToolService != service || flow != m_oneShotFlowRevision) {
+        return;
+    }
+    m_oneShotPreparing = false;
+    if (!prepared) {
+        ui.levelOutputLabel->setText(
+            tr("%1 was not prepared: %2")
+                .arg(oneShotActionName(action), error));
+        refreshCalibrationControls();
+        return;
+    }
+
+    m_oneShotPlan = plan;
+    const VehicleEndpoint endpoint = plan.target.endpoint;
+    const bool level = action == VehicleAction::CalibrateLevel;
+    const QString detail = level
+        ? tr("Place the vehicle and autopilot on a stable, flat, level surface and keep them still. "
+             "This performs the one-axis level calibration and updates the default accelerometer offsets/AHRS trim. "
+             "It is not the Full six-position or Simple accelerometer calibration.")
+        : tr("Place the vehicle and autopilot on a stable, flat, level surface and keep them still. "
+             "This performs the firmware's Simple accelerometer calibration. "
+             "It is not the Full six-position or one-axis Level calibration.");
+    const QString warning =
+        tr("%1\n"
+           "Target: %2 — link %3, system %4, component %5.\n\n"
+           "%6\n\n"
+           "The vehicle must remain disarmed. The command changes calibration values on the selected vehicle; "
+           "there is no automatic rollback. An acknowledgement means the firmware accepted the request, not "
+           "independent verification of the resulting calibration. Continue?")
+            .arg(oneShotActionName(action), endpoint.displayName(),
+                 QString::number(endpoint.linkId),
+                 QString::number(endpoint.systemId),
+                 QString::number(endpoint.componentId), detail);
+    auto *dialog = new QMessageBox(
+        QMessageBox::Warning,
+        level ? tr("Calibrate Level")
+              : tr("Simple Accelerometer Calibration"),
+        warning, QMessageBox::Yes | QMessageBox::Cancel, this);
+    dialog->setObjectName(level
+        ? QStringLiteral("AccelLevelConfirmation")
+        : QStringLiteral("AccelSimpleConfirmation"));
+    dialog->setTextFormat(Qt::PlainText);
+    dialog->setDefaultButton(QMessageBox::Cancel);
+    dialog->setEscapeButton(QMessageBox::Cancel);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    m_oneShotConsent = dialog;
+    connect(dialog, &QDialog::finished, this,
+            [this, guard, service, serviceRevision, plan, action, flow](int result) {
+        if (!guard || !service
+            || serviceRevision != m_vehicleToolServiceRevision
+            || m_vehicleToolService != service
+            || flow != m_oneShotFlowRevision
+            || m_oneShotPlan.planId != plan.planId) {
+            return;
+        }
+        m_oneShotConsent.clear();
+        if (result != QMessageBox::Yes) {
+            m_oneShotPlan = {};
+            ui.levelOutputLabel->setText(
+                tr("%1 cancelled; no command was sent.")
+                    .arg(oneShotActionName(action)));
+            refreshCalibrationControls();
+            return;
+        }
+
+        QString validationError;
+        const bool valid = service->validate(plan, &validationError);
+        if (!guard || !service
+            || serviceRevision != m_vehicleToolServiceRevision
+            || m_vehicleToolService != service
+            || flow != m_oneShotFlowRevision
+            || m_oneShotPlan.planId != plan.planId) {
+            return;
+        }
+        if (!valid) {
+            m_oneShotPlan = {};
+            ui.levelOutputLabel->setText(
+                tr("%1 cancelled before transmission: %2")
+                    .arg(oneShotActionName(action), validationError));
+            refreshCalibrationControls();
+            return;
+        }
+
+        m_oneShotSubmitting = true;
+        m_oneShotTerminalDuringSubmit = false;
+        ui.levelOutputLabel->setText(
+            tr("Submitting %1 to the exact selected vehicle...")
+                .arg(oneShotActionName(action).toLower()));
+        refreshCalibrationControls();
+        if (!guard || !service
+            || serviceRevision != m_vehicleToolServiceRevision
+            || m_vehicleToolService != service
+            || flow != m_oneShotFlowRevision
+            || m_oneShotPlan.planId != plan.planId) {
+            return;
+        }
+
+        QString submitError;
+        const auto submitResult = service->execute(plan, 0.0, &submitError);
+        if (!guard || !service
+            || serviceRevision != m_vehicleToolServiceRevision
+            || m_vehicleToolService != service
+            || flow != m_oneShotFlowRevision) {
+            return;
+        }
+        const bool terminalDuringSubmit = m_oneShotTerminalDuringSubmit;
+        m_oneShotSubmitting = false;
+        if (terminalDuringSubmit) {
+            refreshCalibrationControls();
+            return;
+        }
+        if (submitResult != DeveloperVehicleToolService::SubmitResult::Started) {
+            m_oneShotPlan = {};
+            ui.levelOutputLabel->setText(
+                tr("%1 was not started: %2")
+                    .arg(oneShotActionName(action), submitError));
+        } else if (service->busy() && service->currentOperationId() != 0) {
+            m_oneShotOperationId = service->currentOperationId();
+            ui.levelOutputLabel->setText(
+                tr("%1 submitted; awaiting the vehicle acknowledgement...")
+                    .arg(oneShotActionName(action)));
+        } else {
+            // A terminal callback should normally have reported this case.
+            // Fail closed if an injected transport completed without one.
+            m_oneShotPlan = {};
+            ui.levelOutputLabel->setText(
+                tr("%1 ended before an operation could be tracked; inspect the vehicle before retrying.")
+                    .arg(oneShotActionName(action)));
+        }
+        refreshCalibrationControls();
+    });
+    dialog->open();
+    if (!guard || flow != m_oneShotFlowRevision) {
+        return;
+    }
+    refreshCalibrationControls();
+}
+
+void AccelCalibrationConfig::dismissOneShotConsent()
+{
+    QPointer<QMessageBox> dialog(m_oneShotConsent);
+    m_oneShotConsent.clear();
+    if (!dialog) {
+        return;
+    }
+    disconnect(dialog, nullptr, this, nullptr);
+    dialog->blockSignals(true);
+    dialog->reject();
+    if (dialog) {
+        dialog->deleteLater();
+    }
+}
+
+void AccelCalibrationConfig::handleVehicleToolServiceStateChanged()
+{
+    const QPointer<AccelCalibrationConfig> guard(this);
+    const QPointer<DeveloperVehicleToolService> service(m_vehicleToolService);
+    const quint64 serviceRevision = m_vehicleToolServiceRevision;
+    if (service && m_oneShotConsent && m_oneShotPlan.isValid()) {
+        QString error;
+        const bool valid = service->validate(m_oneShotPlan, &error);
+        if (!guard || !service
+            || serviceRevision != m_vehicleToolServiceRevision
+            || m_vehicleToolService != service) {
+            return;
+        }
+        if (!valid) {
+            const VehicleAction action = m_oneShotPlan.action;
+            ++m_oneShotFlowRevision;
+            const quint64 cancelledFlow = m_oneShotFlowRevision;
+            m_oneShotPlan = {};
+            dismissOneShotConsent();
+            if (!guard || cancelledFlow != m_oneShotFlowRevision) {
+                return;
+            }
+            ui.levelOutputLabel->setText(
+                tr("%1 cancelled before transmission: %2")
+                    .arg(oneShotActionName(action), error));
+        }
+    }
+    if (guard) {
+        refreshCalibrationControls();
+    }
+}
+
+void AccelCalibrationConfig::handleVehicleToolOperationFinished(
+    const DeveloperVehicleToolService::Report &report)
+{
+    if (!isOneShotAccelAction(report.action)) {
+        return;
+    }
+    const bool matchesTrackedOperation = m_oneShotOperationId != 0
+        && report.operationId == m_oneShotOperationId;
+    const bool matchesSynchronousSubmission = m_oneShotSubmitting
+        && m_oneShotPlan.isValid()
+        && report.endpoint.sameIdentity(m_oneShotPlan.target.endpoint);
+    if (!matchesTrackedOperation && !matchesSynchronousSubmission) {
+        return;
+    }
+
+    if (m_oneShotSubmitting) {
+        m_oneShotTerminalDuringSubmit = true;
+    }
+    m_oneShotOperationId = 0;
+    m_oneShotPlan = {};
+    const QString actionName = oneShotActionName(report.action);
+    switch (report.outcome) {
+    case DeveloperVehicleToolService::Outcome::Succeeded:
+        ui.levelOutputLabel->setText(
+            tr("%1 accepted. %2").arg(actionName, report.description));
+        if (report.action == VehicleAction::CalibrateLevel) {
+            ui.calibrateAccelLevelButton->setText(tr("Completed"));
+        }
+        break;
+    case DeveloperVehicleToolService::Outcome::Rejected:
+        ui.levelOutputLabel->setText(
+            tr("%1 rejected: %2").arg(actionName, report.description));
+        if (report.action == VehicleAction::CalibrateLevel) {
+            ui.calibrateAccelLevelButton->setText(
+                tr(LEVEL_CALIBRATE_BUTTON_TEXT));
+        }
+        break;
+    case DeveloperVehicleToolService::Outcome::OutcomeUncertain:
+        ui.levelOutputLabel->setText(
+            tr("%1 outcome is uncertain: %2 Do not assume calibration completed; inspect the vehicle before retrying.")
+                .arg(actionName, report.description));
+        if (report.action == VehicleAction::CalibrateLevel) {
+            ui.calibrateAccelLevelButton->setText(
+                tr(LEVEL_CALIBRATE_BUTTON_TEXT));
+        }
+        break;
+    }
+    refreshCalibrationControls();
+}
+
+void AccelCalibrationConfig::refreshCalibrationControls()
+{
+    if (m_refreshingCalibrationControls) {
+        return;
+    }
+    m_refreshingCalibrationControls = true;
+    const QPointer<AccelCalibrationConfig> guard(this);
+    const QPointer<DeveloperVehicleToolService> service(m_vehicleToolService);
+    const quint64 serviceRevision = m_vehicleToolServiceRevision;
+
+    const bool oneShotBusy = oneShotInteractionBusy();
+    const bool fullOrLegacyActive = isInCalibration;
+    const bool fullCanContinue = fullOrLegacyActive
+        && m_calibrationType != CalibrationType::Simple_Calibration;
+    const bool canStartDirect = !fullOrLegacyActive && !oneShotBusy;
+
+    ui.calibrateAccelButton->setEnabled(fullCanContinue || canStartDirect);
+    if (!guard) {
+        return;
+    }
+    ui.calibrateAccelSimpleButton->setEnabled(
+        !fullOrLegacyActive && !oneShotBusy && service);
+    if (!guard) {
+        return;
+    }
+    ui.legacyCheckBox->setEnabled(!fullOrLegacyActive && !oneShotBusy);
+    if (!guard) {
+        return;
+    }
+
+    QString levelReason;
+    bool canLevel = !fullOrLegacyActive && !oneShotBusy && service;
+    if (!service) {
+        levelReason = tr("The exact-target calibration service is unavailable.");
+    } else if (fullOrLegacyActive) {
+        levelReason = tr("Finish the active Full or Legacy calibration first.");
+    } else if (oneShotBusy) {
+        levelReason = tr("A vehicle operation or calibration confirmation is active.");
+    } else {
+        canLevel = service->canPrepare(VehicleAction::CalibrateLevel,
+                                       &levelReason);
+        if (!guard || !service
+            || serviceRevision != m_vehicleToolServiceRevision
+            || m_vehicleToolService != service) {
+            if (guard) {
+                m_refreshingCalibrationControls = false;
+                refreshCalibrationControls();
+            }
+            return;
+        }
+    }
+    ui.calibrateAccelLevelButton->setEnabled(canLevel);
+    if (!guard) {
+        return;
+    }
+    ui.calibrateAccelLevelButton->setToolTip(canLevel
+        ? tr("Set one-axis level offsets/AHRS trim for the exact selected disarmed vehicle.")
+        : levelReason);
+    if (!guard) {
+        return;
+    }
+
+    QString simpleReason;
+    bool canSimple = !fullOrLegacyActive && !oneShotBusy && service;
+    if (!service) {
+        simpleReason = tr("The exact-target calibration service is unavailable.");
+    } else if (fullOrLegacyActive) {
+        simpleReason = tr("Finish the active Full or Legacy calibration first.");
+    } else if (oneShotBusy) {
+        simpleReason = tr("A vehicle operation or calibration confirmation is active.");
+    } else {
+        canSimple = service->canPrepare(
+            VehicleAction::SimpleAccelCalibration, &simpleReason);
+        if (!guard || !service
+            || serviceRevision != m_vehicleToolServiceRevision
+            || m_vehicleToolService != service) {
+            if (guard) {
+                m_refreshingCalibrationControls = false;
+                refreshCalibrationControls();
+            }
+            return;
+        }
+    }
+    ui.calibrateAccelSimpleButton->setEnabled(canSimple);
+    if (!guard) {
+        return;
+    }
+    ui.calibrateAccelSimpleButton->setToolTip(canSimple
+        ? tr("Run Simple accelerometer calibration on the exact selected disarmed vehicle.")
+        : simpleReason);
+    m_refreshingCalibrationControls = false;
 }
 
 void AccelCalibrationConfig::startCalibration()
@@ -224,31 +718,46 @@ void AccelCalibrationConfig::startCalibration()
         ui.outputLabel->setText("Simple Accel Calibration...");
     }break;
     }
+    refreshCalibrationControls();
 }
 
 void AccelCalibrationConfig::cancelCalibration()
 {
     QLOG_INFO() << "Cancel Accelerometer Calibration.";
+    const bool wasInCalibration = isInCalibration;
     ui.coutdownLabel->setText("");
     m_countdownTimer.stop();
     ui.calibrateAccelButton->setText(CALIBRATE_BUTTON_TEXT);
     isInCalibration = false;
 
-    if (m_calibrationType == CalibrationType::Legacy_Calibration && m_accelAckCount >= 0) {
+    if (wasInCalibration && m_uas
+        && m_calibrationType == CalibrationType::Legacy_Calibration
+        && m_accelAckCount >= 0) {
 
         for (int i = 0; i < m_accelAckCount; i++) {
             QLOG_WARN() << "Canceling " << i << " of " << m_accelAckCount;
             m_uas->executeCommandAck(i,true);
         }
         m_accelAckCount = -1;
-    } else {
+    } else if (wasInCalibration && m_uas) {
         m_uas->executeCommandAck(1,true);
     }
+    refreshCalibrationControls();
 }
 
 void AccelCalibrationConfig::hideEvent(QHideEvent *evt)
 {
     Q_UNUSED(evt);
+
+    if (m_oneShotConsent) {
+        const VehicleAction action = m_oneShotPlan.action;
+        ++m_oneShotFlowRevision;
+        m_oneShotPlan = {};
+        dismissOneShotConsent();
+        ui.levelOutputLabel->setText(
+            tr("%1 cancelled because the page was closed; no command was sent.")
+                .arg(oneShotActionName(action)));
+    }
 
     if (m_muted) { // turns audio backon, when you leave the page
         GAudioOutput::instance()->mute(false);
@@ -307,6 +816,7 @@ void AccelCalibrationConfig::mavlinkMessageCommandLong(UASInterface* uas, mavlin
             m_countdownTimer.stop();
             ui.calibrateAccelButton->setText(CALIBRATE_BUTTON_TEXT);
             isInCalibration = false;
+            refreshCalibrationControls();
         } break;
 
         case ACCELCAL_VEHICLE_POS_FAILED: {
@@ -315,6 +825,7 @@ void AccelCalibrationConfig::mavlinkMessageCommandLong(UASInterface* uas, mavlin
             m_countdownTimer.stop();
             ui.calibrateAccelButton->setText(CALIBRATE_BUTTON_TEXT);
             isInCalibration = false;
+            refreshCalibrationControls();
         } break;
 
         default:
@@ -373,6 +884,7 @@ void AccelCalibrationConfig::uasTextMessageReceived(int uasid, int componentid, 
                 MainWindow::instance()->toolBar().startAnimation();
                 m_accelAckCount = -1;
                 isInCalibration = false;
+                refreshCalibrationControls();
 
             } else if (text.contains("FAILED")
                 || text.contains("Failed CMD: 241") || text.startsWith("FAILURE:")
@@ -393,5 +905,3 @@ void AccelCalibrationConfig::uasTextMessageReceived(int uasid, int componentid, 
     }
 
 }
-
-

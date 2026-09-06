@@ -40,7 +40,9 @@ public:
         ForceCompassCalibrated,
         RebootVehicle,
         RebootToDfu,
-        UpgradeBootloader
+        UpgradeBootloader,
+        CalibrateLevel,
+        SimpleAccelCalibration
     };
     Q_ENUM(Action)
 
@@ -108,6 +110,7 @@ public:
     static constexpr double MaximumAltitudeAdjustmentMetres = 100.0;
     static constexpr double PressurePerMetrePa = 11.1;
     static constexpr float BootloaderMagic = 290876.0F;
+    static constexpr int CalibrationAcknowledgementTimeoutMs = 25000;
     static constexpr int BootloaderAcknowledgementTimeoutMs =
         5 * 60 * 1000;
     static constexpr int BootloaderMaximumLifetimeMs =

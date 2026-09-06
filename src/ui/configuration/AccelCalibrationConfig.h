@@ -31,10 +31,14 @@ This file is part of the APM_PLANNER project
 #define ACCELCALIBRATIONCONFIG_H
 
 #include <QWidget>
+#include <QPointer>
 #include "ui_AccelCalibrationConfig.h"
 #include "UASManager.h"
 #include "UASInterface.h"
 #include "AP2ConfigWidget.h"
+#include "services/DeveloperVehicleToolService.h"
+
+class QMessageBox;
 
 class AccelCalibrationConfig : public AP2ConfigWidget
 {
@@ -44,12 +48,16 @@ class AccelCalibrationConfig : public AP2ConfigWidget
 public:
     explicit AccelCalibrationConfig(QWidget *parent = 0);
     ~AccelCalibrationConfig();
+
+    /** Bind the app-owned exact-target vehicle action service. */
+    void setVehicleToolService(DeveloperVehicleToolService *service);
 protected:
     void hideEvent(QHideEvent *evt);
 
 private slots:
     void activeUASSet(UASInterface *uas);
     void calibrateButtonClicked();
+    void calibrateLevelButtonClicked();
     void calibrateSimpleButtonClicked();
     void mavlinkMessageCommandLong(UASInterface* uas,mavlink_command_long_t& command_long);
     void uasTextMessageReceived(int uasid, int componentid, int severity, QString text);
@@ -60,6 +68,13 @@ private slots:
 
 private:
     void startCalibration();
+    void refreshCalibrationControls();
+    void startOneShotCalibration(DeveloperVehicleToolService::Action action);
+    void handleVehicleToolServiceStateChanged();
+    void handleVehicleToolOperationFinished(
+        const DeveloperVehicleToolService::Report &report);
+    void dismissOneShotConsent();
+    bool oneShotInteractionBusy() const;
 
 private:
     enum class CalibrationType {
@@ -77,6 +92,17 @@ private:
     int m_countdownCount;
 
     int m_position {0};
+
+    QPointer<DeveloperVehicleToolService> m_vehicleToolService;
+    QPointer<QMessageBox> m_oneShotConsent;
+    DeveloperVehicleToolService::Plan m_oneShotPlan;
+    quint64 m_oneShotOperationId {0};
+    quint64 m_oneShotFlowRevision {0};
+    quint64 m_vehicleToolServiceRevision {0};
+    bool m_oneShotPreparing {false};
+    bool m_oneShotSubmitting {false};
+    bool m_oneShotTerminalDuringSubmit {false};
+    bool m_refreshingCalibrationControls {false};
 };
 
 #endif // ACCELCALIBRATIONCONFIG_H

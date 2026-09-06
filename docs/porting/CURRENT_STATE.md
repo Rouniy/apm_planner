@@ -33,6 +33,39 @@ below is background, not permission to return to export-first work.
 
 ## Verified checkpoint
 
+Latest implementation (2026-09-06): **SETUP Calibrate Level and Simple**.
+The real accelerometer page now has Full, Level and Simple sections in a
+resizable layout, plus the useful Legacy option. Level sends the MP10
+PREFLIGHT_CALIBRATION p5=2; Simple preserves p5=4 but now shares the exact
+one-shot command/ACK service. Its old never-cleared calibration flag is fixed,
+as is idle page opening/closing emitting a legacy calibration ACK.
+
+Both actions use explicit default/Escape-Cancel consent, flat-and-level
+instructions, a fresh disarmed target,25s ACK timeout and no automatic retry.
+Completed means accepted ACK, not mere submission or physical calibration
+verification. Pending one-shot work excludes Full/Legacy starts; after ACK
+the controls become usable again. Existing Developer32 routes are unchanged.
+
+Qt5/audio build1, focused **4/4 (35.69s)** and full **313/313 (55.24s)** pass,
+including production
+SETUP Level Cancel/Accept, exact captured payload, Completed, Simple ACK,
+restored Full/Level/Simple controls and no idle/hide legacy ACKs. Production
+X11 reports zero audit failures and exits0; root inspected the actual page
+and confirmation screenshots. Claude TCP c346/c348 independently checked the
+normal reference workflow and integration. Evidence is
+`/tmp/apm-accel-level.NVpAxK/`; see `ACCEL_LEVEL_PORT.md`.
+
+The port remains incomplete: **129 rows:80 in-progress,34 partial,15
+not-started;158 deviations**, no strict-complete surface. SETUP46 routes and
+its eight absent reference routes are unchanged. Full/Legacy exact-target
+parity, automatic AHRS trim cache refresh, non-ArduPilot and physical/native
+evidence remain separate work. The old inventory temperature requirement was
+removed because it does not exist in the actual MP10 accelerometer page.
+Next: everyday radio/RTK and firmware-page workflows, actual Advanced/Developer
+gaps, then Settings; no return to MATLAB/rare export audits, Swarm last.
+
+### Previous checkpoint: Joystick
+
 Latest implementation (2026-09-06): **SETUP Joystick — practical port**.
 The old launcher is replaced by the embedded `ConfigJoystickView`: device/raw
 input,16 RC channels, expo/reverse/Auto Detect, button mapping/settings,

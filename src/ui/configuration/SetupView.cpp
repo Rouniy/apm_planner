@@ -470,8 +470,14 @@ void SetupView::buildPages()
         return createDefaultSettingsPage(parent);
     };
     m_backstage->addPage(defaultSettings);
-    m_backstage->addPage(makeBackstagePage<AccelCalibrationConfig>(
-        kAccelCalibration, tr("Accel Calibration"), true, true));
+    auto accelCalibration = makeBackstagePage<AccelCalibrationConfig>(
+        kAccelCalibration, tr("Accel Calibration"), true, true);
+    accelCalibration.factory = [](QWidget *parent) {
+        auto *page = new AccelCalibrationConfig;
+        page->setVehicleToolService(LinkManager::instance()->developerVehicleToolService());
+        return scrollablePage(page, kAccelCalibration, parent);
+    };
+    m_backstage->addPage(accelCalibration);
     BackstagePage compass;
     compass.id = kCompass;
     compass.header = tr("Compass");

@@ -238,6 +238,7 @@ private slots:
     void fallbackRequiresInternalWriteCapability();
     void pressureRequiresReal32();
     void commandsUseMissionPlannerPayloadsAndTerminalReports();
+    void levelCalibrationRejectedAndGated();
     void bootloaderRejectsWrongEvidenceAndTimesOutUncertain();
     void bootloaderWriteGateRejectsArmedAndSelectionAba();
     void deletionAtFinalCommandValidationIsSafe();
@@ -412,6 +413,10 @@ commandsUseMissionPlannerPayloadsAndTerminalReports()
         std::array<float, 7> params;
     };
     const QList<CommandCase> cases{
+        {DeveloperVehicleToolService::Action::CalibrateLevel,
+         MAV_CMD_PREFLIGHT_CALIBRATION, {0, 0, 0, 0, 2, 0, 0}},
+        {DeveloperVehicleToolService::Action::SimpleAccelCalibration,
+         MAV_CMD_PREFLIGHT_CALIBRATION, {0, 0, 0, 0, 4, 0, 0}},
         {DeveloperVehicleToolService::Action::ForceAccelCalibrated,
          MAV_CMD_PREFLIGHT_CALIBRATION, {0, 0, 0, 0, 76, 0, 0}},
         {DeveloperVehicleToolService::Action::ForceCompassCalibrated,
@@ -477,6 +482,58 @@ commandsUseMissionPlannerPayloadsAndTerminalReports()
         QVERIFY(!fixture.tools.busy());
         QCOMPARE(finished.count(), index + 1);
     }
+}
+
+void DeveloperVehicleToolServiceTest::levelCalibrationRejectedAndGated()
+{
+    QCOMPARE(
+        DeveloperVehicleToolService::CalibrationAcknowledgementTimeoutMs,
+        25000);
+    QVERIFY(VehicleCommandService::DefaultExactCommandMaximumLifetimeMs
+            >= 30000);
+    Fixture fixture;
+    DeveloperVehicleToolService::Plan plan;
+    QString error;
+    QVERIFY(fixture.tools.canPrepare(
+        DeveloperVehicleToolService::Action::CalibrateLevel, &error));
+    QVERIFY(fixture.tools.prepare(
+        DeveloperVehicleToolService::Action::CalibrateLevel,
+        &plan, &error));
+    QCOMPARE(fixture.tools.execute(plan, 0.0, &error),
+             DeveloperVehicleToolService::SubmitResult::Started);
+    QCOMPARE(fixture.frames.size(), 1);
+    const mavlink_command_long_t payload =
+        commandPayload(fixture.frames.constFirst());
+    QCOMPARE(payload.command, quint16(MAV_CMD_PREFLIGHT_CALIBRATION));
+    QCOMPARE(payload.param1, 0.0F);
+    QCOMPARE(payload.param2, 0.0F);
+    QCOMPARE(payload.param3, 0.0F);
+    QCOMPARE(payload.param4, 0.0F);
+    QCOMPARE(payload.param5, 2.0F);
+    QCOMPARE(payload.param6, 0.0F);
+    QCOMPARE(payload.param7, 0.0F);
+
+    fixture.commands.observeMessage(
+        Fixture::linkId,
+        commandAck(fixture.vehicleEndpoint,
+                   MAV_CMD_PREFLIGHT_CALIBRATION,
+                   MAV_RESULT_DENIED));
+    QVERIFY(!fixture.tools.busy());
+    QCOMPARE(fixture.tools.lastReport().action,
+             DeveloperVehicleToolService::Action::CalibrateLevel);
+    QCOMPARE(fixture.tools.lastReport().outcome,
+             DeveloperVehicleToolService::Outcome::Rejected);
+
+    fixture.setArmed(true);
+    fixture.frames.clear();
+    plan = {};
+    QVERIFY(!fixture.tools.canPrepare(
+        DeveloperVehicleToolService::Action::CalibrateLevel, &error));
+    QVERIFY(!fixture.tools.prepare(
+        DeveloperVehicleToolService::Action::CalibrateLevel,
+        &plan, &error));
+    QVERIFY(!plan.isValid());
+    QVERIFY(fixture.frames.isEmpty());
 }
 
 void DeveloperVehicleToolServiceTest::

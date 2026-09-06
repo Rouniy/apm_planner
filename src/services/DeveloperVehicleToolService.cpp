@@ -546,6 +546,8 @@ bool DeveloperVehicleToolService::canPrepare(Action action,
         return captureParameter(action, &plan, error);
     }
     switch (action) {
+    case Action::CalibrateLevel:
+    case Action::SimpleAccelCalibration:
     case Action::ForceAccelCalibrated:
     case Action::ForceCompassCalibrated:
     case Action::RebootVehicle:
@@ -608,6 +610,8 @@ bool DeveloperVehicleToolService::prepare(Action action,
     }
     if (!isParameterAction(action)) {
         switch (action) {
+        case Action::CalibrateLevel:
+        case Action::SimpleAccelCalibration:
         case Action::ForceAccelCalibrated:
         case Action::ForceCompassCalibrated:
         case Action::RebootVehicle:
@@ -926,7 +930,18 @@ DeveloperVehicleToolService::execute(const Plan &plan,
         }
 
         VehicleCommandService::ExactCommandRequest request;
-        if (plan.action == Action::ForceAccelCalibrated) {
+        if (plan.action == Action::CalibrateLevel
+            || plan.action == Action::SimpleAccelCalibration) {
+            request.command = MAV_CMD_PREFLIGHT_CALIBRATION;
+            request.params[4] = plan.action == Action::CalibrateLevel
+                ? 2.0F : 4.0F;
+            request.acknowledgementTimeoutMs =
+                CalibrationAcknowledgementTimeoutMs;
+            // Deliberate safety deviation from the reference retry: a lost
+            // acknowledgement remains uncertain rather than risking a
+            // second calibration request while the first may still be busy.
+            request.maximumRetries = 0;
+        } else if (plan.action == Action::ForceAccelCalibrated) {
             request.command = MAV_CMD_PREFLIGHT_CALIBRATION;
             request.params[4] = 76.0F;
         } else if (plan.action == Action::ForceCompassCalibrated) {
@@ -1172,6 +1187,10 @@ QString DeveloperVehicleToolService::actionName(Action action)
         return QStringLiteral("Reboot to DFU");
     case Action::UpgradeBootloader:
         return QStringLiteral("Upgrade Bootloader");
+    case Action::CalibrateLevel:
+        return QStringLiteral("Calibrate Level");
+    case Action::SimpleAccelCalibration:
+        return QStringLiteral("Simple Accel Calibration");
     }
     return QStringLiteral("Developer action");
 }

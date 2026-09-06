@@ -2,170 +2,50 @@
 <ui version="4.0">
  <class>AccelCalibrationConfig</class>
  <widget class="QWidget" name="AccelCalibrationConfig">
-  <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>436</width>
-    <height>330</height>
-   </rect>
-  </property>
-  <property name="windowTitle">
-   <string>Form</string>
-  </property>
-  <widget class="QLabel" name="label">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>0</y>
-     <width>285</width>
-     <height>24</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-size:x-large; font-weight:600;&quot;&gt;3D Accelerometer Calibration&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-   </property>
-   <property name="scaledContents">
-    <bool>false</bool>
-   </property>
-  </widget>
-  <widget class="QWidget" name="verticalLayoutWidget">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>30</y>
-     <width>400</width>
-     <height>281</height>
-    </rect>
-   </property>
-   <layout class="QVBoxLayout" name="verticalLayout" stretch="0,0,2,2,2,0,0">
-    <item>
-     <widget class="QLabel" name="accelDescLabel">
-      <property name="text">
-       <string>Level your UAV to set default accelerometer offsets (3 axis)&lt;br&gt;This will ask you to place your autopilot on each edge.</string>
-      </property>
-      <property name="wordWrap">
-       <bool>true</bool>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QLabel" name="coutdownLabel">
-      <property name="text">
-       <string/>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QLabel" name="outputLabel">
-      <property name="text">
-       <string/>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <layout class="QHBoxLayout" name="horizontalLayout">
-      <item>
-       <spacer name="horizontalSpacer">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-      <item>
-       <widget class="QPushButton" name="calibrateAccelButton">
-        <property name="minimumSize">
-         <size>
-          <width>120</width>
-          <height>35</height>
-         </size>
-        </property>
-        <property name="focusPolicy">
-         <enum>Qt::NoFocus</enum>
-        </property>
-        <property name="text">
-         <string>Full Accel
-Calibration</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <spacer name="horizontalSpacer_3">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-      <item>
-       <widget class="QPushButton" name="calibrateAccelSimpleButton">
-        <property name="minimumSize">
-         <size>
-          <width>120</width>
-          <height>35</height>
-         </size>
-        </property>
-        <property name="focusPolicy">
-         <enum>Qt::NoFocus</enum>
-        </property>
-        <property name="text">
-         <string>Simple
-Accel Calibration</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <spacer name="horizontalSpacer_2">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-     </layout>
-    </item>
-    <item>
-     <widget class="Line" name="line">
-      <property name="orientation">
-       <enum>Qt::Horizontal</enum>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QCheckBox" name="legacyCheckBox">
-      <property name="toolTip">
-       <string>Enables compatibility mode for older ardupilot firmware.</string>
-      </property>
-      <property name="text">
-       <string>Legacy Mode</string>
-      </property>
-     </widget>
-    </item>
-    <item>
-     <widget class="QLabel" name="levelOutputLabel">
-      <property name="text">
-       <string/>
-      </property>
-     </widget>
-    </item>
-   </layout>
-  </widget>
+  <property name="geometry"><rect><x>0</x><y>0</y><width>460</width><height>470</height></rect></property>
+  <property name="minimumSize"><size><width>420</width><height>430</height></size></property>
+  <property name="windowTitle"><string>Accelerometer Calibration</string></property>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="leftMargin"><number>10</number></property>
+   <property name="topMargin"><number>8</number></property>
+   <property name="rightMargin"><number>10</number></property>
+   <property name="bottomMargin"><number>8</number></property>
+   <item><widget class="QLabel" name="label"><property name="text"><string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; font-size:x-large; font-weight:600;&quot;&gt;Accelerometer Calibration&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string></property></widget></item>
+   <item><widget class="QLabel" name="accelDescLabel"><property name="text"><string>Full calibration measures all three accelerometer axes. The vehicle will ask to be placed level and on each side.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item><widget class="QLabel" name="coutdownLabel"><property name="text"><string/></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item><widget class="QLabel" name="outputLabel"><property name="text"><string/></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item>
+    <layout class="QHBoxLayout" name="fullCalibrationLayout">
+     <item><spacer name="fullLeftSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QPushButton" name="calibrateAccelButton"><property name="minimumSize"><size><width>160</width><height>40</height></size></property><property name="focusPolicy"><enum>Qt::NoFocus</enum></property><property name="text"><string>Full
+Accel Calibration</string></property></widget></item>
+     <item><spacer name="fullRightSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+    </layout>
+   </item>
+   <item><widget class="Line" name="levelSeparator"><property name="orientation"><enum>Qt::Horizontal</enum></property></widget></item>
+   <item><widget class="QLabel" name="levelDescLabel"><property name="text"><string>Calibrate Level sets the default one-axis accelerometer offsets and AHRS trim. Place the vehicle flat and level.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item>
+    <layout class="QHBoxLayout" name="levelCalibrationLayout">
+     <item><spacer name="levelLeftSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QPushButton" name="calibrateAccelLevelButton"><property name="minimumSize"><size><width>160</width><height>40</height></size></property><property name="focusPolicy"><enum>Qt::NoFocus</enum></property><property name="text"><string>Calibrate Level</string></property></widget></item>
+     <item><spacer name="levelRightSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+    </layout>
+   </item>
+   <item><widget class="QLabel" name="levelOutputLabel"><property name="text"><string/></property><property name="textFormat"><enum>Qt::PlainText</enum></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item><widget class="Line" name="simpleSeparator"><property name="orientation"><enum>Qt::Horizontal</enum></property></widget></item>
+   <item><widget class="QLabel" name="simpleAccelDescLabel"><property name="text"><string>Simple calibration runs the firmware's quick accelerometer calibration. Place the vehicle flat and level, and keep it still while calibration completes.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+   <item>
+    <layout class="QHBoxLayout" name="simpleCalibrationLayout">
+     <item><spacer name="simpleLeftSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QPushButton" name="calibrateAccelSimpleButton"><property name="minimumSize"><size><width>160</width><height>40</height></size></property><property name="focusPolicy"><enum>Qt::NoFocus</enum></property><property name="text"><string>Simple
+Accel Calibration</string></property></widget></item>
+     <item><spacer name="simpleRightSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+    </layout>
+   </item>
+   <item><widget class="Line" name="line"><property name="orientation"><enum>Qt::Horizontal</enum></property></widget></item>
+   <item><widget class="QCheckBox" name="legacyCheckBox"><property name="toolTip"><string>Enables compatibility mode for older ArduPilot firmware when starting Full calibration.</string></property><property name="text"><string>Legacy Mode (Full calibration)</string></property></widget></item>
+   <item><spacer name="verticalSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>10</height></size></property></spacer></item>
+  </layout>
  </widget>
  <resources/>
  <connections/>

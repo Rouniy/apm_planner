@@ -19,6 +19,7 @@
 #include "ui/configuration/ConfigCompassView.h"
 #include "ui/configuration/MavFTPUIView.h"
 #include "ui/configuration/SetupView.h"
+#include "ui/configuration/AccelCalibrationConfig.h"
 
 #include <QAction>
 #include "comm/RemoteDataFlashLogService.h"
@@ -663,6 +664,7 @@ public:
                 pressure = value.param_value;
                 pressureReply();
             }
+            if (message.msgid == MAVLINK_MSG_ID_COMMAND_ACK) ++outgoingCommandAcks;
             if (message.msgid == MAVLINK_MSG_ID_COMMAND_LONG) {
                 mavlink_command_long_t command{};
                 mavlink_msg_command_long_decode(&message, &command);
@@ -695,6 +697,7 @@ public:
         }
     }
     int parameterWrites = 0;
+    int outgoingCommandAcks = 0;
     float pressure = 101325.0f;
     QVector<mavlink_command_long_t> commands;
     QVector<mavlink_command_long_t> cameraCommands;
@@ -2815,6 +2818,92 @@ int RunDeveloperVehicleToolRuntimeAudit()
                 qInfo() << "Serial TCP Bridge production binary/cancel/armed-release audit passed";
             }
         }
+    }
+    // Everyday SETUP workflow: real embedded accelerometer page, exact level
+    // command and ACK. This fixture never opens a socket to the user's SITL.
+    {
+        fixtureArmed = false;
+        fixture->heartbeat(false);
+        expect(waitFor([&] {
+            return service->canPrepare(DeveloperVehicleToolService::Action::CalibrateLevel);
+        }), "Calibrate Level service did not become ready");
+        const int acksBeforeAccel = fixture->outgoingCommandAcks;
+        window->loadHardwareConfigView();
+        expect(backstage && backstage->setCurrentPage(QStringLiteral("ConfigAccelCalibrationView")),
+               "Accel Calibration SETUP route unavailable");
+        QWidget *accelHost = backstage ? backstage->page(QStringLiteral("ConfigAccelCalibrationView")) : nullptr;
+        QPointer<AccelCalibrationConfig> accel = accelHost
+            ? accelHost->findChild<AccelCalibrationConfig *>() : nullptr;
+        auto *level = accel ? accel->findChild<QPushButton *>(QStringLiteral("calibrateAccelLevelButton")) : nullptr;
+        auto *full = accel ? accel->findChild<QPushButton *>(QStringLiteral("calibrateAccelButton")) : nullptr;
+        auto *simple = accel ? accel->findChild<QPushButton *>(QStringLiteral("calibrateAccelSimpleButton")) : nullptr;
+        expect(accel && level && full && simple, "Full/Level/Simple calibration controls missing");
+        if (level && full && simple) {
+            expect(waitFor([&] { return level->isEnabled(); }), "Level button stays disabled");
+            const auto consent = [&]() -> QMessageBox * {
+                if (accel) for (auto *box : accel->findChildren<QMessageBox *>(QStringLiteral("AccelLevelConfirmation")))
+                    if (box->isVisible()) return box;
+                return nullptr;
+            };
+            const int before = fixture->commands.size();
+            level->click();
+            expect(waitFor([&] { return consent(); }), "Level confirmation missing");
+            if (auto *box = consent()) {
+                expect(box->defaultButton() == box->button(QMessageBox::Cancel), "Level consent not default Cancel");
+                expect(!full->isEnabled() && !simple->isEnabled(), "Calibration starts can overlap Level confirmation");
+                box->button(QMessageBox::Cancel)->click();
+            }
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            expect(fixture->commands.size() == before, "Cancelled Level sent a calibration command");
+            level->click();
+            expect(waitFor([&] { return consent(); }), "Second Level confirmation missing");
+            if (auto *box = consent()) {
+                expect(box->text().contains(QString::number(FixtureSystem))
+                       && box->text().contains(QString::number(FixtureLinkId)),
+                       "Level confirmation omitted the exact target");
+                const QString screenshot = qEnvironmentVariable("APM_ACCEL_LEVEL_AUDIT_SCREENSHOT");
+                if (!screenshot.isEmpty()) expect(box->grab().save(screenshot + QStringLiteral(".consent.png")), "Level consent screenshot failed");
+                box->button(QMessageBox::Yes)->click();
+            }
+            expect(waitFor([&] { return !service->busy() && fixture->commands.size() == before + 1; }),
+                   "Level command did not reach an acknowledged terminal result");
+            if (fixture->commands.size() == before + 1) {
+                const auto command = fixture->commands.last();
+                expect(command.command == MAV_CMD_PREFLIGHT_CALIBRATION
+                       && command.target_system == FixtureSystem && command.target_component == 1
+                       && command.confirmation == 0 && command.param5 == 2
+                       && command.param1 == 0 && command.param2 == 0 && command.param3 == 0
+                       && command.param4 == 0 && command.param6 == 0 && command.param7 == 0,
+                       "Level does not use the MP10 one-axis/AHRS trim payload");
+            }
+            expect(waitFor([&] { return level->text().contains(QStringLiteral("Completed")); }),
+                   "Accepted Level did not display Completed");
+            expect(full->isEnabled() && simple->isEnabled(), "Level completion left existing calibration starts disabled");
+            const int beforeSimple = fixture->commands.size();
+            simple->click();
+            QMessageBox *simpleConsent = nullptr;
+            expect(waitFor([&] {
+                if (accel) for (auto *box : accel->findChildren<QMessageBox *>(QStringLiteral("AccelSimpleConfirmation")))
+                    if (box->isVisible()) { simpleConsent = box; return true; }
+                return false;
+            }), "Simple calibration confirmation missing");
+            if (simpleConsent) simpleConsent->button(QMessageBox::Yes)->click();
+            expect(waitFor([&] {
+                return !service->busy() && fixture->commands.size() == beforeSimple + 1
+                    && full->isEnabled() && level->isEnabled() && simple->isEnabled();
+            }), "Simple calibration did not release calibration controls after ACK");
+            if (fixture->commands.size() == beforeSimple + 1) {
+                const auto command = fixture->commands.last();
+                expect(command.command == MAV_CMD_PREFLIGHT_CALIBRATION && command.param5 == 4
+                       && command.target_system == FixtureSystem && command.target_component == 1,
+                       "Simple calibration does not use exact p5=4");
+            }
+            const QString screenshot = qEnvironmentVariable("APM_ACCEL_LEVEL_AUDIT_SCREENSHOT");
+            if (!screenshot.isEmpty()) expect(accel->grab().save(screenshot), "Accel page screenshot failed");
+        }
+        window->loadPilotView();
+        expect(fixture->outgoingCommandAcks == acksBeforeAccel,
+               "Opening/closing one-shot calibration injected legacy calibration ACKs");
     }
     heartbeat.stop();
     links->removeLink(FixtureLinkId);

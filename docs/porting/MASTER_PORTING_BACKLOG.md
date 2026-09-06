@@ -14,6 +14,16 @@ Advanced/Developer и настройки оборудования. Telemetry Log
 экспорты/исследования редких случаев отложены. Рабочая форма важнее очередного
 аудита уже работающего экспортёра. Settings далее; Swarm последний.
 
+Calibrate Level добавлен в реальную страницу SETUP между Full и Simple.
+Level p5=2 и Simple p5=4 теперь имеют exact-target ACK-завершение; Simple
+больше не оставляет вечное busy-состояние. Full/Legacy сохранены, форма
+растягивается. Проверенные результаты — `CURRENT_STATE.md` и
+`ACCEL_LEVEL_PORT.md`; текущий inventory129 =80 in-progress/34 partial/
+15 not-started, deviations158. Следом обычные radio/RTK и firmware workflows,
+реальные остатки Advanced/Developer; Settings далее, Swarm последний.
+
+Предыдущий checkpoint (Joystick):
+
 Joystick теперь встроен в SETUP:16 RC-каналов, SDL2, автоопределение,
 калибровка, кнопки/профили и приложение-владелец20Hz exact-target управления.
 Финальные Qt5/audio build4, полный прогон313/313 (54.34s) и нативный сценарий прошли;
